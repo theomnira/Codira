@@ -7,8 +7,8 @@ Functionality: Codira Programming Language
 -->
 
 # Codira Programming Language 
-### Stable Version: 26.8.3
-### Build: August 21, 2026.
+### Stable Version: 26.9
+### Build: September 15, 2026.
 
 _Codira_ is an Ahead of Time (AOT) programming language for high performance systems.
 
