@@ -48,7 +48,7 @@ _Codira_ is an Ahead of Time (AOT) programming language for high performance sys
 flowchart TD
     subgraph FRONTEND [" 1. Frontend & AST Analysis "]
         direction TB
-        Src["Codira Source Code<br/>.cod"] --> Lexer["Lexer & Parser"]
+        Src["Codira Source Code<br/>.code"] --> Lexer["Lexer & Parser"]
         Lexer --> AST["Abstract Syntax Tree"]
         
         subgraph TC [" Type System & Formal Checker "]
