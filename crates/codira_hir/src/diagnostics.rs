@@ -1118,3 +1118,32 @@ impl Diagnostic for DuplicateSupervisorEntry {
         self
     }
 }
+
+/// A set of module-level bindings that depend on one another in a cycle,
+/// so none of them has a value.
+///
+/// Emitted once per participating binding: each is an equally valid place
+/// to break the cycle, and singling one out would be arbitrary.
+#[derive(Debug)]
+pub struct CyclicConstDefinition {
+    /// The cycle rendered as `A -> B -> C`, for the message.
+    pub cycle: String,
+    pub definition: InFile<SyntaxNodePtr>,
+}
+
+impl Diagnostic for CyclicConstDefinition {
+    fn message(&self) -> String {
+        format!(
+            "module-level bindings form a dependency cycle: {}",
+            self.cycle
+        )
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        self.definition.clone()
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}

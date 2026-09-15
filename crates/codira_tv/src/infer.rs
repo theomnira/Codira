@@ -1,4 +1,6 @@
-//! Copyright (c) 2026 Omnira CJSC
+//! Copyright (c) 2026 Omnira CJSC. All Rights Reserved.
+//! Author: Tunjay Akbarli
+//! Date: September 15, 2026
 //!
 //! Argument-sort inference: `OpKind::Arg(i)` is untyped in the IR, so the
 //! encoder needs to decide, per argument, whether to model it as a Z3

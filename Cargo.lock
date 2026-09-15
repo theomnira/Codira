@@ -657,6 +657,7 @@ dependencies = [
  "codira_abi",
  "codira_compiler",
  "codira_compiler_daemon",
+ "codira_healing",
  "codira_language_server",
  "codira_project",
  "codira_runtime",

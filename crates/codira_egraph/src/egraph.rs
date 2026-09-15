@@ -1,4 +1,6 @@
-//! Copyright (c) 2026 Omnira CJSC
+//! Copyright (c) 2026 Omnira CJSC. All Rights Reserved.
+//! Author: Tunjay Akbarli
+//! Date: September 15, 2026
 //!
 //! The e-graph itself: union-find, hashconsing, congruence closure, and
 //! the e-class analyses.

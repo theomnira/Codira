@@ -54,3 +54,7 @@ cmake-build-*/
 *.snap
 /crates/codira_codegen/src/snapshots
 /.claude-flow
+/.claude-flow
+/.cache
+*.snap
+*.snap

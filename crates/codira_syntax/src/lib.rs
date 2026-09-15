@@ -228,6 +228,7 @@ fn api_walkthrough() {
             | ast::ModuleItemKind::MacroDef(_)
             | ast::ModuleItemKind::ExternBlock(_)
             | ast::ModuleItemKind::SupervisorDef(_)
+            | ast::ModuleItemKind::ConstDef(_)
             | ast::ModuleItemKind::Extend(_) => (),
         }
     }

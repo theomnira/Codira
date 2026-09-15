@@ -475,6 +475,42 @@ impl Condition {
     }
 }
 
+// ConstDef
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConstDef {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ConstDef {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, CONST_DEF)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ConstDef { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ast::NameOwner for ConstDef {}
+impl ast::VisibilityOwner for ConstDef {}
+impl ast::DocCommentsOwner for ConstDef {}
+impl ast::AttributeOwner for ConstDef {}
+impl ConstDef {
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        super::child_opt(self)
+    }
+
+    pub fn initializer(&self) -> Option<Expr> {
+        super::child_opt(self)
+    }
+}
+
 // EffectDef
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -1797,6 +1833,7 @@ impl AstNode for ModuleItem {
             USE | FUNCTION_DEF
                 | STRUCT_DEF
                 | TYPE_ALIAS_DEF
+                | CONST_DEF
                 | TRAIT_DEF
                 | ENUM_DEF
                 | EFFECT_DEF
@@ -1823,6 +1860,7 @@ pub enum ModuleItemKind {
     FunctionDef(FunctionDef),
     StructDef(StructDef),
     TypeAliasDef(TypeAliasDef),
+    ConstDef(ConstDef),
     TraitDef(TraitDef),
     EnumDef(EnumDef),
     EffectDef(EffectDef),
@@ -1848,6 +1886,11 @@ impl From<StructDef> for ModuleItem {
 }
 impl From<TypeAliasDef> for ModuleItem {
     fn from(n: TypeAliasDef) -> ModuleItem {
+        ModuleItem { syntax: n.syntax }
+    }
+}
+impl From<ConstDef> for ModuleItem {
+    fn from(n: ConstDef) -> ModuleItem {
         ModuleItem { syntax: n.syntax }
     }
 }
@@ -1898,6 +1941,7 @@ impl ModuleItem {
             TYPE_ALIAS_DEF => {
                 ModuleItemKind::TypeAliasDef(TypeAliasDef::cast(self.syntax.clone()).unwrap())
             }
+            CONST_DEF => ModuleItemKind::ConstDef(ConstDef::cast(self.syntax.clone()).unwrap()),
             TRAIT_DEF => ModuleItemKind::TraitDef(TraitDef::cast(self.syntax.clone()).unwrap()),
             ENUM_DEF => ModuleItemKind::EnumDef(EnumDef::cast(self.syntax.clone()).unwrap()),
             EFFECT_DEF => ModuleItemKind::EffectDef(EffectDef::cast(self.syntax.clone()).unwrap()),

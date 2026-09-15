@@ -22,6 +22,7 @@ codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
 codira_compiler = { version = "0.6.0-dev", path = "../codira_compiler" }
 codira_compiler_daemon = { version = "0.6.0-dev", path = "../codira_compiler_daemon" }
 codira_runtime = { version = "0.6.0-dev", path = "../codira_runtime" }
+codira_healing = { version = "0.6.0-dev", path = "../codira_healing" }
 codira_language_server = { version = "0.6.0-dev", path = "../codira_language_server" }
 codira_project = { version = "0.6.0-dev", path = "../codira_project" }
 

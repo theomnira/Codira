@@ -123,6 +123,7 @@ struct ItemTreeData {
     structs: Arena<Struct>,
     fields: Arena<Field>,
     type_aliases: Arena<TypeAlias>,
+    consts: Arena<Const>,
     impls: Arena<Impl>,
 
     visibilities: ItemVisibilities,
@@ -234,6 +235,7 @@ mod_items! {
     Function in functions -> ast::FunctionDef,
     Struct in structs -> ast::StructDef,
     TypeAlias in type_aliases -> ast::TypeAliasDef,
+    Const in consts -> ast::ConstDef,
     Import in imports -> ast::Use,
     Impl in impls -> ast::Extend,
 }
@@ -414,6 +416,35 @@ pub struct TypeAlias {
     pub ast_id: FileAstId<ast::TypeAliasDef>,
 }
 
+/// A module-level binding: `let NAME: T = expr;`.
+///
+/// Both the type and the initializer are mandatory at the grammar level
+/// (see `declarations::const_def`), so neither is optional here -- a
+/// module-level binding has no enclosing scope to infer a type from and no
+/// later assignment to take a value from.
+///
+/// The initializer expression is **not** stored in the item tree: bodies
+/// are lowered separately and on demand (`Body::body_query`), and holding
+/// an expression here would make every item-tree consumer depend on body
+/// lowering. What *is* stored is [`Const::references`] -- the set of
+/// module-level names the initializer mentions -- because cycle detection
+/// must run before any body is lowered. See
+/// [`lower::detect_const_cycles`].
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct Const {
+    pub name: Name,
+    pub visibility: RawVisibilityId,
+    pub types: TypeRefMap,
+    pub type_ref: LocalTypeRefId,
+    /// Single-segment names the initializer refers to, in source order and
+    /// deduplicated. This is the edge set of the dependency graph that
+    /// cycle detection walks; it deliberately over-approximates (a name
+    /// that turns out to be a local or a function is simply not a vertex,
+    /// so it contributes no edge).
+    pub references: Box<[Name]>,
+    pub ast_id: FileAstId<ast::ConstDef>,
+}
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AssociatedItem {
     Function(LocalItemTreeId<Function>),
@@ -515,8 +546,8 @@ mod diagnostics {
 
     use super::{ItemTree, ModItem};
     use crate::{
-        diagnostics::DuplicateDefinition, DefDatabase, DiagnosticSink, HirDatabase, InFile, Name,
-        Path,
+        diagnostics::{CyclicConstDefinition, DuplicateDefinition},
+        DefDatabase, DiagnosticSink, HirDatabase, InFile, Name, Path,
     };
 
     #[derive(Clone, Debug, Eq, PartialEq)]
@@ -525,6 +556,17 @@ mod diagnostics {
             name: Name,
             first: ModItem,
             second: ModItem,
+        },
+        /// Module-level bindings that depend on one another in a cycle,
+        /// e.g. `let A: i32 = B;` with `let B: i32 = A;`. Detected by
+        /// Tarjan's SCC in `lower::detect_const_cycles`; see that
+        /// function's doc comment for why this is a graph pass rather
+        /// than something the evaluator or the solver discovers.
+        CyclicConstDefinition {
+            /// Every binding in the cycle, so each one can be pointed at.
+            items: Box<[ModItem]>,
+            /// Their names, in the same order, for the message.
+            names: Box<[Name]>,
         },
     }
 
@@ -569,6 +611,10 @@ mod diagnostics {
                             SyntaxNodePtr::new(use_item.expect("cannot find use item").syntax()),
                         )
                     }
+                    ModItem::Const(item) => InFile::new(
+                        item_tree.file_id,
+                        SyntaxNodePtr::new(item_tree.source(db, item).syntax()),
+                    ),
                     ModItem::Impl(_) => unreachable!("impls cannot be duplicated"),
                 }
             }
@@ -583,6 +629,22 @@ mod diagnostics {
                     first_definition: ast_ptr_from_mod(db, item_tree, *first),
                     definition: ast_ptr_from_mod(db, item_tree, *second),
                 }),
+                ItemTreeDiagnostic::CyclicConstDefinition { items, names } => {
+                    let cycle = names
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" -> ");
+                    // Reported against every participant: each is an
+                    // equally valid place to break the cycle, so singling
+                    // one out would be arbitrary.
+                    for item in items.iter() {
+                        sink.push(CyclicConstDefinition {
+                            cycle: cycle.clone(),
+                            definition: ast_ptr_from_mod(db, item_tree, *item),
+                        });
+                    }
+                }
             };
         }
     }

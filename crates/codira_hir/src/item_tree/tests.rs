@@ -153,3 +153,107 @@ fn test_duplicate_import() {
     )
     .unwrap());
 }
+
+// ---- module-level bindings and cycle detection --------------------------
+
+#[test]
+fn module_level_bindings() {
+    // The shape the standard library actually uses for its constants.
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    public let RELAXED: i32 = 0;
+    let DERIVED: i32 = RELAXED;
+    let COMPUTED: i64 = 1 + 2;
+    "#,
+    )
+    .unwrap());
+}
+
+#[test]
+fn direct_const_cycle_is_rejected() {
+    // `A -> B -> A`. Tarjan finds one strongly-connected component of two
+    // vertices; both are reported, because either is a valid place to
+    // break the cycle.
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    let A: i32 = B;
+    let B: i32 = A;
+    "#,
+    )
+    .unwrap());
+}
+
+#[test]
+fn self_referential_const_is_rejected() {
+    // A one-vertex component is only a cycle when the vertex has an edge
+    // to itself -- the case a naive `component.len() > 1` check misses.
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    let LOOP: i32 = LOOP;
+    "#,
+    )
+    .unwrap());
+}
+
+#[test]
+fn longer_const_cycle_is_rejected() {
+    // `A -> B -> C -> A`, with an acyclic binding alongside it to confirm
+    // only the participants are flagged.
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    let A: i32 = B;
+    let B: i32 = C;
+    let C: i32 = A;
+    let FINE: i32 = 7;
+    "#,
+    )
+    .unwrap());
+}
+
+#[test]
+fn acyclic_chain_is_accepted() {
+    // A deep chain is not a cycle, however long. This also exercises the
+    // iterative DFS: the recursive formulation would grow its stack with
+    // the chain length.
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    let A: i32 = 1;
+    let B: i32 = A;
+    let C: i32 = B;
+    let D: i32 = C;
+    let E: i32 = D;
+    "#,
+    )
+    .unwrap());
+}
+
+#[test]
+fn diamond_dependency_is_not_a_cycle() {
+    // `D` depends on `B` and `C`, both of which depend on `A`. A vertex
+    // reachable by two paths is revisited during the DFS; a detector that
+    // confused "already seen" with "on the current stack" would call this
+    // a cycle.
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    let A: i32 = 1;
+    let B: i32 = A;
+    let C: i32 = A;
+    let D: i32 = B + C;
+    "#,
+    )
+    .unwrap());
+}
+
+#[test]
+fn reference_to_a_function_is_not_a_dependency_edge() {
+    // `collect_path_references` over-approximates: it records every
+    // single-segment name. `helper` is a function, not a binding, so it is
+    // not a vertex and contributes no edge -- and cannot create a cycle.
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    func helper() -> i32 { 1 }
+    let VALUE: i32 = helper();
+    "#,
+    )
+    .unwrap());
+}

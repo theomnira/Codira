@@ -194,6 +194,7 @@ Grammar(
 
         "STRUCT_DEF",
         "TYPE_ALIAS_DEF",
+        "CONST_DEF",
         "RECORD_FIELD_DEF_LIST",
         "RECORD_FIELD_DEF",
         "TUPLE_FIELD_DEF_LIST",
@@ -294,7 +295,7 @@ Grammar(
             traits: [ "ModuleItemOwner", "FunctionDefOwner" ],
         ),
         "ModuleItem": (
-            enum: ["Use", "FunctionDef", "StructDef", "TypeAliasDef", "TraitDef", "EnumDef", "EffectDef", "MacroDef", "Extend", "ExternBlock", "SupervisorDef"]
+            enum: ["Use", "FunctionDef", "StructDef", "TypeAliasDef", "ConstDef", "TraitDef", "EnumDef", "EffectDef", "MacroDef", "Extend", "ExternBlock", "SupervisorDef"]
         ),
         "Visibility": (),
         "AttributeList": (collections: [("attributes", "Attribute")]),
@@ -395,6 +396,15 @@ Grammar(
                 "AttributeOwner",
             ],
             options: [ "ParamList", ["body", "BlockExpr"], "RetType" ],
+        ),
+        "ConstDef": (
+            options: ["TypeRef", ["initializer", "Expr"]],
+            traits: [
+                "NameOwner",
+                "VisibilityOwner",
+                "DocCommentsOwner",
+                "AttributeOwner",
+            ]
         ),
         "TypeAliasDef": (
             options: ["TypeRef"],
