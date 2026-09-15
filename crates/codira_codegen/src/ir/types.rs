@@ -4,13 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[cfg(test)]
 mod test;
 
-use itertools::Itertools;
 use codira_abi as abi;
 use codira_codegen_macros::AsValue;
+use itertools::Itertools;
 
 use crate::value::{
     AsValue, BytesOrPtr, Global, IrTypeContext, IrValueContext, SizedValueType, TransparentValue,
@@ -147,4 +146,3 @@ pub struct AssemblyInfo<'ink> {
     pub dependencies: Value<'ink, *const *const u8>,
     pub num_dependencies: u32,
 }
-

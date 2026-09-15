@@ -6,10 +6,10 @@
 // (exit) or abnormally (abort).
 //
 // These are low-level primitives.  Prefer returning Result/Error from
-// main() when possible — use these only for truly unrecoverable situations.
+// main() when possible — import these only for truly unrecoverable situations.
 // =============================================================================
 
-use std.builtin.types;
+import std.builtin.types;
 
 // =============================================================================
 // exit — Graceful termination

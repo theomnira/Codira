@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{borrow::Cow, env};
 
 use Arch::{
@@ -207,4 +206,3 @@ fn watchos_lld_platform_version() -> String {
 //     let (major, minor) = watchos_deployment_target();
 //     format!("{}-apple-watchos{}.{}.0-simulator", arch.target_name(), major,
 // minor) }
-

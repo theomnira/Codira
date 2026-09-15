@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_hir_input::FileId;
@@ -138,4 +137,3 @@ impl HasVisibility for TypeAlias {
         self.data(db).visibility.resolve(db, &self.id.resolver(db))
     }
 }
-

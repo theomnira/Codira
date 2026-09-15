@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -85,4 +84,3 @@ pub fn write(path: impl AsRef<Path>, contents: impl AsRef<[u8]>) -> anyhow::Resu
     fs::write(path, contents.as_ref())
         .map_err(|_error| anyhow!("failed to write `{}`", path.display()))
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::io;
 
 use thiserror::Error;
@@ -18,4 +17,3 @@ pub enum CodeGenerationError {
     #[error("error generating machine code")]
     MachineCodeError(String),
 }
-

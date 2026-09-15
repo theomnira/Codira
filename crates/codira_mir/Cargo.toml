@@ -14,5 +14,7 @@ license.workspace = true
 
 [dependencies]
 la-arena = { workspace = true }
+rustc-hash = { workspace = true, features = ["std"] }
 smallvec = { workspace = true }
 smol_str = { workspace = true }
+thiserror = { workspace = true }

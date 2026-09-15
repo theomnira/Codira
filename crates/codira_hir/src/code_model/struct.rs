@@ -4,16 +4,15 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{fmt, iter::once, sync::Arc};
 
 pub use ast::StructMemoryKind;
-use la_arena::{Arena, Idx};
 use codira_hir_input::FileId;
 use codira_syntax::{
     ast,
     ast::{NameOwner, TypeAscriptionOwner, VisibilityOwner},
 };
+use la_arena::{Arena, Idx};
 
 use super::Module;
 use crate::{
@@ -262,4 +261,3 @@ impl HasVisibility for Struct {
         self.data(db).visibility.resolve(db, &self.id.resolver(db))
     }
 }
-

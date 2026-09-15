@@ -4,13 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
     adt, error_block, expressions, generics, name, name_recovery, opt_attribute_list,
-    opt_visibility, params, paths, traits, types, IDENT, Marker, Parser, TokenSet, EOF, ERROR,
-    EXTERN, FUNCTION_DEF, MACRO_DEF, RENAME, RET_TYPE, USE, USES_CLAUSE, USE_TREE, USE_TREE_LIST,
+    opt_visibility, params, paths, traits, types, Marker, Parser, TokenSet, EOF, ERROR, EXTERN,
+    FUNCTION_DEF, IDENT, MACRO_DEF, RENAME, RET_TYPE, USE, USES_CLAUSE, USE_TREE, USE_TREE_LIST,
 };
-use crate::{parsing::grammar::paths::is_use_path_start, T};
+use crate::parsing::grammar::paths::is_use_path_start;
 
 pub(super) const DECLARATION_RECOVERY_SET: TokenSet = TokenSet::new(&[
     T![func],
@@ -155,7 +154,7 @@ fn declarations_without_modifiers(p: &mut Parser<'_>, m: Marker) -> Result<(), M
 }
 
 /// Parses `supervisor Name { key: value, .. child Name { .. } }` (see
-/// spec/self_healing_programming_language.md section 3.5). This only covers
+/// `spec/self_healing_programming_language.md` section 3.5). This only covers
 /// the declaration surface: parsing and, at the HIR level, registering the
 /// supervisor/child hierarchy and its config entries -- not the OTP-style
 /// restart-strategy runtime described in the paper, which needs a process
@@ -376,4 +375,3 @@ fn opt_rename(p: &mut Parser<'_>) {
         m.complete(p, RENAME);
     }
 }
-

@@ -6,10 +6,10 @@
 //! - Original module content restored; copyright header moved to top.
 //!
 //! Structural validation for `supervisor`/`child` blocks (see
-//! spec/self_healing_programming_language.md section 3.5). These parse into
+//! `spec/self_healing_programming_language.md` section 3.5). These parse into
 //! a full syntax tree (`codira_syntax`) but are not lowered into
 //! name-resolvable HIR items -- there is no process-supervision runtime to
-//! register them against (see spec/LANGUAGE_SPEC.md section 12's "explicitly
+//! register them against (see `spec/LANGUAGE_SPEC.md` section 12's "explicitly
 //! out of scope" note on the JIT/consensus machinery this paper otherwise
 //! describes). This module operates directly on the raw syntax tree instead
 //! of going through the usual item-diagnostic machinery, checking the one
@@ -104,7 +104,11 @@ mod tests {
 
         let mut messages = String::new();
         let mut sink = DiagnosticSink::new(|diag| {
-            messages.push_str(&format!("{:?}: {}\n", diag.highlight_range(), diag.message()));
+            messages.push_str(&format!(
+                "{:?}: {}\n",
+                diag.highlight_range(),
+                diag.message()
+            ));
         });
         module.diagnostics(&db, &mut sink);
         drop(sink);
@@ -178,4 +182,3 @@ mod tests {
         ));
     }
 }
-

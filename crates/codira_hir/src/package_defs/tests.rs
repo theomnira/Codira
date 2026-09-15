@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir_input::WithFixture;
 use rustc_hash::FxHashSet;
 
@@ -358,4 +357,3 @@ fn fully_qualified_module_path(db: &dyn HirDatabase, module: Module) -> String {
     )
     .collect::<String>()
 }
-

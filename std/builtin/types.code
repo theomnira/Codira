@@ -102,7 +102,7 @@ public type USize = usize;
 // ---- Scalar union type ------------------------------------------------------
 
 // Scalar represents any single numeric value.  It is a sum type over
-// every fixed-width numeric primitive.  The compiler may use it for
+// every fixed-width numeric primitive.  The compiler may import it for
 // generic numeric code and SIMD element types.
 public enum Scalar {
     SI8(i8),

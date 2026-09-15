@@ -4,12 +4,11 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{iter::successors, sync::Arc};
 
-use la_arena::ArenaMap;
 use codira_hir_input::{ModuleId, ModuleTree, PackageModuleId};
 use codira_syntax::ast;
+use la_arena::ArenaMap;
 
 use crate::{
     code_model::r#struct::LocalFieldId,
@@ -179,4 +178,3 @@ pub(crate) fn field_visibilities_query(
     };
     Arc::new(res)
 }
-

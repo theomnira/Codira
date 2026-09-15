@@ -543,4 +543,3 @@ pub fn iter_source_files(source_dir: &Path) -> impl Iterator<Item = PathBuf> {
         .filter(|e| is_source_file(e.path()))
         .map(|e| e.path().to_path_buf())
 }
-

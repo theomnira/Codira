@@ -6,7 +6,7 @@
 // null-pointer errors by making absence explicit in the type system.
 //
 // Migration note (2026-08-20): rewritten from the pre-redesign syntax
-// (`struct(value) Optional[T]`) to the current grammar
+// (`struct Optional[T]`) to the current grammar
 // (spec/LANGUAGE_SPEC.md) -- verified to parse cleanly via
 // codira_syntax::SourceFile::parse (zero SyntaxErrors). Three things
 // changed versus a naive re-spelling of the original file, each found by

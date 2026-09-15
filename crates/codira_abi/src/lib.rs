@@ -3,13 +3,13 @@
 //! Date: August 6, 2026
 //!
 //! Functionality:
-//! - The Codira ABI defines the binary format used to communicate between
-//!   the Codira Compiler and the Codira Runtime.
+//! - The Codira ABI defines the binary format used to communicate between the
+//!   Codira Compiler and the Codira Runtime.
 //!
 //! The Codira ABI
 //!
-//! The Codira ABI defines the binary format used to communicate between the Codira
-//! Compiler and Codira Runtime.
+//! The Codira ABI defines the binary format used to communicate between the
+//! Codira Compiler and Codira Runtime.
 #![warn(missing_docs)]
 
 use std::{ffi::CStr, fmt};
@@ -70,10 +70,7 @@ impl fmt::Display for Guid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         #[inline]
         const fn format_hyphenated(src: &[u8; 16]) -> [u8; 36] {
-            const LUT: [u8; 16] = [
-                b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'a', b'b', b'c', b'd',
-                b'e', b'f',
-            ];
+            const LUT: [u8; 16] = *b"0123456789abcdef";
 
             let groups = [(0, 8), (9, 13), (14, 18), (19, 23), (24, 36)];
             let mut dst = [0; 36];

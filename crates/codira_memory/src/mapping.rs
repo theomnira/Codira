@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::collections::{HashMap, HashSet};
 
 use codira_abi::Guid;
@@ -270,7 +269,7 @@ pub unsafe fn field_mapping(old_ty: &Type, new_ty: &Type, diff: &[FieldDiff]) ->
             FieldDiff::Delete { .. } => None,
         })
         .collect();
-    additions.sort_by(|a, b| a.0.cmp(&b.0));
+    additions.sort_by_key(|a| a.0);
 
     // Add mappings for all inserted and moved fields.
     for (new_index, map) in additions {
@@ -527,4 +526,3 @@ pub trait MemoryMapper {
     /// objects have been deallocated.
     fn map_memory(&self, mapping: Mapping) -> Vec<GcPtr>;
 }
-

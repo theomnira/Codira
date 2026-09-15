@@ -4,12 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
+use codira_hir::{Body, Expr, ExprId, HirDatabase, InferenceResult};
 use inkwell::{
     context::Context,
     module::Module,
@@ -17,7 +17,6 @@ use inkwell::{
     types::{BasicTypeEnum, FunctionType},
     values::{BasicValueEnum, PointerValue},
 };
-use codira_hir::{Body, Expr, ExprId, HirDatabase, InferenceResult};
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -165,7 +164,7 @@ impl<'ink> DispatchTable<'ink> {
         let ir_type = self.entries[index].ir_type;
         let function_ptr = builder
             .build_load(
-                ir_type.ptr_type(inkwell::AddressSpace::default()),
+                self.context.ptr_type(inkwell::AddressSpace::default()),
                 ptr_to_function_ptr,
                 &format!("{function_name}_ptr"),
             )
@@ -364,8 +363,8 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
     ///
     /// # Parameters
     ///
-    /// * **functions**: Mapping of *defined* Codira functions to their respective
-    ///   IR values.
+    /// * **functions**: Mapping of *defined* Codira functions to their
+    ///   respective IR values.
     ///
     /// Returns the `DispatchTable` and a set of dependencies for the module.
     pub fn build(self) -> (DispatchTable<'ink>, FxHashSet<codira_hir::Module>) {
@@ -373,7 +372,16 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
         let table_body: Vec<BasicTypeEnum<'ink>> = self
             .entries
             .iter()
-            .map(|f| f.ir_type.ptr_type(inkwell::AddressSpace::default()).into())
+            .map(|f| {
+                // Every dispatch-table slot is a function pointer. Under
+                // opaque pointers the pointee signature does not change the
+                // LLVM type, but `ir_type` is still the record of what the
+                // slot holds and is read elsewhere for call construction.
+                let _signature = f.ir_type;
+                self.context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into()
+            })
             .collect();
 
         // We can fill in the DispatchTable body, i.e: struct DispatchTable { <this
@@ -436,4 +444,3 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
         )
     }
 }
-

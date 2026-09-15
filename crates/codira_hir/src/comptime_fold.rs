@@ -5,20 +5,23 @@
 //!
 //! Scope (see `spec/KGEN_SUPERSET_STATUS.md`): only single-tail-expression
 //! blocks (no `let`-statements, no expression-statements) built from
-//! literals, arithmetic/comparison/logical operators, unary neg/not, and
-//! `if`/`else` fold today. Anything referencing a name (`Path`), calling a
-//! function, indexing, looping, or containing a statement bails out
-//! (`None`) and the caller leaves the block to lower exactly as it did
-//! before this module existed -- an honest, additive-only improvement:
-//! nothing that used to work stops working, and a real (if narrow) subset
-//! of `comptime` now actually evaluates at compile time instead of always
-//! running at ordinary runtime.
+//! int/bool/float literals, arithmetic/comparison/logical/bitwise/shift
+//! operators, unary neg/not, and `if`/`else` fold today. Anything
+//! referencing a name (`Path`), calling a function, indexing, looping, or
+//! containing a statement bails out (`None`) and the caller leaves the
+//! block to lower exactly as it did before this module existed -- an
+//! honest, additive-only improvement: nothing that used to work stops
+//! working, and a real (if narrow) subset of `comptime` now actually
+//! evaluates at compile time instead of always running at ordinary
+//! runtime. (Calls *are* liftable in the more general `mir_lower` pass,
+//! which has interprocedural context; a bare `comptime` block evaluated
+//! here has no `GeneratorStore` to resolve them against.)
 
 use la_arena::Arena;
 
 use crate::expr::{
-    ArithOp, BinaryOp, CmpOp, Expr, ExprId, Literal, LiteralInt, LiteralIntKind, LogicOp,
-    Ordering, UnaryOp,
+    ArithOp, BinaryOp, CmpOp, Expr, ExprId, Literal, LiteralFloat, LiteralFloatKind, LiteralInt,
+    LiteralIntKind, LogicOp, Ordering, UnaryOp,
 };
 
 /// Attempts to evaluate `block` (already-lowered HIR) at compile time.
@@ -32,33 +35,62 @@ pub(crate) fn try_eval(exprs: &Arena<Expr>, block: ExprId) -> Option<codira_comp
 
 /// Converts a concrete evaluation result back into a source `Expr`,
 /// allocating any synthetic sub-expressions (the literal inside a negative
-/// result's `UnaryOp::Neg` wrapper) into `exprs`. Returns `None` for
-/// `Value::Unit` -- there is no `Expr::Literal` variant that safely stands
-/// in for "unit" without risking a type mismatch against the block's
-/// inferred type, and it's a low-value case to special-case further today.
+/// result's `UnaryOp::Neg` wrapper) into `exprs`. Returns `None` for:
+///
+/// * `Value::Unit` -- there is no `Expr::Literal` variant that safely stands in
+///   for "unit" without risking a type mismatch against the block's inferred
+///   type, and it's a low-value case to special-case further today;
+/// * `Value::Str`/`Value::Tuple` -- the restricted `build_op` walker below
+///   never produces string or tuple values, so a result of that shape means
+///   something upstream changed; bailing (leaving the block unevaluated) is the
+///   honest move rather than guessing at an `Expr` encoding this module has
+///   never emitted;
+/// * non-finite `Value::Float` results -- there is no source-level float
+///   literal spelling for `inf`/`NaN` to fold back into.
 pub(crate) fn value_to_expr(
     exprs: &mut Arena<Expr>,
     value: codira_comptime::Value,
 ) -> Option<Expr> {
     match value {
         codira_comptime::Value::Bool(b) => Some(Expr::Literal(Literal::Bool(b))),
-        codira_comptime::Value::Int(v) if v >= 0 => {
-            Some(Expr::Literal(Literal::Int(LiteralInt {
-                kind: LiteralIntKind::Unsuffixed,
-                value: v as u128,
-            })))
-        }
+        codira_comptime::Value::Int(v) if v >= 0 => Some(Expr::Literal(Literal::Int(LiteralInt {
+            kind: LiteralIntKind::Unsuffixed,
+            value: v as u128,
+        }))),
         codira_comptime::Value::Int(v) => {
             let inner = exprs.alloc(Expr::Literal(Literal::Int(LiteralInt {
                 kind: LiteralIntKind::Unsuffixed,
-                value: v.unsigned_abs() as u128,
+                value: u128::from(v.unsigned_abs()),
             })));
             Some(Expr::UnaryOp {
                 expr: inner,
                 op: UnaryOp::Neg,
             })
         }
-        codira_comptime::Value::Unit => None,
+        codira_comptime::Value::Float(f) if !f.is_finite() => None,
+        // Mirror the integer convention: non-negative results become a
+        // bare literal, negative ones (including -0.0, whose sign is
+        // observable) wrap `abs` in `UnaryOp::Neg` -- float literals in
+        // source are unsigned, negation is an operator.
+        codira_comptime::Value::Float(f) if !f.is_sign_negative() => {
+            Some(Expr::Literal(Literal::Float(LiteralFloat {
+                kind: LiteralFloatKind::Unsuffixed,
+                value: f,
+            })))
+        }
+        codira_comptime::Value::Float(f) => {
+            let inner = exprs.alloc(Expr::Literal(Literal::Float(LiteralFloat {
+                kind: LiteralFloatKind::Unsuffixed,
+                value: -f,
+            })));
+            Some(Expr::UnaryOp {
+                expr: inner,
+                op: UnaryOp::Neg,
+            })
+        }
+        codira_comptime::Value::Str(_)
+        | codira_comptime::Value::Tuple(_)
+        | codira_comptime::Value::Unit => None,
     }
 }
 
@@ -75,11 +107,17 @@ fn build_op(
             let v = i64::try_from(*value).ok()?;
             Some(body.push(OpKind::Const(Attr::Int(v)), []))
         }
+        Expr::Literal(Literal::Float(LiteralFloat { value, .. })) => {
+            // HIR float literals store the parsed `f64` directly, which is
+            // exactly what `Attr::float` wants (it keeps the bit pattern).
+            Some(body.push(OpKind::Const(Attr::float(*value)), []))
+        }
         Expr::UnaryOp { expr, op } => {
             let inner = build_op(exprs, *expr, body)?;
             let kind = match op {
                 UnaryOp::Neg => OpKind::Neg,
                 UnaryOp::Not => OpKind::Not,
+                UnaryOp::BitNot => OpKind::BitNot,
             };
             Some(body.push(kind, [inner]))
         }
@@ -114,12 +152,14 @@ fn build_op(
                 [Region::new(then_body), Region::new(else_body)],
             ))
         }
-        Expr::Block { statements, tail } if statements.is_empty() => build_op(exprs, (*tail)?, body),
+        Expr::Block { statements, tail } if statements.is_empty() => {
+            build_op(exprs, (*tail)?, body)
+        }
         // `Path`, `Call`, `MethodCall`, `Index`, `Array`, `RecordLit`,
         // `Field`, `Loop`, `While`, `Return`, `Break`, blocks with
-        // statements, `Missing`, and string/float literals are all out of
-        // scope for this session's restricted interpreter -- see module
-        // doc and spec/KGEN_SUPERSET_STATUS.md.
+        // statements, `Missing`, and string literals are all out of scope
+        // for this restricted walker -- see module doc and
+        // spec/KGEN_SUPERSET_STATUS.md.
         _ => None,
     }
 }
@@ -132,13 +172,11 @@ fn binary_op_kind(op: BinaryOp) -> Option<codira_mir::OpKind> {
         BinaryOp::ArithOp(ArithOp::Multiply) => OpKind::Mul,
         BinaryOp::ArithOp(ArithOp::Divide) => OpKind::Div,
         BinaryOp::ArithOp(ArithOp::Remainder) => OpKind::Rem,
-        // Bitwise/shift ops have no codira_mir core.* op yet -- only the
-        // arithmetic/comparison/logical subset needed for `comptime { 2 + 2
-        // }`-shaped code exists so far. See architecture doc §2.1.
-        BinaryOp::ArithOp(
-            ArithOp::LeftShift | ArithOp::RightShift | ArithOp::BitAnd | ArithOp::BitOr
-            | ArithOp::BitXor,
-        ) => return None,
+        BinaryOp::ArithOp(ArithOp::LeftShift) => OpKind::Shl,
+        BinaryOp::ArithOp(ArithOp::RightShift) => OpKind::Shr,
+        BinaryOp::ArithOp(ArithOp::BitAnd) => OpKind::BitAnd,
+        BinaryOp::ArithOp(ArithOp::BitOr) => OpKind::BitOr,
+        BinaryOp::ArithOp(ArithOp::BitXor) => OpKind::BitXor,
         BinaryOp::LogicOp(LogicOp::And) => OpKind::And,
         BinaryOp::LogicOp(LogicOp::Or) => OpKind::Or,
         BinaryOp::CmpOp(CmpOp::Eq { negated: false }) => OpKind::Eq,
@@ -226,7 +264,10 @@ mod tests {
 
         let folded = value_to_expr(&mut exprs, value).unwrap();
         match folded {
-            Expr::UnaryOp { expr, op: UnaryOp::Neg } => {
+            Expr::UnaryOp {
+                expr,
+                op: UnaryOp::Neg,
+            } => {
                 assert_eq!(
                     exprs[expr],
                     Expr::Literal(Literal::Int(LiteralInt {
@@ -237,6 +278,134 @@ mod tests {
             }
             other => panic!("expected UnaryOp::Neg, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn folds_bitwise_and_shift_ops() {
+        // `(1 << 4) | 3` -> 19: the bitwise/shift operators now map to
+        // real codira_mir ops instead of bailing.
+        let mut exprs = Arena::new();
+        let one = exprs.alloc(Expr::Literal(Literal::Int(LiteralInt {
+            kind: LiteralIntKind::Unsuffixed,
+            value: 1,
+        })));
+        let four = exprs.alloc(Expr::Literal(Literal::Int(LiteralInt {
+            kind: LiteralIntKind::Unsuffixed,
+            value: 4,
+        })));
+        let shifted = exprs.alloc(Expr::BinaryOp {
+            lhs: one,
+            rhs: four,
+            op: Some(BinaryOp::ArithOp(ArithOp::LeftShift)),
+        });
+        let three = exprs.alloc(Expr::Literal(Literal::Int(LiteralInt {
+            kind: LiteralIntKind::Unsuffixed,
+            value: 3,
+        })));
+        let ored = exprs.alloc(Expr::BinaryOp {
+            lhs: shifted,
+            rhs: three,
+            op: Some(BinaryOp::ArithOp(ArithOp::BitOr)),
+        });
+
+        let value = try_eval(&exprs, ored).unwrap();
+        assert_eq!(value, codira_comptime::Value::Int(19));
+    }
+
+    #[test]
+    fn folds_float_arithmetic_back_to_a_float_literal() {
+        // `1.5 + 2.25` -> the float literal `3.75` (exact in binary
+        // floating point, so the round-trip is loss-free).
+        let mut exprs = Arena::new();
+        let a = exprs.alloc(Expr::Literal(Literal::Float(LiteralFloat {
+            kind: LiteralFloatKind::Unsuffixed,
+            value: 1.5,
+        })));
+        let b = exprs.alloc(Expr::Literal(Literal::Float(LiteralFloat {
+            kind: LiteralFloatKind::Unsuffixed,
+            value: 2.25,
+        })));
+        let sum = exprs.alloc(Expr::BinaryOp {
+            lhs: a,
+            rhs: b,
+            op: Some(BinaryOp::ArithOp(ArithOp::Add)),
+        });
+
+        let value = try_eval(&exprs, sum).unwrap();
+        assert_eq!(value, codira_comptime::Value::Float(3.75));
+
+        let folded = value_to_expr(&mut exprs, value).unwrap();
+        assert_eq!(
+            folded,
+            Expr::Literal(Literal::Float(LiteralFloat {
+                kind: LiteralFloatKind::Unsuffixed,
+                value: 3.75,
+            }))
+        );
+    }
+
+    #[test]
+    fn negative_float_result_wraps_in_unary_neg() {
+        // `1.5 - 2.0` -> `-(0.5)`: float literals in source are unsigned,
+        // so a negative fold result becomes Neg(abs), same as ints.
+        let mut exprs = Arena::new();
+        let a = exprs.alloc(Expr::Literal(Literal::Float(LiteralFloat {
+            kind: LiteralFloatKind::Unsuffixed,
+            value: 1.5,
+        })));
+        let b = exprs.alloc(Expr::Literal(Literal::Float(LiteralFloat {
+            kind: LiteralFloatKind::Unsuffixed,
+            value: 2.0,
+        })));
+        let diff = exprs.alloc(Expr::BinaryOp {
+            lhs: a,
+            rhs: b,
+            op: Some(BinaryOp::ArithOp(ArithOp::Subtract)),
+        });
+
+        let value = try_eval(&exprs, diff).unwrap();
+        assert_eq!(value, codira_comptime::Value::Float(-0.5));
+
+        match value_to_expr(&mut exprs, value).unwrap() {
+            Expr::UnaryOp {
+                expr,
+                op: UnaryOp::Neg,
+            } => {
+                assert_eq!(
+                    exprs[expr],
+                    Expr::Literal(Literal::Float(LiteralFloat {
+                        kind: LiteralFloatKind::Unsuffixed,
+                        value: 0.5,
+                    }))
+                );
+            }
+            other => panic!("expected UnaryOp::Neg, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn non_finite_float_results_do_not_fold() {
+        // `1.0 / 0.0` is IEEE infinity -- evaluation succeeds (fold_op's
+        // documented float semantics), but there is no literal spelling
+        // for it, so value_to_expr must bail rather than invent one.
+        let mut exprs = Arena::new();
+        let one = exprs.alloc(Expr::Literal(Literal::Float(LiteralFloat {
+            kind: LiteralFloatKind::Unsuffixed,
+            value: 1.0,
+        })));
+        let zero = exprs.alloc(Expr::Literal(Literal::Float(LiteralFloat {
+            kind: LiteralFloatKind::Unsuffixed,
+            value: 0.0,
+        })));
+        let div = exprs.alloc(Expr::BinaryOp {
+            lhs: one,
+            rhs: zero,
+            op: Some(BinaryOp::ArithOp(ArithOp::Divide)),
+        });
+
+        let value = try_eval(&exprs, div).unwrap();
+        assert_eq!(value, codira_comptime::Value::Float(f64::INFINITY));
+        assert!(value_to_expr(&mut exprs, value).is_none());
     }
 
     #[test]

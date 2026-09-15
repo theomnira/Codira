@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{name::AsName, ty::lower::type_for_primitive, Name, Ty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -29,4 +28,3 @@ impl From<crate::primitive_type::PrimitiveType> for PrimitiveType {
         PrimitiveType { inner }
     }
 }
-

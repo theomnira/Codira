@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{dot, expr, CompletionContext, Completions, NameRefContext, NameRefKind, PathKind};
 
 /// Generate completions for a name reference.
@@ -26,4 +25,3 @@ pub(super) fn complete_name_ref(
         }
     }
 }
-

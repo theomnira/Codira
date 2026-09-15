@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 use inkwell::{context::Context, module::Module, targets::TargetMachine, types::StructType};
@@ -55,4 +54,3 @@ impl<'db, 'ink> CodeGenContext<'db, 'ink> {
         module
     }
 }
-

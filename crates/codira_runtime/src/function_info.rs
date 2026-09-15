@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::c_void, ptr, sync::Arc};
 
 use codira_abi as abi;
@@ -207,4 +206,3 @@ impl FunctionDefinitionBuilder {
         })
     }
 }
-

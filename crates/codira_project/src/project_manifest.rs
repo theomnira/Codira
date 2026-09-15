@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{convert::TryFrom, fs::read_dir, io};
 
 use anyhow::bail;
@@ -67,4 +66,3 @@ impl ProjectManifest {
         project_manifests
     }
 }
-

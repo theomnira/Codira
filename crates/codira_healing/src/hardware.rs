@@ -6,18 +6,17 @@
 //! Date: August 7, 2026
 //!
 //! Functionality (per Theorem 7 and Section 2.7.4):
-//! - Models the fine-grained execution telemetry an open-silicon
-//!   (RISC-V style) CPU architecture would expose to the compiler: a
-//!   `faulty_cores[]` bitmap, a `bad_dram_rows[]` bitmap, a
-//!   `throttled_cores[]` thermal bitmap, and soft-error traps keyed by
-//!   program counter.
+//! - Models the fine-grained execution telemetry an open-silicon (RISC-V style)
+//!   CPU architecture would expose to the compiler: a `faulty_cores[]` bitmap,
+//!   a `bad_dram_rows[]` bitmap, a `throttled_cores[]` thermal bitmap, and
+//!   soft-error traps keyed by program counter.
 //! - The healing host uses this telemetry exactly as the paper's JIT does:
 //!   * migrate work away from degraded cores (`pick_healthy_core` /
 //!     `healthy_cores`),
 //!   * remap object allocations so they never land on poisoned DRAM rows
 //!     (`alloc_avoiding_bad_rows`), and
-//!   * count soft errors per PC so the patcher can synthesize an
-//!     alternate code path around degraded instructions.
+//!   * count soft errors per PC so the patcher can synthesize an alternate code
+//!     path around degraded instructions.
 //!
 //! The telemetry model is deliberately pure data + pure policy (no actual
 //! thread migration or ECC is performed -- that is the OS/CPU's job). This

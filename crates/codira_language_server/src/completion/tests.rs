@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[cfg(test)]
 mod test {
     use crate::completion::test_utils::completion_relevance_string;
@@ -28,4 +27,3 @@ mod test {
         "###);
     }
 }
-

@@ -4,11 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use inkwell::module::Module;
 use codira_hir::{HasVisibility, ModuleDef};
+use inkwell::module::Module;
 
 use super::body::ExternalGlobals;
 use crate::{
@@ -96,6 +95,7 @@ pub(crate) fn gen_file_ir<'ink>(
     for (hir_function, llvm_function) in functions.iter() {
         let mut code_gen = BodyIrGenerator::new(
             code_gen.context,
+            &llvm_module,
             code_gen.db,
             (*hir_function, *llvm_function),
             &functions,
@@ -112,6 +112,7 @@ pub(crate) fn gen_file_ir<'ink>(
     for (hir_function, llvm_function) in wrapper_functions.iter() {
         let mut code_gen = BodyIrGenerator::new(
             code_gen.context,
+            &llvm_module,
             code_gen.db,
             (*hir_function, *llvm_function),
             &functions,
@@ -147,4 +148,3 @@ pub(crate) fn gen_file_ir<'ink>(
         type_definitions,
     }
 }
-

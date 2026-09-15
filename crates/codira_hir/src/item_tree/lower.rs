@@ -9,18 +9,18 @@
 
 use std::{collections::HashMap, convert::TryInto, marker::PhantomData, sync::Arc};
 
-use la_arena::{Idx, RawIdx};
 use codira_hir_input::FileId;
 use codira_syntax::ast::{
     self, ExternOwner, GenericParamsOwner, ModuleItemOwner, NameOwner, StructKind,
     TypeAscriptionOwner,
 };
+use la_arena::{Idx, RawIdx};
 use smallvec::SmallVec;
 
 use super::{
-    diagnostics, AssociatedItem, Field, Fields, Function, FunctionFlags, GenericParamData,
-    IdRange, Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities, LocalItemTreeId,
-    ModItem, Param, ParamAstId, RawVisibilityId, Struct, TypeAlias,
+    diagnostics, AssociatedItem, Field, Fields, Function, FunctionFlags, GenericParamData, IdRange,
+    Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities, LocalItemTreeId, ModItem, Param,
+    ParamAstId, RawVisibilityId, Struct, TypeAlias,
 };
 use crate::{
     item_tree::Import,
@@ -176,6 +176,8 @@ impl Context {
     /// Bounds are allocated into `types` so callers can resolve them the
     /// same way they resolve param/field/return types (see
     /// [`GenericParamData`]).
+    // Keeps `&mut self` for symmetry with the sibling `lower_*` methods.
+    #[allow(clippy::unused_self)]
     fn lower_generic_params(
         &mut self,
         owner: &impl GenericParamsOwner,
@@ -199,6 +201,10 @@ impl Context {
     /// (`uses Logger`, not `uses some.module.Logger`) -- see the doc
     /// comment on `item_tree::Function::effects` for why that's an
     /// intentional restriction for now, not an oversight.
+    // Keeps `&self` for symmetry with the sibling `lower_*` methods,
+    // which all take the collector; making this one associated would
+    // make the call sites inconsistent.
+    #[allow(clippy::unused_self)]
     fn lower_uses_clause(&self, func: &ast::FunctionDef) -> Box<[crate::name::Name]> {
         let Some(uses_clause) = func.uses_clause() else {
             return Box::new([]);
@@ -445,4 +451,3 @@ fn lower_visibility(item: &impl ast::VisibilityOwner) -> RawVisibilityId {
     let vis = RawVisibility::from_ast(item.visibility());
     ItemVisibilities::alloc(vis)
 }
-

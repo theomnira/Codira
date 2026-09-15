@@ -10,10 +10,10 @@
 
 use std::convert::TryFrom;
 
-use lsp_types::Url;
 use codira_hir_input::{FileId, LineCol, LineIndex};
 use codira_paths::AbsPathBuf;
 use codira_syntax::{TextRange, TextSize};
+use lsp_types::Url;
 
 use crate::{state::LanguageServerSnapshot, FilePosition};
 
@@ -68,4 +68,3 @@ pub(crate) fn file_position(
     let offset = offset(&line_index, text_document_position.position);
     Ok(FilePosition { file_id, offset })
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     env,
     path::{Path, PathBuf},
@@ -132,7 +131,8 @@ pub fn build(args: Args) -> Result<ExitStatus, anyhow::Error> {
     .map(Into::into)
 }
 
-/// Find a Codira manifest file in the specified directory or one of its parents.
+/// Find a Codira manifest file in the specified directory or one of its
+/// parents.
 fn find_manifest(directory: &Path) -> Option<PathBuf> {
     let mut current_dir = Some(directory);
     while let Some(dir) = current_dir {
@@ -170,4 +170,3 @@ mod test {
         assert_eq!(find_manifest(&subdir_path).as_ref(), Some(&manifest_path));
     }
 }
-

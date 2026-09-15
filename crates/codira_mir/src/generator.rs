@@ -1,8 +1,10 @@
+//! Copyright (c) 2026 Omnira CJSC
+//!
 //! Generators: parametric function/struct templates.
 //!
 //! Structural analog of `kgen.generator` / `kgen.struct.generator`
 //! (`modular/KGEN/docs/MojoCompilerWalkthrough.md` §"Generators: Function
-//! and Struct") -- see `spec/KGEN_SUPERSET_ARCHITECTURE.md` §3. Elaboration
+//! and Struct") -- see `spec/EIDOS_ARCHITECTURE.md` §3. Elaboration
 //! (in the separate `codira_comptime` crate) consumes a [`Generator`] plus
 //! concrete parameter values and produces a monomorphized [`Body`].
 
@@ -42,7 +44,7 @@ pub struct Generator {
 /// Field *types* are deliberately not modeled yet (only field names) --
 /// doing so honestly requires a type-expression IR shared with
 /// `codira_hir::type_ref`, which is out of scope for this session (see
-/// `spec/KGEN_SUPERSET_ARCHITECTURE.md` §8, non-goals). This exists now so
+/// `spec/EIDOS_ARCHITECTURE.md` §8, non-goals). This exists now so
 /// `GeneratorId`/`GeneratorStore` have a real second case to be generic
 /// over, matching KGEN's `GeneratorOpInterface` covering both function and
 /// struct generators uniformly.
@@ -81,6 +83,19 @@ impl GeneratorStore {
 
     pub fn generator(&self, id: GeneratorId) -> &Generator {
         &self.generators[id]
+    }
+
+    /// Resolves a `core.call` symbol reference (`OpKind::Call`'s callee
+    /// name) to its generator, the way KGEN resolves `#kgen.genref`
+    /// against the module symbol table. Linear scan: generator counts per
+    /// compilation unit are small, and keeping the store index-free means
+    /// `add_generator` can never observe a stale name index.
+    pub fn generator_by_name(&self, name: &str) -> Option<(GeneratorId, &Generator)> {
+        self.generators.iter().find(|(_, g)| g.name == name)
+    }
+
+    pub fn iter_generators(&self) -> impl Iterator<Item = (GeneratorId, &Generator)> {
+        self.generators.iter()
     }
 
     pub fn struct_generator(&self, id: StructGeneratorId) -> &StructGenerator {

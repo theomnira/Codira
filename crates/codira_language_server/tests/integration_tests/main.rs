@@ -4,10 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod document_symbols;
 mod initialization;
 mod support;
 
 pub use support::Project;
-

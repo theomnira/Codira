@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Each bucket is either empty, occupied, or a tombstone (deleted).
-struct(value) BucketState {
+struct BucketState {
     value: u8,  // 0 = empty, 1 = occupied, 2 = tombstone
 }
 
@@ -19,7 +19,7 @@ let BUCKET_TOMBSTONE: u8 = 2;
 // Entry — a single key-value pair stored in a bucket.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct(value) Entry[K, V] {
+struct Entry[K, V] {
     key:   K,
     value: V,
     state: u8,
@@ -30,7 +30,7 @@ struct(value) Entry[K, V] {
 // Dict[K, V] — a generic hash map.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct(gc) Dict[K, V] {
+class Dict[K, V] {
     buckets:    Pointer[Entry[K, V]],
     num_buckets: usize,
     len:         usize,
@@ -324,7 +324,7 @@ public func clear[K, V](self: Dict[K, V]) -> Dict[K, V] {
 // ── Iteration ────────────────────────────────────────────────────────────────
 
 /// Iterator state for Dict[K, V].
-struct(value) DictIter[K, V] {
+struct DictIter[K, V] {
     dict: Dict[K, V],
     pos:  usize,
 }

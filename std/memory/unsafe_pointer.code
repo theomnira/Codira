@@ -16,12 +16,12 @@
 // For everyday code, prefer Pointer[T] which provides safety checks.
 // =============================================================================
 
-use std.builtin.types;
-use std.builtin.traits;
+import std.builtin.types;
+import std.builtin.traits;
 
 // A raw, unchecked pointer to a value of type T.
 // No safety guarantees.  All operations are the caller's responsibility.
-public struct(value) UnsafePointer[T] {
+public struct UnsafePointer[T] {
     _addr: usize,
 }
 

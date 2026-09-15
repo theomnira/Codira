@@ -4,21 +4,26 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
     error_block, expressions, name_ref, name_ref_or_index, paths, patterns, types, BlockLike,
     CompletedMarker, Marker, Parser, SyntaxKind, TokenSet, ARG_LIST, ARRAY_EXPR, BIN_EXPR,
-    BLOCK_EXPR, BREAK_EXPR, CALL_EXPR, CHANNEL_RECV_EXPR, CHANNEL_SEND_EXPR, COMPTIME_EXPR,
-    CONDITION, EOF, ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER, HANDLE_EXPR, HANDLER_ARM,
-    HANDLER_ARM_LIST, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER, LET_STMT, LITERAL, LOOP_EXPR,
-    MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, PAREN_EXPR, PARAM, PARAM_LIST, PATH_EXPR, PATH_TYPE,
-    PERFORM_EXPR, PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT, RETURN_EXPR,
-    SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, WHILE_EXPR,
+    BLOCK_EXPR, BREAK_EXPR, CALL_EXPR, CAST_EXPR, CHANNEL_RECV_EXPR, CHANNEL_SEND_EXPR,
+    COMPTIME_EXPR, CONDITION, EOF, ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER, HANDLER_ARM,
+    HANDLER_ARM_LIST, HANDLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER, LET_STMT,
+    LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, PARAM, PARAM_LIST, PAREN_EXPR,
+    PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT,
+    RETURN_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, WHILE_EXPR,
 };
 use crate::{parsing::grammar::paths::PATH_FIRST, SyntaxKind::METHOD_CALL_EXPR};
 
-pub(crate) const LITERAL_FIRST: TokenSet =
-    TokenSet::new(&[T![true], T![false], T![nil], INT_NUMBER, FLOAT_NUMBER, STRING]);
+pub(crate) const LITERAL_FIRST: TokenSet = TokenSet::new(&[
+    T![true],
+    T![false],
+    T![nil],
+    INT_NUMBER,
+    FLOAT_NUMBER,
+    STRING,
+]);
 
 const EXPR_RECOVERY_SET: TokenSet = TokenSet::new(&[T![let]]);
 
@@ -39,7 +44,7 @@ const ATOM_EXPR_FIRST: TokenSet = LITERAL_FIRST.union(PATH_FIRST).union(TokenSet
     T![spawn],
 ]));
 
-const LHS_FIRST: TokenSet = ATOM_EXPR_FIRST.union(TokenSet::new(&[T![!], T![-], T![<-]]));
+const LHS_FIRST: TokenSet = ATOM_EXPR_FIRST.union(TokenSet::new(&[T![!], T![-], T![~], T![<-]]));
 
 const EXPR_FIRST: TokenSet = LHS_FIRST;
 
@@ -117,6 +122,19 @@ pub(super) fn stmt(p: &mut Parser<'_>) {
 fn let_stmt(p: &mut Parser<'_>, m: Marker) {
     assert!(p.at(T![let]) || p.at(T![var]));
     p.bump_any();
+    // `let mut x` is accepted as the Rust-style spelling of `var x`.
+    // Both forms produce the same LET_STMT: the language uses the shared
+    // mutability model of spec/LANGUAGE_SPEC.md section 8 (no borrow
+    // checker), so the binding form carries no semantics HIR tracks today.
+    // Accepting it here is what lets idiomatic stdlib code parse; if
+    // mutability ever becomes checked, this is the one place that has to
+    // start recording which form was written.
+    // `mut` is a *contextual* keyword (grammar.ron section on contextual
+    // keywords): the lexer emits IDENT and the parser promotes it, so
+    // `p.eat(T![mut])` would never match.
+    if p.at_contextual_kw("mut") {
+        p.bump_remap(T![mut]);
+    }
     patterns::pattern(p);
     if p.at(T![:]) {
         types::ascription(p);
@@ -169,18 +187,70 @@ fn expr_bp(p: &mut Parser<'_>, r: Restrictions, bp: u8) -> (Option<CompletedMark
         }
 
         let m = lhs.precede(p);
+
+        // `as` is the one infix operator whose right operand is a *type*, not
+        // an expression, so it cannot go through the generic `expr_bp`
+        // recursion below.
+        //
+        // Associativity falls out of this shape for free: because nothing
+        // recurses, control returns straight to the top of this loop with the
+        // freshly completed `CAST_EXPR` as the new `lhs`, so `x as i32 as i64`
+        // nests left as `((x as i32) as i64)`. Chained casts matter -- the
+        // stdlib leans on them (`b as u32 as u64`).
+        if op == T![as] {
+            p.bump(T![as]);
+            types::cast_type(p);
+            lhs = m.complete(p, CAST_EXPR);
+            continue;
+        }
+
         p.bump(op);
 
         expr_bp(p, r, op_bp + 1);
-        let kind = if op == T![<-] { CHANNEL_SEND_EXPR } else { BIN_EXPR };
+        let kind = if op == T![<-] {
+            CHANNEL_SEND_EXPR
+        } else {
+            BIN_EXPR
+        };
         lhs = m.complete(p, kind);
     }
 
     (Some(lhs), BlockLike::NotBlock)
 }
 
+/// The binding power and normalized token of the infix operator the parser is
+/// sitting on, or `(0, T![_])` when it is not sitting on one at all.
+///
+/// Binding powers in use, loosest to tightest:
+///
+/// |  bp | operators                     |
+/// |-----|-------------------------------|
+/// |   1 | `=` and compound assignments  |
+/// |   2 | `<-` (channel send)           |
+/// |   3 | `\|\|`                        |
+/// |   4 | `&&`                          |
+/// |   5 | `==` `!=` `<` `>` `<=` `>=`   |
+/// |   6 | `\|`                          |
+/// |   7 | `^`                           |
+/// |   8 | `&`                           |
+/// |   9 | `<<` `>>`                     |
+/// |  10 | `+` `-`                       |
+/// |  11 | `*` `/` `%`                   |
+/// |  12 | `as`                          |
 fn current_op(p: &Parser<'_>) -> (u8, SyntaxKind) {
     match p.current() {
+        // `expr as Type` (see `expr_bp`). `as` sits at 12, one above `*`/`/`/`%`
+        // at 11 and therefore above *every* binary operator, so a cast claims
+        // exactly its adjacent operand and nothing more: `a as i32 + b` is
+        // `(a as i32) + b`, never `a as (i32 + b)`, and `a + b as i32` is
+        // `a + (b as i32)`.
+        //
+        // It is deliberately *below* the 255 that `lhs` passes down for the
+        // operand of a prefix operator, which leaves `as` looser than the
+        // unary and postfix operators: `-x as i32` is `(-x) as i32`, and
+        // `f() as u8` casts the call's result rather than the callee. That is
+        // the layering Rust uses, and the one the stdlib's `as` uses assume.
+        T![as] => (12, T![as]),
         T![+] if p.at(T![+=]) => (1, T![+=]),
         T![+] => (10, T![+]),
         T![-] if p.at(T![-=]) => (1, T![-=]),
@@ -221,7 +291,7 @@ fn current_op(p: &Parser<'_>) -> (u8, SyntaxKind) {
 fn lhs(p: &mut Parser<'_>, r: Restrictions) -> Option<(CompletedMarker, BlockLike)> {
     let m;
     let kind = match p.current() {
-        T![-] | T![!] => {
+        T![-] | T![!] | T![~] => {
             m = p.start();
             p.bump_any();
             PREFIX_EXPR
@@ -302,7 +372,7 @@ fn force_unwrap_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarke
 
 /// `expr^` transfers a value into a new temporary in Mojo style: the source
 /// binding is moved into the result and no longer usable. See
-/// spec/LANGUAGE_SPEC.md section 14. Parse-level scaffolding only -- there is
+/// `spec/LANGUAGE_SPEC.md` section 14. Parse-level scaffolding only -- there is
 /// no ownership/move analysis yet, so this produces the same tree shape as an
 /// infix XOR would, distinguished only by the surrounding tokens.
 fn transfer_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
@@ -340,10 +410,11 @@ fn arg_list(p: &mut Parser<'_>) {
     m.complete(p, ARG_LIST);
 }
 
-/// Parses an attribute's argument list, e.g. `@heal(on: [Timeout], strategies: [Retry])`.
-/// Arguments may optionally be prefixed by `name:`, matching healing-contract-style
-/// named attribute arguments; the name is recorded as a loose token pair ahead of the
-/// argument expression rather than a dedicated named-argument node.
+/// Parses an attribute's argument list, e.g. `@heal(on: [Timeout], strategies:
+/// [Retry])`. Arguments may optionally be prefixed by `name:`, matching
+/// healing-contract-style named attribute arguments; the name is recorded as a
+/// loose token pair ahead of the argument expression rather than a dedicated
+/// named-argument node.
 pub(super) fn attribute_arg_list(p: &mut Parser<'_>) {
     assert!(p.at(T!['(']));
     let m = p.start();
@@ -474,7 +545,7 @@ fn match_arm_list(p: &mut Parser<'_>) {
 
 /// `spawn <expr>`: launches `expr` (typically a call or block) as a
 /// concurrently-scheduled task, Go-`go`-statement style (see
-/// spec/LANGUAGE_SPEC.md section 14). Parse-level scaffolding only: there
+/// `spec/LANGUAGE_SPEC.md` section 14). Parse-level scaffolding only: there
 /// is no green-thread/work-stealing scheduler backing this yet, so it does
 /// not actually run anything concurrently.
 fn spawn_expr(p: &mut Parser<'_>) -> CompletedMarker {
@@ -692,4 +763,3 @@ fn array_expr(p: &mut Parser<'_>) -> CompletedMarker {
 
     m.complete(p, ARRAY_EXPR)
 }
-

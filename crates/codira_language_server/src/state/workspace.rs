@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     convert::{TryFrom, TryInto},
     sync::Arc,
@@ -153,4 +152,3 @@ impl LanguageServerState {
         source_roots
     }
 }
-

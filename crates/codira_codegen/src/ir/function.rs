@@ -4,9 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
-use inkwell::{module::Module, values::FunctionValue};
 use codira_hir::HirDatabase;
+use inkwell::{module::Module, values::FunctionValue};
 
 use crate::ir::ty::HirTypeCache;
 
@@ -42,4 +41,3 @@ pub(crate) fn gen_public_prototype<'db, 'ink>(
     let ir_ty = types.get_public_function_type(func);
     module.add_function(&name, ir_ty, None)
 }
-

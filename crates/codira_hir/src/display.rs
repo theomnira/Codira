@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt;
 
 use codira_hir_input::ModuleId;
@@ -168,4 +167,3 @@ fn write_visiblity(
         }
     }
 }
-

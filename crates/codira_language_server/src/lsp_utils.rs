@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir_input::LineIndex;
 
 use crate::from_lsp;
@@ -132,4 +131,3 @@ mod tests {
         assert_eq!(text, "ațc\ncb");
     }
 }
-

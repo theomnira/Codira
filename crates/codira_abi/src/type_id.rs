@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt;
 
 use once_cell::sync::OnceCell;
@@ -90,7 +89,7 @@ impl fmt::Display for PointerTypeId<'_> {
 
 impl fmt::Display for ArrayTypeId<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}]", &self.element)
+        write!(f, "[{}]", self.element)
     }
 }
 
@@ -168,4 +167,3 @@ mod test {
         );
     }
 }
-

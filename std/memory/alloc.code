@@ -15,8 +15,8 @@
 //   aligned_free(addr, size, align) — synonym for deallocate
 // =============================================================================
 
-use std.builtin.types;
-use std.builtin.error;
+import std.builtin.types;
+import std.builtin.error;
 
 // =============================================================================
 // Allocator trait
@@ -47,7 +47,7 @@ public trait Allocator {
 // =============================================================================
 
 // Describes the size and alignment requirements of a type or allocation.
-public struct(value) Layout {
+public struct Layout {
     size: usize,
     align: usize,
 }
@@ -113,7 +113,7 @@ public func Layout.eq(self, other: Layout) -> bool {
 // =============================================================================
 
 // The default system allocator.  Delegates to platform APIs.
-public struct(value) DefaultAllocator {}
+public struct DefaultAllocator {}
 
 public func DefaultAllocator.new() -> DefaultAllocator {
     return DefaultAllocator {};
@@ -169,7 +169,7 @@ public func DefaultAllocator.allocate_zeroed(self, size: usize, align: usize) ->
 }
 
 // =============================================================================
-// Free-standing convenience functions (use the global default allocator)
+// Free-standing convenience functions (import the global default allocator)
 // =============================================================================
 
 // The global allocator instance.

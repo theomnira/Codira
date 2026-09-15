@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use itertools::Itertools;
 
 use crate::{AstNode, SyntaxNode, TextSize};
@@ -35,4 +34,3 @@ pub fn ancestors_at_offset(
 pub fn find_node_at_offset<N: AstNode>(syntax: &SyntaxNode, offset: TextSize) -> Option<N> {
     ancestors_at_offset(syntax, offset).find_map(N::cast)
 }
-

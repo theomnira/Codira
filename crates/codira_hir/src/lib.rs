@@ -6,9 +6,9 @@
 //! - Original module content restored; copyright header moved to top.
 //!
 //! HIR provides high-level, object-oriented access to Codira code. It is
-//! constructed by first parsing Codira code with the `codira_syntax` crate and then
-//! it is lowered into HIR constructs, names are resolved, and type checking is
-//! performed. HIR is the input for both the compiler as well as the
+//! constructed by first parsing Codira code with the `codira_syntax` crate and
+//! then it is lowered into HIR constructs, names are resolved, and type
+//! checking is performed. HIR is the input for both the compiler as well as the
 //! language server.
 
 #![allow(dead_code)]
@@ -39,8 +39,9 @@ pub use crate::{
     primitive_type::{FloatBitness, IntBitness, Signedness},
     resolve::{resolver_for_expr, resolver_for_scope, Resolver, TypeNs, ValueNs},
     ty::{
-        lower::CallableDef, FloatTy, InferenceResult, IntTy, ResolveBitness, Substitution, Ty,
-        TyKind, TypableDef,
+        cast::{check_cast, CastCheck, CastOp, InvalidCastReason},
+        lower::CallableDef,
+        FloatTy, InferenceResult, IntTy, ResolveBitness, Substitution, Ty, TyKind, TypableDef,
     },
     visibility::{HasVisibility, Visibility},
 };
@@ -84,4 +85,3 @@ mod source_analyzer;
 #[cfg(test)]
 mod tests;
 mod visibility;
-

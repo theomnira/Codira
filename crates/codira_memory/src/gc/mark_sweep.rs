@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     alloc::{Layout, LayoutError},
     borrow::Cow,
@@ -570,8 +569,8 @@ where
 
         // Get all roots
         let mut roots = objects
-            .iter()
-            .filter_map(|(_, obj)| {
+            .values()
+            .filter_map(|obj| {
                 if obj.roots > 0 {
                     Some(obj.as_ref().get_ref() as *const _ as *mut ObjectInfo)
                 } else {
@@ -1139,4 +1138,3 @@ impl ObjectInfo {
         }
     }
 }
-

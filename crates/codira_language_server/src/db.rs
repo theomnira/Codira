@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(clippy::enum_variant_names)] // This is a HACK because we use salsa
 
 use std::panic;
@@ -97,4 +96,3 @@ impl salsa::ParallelDatabase for AnalysisDatabase {
         })
     }
 }
-

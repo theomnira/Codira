@@ -4,15 +4,11 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 pub use assembly_builder::AssemblyBuilder;
 pub use context::CodeGenContext;
 pub use error::CodeGenerationError;
 use inkwell::{
-    module::Module,
-    passes::PassBuilderOptions,
-    targets::TargetMachine,
-    OptimizationLevel,
+    module::Module, passes::PassBuilderOptions, targets::TargetMachine, OptimizationLevel,
 };
 pub(crate) use object_file::ObjectFile;
 
@@ -51,4 +47,3 @@ pub(crate) fn optimize_module(
         .run_passes(passes, target_machine, PassBuilderOptions::create())
         .expect("failed to run optimization passes");
 }
-

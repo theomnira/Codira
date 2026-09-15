@@ -11,9 +11,9 @@
 //!   (`site_id`, module, `fault_class`, `dominant_strategy_success_rate`,
 //!   `window_size`, `suggested_action`).
 //! - `DeficiencyDetector`: watches fingerprint observations over a sliding
-//!   window and emits an HDR when the dominant strategy's success rate
-//!   falls below a configurable threshold `θ` (default 0.10) over a window
-//!   of `W` fault events (default 100).
+//!   window and emits an HDR when the dominant strategy's success rate falls
+//!   below a configurable threshold `θ` (default 0.10) over a window of `W`
+//!   fault events (default 100).
 //! - HDRs close the loop between runtime observation and compile-time code
 //!   generation (Section 6.1: "can be fed to the AOT compiler to trigger an
 //!   incremental recompilation").
@@ -93,7 +93,12 @@ impl DeficiencyDetector {
     /// a deficiency report if, after this observation, the dominant
     /// strategy's success rate over the last `window_size` events has
     /// dropped below the threshold and the site hasn't reported recently.
-    pub fn observe(&mut self, site_id: u64, strategy: &str, succeeded: bool) -> Option<HealingDeficiencyReport> {
+    pub fn observe(
+        &mut self,
+        site_id: u64,
+        strategy: &str,
+        succeeded: bool,
+    ) -> Option<HealingDeficiencyReport> {
         self.recent.push((site_id, strategy.to_owned(), succeeded));
         if self.recent.len() > self.window_size {
             self.recent.remove(0);
@@ -182,7 +187,10 @@ mod tests {
         for _ in 0..10 {
             report = detector.observe(1, "retry", true);
         }
-        assert!(report.is_none(), "healthy site must not report, got {report:?}");
+        assert!(
+            report.is_none(),
+            "healthy site must not report, got {report:?}"
+        );
     }
 
     #[test]

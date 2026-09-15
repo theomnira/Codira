@@ -302,6 +302,38 @@ impl CallExpr {
     }
 }
 
+// CastExpr
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CastExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for CastExpr {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, CAST_EXPR)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(CastExpr { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl CastExpr {
+    pub fn expr(&self) -> Option<Expr> {
+        super::child_opt(self)
+    }
+
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        super::child_opt(self)
+    }
+}
+
 // ChannelRecvExpr
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -646,6 +678,7 @@ impl AstNode for Expr {
                 | PREFIX_EXPR
                 | PATH_EXPR
                 | BIN_EXPR
+                | CAST_EXPR
                 | PAREN_EXPR
                 | CALL_EXPR
                 | METHOD_CALL_EXPR
@@ -687,6 +720,7 @@ pub enum ExprKind {
     PrefixExpr(PrefixExpr),
     PathExpr(PathExpr),
     BinExpr(BinExpr),
+    CastExpr(CastExpr),
     ParenExpr(ParenExpr),
     CallExpr(CallExpr),
     MethodCallExpr(MethodCallExpr),
@@ -727,6 +761,11 @@ impl From<PathExpr> for Expr {
 }
 impl From<BinExpr> for Expr {
     fn from(n: BinExpr) -> Expr {
+        Expr { syntax: n.syntax }
+    }
+}
+impl From<CastExpr> for Expr {
+    fn from(n: CastExpr) -> Expr {
         Expr { syntax: n.syntax }
     }
 }
@@ -848,6 +887,7 @@ impl Expr {
             PREFIX_EXPR => ExprKind::PrefixExpr(PrefixExpr::cast(self.syntax.clone()).unwrap()),
             PATH_EXPR => ExprKind::PathExpr(PathExpr::cast(self.syntax.clone()).unwrap()),
             BIN_EXPR => ExprKind::BinExpr(BinExpr::cast(self.syntax.clone()).unwrap()),
+            CAST_EXPR => ExprKind::CastExpr(CastExpr::cast(self.syntax.clone()).unwrap()),
             PAREN_EXPR => ExprKind::ParenExpr(ParenExpr::cast(self.syntax.clone()).unwrap()),
             CALL_EXPR => ExprKind::CallExpr(CallExpr::cast(self.syntax.clone()).unwrap()),
             METHOD_CALL_EXPR => {

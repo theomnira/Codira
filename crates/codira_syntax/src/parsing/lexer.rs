@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod classes;
 mod comments;
 mod cursor;
@@ -141,4 +140,3 @@ fn scan_index(c: char, cursor: &mut Cursor<'_>) -> Option<SyntaxKind> {
         None
     }
 }
-

@@ -4,14 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::ffi::CStr;
 
 use inkwell::{
     builder::Builder,
     types::{BasicType, BasicTypeEnum},
     values::{BasicValueEnum, PointerValue},
-    AddressSpace,
 };
 
 /// A helper struct that wraps an object on the heap.
@@ -100,9 +98,11 @@ impl<'ink> RuntimeReferenceValue<'ink> {
         // regardless of pointee, so `self.object_type`'s own pointer type
         // (rather than anything more specific) is the correct pointee type
         // to load through here.
-        let data_ptr_ty = self.object_type.ptr_type(AddressSpace::default());
+        // Opaque pointers: loading through a `ptr` needs no pointee
+        // type, so the value's own type is the right load type.
+        let data_ptr_ty = self.ptr.get_type();
         builder
-            .build_load(data_ptr_ty, self.ptr, &format!("{}->data", &value_name))
+            .build_load(data_ptr_ty, self.ptr, &format!("{value_name}->data"))
             .expect("failed to build load for reference data pointer")
             .into_pointer_value()
     }
@@ -124,4 +124,3 @@ impl<'ink> From<RuntimeReferenceValue<'ink>> for PointerValue<'ink> {
         value.ptr
     }
 }
-

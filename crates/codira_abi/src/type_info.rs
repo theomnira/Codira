@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     convert::TryInto,
     ffi::CStr,
@@ -17,9 +16,9 @@ use crate::{type_id::TypeId, Guid, StructDefinition};
 
 /// Represents the type declaration for a type that is exported by an assembly.
 ///
-/// When multiple Codira modules reference the same type, only one module exports
-/// the type; the module that contains the type definition. All the other Codira
-/// modules reference the type through a [`TypeId`].
+/// When multiple Codira modules reference the same type, only one module
+/// exports the type; the module that contains the type definition. All the
+/// other Codira modules reference the type through a [`TypeId`].
 ///
 /// The modules that defines the type exports the data to reduce the filesize of
 /// the assemblies and to ensure only one definition exists. When linking all
@@ -247,4 +246,3 @@ mod tests {
         assert_eq!(type_definition, type_definition);
     }
 }
-

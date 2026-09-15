@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir::InFile;
 use codira_syntax::{ast, AstNode, Parse, SourceFile, SyntaxKind, SyntaxNodePtr, TextRange};
 
@@ -168,4 +167,3 @@ impl<'db, 'diag, DB: codira_hir::HirDatabase> DuplicateDefinition<'db, 'diag, DB
         DuplicateDefinition { db, diag }
     }
 }
-

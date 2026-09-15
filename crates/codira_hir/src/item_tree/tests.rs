@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt;
 
 use codira_hir_input::WithFixture;
@@ -154,4 +153,3 @@ fn test_duplicate_import() {
     )
     .unwrap());
 }
-

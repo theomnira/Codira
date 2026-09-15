@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::collections::hash_map::Entry;
 
 use codira_hir_input::PackageModuleId;
@@ -248,4 +247,3 @@ impl PerNs<(ItemDefinitionId, Visibility)> {
         }
     }
 }
-

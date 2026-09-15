@@ -4,7 +4,7 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
+pub mod cast;
 mod infer;
 pub(super) mod lower;
 mod op;
@@ -470,4 +470,3 @@ impl TypeWalk for Ty {
         f(self);
     }
 }
-

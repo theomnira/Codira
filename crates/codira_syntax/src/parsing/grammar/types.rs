@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
     expressions, generics, name_ref, paths, CompletedMarker, Parser, TokenSet, ARRAY_TYPE,
     NEVER_TYPE, OPTIONAL_TYPE, PATH_TYPE, REFINEMENT_TYPE,
@@ -35,6 +34,25 @@ pub(super) fn type_(p: &mut Parser<'_>) {
 /// via a named `type` alias (see the doc comment below) anyway, so the return
 /// type position simply never looks for one.
 pub(super) fn return_type(p: &mut Parser<'_>) {
+    type_inner(p, false);
+}
+
+/// Like [`type_`], but never attempts to parse a trailing refinement clause.
+/// This is the target type of an `expr as Type` cast.
+///
+/// A cast's target type sits in expression position, so a `{` following it is
+/// overwhelmingly likely to open a block rather than a refinement clause --
+/// `while i as u64 { .. }`, `match x as u8 { .. }`, `if flag as i32 { .. }`.
+/// The `{ IDENT |` lookahead [`type_inner`] uses to spot a refinement cannot
+/// tell those apart from `i as i32 { x | x > 0 }`, so, exactly as for
+/// [`return_type`], the cast position simply never looks for one. A refined
+/// cast target remains expressible through a named `type` alias.
+///
+/// Nothing is lost by this today: `as` only ever produces wrapping/saturating
+/// conversions, never a checked one, so a refinement on the target would have
+/// nothing to check. Refined casts are reserved for the refinement-types
+/// integration in M7.
+pub(super) fn cast_type(p: &mut Parser<'_>) {
     type_inner(p, false);
 }
 
@@ -102,4 +120,3 @@ fn array_type(p: &mut Parser<'_>) -> CompletedMarker {
     p.expect(T![']']);
     m.complete(p, ARRAY_TYPE)
 }
-

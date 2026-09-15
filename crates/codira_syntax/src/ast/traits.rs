@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{
     ast::{self, child_opt, children, AstChildren, AstNode, AstToken},
     syntax_node::SyntaxElementChildren,
@@ -103,4 +102,3 @@ pub trait GenericParamsOwner: AstNode {
         child_opt(self)
     }
 }
-

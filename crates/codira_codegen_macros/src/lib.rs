@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![cfg(not(tarpaulin_include))]
 
 use proc_macro::TokenStream;
@@ -721,4 +720,3 @@ pub fn as_value_derive(input: TokenStream) -> TokenStream {
         }
     }
 }
-

@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 // format
 // Formats a string by substituting placeholders with the provided arguments.
-// Placeholders use curly braces: "{}" for positional, "{0}", "{1}" for
+// Placeholders import curly braces: "{}" for positional, "{0}", "{1}" for
 // explicit indices.
 //
 // Example: format("Hello, {}! You are {} years old.", "Alice", 30)

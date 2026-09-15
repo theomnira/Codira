@@ -8,6 +8,20 @@
 //! This module provides constructs to enable type safe handling of inkwell
 //! types.
 
+#![allow(deprecated)]
+//! LLVM 15 unified all pointer types into a single opaque `ptr`, which
+//! deprecates inkwell's pointee-typed `T::ptr_type(..)` constructors in
+//! favour of `Context::ptr_type(..)`.
+//!
+//! This module *is* the pointee-typed pointer abstraction: traits like
+//! `IsPointerType` / `PointerValueType` exist precisely to compute "the
+//! pointer type for pointee `T`", a question LLVM no longer distinguishes
+//! answers to. The right fix is to delete the abstraction and have
+//! callers ask the context directly -- a design change, not a mechanical
+//! one. Until then the deprecation is allowed *here only*, so that a
+//! genuinely new deprecation elsewhere in the crate still fails the
+//! build.
+
 mod array_value;
 mod float_value;
 mod function_value;
@@ -539,4 +553,3 @@ mod tests {
 
     test_as_bytes_and_ptrs_primitive!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64);
 }
-

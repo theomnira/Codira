@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_syntax::{AstNode, SyntaxNodePtr};
@@ -17,6 +16,7 @@ use crate::{
     },
     expr::BodySourceMap,
     in_file::InFile,
+    refinement_check::{check_satisfiable, RefinementCheckResult},
     resolve::HasResolver,
     Body, Expr, Function, HasVisibility, HirDatabase, InferenceResult, Ty, TyKind, TypeAlias,
     Visibility,
@@ -228,7 +228,6 @@ impl<'a> TypeAliasValidator<'a> {
             return;
         };
 
-        use crate::refinement_check::{check_satisfiable, RefinementCheckResult};
         if check_satisfiable(&binder.text(), &predicate) == RefinementCheckResult::Unsatisfiable {
             sink.push(crate::diagnostics::UnsatisfiableRefinement {
                 file: src.file_id,
@@ -277,4 +276,3 @@ impl<'a> TypeAliasValidator<'a> {
         }
     }
 }
-

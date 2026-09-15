@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt;
 
 use crate::name::{name, AsName, Name};
@@ -174,4 +173,3 @@ impl PrimitiveFloat {
         Some(res)
     }
 }
-

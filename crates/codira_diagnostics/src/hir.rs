@@ -41,7 +41,8 @@ impl<DB: codira_hir::HirDatabase> DiagnosticForWith<DB> for dyn codira_hir::Diag
             f(&possibly_unitialized_variable::PossiblyUninitializedVariable::new(with, v))
         } else if let Some(v) = self.downcast_ref::<codira_hir::diagnostics::AccessUnknownField>() {
             f(&access_unknown_field::AccessUnknownField::new(with, v))
-        } else if let Some(v) = self.downcast_ref::<codira_hir::diagnostics::DuplicateDefinition>() {
+        } else if let Some(v) = self.downcast_ref::<codira_hir::diagnostics::DuplicateDefinition>()
+        {
             f(&duplicate_definition_error::DuplicateDefinition::new(
                 with, v,
             ))
@@ -74,4 +75,3 @@ impl Diagnostic for GenericHirDiagnostic<'_> {
         None
     }
 }
-

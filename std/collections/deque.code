@@ -6,7 +6,7 @@
 // Deque[T]
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct(gc) Deque[T] {
+class Deque[T] {
     buf:   Pointer[T],
     cap:   usize,
     head:  usize,   // index of the front element
@@ -182,7 +182,7 @@ public func deque_to_list[T](self: Deque[T]) -> List[T] {
 
 // ── Iteration ────────────────────────────────────────────────────────────────
 
-struct(value) DequeIter[T] {
+struct DequeIter[T] {
     deque: Deque[T],
     pos:   usize,
 }

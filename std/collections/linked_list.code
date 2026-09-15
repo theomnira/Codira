@@ -6,7 +6,7 @@
 // Node[T] — a single node in the doubly-linked list.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct(gc) Node[T] {
+class Node[T] {
     value: T,
     prev:  Optional[Pointer[Node[T]]],
     next:  Optional[Pointer[Node[T]]],
@@ -16,7 +16,7 @@ struct(gc) Node[T] {
 // LinkedList[T]
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct(gc) LinkedList[T] {
+class LinkedList[T] {
     head: Optional[Pointer[Node[T]]],
     tail: Optional[Pointer[Node[T]]],
     len:  usize,
@@ -311,7 +311,7 @@ public func to_list[T](self: LinkedList[T]) -> List[T] {
 
 // ── Iteration ────────────────────────────────────────────────────────────────
 
-struct(value) LinkedListIter[T] {
+struct LinkedListIter[T] {
     current: Optional[Pointer[Node[T]]],
     remaining: usize,
 }

@@ -21,13 +21,13 @@
 // lower to PTX / GCN instructions on the GPU backend.
 // =============================================================================
 
-use std.builtin.types;
-use std.builtin.simd;
-use std.sys.info;
-use std.sys.intrinsics;
-use std.bit;
-use std.gpu.id;
-use std.gpu.globals;
+import std.builtin.types;
+import std.builtin.simd;
+import std.sys.info;
+import std.sys.intrinsics;
+import std.bit;
+import std.gpu.id;
+import std.gpu.globals;
 
 // Full warp mask: WARP_SIZE low bits set.
 public let _FULL_MASK: u64 = ((1 as u64) << globals.WARP_SIZE) - 1;

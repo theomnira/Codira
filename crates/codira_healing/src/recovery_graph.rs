@@ -6,10 +6,10 @@
 //! Date: August 6, 2026
 //!
 //! Functionality (per Section 3.4 of the HERACLES spec):
-//! - `RecoveryNode`: executable strategies including the nominal path, with
-//!   an optional guard predicate and a cost model.
-//! - `RecoveryEdge`: either a `FaultEdge` (fault condition between nodes) or
-//!   a `PostconditionEdge` (a recovered result failing the postcondition).
+//! - `RecoveryNode`: executable strategies including the nominal path, with an
+//!   optional guard predicate and a cost model.
+//! - `RecoveryEdge`: either a `FaultEdge` (fault condition between nodes) or a
+//!   `PostconditionEdge` (a recovered result failing the postcondition).
 //! - `RecoveryGraph`: a DAG over nodes and edges, with edge weight update
 //!   support so the Bayesian ranker can reorder recovery paths at runtime
 //!   (Section 5.3: "Recovery Graph Edge Weight Update").
@@ -18,6 +18,12 @@
 //! from a lower index to a higher index, so any walk is terminating. This is
 //! the executable analogue of the paper's "all DAG paths are proven acyclic
 //! and terminating via structural induction" (Section 4.2.3).
+
+#![allow(clippy::match_same_arms, clippy::type_complexity, clippy::unused_self)]
+//! Lint notes: several matches here are *tables* mapping distinct
+//! strategies/faults onto a shared tier or recovery action -- collapsing
+//! the arms would erase which case is which. The `type_complexity`
+//! sites are graph adjacency maps whose shape is the point.
 
 use std::collections::HashMap;
 
@@ -138,7 +144,10 @@ impl RecoveryGraph {
         }
         let weight = edge.weight();
         self.edges.push(edge);
-        self.adjacency.entry(source).or_default().push(self.edges.len() - 1);
+        self.adjacency
+            .entry(source)
+            .or_default()
+            .push(self.edges.len() - 1);
         let _ = weight;
         true
     }
@@ -188,7 +197,6 @@ impl RecoveryGraph {
         self.edges.len()
     }
 }
-
 
 #[cfg(test)]
 mod tests {

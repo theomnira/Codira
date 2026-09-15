@@ -9,7 +9,7 @@
 
 use std::mem::ManuallyDrop;
 
-use codira_capi_utils::{error::ErrorHandle, codira_error_try, try_deref_mut};
+use codira_capi_utils::{codira_error_try, error::ErrorHandle, try_deref_mut};
 pub use codira_memory::gc::GcPtr;
 use codira_memory::{ffi::Type, gc::GcRuntime};
 
@@ -27,7 +27,11 @@ use crate::runtime::Runtime;
 /// is a null pointer, an error will be returned. Passing pointers to invalid
 /// data, will lead to undefined behavior.
 #[no_mangle]
-pub unsafe extern "C" fn codira_gc_alloc(runtime: Runtime, ty: Type, obj: *mut GcPtr) -> ErrorHandle {
+pub unsafe extern "C" fn codira_gc_alloc(
+    runtime: Runtime,
+    ty: Type,
+    obj: *mut GcPtr,
+) -> ErrorHandle {
     let runtime = codira_error_try!(runtime
         .inner()
         .map_err(|e| format!("invalid argument 'runtime': {e}")));
@@ -92,8 +96,9 @@ pub unsafe extern "C" fn codira_gc_root(runtime: Runtime, obj: GcPtr) -> ErrorHa
 /// Unroots the specified `obj`, potentially allowing it and objects it
 /// references to be collected. An object can be rooted multiple times, so you
 /// must make sure to call `codira_gc_unroot` the same number of times as
-/// `codira_gc_root` was called before the object can be collected. If successful,
-/// `obj` has been unrooted, otherwise a non-zero error handle is returned.
+/// `codira_gc_root` was called before the object can be collected. If
+/// successful, `obj` has been unrooted, otherwise a non-zero error handle is
+/// returned.
 ///
 /// If a non-zero error handle is returned, it must be manually destructed using
 /// [`codira_error_destroy`].
@@ -168,7 +173,7 @@ mod tests {
     fn test_gc_alloc_invalid_type_info() {
         let driver = TestDriver::new(
             r#"
-        pub struct Foo;
+        public class Foo;
     "#,
         );
 
@@ -182,7 +187,7 @@ mod tests {
     fn test_gc_alloc_invalid_obj() {
         let driver = TestDriver::new(
             r#"
-        pub struct Foo;
+        public class Foo;
     "#,
         );
 
@@ -205,7 +210,7 @@ mod tests {
     fn test_gc_alloc() {
         let driver = TestDriver::new(
             r#"
-        pub struct Foo;
+        public class Foo;
     "#,
         );
 
@@ -229,7 +234,7 @@ mod tests {
     fn test_gc_ptr_type_invalid_type_info() {
         let driver = TestDriver::new(
             r#"
-        pub struct Foo;
+        public class Foo;
     "#,
         );
 
@@ -246,7 +251,7 @@ mod tests {
     fn test_gc_ptr_type() {
         let driver = TestDriver::new(
             r#"
-        pub struct Foo;
+        public class Foo;
     "#,
         );
 
@@ -273,7 +278,7 @@ mod tests {
     fn test_gc_rooting() {
         let driver = TestDriver::new(
             r#"
-        pub struct Foo;
+        public class Foo;
     "#,
         );
 
@@ -304,9 +309,9 @@ mod tests {
     fn test_gc_ptr_collect_invalid_reclaimed() {
         let driver = TestDriver::new(
             r#"
-        pub struct Foo;
+        public class Foo;
 
-        pub fn main() -> Foo { Foo }
+        public func main() -> Foo { Foo }
     "#,
         );
 
@@ -316,4 +321,3 @@ mod tests {
         );
     }
 }
-

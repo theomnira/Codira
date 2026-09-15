@@ -16,11 +16,11 @@
 //                 Representable, Defaultable, Arithmetic
 // =============================================================================
 
-use std.builtin.traits;
-use std.builtin.types;
+import std.builtin.traits;
+import std.builtin.types;
 
 // Machine-width signed integer.
-public struct(value) Int {
+public struct Int {
     _value: isize,
 }
 

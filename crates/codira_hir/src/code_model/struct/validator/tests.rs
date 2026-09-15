@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[cfg(test)]
 use crate::utils::tests::*;
 
@@ -50,4 +49,3 @@ fn test_private_leak_struct_fields() {
     433..436: can't leak private type
     ");
 }
-

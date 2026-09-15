@@ -11,7 +11,7 @@
 // A fixed-size block of raw memory that can be reinterpreted as different
 // types. The size is the maximum of all constituent type sizes.
 // ---------------------------------------------------------------------------
-public struct(value) UnsafeUnion {
+public struct UnsafeUnion {
     _storage: Array<u8>,   // raw bytes (sized to the largest variant)
     _size: usize,          // total capacity in bytes
 }

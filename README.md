@@ -106,10 +106,14 @@ func on_heap() -> GC {
 
 ## Building from Source
 
-Make sure you have the following dependencies installed on you machine:
+Make sure you have the following dependencies installed on your machine:
 
 * Rust
-* LLVM 14
+* LLVM 22.1 (a full dev distribution with `llvm-config` and the LLD static
+  libraries; point `LLVM_SYS_221_PREFIX` at its install root -- see
+  `book/src/dev/02-building-llvm.md`)
+* Z3 (`libz3` -- used by `codira_smt` for refinement-type checking and
+  translation validation)
 
 Clone the source code, including all submodules:
 

@@ -7,7 +7,7 @@
 // BinaryHeap[T]
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct(gc) BinaryHeap[T] {
+class BinaryHeap[T] {
     data: Pointer[T],
     len:  usize,
     cap:  usize,
@@ -223,7 +223,7 @@ public func extend[T](self: BinaryHeap[T], items: List[T]) -> BinaryHeap[T] {
 
 // ── Iteration (unordered) ────────────────────────────────────────────────────
 
-struct(value) BinaryHeapIter[T] {
+struct BinaryHeapIter[T] {
     heap: BinaryHeap[T],
     pos:  usize,
 }

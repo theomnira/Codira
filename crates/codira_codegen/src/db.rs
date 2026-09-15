@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{rc::Rc, sync::Arc};
 
 use by_address::ByAddress;
@@ -77,4 +76,3 @@ fn target_machine(db: &dyn CodeGenDatabase) -> ByAddress<Rc<inkwell::targets::Ta
 
     ByAddress(Rc::new(target_machine))
 }
-

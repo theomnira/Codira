@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir::HirDisplay;
 
 use super::{CompletionItem, RenderContext};
@@ -44,4 +43,3 @@ impl<'a> FunctionRender<'a> {
         format!("-> {}", ty.display(self.ctx.db()))
     }
 }
-

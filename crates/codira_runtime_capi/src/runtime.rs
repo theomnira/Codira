@@ -11,7 +11,7 @@ use std::{ffi::c_void, mem::ManuallyDrop, ops::Deref, os::raw::c_char, slice};
 
 use codira_abi as abi;
 use codira_capi_utils::{
-    error::ErrorHandle, codira_error_try, try_convert_c_string, try_deref, try_deref_mut,
+    codira_error_try, error::ErrorHandle, try_convert_c_string, try_deref, try_deref_mut,
 };
 use codira_memory::{ffi::Type, type_table::TypeTable, Type as RustType};
 use codira_runtime::{FunctionDefinition, FunctionPrototype, FunctionSignature};
@@ -45,6 +45,10 @@ impl Runtime {
     ///
     /// The caller must ensure that the internal pointers point to a valid
     /// [`codira_runtime::Runtime`].
+    // The C API owns the Runtime and hands back a raw handle; this is
+    // the deliberate unsafe bridge from that handle to a Rust &mut.
+    // Clippy's suggestion (take &mut self) would change the extern ABI.
+    #[allow(clippy::mut_from_ref)]
     pub unsafe fn inner_mut(&self) -> Result<&mut codira_runtime::Runtime, &'static str> {
         self.0
             .cast::<codira_runtime::Runtime>()
@@ -86,9 +90,9 @@ pub struct ExternalFunctionDefinition {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RuntimeOptions {
-    /// Function definitions that should be inserted in the runtime before a codira
-    /// library is loaded. This is useful to initialize `extern` functions
-    /// used in a codira library.
+    /// Function definitions that should be inserted in the runtime before a
+    /// codira library is loaded. This is useful to initialize `extern`
+    /// functions used in a codira library.
     ///
     /// If the [`num_functions`] fields is non-zero this field must contain a
     /// pointer to an array of [`abi::FunctionDefinition`]s.
@@ -348,7 +352,10 @@ pub unsafe extern "C" fn codira_runtime_get_type_info_by_id(
 /// is a null pointer, an error will be returned. Passing pointers to invalid
 /// data, will lead to undefined behavior.
 #[no_mangle]
-pub unsafe extern "C" fn codira_runtime_update(runtime: Runtime, updated: *mut bool) -> ErrorHandle {
+pub unsafe extern "C" fn codira_runtime_update(
+    runtime: Runtime,
+    updated: *mut bool,
+) -> ErrorHandle {
     let runtime = codira_error_try!(runtime
         .inner_mut()
         .map_err(|e| format!("invalid argument 'runtime': {e}")));
@@ -562,7 +569,7 @@ mod tests {
     fn test_runtime_get_function_info_invalid_fn_name() {
         let driver = TestDriver::new(
             r#"
-        pub fn main() -> i32 { 3 }
+        public func main() -> i32 { 3 }
     "#,
         );
 
@@ -584,7 +591,7 @@ mod tests {
     fn test_runtime_get_function_info_invalid_fn_name_encoding() {
         let driver = TestDriver::new(
             r#"
-        pub fn main() -> i32 { 3 }
+        public func main() -> i32 { 3 }
     "#,
         );
 
@@ -607,7 +614,7 @@ mod tests {
     fn test_runtime_get_function_info_invalid_has_fn_info() {
         let driver = TestDriver::new(
             r#"
-        pub fn main() -> i32 { 3 }
+        public func main() -> i32 { 3 }
     "#,
         );
 
@@ -630,7 +637,7 @@ mod tests {
     fn test_runtime_get_function_info_invalid_fn_info() {
         let driver = TestDriver::new(
             r#"
-        pub fn main() -> i32 { 3 }
+        public func main() -> i32 { 3 }
     "#,
         );
 
@@ -654,7 +661,7 @@ mod tests {
     fn test_runtime_get_function_info_none() {
         let driver = TestDriver::new(
             r#"
-        pub fn main() -> i32 { 3 }
+        public func main() -> i32 { 3 }
     "#,
         );
 
@@ -673,7 +680,7 @@ mod tests {
     fn test_runtime_get_function_info_some() {
         let driver = TestDriver::new(
             r#"
-        pub fn main() -> i32 { 3 }
+        public func main() -> i32 { 3 }
     "#,
         );
 
@@ -692,7 +699,7 @@ mod tests {
     fn test_runtime_get_type_info_by_name_invalid_type_name() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -713,7 +720,7 @@ mod tests {
     fn test_runtime_get_type_info_by_name_invalid_type_name_encoding() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -735,7 +742,7 @@ mod tests {
     fn test_runtime_get_type_info_by_name_invalid_has_type_info() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -757,7 +764,7 @@ mod tests {
     fn test_runtime_get_type_info_by_name_invalid_type_info() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -780,7 +787,7 @@ mod tests {
     fn test_runtime_get_type_info_by_name_none() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -798,7 +805,7 @@ mod tests {
     fn test_runtime_get_type_info_by_name_some() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -816,7 +823,7 @@ mod tests {
     fn test_runtime_get_type_info_by_id_invalid_type_id() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -837,7 +844,7 @@ mod tests {
     fn test_runtime_get_type_info_by_id_invalid_has_type_info() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -859,7 +866,7 @@ mod tests {
     fn test_runtime_get_type_info_by_id_invalid_type_info() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -882,7 +889,7 @@ mod tests {
     fn test_runtime_get_type_info_by_id_none() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -900,7 +907,7 @@ mod tests {
     fn test_runtime_get_type_info_by_id_some() {
         let driver = TestDriver::new(
             r#"
-            pub struct Foo;
+            public class Foo;
     "#,
         );
 
@@ -918,7 +925,7 @@ mod tests {
     fn test_runtime_update_invalid_updated() {
         let driver = TestDriver::new(
             r#"
-        pub fn main() -> i32 { 3 }
+        public func main() -> i32 { 3 }
     "#,
         );
 
@@ -932,11 +939,10 @@ mod tests {
     fn test_runtime_update() {
         let driver = TestDriver::new(
             r#"
-        pub fn main() -> i32 { 3 }
+        public func main() -> i32 { 3 }
     "#,
         );
 
         assert_getter1!(codira_runtime_update(driver.runtime, _updated));
     }
 }
-

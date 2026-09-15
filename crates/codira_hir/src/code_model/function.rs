@@ -4,12 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{iter::once, sync::Arc};
 
 use codira_hir_input::FileId;
 use codira_syntax::{
-    ast, ast::AttributeOwner, ast::GenericParamsOwner, ast::NameOwner, ast::TypeAscriptionOwner,
+    ast,
+    ast::{AttributeOwner, GenericParamsOwner, NameOwner, TypeAscriptionOwner},
 };
 
 use super::Module;
@@ -357,4 +357,3 @@ impl HasVisibility for Function {
         db.function_visibility(self.id)
     }
 }
-

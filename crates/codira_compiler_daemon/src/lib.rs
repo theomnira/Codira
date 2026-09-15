@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     io::stderr,
     path::Path,
@@ -13,7 +12,10 @@ use std::{
 };
 
 use codira_compiler::{compute_source_relative_path, is_source_file, Config, DisplayColor, Driver};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{
+    event::{ModifyKind, RenameMode},
+    EventKind, RecursiveMode, Watcher,
+};
 
 /// Compiles and watches the package at the specified path. Recompiles changes
 /// that occur.
@@ -27,7 +29,7 @@ pub fn compile_and_watch_manifest(
 
     // Start watching the source directory
     let (watcher_tx, watcher_rx) = channel();
-    let mut watcher: RecommendedWatcher = Watcher::new(watcher_tx, Duration::from_millis(10))?;
+    let mut watcher = notify::recommended_watcher(watcher_tx)?;
     let source_directory = package.source_directory();
 
     watcher.watch(&source_directory, RecursiveMode::Recursive)?;
@@ -46,48 +48,18 @@ pub fn compile_and_watch_manifest(
     })
     .expect("error setting ctrl-c handler");
 
-    // Start watching filesystem events.
+    // Start watching filesystem events. notify 5 delivers raw (undebounced)
+    // events; salsa's early-exit makes a redundant `update_file` with
+    // unchanged contents cheap, so no separate debouncing layer is needed.
     while !should_quit.load(std::sync::atomic::Ordering::SeqCst) {
-        if let Ok(event) = watcher_rx.recv_timeout(Duration::from_millis(1)) {
-            use notify::DebouncedEvent::{Create, Remove, Rename, Write};
-            match event {
-                Write(ref path) if is_source_file(path) => {
-                    let relative_path = compute_source_relative_path(&source_directory, path)?;
-                    let file_contents = std::fs::read_to_string(path)?;
-                    log::info!("Modifying {}", relative_path);
-                    driver.update_file(relative_path, file_contents);
-                    if !driver.emit_diagnostics(&mut stderr(), display_color)? {
-                        driver.write_all_assemblies(false)?;
-                    }
-                }
-                Create(ref path) if is_source_file(path) => {
-                    let relative_path = compute_source_relative_path(&source_directory, path)?;
-                    let file_contents = std::fs::read_to_string(path)?;
-                    log::info!("Creating {}", relative_path);
-                    driver.add_file(relative_path, file_contents);
-                    if !driver.emit_diagnostics(&mut stderr(), display_color)? {
-                        driver.write_all_assemblies(false)?;
-                    }
-                }
-                Remove(ref path) if is_source_file(path) => {
-                    // Simply remove the source file from the source root
-                    let relative_path = compute_source_relative_path(&source_directory, path)?;
-                    log::info!("Removing {}", relative_path);
-                    // TODO: Remove assembly files if there are no files referencing it.
-                    // let assembly_path =
-                    // driver.assembly_output_path(driver.get_file_id_for_path(&relative_path).
-                    // expect("cannot remove a file that was not part of the compilation in the
-                    // first place")); if assembly_path.is_file() {
-                    //     std::fs::remove_file(assembly_path)?;
-                    // }
-                    driver.remove_file(relative_path);
-                    driver.emit_diagnostics(&mut stderr(), display_color)?;
-                }
-                Rename(ref from, ref to) => {
+        if let Ok(Ok(event)) = watcher_rx.recv_timeout(Duration::from_millis(1)) {
+            match event.kind {
+                EventKind::Modify(ModifyKind::Name(RenameMode::Both)) if event.paths.len() == 2 => {
                     // Renaming is done by changing the relative path of the original source file
                     // but not modifying any text. This ensures that most of the
                     // cache for the renamed file stays alive. This is
                     // effectively a rename of the file_id in the database.
+                    let (from, to) = (&event.paths[0], &event.paths[1]);
                     let from_relative_path = compute_source_relative_path(&source_directory, from)?;
                     let to_relative_path = compute_source_relative_path(&source_directory, to)?;
 
@@ -97,6 +69,42 @@ pub fn compile_and_watch_manifest(
                         driver.write_all_assemblies(false)?;
                     }
                 }
+                // A rename observed as two separate From/To events (or a
+                // platform that can't pair them) degrades to remove+create:
+                // correctness is identical, only the file_id-preserving
+                // cache optimization above is lost.
+                EventKind::Modify(ModifyKind::Name(RenameMode::From)) | EventKind::Remove(_) => {
+                    for path in event.paths.iter().filter(|p| is_source_file(p)) {
+                        // Simply remove the source file from the source root
+                        let relative_path = compute_source_relative_path(&source_directory, path)?;
+                        log::info!("Removing {}", relative_path);
+                        // TODO: Remove assembly files if there are no files referencing it.
+                        driver.remove_file(relative_path);
+                        driver.emit_diagnostics(&mut stderr(), display_color)?;
+                    }
+                }
+                EventKind::Modify(ModifyKind::Name(RenameMode::To)) | EventKind::Create(_) => {
+                    for path in event.paths.iter().filter(|p| is_source_file(p)) {
+                        let relative_path = compute_source_relative_path(&source_directory, path)?;
+                        let file_contents = std::fs::read_to_string(path)?;
+                        log::info!("Creating {}", relative_path);
+                        driver.add_file(relative_path, file_contents);
+                        if !driver.emit_diagnostics(&mut stderr(), display_color)? {
+                            driver.write_all_assemblies(false)?;
+                        }
+                    }
+                }
+                EventKind::Modify(_) => {
+                    for path in event.paths.iter().filter(|p| is_source_file(p)) {
+                        let relative_path = compute_source_relative_path(&source_directory, path)?;
+                        let file_contents = std::fs::read_to_string(path)?;
+                        log::info!("Modifying {}", relative_path);
+                        driver.update_file(relative_path, file_contents);
+                        if !driver.emit_diagnostics(&mut stderr(), display_color)? {
+                            driver.write_all_assemblies(false)?;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -104,4 +112,3 @@ pub fn compile_and_watch_manifest(
 
     Ok(true)
 }
-

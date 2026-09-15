@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 pub use r#type::{
     ArrayType, Field, FieldData, HasStaticType, PointerType, StructType, StructTypeBuilder, Type,
     TypeCollectionStats, TypeKind,
@@ -37,4 +36,3 @@ pub enum TryFromAbiError<'a> {
     #[error("unknown TypeId '{0}'")]
     UnknownTypeId(abi::TypeId<'a>),
 }
-

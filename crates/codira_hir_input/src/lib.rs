@@ -41,4 +41,3 @@ pub struct ModuleId {
     /// The id of the module inside the package.
     pub local_id: PackageModuleId,
 }
-

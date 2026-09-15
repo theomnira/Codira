@@ -24,9 +24,8 @@
 //! then, this check is only reliable for code with no `handle` blocks --
 //! genuinely useful there (it's real, tested detection of a real class of
 //! bug), not a complete implementation of the spec's rule.
-use crate::{diagnostics::UndeclaredEffect, resolve::resolver_for_expr, Expr, HasSource};
-
 use super::ExprValidator;
+use crate::{diagnostics::UndeclaredEffect, resolve::resolver_for_expr, Expr, HasSource};
 
 impl ExprValidator<'_> {
     /// Checks every call in this function's body against its own declared
@@ -66,11 +65,10 @@ impl ExprValidator<'_> {
                 if caller_effects.contains(effect) {
                     continue;
                 }
-                let Some(syntax) = self
-                    .body_source_map
-                    .expr_syntax(expr_id)
-                    .map(|sp| sp.value.either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr()))
-                else {
+                let Some(syntax) = self.body_source_map.expr_syntax(expr_id).map(|sp| {
+                    sp.value
+                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr())
+                }) else {
                     continue;
                 };
                 sink.push(UndeclaredEffect {

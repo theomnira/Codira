@@ -12,7 +12,7 @@
 // All functions accept `usize` addresses and `usize` byte counts.
 // =============================================================================
 
-use std.builtin.types;
+import std.builtin.types;
 
 // =============================================================================
 // memcpy — non-overlapping copy

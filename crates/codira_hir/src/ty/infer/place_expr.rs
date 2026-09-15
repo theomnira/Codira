@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{resolve::ValueNs, ty::infer::InferenceResultBuilder, Expr, ExprId, Path, Resolver};
 
 impl InferenceResultBuilder<'_> {
@@ -27,4 +26,3 @@ impl InferenceResultBuilder<'_> {
         }
     }
 }
-

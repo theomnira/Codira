@@ -8,7 +8,7 @@
 // Represents a span of time with nanosecond precision.
 // Stored internally as total nanoseconds in a u64.
 // ---------------------------------------------------------------------------
-public struct(value) Duration {
+public struct Duration {
     _nanos: u64,
 }
 
@@ -124,7 +124,7 @@ public func duration_is_zero(d: Duration) -> bool {
 // Instant
 // A monotonic point in time, useful for measuring elapsed time.
 // ---------------------------------------------------------------------------
-public struct(value) Instant {
+public struct Instant {
     _nanos: u64,
 }
 

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod ops;
 
 use std::ffi::OsString;
@@ -68,4 +67,3 @@ where
         Command::Start(args) => start::start(args),
     }
 }
-

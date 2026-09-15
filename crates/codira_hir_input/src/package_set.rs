@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::ops::Index;
 
 use rustc_hash::FxHashMap;
@@ -58,4 +57,3 @@ impl Index<PackageId> for PackageSet {
         &self.arena[&index]
     }
 }
-

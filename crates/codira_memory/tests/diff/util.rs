@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(dead_code)]
 
 use std::collections::VecDeque;
@@ -152,7 +151,7 @@ fn apply_struct_mapping(
             _ => None,
         })
         .collect();
-    additions.sort_by(|a, b| a.0.cmp(&b.0));
+    additions.sort_by_key(|a| a.0);
 
     for (index, field) in additions {
         fields.insert(index, field);
@@ -179,4 +178,3 @@ fn apply_struct_mapping(
         .add_fields(fields)
         .finish()
 }
-

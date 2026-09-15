@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::CStr, os::raw::c_char, slice, str};
 
 use crate::{DispatchTable, ModuleInfo, TypeLut};
@@ -87,4 +86,3 @@ mod tests {
         }
     }
 }
-

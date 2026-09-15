@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir_input::{ModuleId, PackageId};
 
 use super::Module;
@@ -49,4 +48,3 @@ impl Package {
             .collect()
     }
 }
-

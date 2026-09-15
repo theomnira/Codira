@@ -9,8 +9,8 @@
 
 use std::{ops::Index, sync::Arc};
 
-use la_arena::ArenaMap;
 use codira_hir_input::FileId;
+use la_arena::ArenaMap;
 
 pub(crate) use self::diagnostics::LowerDiagnostic;
 use crate::{
@@ -118,15 +118,9 @@ impl Ty {
             // Tracked as follow-up work -- introducing it touches unification,
             // coercion, and codegen's representation of these values, which need a
             // real LLVM toolchain to verify end-to-end.
-            TypeRef::Optional(inner) | TypeRef::Refinement(inner) => {
-                Some(Self::from_hir_with_diagnostics(
-                    db,
-                    resolver,
-                    type_ref_map,
-                    diagnostics,
-                    *inner,
-                ))
-            }
+            TypeRef::Optional(inner) | TypeRef::Refinement(inner) => Some(
+                Self::from_hir_with_diagnostics(db, resolver, type_ref_map, diagnostics, *inner),
+            ),
         };
         if let Some(ty) = res {
             ty
@@ -388,4 +382,3 @@ pub mod diagnostics {
         }
     }
 }
-

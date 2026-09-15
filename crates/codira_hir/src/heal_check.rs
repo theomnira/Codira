@@ -55,7 +55,10 @@ use crate::refinement_check::{check_satisfiable, RefinementCheckResult};
 /// found a postcondition but it uses a construct outside the checkable
 /// subset").
 pub(crate) fn check_heal_postcondition(func: &ast::FunctionDef) -> Option<RefinementCheckResult> {
-    let heal_attr = func.attribute_list()?.attributes().find(is_heal_attribute)?;
+    let heal_attr = func
+        .attribute_list()?
+        .attributes()
+        .find(is_heal_attribute)?;
     let arg_list = heal_attr.arg_list()?;
     let postcondition = named_arg(&arg_list, "postcondition")?;
     Some(check_satisfiable("result", &postcondition))
@@ -109,8 +112,9 @@ fn named_arg(arg_list: &ast::ArgList, name: &str) -> Option<ast::Expr> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use codira_syntax::{ast::ModuleItemOwner, SourceFile};
+
+    use super::*;
 
     fn parse_fn(src: &str) -> ast::FunctionDef {
         let file = SourceFile::parse(src).tree();
@@ -136,17 +140,18 @@ mod tests {
 
     #[test]
     fn satisfiable_postcondition_is_ok() {
-        let f = parse_fn(
-            "@heal(on: [Timeout], postcondition: result >= 0) func risky() -> i32 { 0 }",
+        let f =
+            parse_fn("@heal(on: [Timeout], postcondition: result >= 0) func risky() -> i32 { 0 }");
+        assert_eq!(
+            check_heal_postcondition(&f),
+            Some(RefinementCheckResult::Ok)
         );
-        assert_eq!(check_heal_postcondition(&f), Some(RefinementCheckResult::Ok));
     }
 
     #[test]
     fn impossible_postcondition_is_unsatisfiable() {
-        let f = parse_fn(
-            "@heal(postcondition: result > 0 && result < 0) func risky() -> i32 { 0 }",
-        );
+        let f =
+            parse_fn("@heal(postcondition: result > 0 && result < 0) func risky() -> i32 { 0 }");
         assert_eq!(
             check_heal_postcondition(&f),
             Some(RefinementCheckResult::Unsatisfiable)
@@ -155,17 +160,17 @@ mod tests {
 
     #[test]
     fn or_form_is_understood() {
-        let f = parse_fn(
-            "@heal(postcondition: result > 0 || result == 0) func risky() -> i32 { 0 }",
+        let f =
+            parse_fn("@heal(postcondition: result > 0 || result == 0) func risky() -> i32 { 0 }");
+        assert_eq!(
+            check_heal_postcondition(&f),
+            Some(RefinementCheckResult::Ok)
         );
-        assert_eq!(check_heal_postcondition(&f), Some(RefinementCheckResult::Ok));
     }
 
     #[test]
     fn non_heal_attribute_is_ignored() {
-        let f = parse_fn(
-            "@target(gpu) func risky() -> i32 { 0 }",
-        );
+        let f = parse_fn("@target(gpu) func risky() -> i32 { 0 }");
         assert_eq!(check_heal_postcondition(&f), None);
     }
 }

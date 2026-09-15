@@ -83,8 +83,8 @@ pub fn run_test(code: &str, mode: TestMode) {
     let assembly_path = driver.assembly_output_path_from_file(file_id);
     let builder = Runtime::builder(assembly_path);
 
-    // Safety: We compiled the codira code ourselves, therefor loading the codiralib is
-    // safe
+    // Safety: We compiled the codira code ourselves, therefor loading the codiralib
+    // is safe
     let runtime = unsafe { builder.finish() }.expect("error creating runtime for test assembly");
 
     // Find the main function
@@ -98,4 +98,3 @@ pub fn run_test(code: &str, mode: TestMode) {
         .invoke("main", ())
         .expect("error calling main function");
 }
-

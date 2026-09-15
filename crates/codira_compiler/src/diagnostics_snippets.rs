@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{collections::HashMap, sync::Arc};
 
 use annotate_snippets::{Annotation, AnnotationType, Renderer, Slice, Snippet, SourceAnnotation};
@@ -203,4 +202,3 @@ fn emit_diagnostic(
     let display = renderer.render(snippet);
     write!(writer, "{display}")
 }
-

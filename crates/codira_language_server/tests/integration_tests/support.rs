@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     cell::{Cell, RefCell},
     convert::TryInto,
@@ -12,16 +11,16 @@ use std::{
     time::Duration,
 };
 
+use codira_hir_input::Fixture;
+use codira_language_server::{main_loop, Config, FilesWatcher};
+use codira_paths::AbsPathBuf;
+use codira_project::ProjectManifest;
 use crossbeam_channel::{after, select};
 use lsp_server::{Connection, Message, Notification, Request};
 use lsp_types::{
     notification::Exit, request::Shutdown, ProgressParams, ProgressParamsValue, Url,
     WorkDoneProgress,
 };
-use codira_hir_input::Fixture;
-use codira_language_server::{main_loop, Config, FilesWatcher};
-use codira_paths::AbsPathBuf;
-use codira_project::ProjectManifest;
 use serde::Serialize;
 use serde_json::Value;
 
@@ -238,4 +237,3 @@ impl Drop for Server {
         }
     }
 }
-

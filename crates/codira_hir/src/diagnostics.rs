@@ -4,14 +4,14 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{any::Any, fmt};
 
 use codira_hir_input::FileId;
 use codira_syntax::{ast, AstPtr, SmolStr, SyntaxNode, SyntaxNodePtr, TextRange};
 
 use crate::{
-    code_model::StructKind, ids::FunctionId, in_file::InFile, HirDatabase, IntTy, Name, Ty,
+    code_model::StructKind, ids::FunctionId, in_file::InFile, ty::cast::InvalidCastReason,
+    HirDatabase, IntTy, Name, Ty,
 };
 
 /// Diagnostic defines `codira_hir` API for errors and warnings.
@@ -357,6 +357,34 @@ pub struct CannotApplyUnaryOp {
 impl Diagnostic for CannotApplyUnaryOp {
     fn message(&self) -> String {
         "cannot apply unary operator".to_string()
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// An `expr as Type` cast that the legality matrix in [`crate::ty::cast`]
+/// rejects. `as` never silently reinterprets: a cast it cannot perform is a
+/// type error.
+#[derive(Debug)]
+pub struct InvalidCast {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+    /// The inferred type of the operand.
+    pub from: Ty,
+    /// The resolved target type that was written after `as`.
+    pub to: Ty,
+    pub reason: InvalidCastReason,
+}
+
+impl Diagnostic for InvalidCast {
+    fn message(&self) -> String {
+        self.reason.message().to_string()
     }
 
     fn source(&self) -> InFile<SyntaxNodePtr> {
@@ -1026,7 +1054,7 @@ pub struct MethodNotFound {
 
 impl Diagnostic for MethodNotFound {
     fn message(&self) -> String {
-        format!("method `{}` does not exist", &self.method_name)
+        format!("method `{}` does not exist", self.method_name)
     }
 
     fn source(&self) -> InFile<SyntaxNodePtr> {
@@ -1039,7 +1067,7 @@ impl Diagnostic for MethodNotFound {
 }
 
 /// An error emitted when a `supervisor` block declares two `child` entries
-/// with the same name (see spec/self_healing_programming_language.md
+/// with the same name (see `spec/self_healing_programming_language.md`
 /// section 3.5). Structural validation only: `supervisor`/`child` blocks
 /// parse into a full syntax tree (`codira_syntax`) but are not lowered into
 /// name-resolvable HIR items, so this walks the raw syntax tree directly
@@ -1053,7 +1081,10 @@ pub struct DuplicateSupervisorChild {
 
 impl Diagnostic for DuplicateSupervisorChild {
     fn message(&self) -> String {
-        format!("a child named `{}` is already declared in this supervisor", self.name)
+        format!(
+            "a child named `{}` is already declared in this supervisor",
+            self.name
+        )
     }
 
     fn source(&self) -> InFile<SyntaxNodePtr> {
@@ -1087,4 +1118,3 @@ impl Diagnostic for DuplicateSupervisorEntry {
         self
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod array;
 mod mark_sweep;
 mod ptr;
@@ -125,4 +124,3 @@ impl<T: Send + Sync> Default for NoopObserver<T> {
         NoopObserver { data: PhantomData }
     }
 }
-

@@ -97,4 +97,3 @@ impl Integer {
     //     Integer::I8
     // }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_runtime::{ArgumentReflection, Marshal, ReturnTypeReflection, StructRef};
 use codira_test::CompileAndRunTestDriver;
 
@@ -742,4 +741,3 @@ fn signed_and_unsigned_rem() {
     assert_invoke_eq!(i32, -2, driver, "signed");
     assert_invoke_eq!(i32, 2, driver, "unsigned");
 }
-

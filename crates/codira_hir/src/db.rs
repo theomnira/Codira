@@ -4,19 +4,20 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(clippy::type_repetition_in_bounds)]
 
 use std::sync::Arc;
 
-use la_arena::ArenaMap;
 use codira_hir_input::{FileId, PackageId, SourceDatabase};
 use codira_syntax::{ast, Parse, SourceFile};
 use codira_target::{abi, spec::Target};
+use la_arena::ArenaMap;
 use smol_str::SmolStr;
 
 use crate::{
-    code_model::{r#struct::LocalFieldId, Function, FunctionData, ImplData, StructData, TypeAliasData},
+    code_model::{
+        r#struct::LocalFieldId, Function, FunctionData, ImplData, StructData, TypeAliasData,
+    },
     expr::BodySourceMap,
     ids,
     ids::{DefWithBodyId, FunctionId, ImplId, VariantId},
@@ -178,4 +179,3 @@ fn target_data_layout(db: &dyn HirDatabase) -> Arc<abi::TargetDataLayout> {
         .expect("unable to create TargetDataLayout from target");
     Arc::new(data_layout)
 }
-

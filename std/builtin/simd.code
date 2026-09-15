@@ -17,14 +17,14 @@
 //   let c = a.mul(b);   // [2.0, 4.0, 6.0, 8.0]
 // =============================================================================
 
-use std.builtin.types;
-use std.builtin.traits;
+import std.builtin.types;
+import std.builtin.traits;
 
 // A fixed-width SIMD vector of `N` elements of type `T`.
 //
 // The struct is a value type and should be register-allocated by the
 // compiler whenever the target has wide-enough vector registers.
-public struct(value) SIMD[T, N: usize] {
+public struct SIMD[T, N: usize] {
     _data: __simd_storage[T, N],
 }
 

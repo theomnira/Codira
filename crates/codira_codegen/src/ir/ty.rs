@@ -4,9 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{cell::RefCell, collections::HashMap, sync::Arc};
 
+use codira_abi::Guid;
+use codira_hir::{
+    FloatBitness, HirDatabase, HirDisplay, IntBitness, ResolveBitness, Signedness, Ty, TyKind,
+};
 use inkwell::{
     context::Context,
     targets::TargetData,
@@ -15,10 +18,6 @@ use inkwell::{
         StructType,
     },
     AddressSpace,
-};
-use codira_abi::Guid;
-use codira_hir::{
-    FloatBitness, HirDatabase, HirDisplay, IntBitness, ResolveBitness, Signedness, Ty, TyKind,
 };
 use smallvec::SmallVec;
 
@@ -167,10 +166,10 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
     /// are always stored on the heap so this will always be a pointer to an
     /// Array<Ty>.
     pub fn get_array_reference_type(&self, element_ty: &Ty) -> PointerType<'ink> {
-        let ir_ty = self.get_array_type(element_ty);
-        ir_ty
-            .ptr_type(AddressSpace::default())
-            .ptr_type(AddressSpace::default())
+        // A pointer-to-pointer is still just `ptr` under opaque
+        // pointers; the pointee chain carries no LLVM-level meaning.
+        let _ = self.get_array_type(element_ty);
+        self.context.ptr_type(AddressSpace::default())
     }
 
     /// Returns the type of the struct that should be used for variables.
@@ -185,10 +184,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
                 // GC values are pointers to pointers
                 // struct Foo {}
                 // Foo**
-                ir_ty
-                    .ptr_type(AddressSpace::default())
-                    .ptr_type(AddressSpace::default())
-                    .into()
+                self.context.ptr_type(AddressSpace::default()).into()
             }
             codira_hir::StructMemoryKind::Value => {
                 // Value structs are passed as values
@@ -210,10 +206,8 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
         // Foo**
         //
         // Value structs are converted to GC types in the public API.
-        ir_ty
-            .ptr_type(AddressSpace::default())
-            .ptr_type(AddressSpace::default())
-            .into()
+        let _ = ir_ty;
+        self.context.ptr_type(AddressSpace::default()).into()
     }
 
     /// Returns the type of the specified function definition
@@ -383,7 +377,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
 
                 let element_type_id = self.type_id(a);
                 let array_type_id = Arc::new(TypeId {
-                    name: format!("[{}]", &element_type_id.name),
+                    name: format!("[{}]", element_type_id.name),
                     data: TypeIdData::Array(element_type_id),
                 });
 
@@ -416,8 +410,7 @@ pub fn guid_from_struct(db: &dyn HirDatabase, s: codira_hir::Struct) -> Guid {
 
     Guid::from_str(&format!(
         "struct {name}{{{fields}}}",
-        name = &name,
+        name = name,
         fields = fields.join(",")
     ))
 }
-

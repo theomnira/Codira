@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     collections::{hash_map::Entry, HashMap},
     ops::ControlFlow,
@@ -118,7 +117,7 @@ impl InherentImpls {
         }
 
         // Find duplicate associated items
-        for (_, impls) in self.map.iter() {
+        for impls in self.map.values() {
             let mut name_to_item = HashMap::new();
             for impl_id in impls.iter() {
                 let impl_data = db.impl_data(*impl_id);
@@ -649,4 +648,3 @@ mod tests {
         methods.join("\n")
     }
 }
-

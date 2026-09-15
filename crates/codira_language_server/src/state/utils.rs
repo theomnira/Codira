@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::LanguageServerState;
 
 #[derive(Debug, Eq, PartialEq)]
@@ -80,4 +79,3 @@ impl LanguageServerState {
         });
     }
 }
-

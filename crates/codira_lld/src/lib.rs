@@ -4,11 +4,9 @@
 //!
 //! Functionality:
 //! - A wrapper around LLD in Rust Programming Language.
-//!
 
-use std::ffi::CStr;
 use std::{
-    ffi::CString,
+    ffi::{CStr, CString},
     os::raw::{c_char, c_int},
 };
 
@@ -27,7 +25,11 @@ pub enum LldFlavor {
 }
 
 extern "C" {
-    fn codira_lld_link(flavor: LldFlavor, argc: c_int, argv: *const *const c_char) -> LldInvokeResult;
+    fn codira_lld_link(
+        flavor: LldFlavor,
+        argc: c_int,
+        argv: *const *const c_char,
+    ) -> LldInvokeResult;
     fn codira_link_free_result(result: *mut LldInvokeResult);
 }
 
@@ -63,14 +65,14 @@ pub fn link(target: LldFlavor, args: &[String]) -> LldResult {
     let mut lld_result = unsafe { codira_lld_link(target, args.len() as c_int, args.as_ptr()) };
 
     // Get the messages from the invocation
-    let messages = if !lld_result.messages.is_null() {
+    let messages = if lld_result.messages.is_null() {
+        String::new()
+    } else {
         unsafe {
             CStr::from_ptr(lld_result.messages)
                 .to_string_lossy()
                 .to_string()
         }
-    } else {
-        String::new()
     };
 
     // Construct the result
@@ -81,7 +83,9 @@ pub fn link(target: LldFlavor, args: &[String]) -> LldResult {
 
     // Release the result
     unsafe { codira_link_free_result(&mut lld_result as *mut LldInvokeResult) };
-    drop(lld_result);
+    // `LldInvokeResult` is a plain repr(C) struct with no Drop impl; the
+    // message buffer it owned was already released by
+    // `codira_link_free_result` above. The explicit drop was a no-op.
 
     result
 }

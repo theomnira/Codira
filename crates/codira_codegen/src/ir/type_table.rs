@@ -4,20 +4,19 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
     sync::Arc,
 };
 
+use codira_hir::{Body, ExprId, HirDatabase, InferenceResult};
 use inkwell::{
     context::Context,
     module::{Linkage, Module},
     types::ArrayType,
     values::PointerValue,
 };
-use codira_hir::{Body, ExprId, HirDatabase, InferenceResult};
 
 use crate::{
     ir::{
@@ -92,7 +91,11 @@ impl<'ink> TypeTable<'ink> {
         // holds `*const c_void` entries) is the correct pointee type here.
         let element_ty = self.table_type.get_element_type();
         builder
-            .build_load(element_ty, ptr_to_type_info_ptr, &format!("{}_ptr", type_info.name))
+            .build_load(
+                element_ty,
+                ptr_to_type_info_ptr,
+                &format!("{}_ptr", type_info.name),
+            )
             .expect("failed to build load from type table")
             .into_pointer_value()
     }
@@ -265,4 +268,3 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
         }
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::OsString, path::Path};
 
 use codira::run_with_args;
@@ -88,4 +87,3 @@ fn build_and_run(project: &Path) {
     let result: f64 = runtime.invoke("main", ()).unwrap();
     assert_eq!(result, 3.14159);
 }
-

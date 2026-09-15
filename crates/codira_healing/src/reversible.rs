@@ -7,19 +7,18 @@
 //!
 //! Functionality (per Theorem 5 and Section 2.7.2):
 //! - Micro-checkpointing at every pure expression / minimal re-execution
-//!   boundary. A [`RegisterFile`] records every register write as a
-//!   write-ahead undo entry, so a fault during a guarded region can rewind
-//!   execution to the last [`Checkpoint`] -- the spec's "rewind to
-//!   Checkpoint C" -- and retry with a corrected value.
+//!   boundary. A [`RegisterFile`] records every register write as a write-ahead
+//!   undo entry, so a fault during a guarded region can rewind execution to the
+//!   last [`Checkpoint`] -- the spec's "rewind to Checkpoint C" -- and retry
+//!   with a corrected value.
 //! - `Checkpoint::commit` is the complement: once a region is known-good,
 //!   committing frees the undo history up to that point, so successful
 //!   execution does not accumulate a growing journal.
-//! - The real-hardware payoff lives in [`crate::trap::protected`]: a
-//!   hardware fault (divide-by-zero, access violation) cannot touch
-//!   ordinary register state left *before* the fault. Operations that
-//!   mutate tracked registers *after* the last checkpoint and *before* the
-//!   faulting instruction would otherwise leak -- that pollution is exactly
-//!   what this journal rolls back.
+//! - The real-hardware payoff lives in [`crate::trap::protected`]: a hardware
+//!   fault (divide-by-zero, access violation) cannot touch ordinary register
+//!   state left *before* the fault. Operations that mutate tracked registers
+//!   *after* the last checkpoint and *before* the faulting instruction would
+//!   otherwise leak -- that pollution is exactly what this journal rolls back.
 //!
 //! The state being rewound here is a small integer register file, honest to
 //! what systems code can safely roll back without a VM. This is the
@@ -244,10 +243,13 @@ mod tests {
 /// from a run that simply never faulted.
 #[cfg(test)]
 mod integration_tests {
-    use super::*;
-    use crate::synthesis::PatchSynthesizer;
-    use crate::trap::{install, protected};
     use codira_smt::Context;
+
+    use super::*;
+    use crate::{
+        synthesis::PatchSynthesizer,
+        trap::{install, protected},
+    };
 
     const DIVISOR: Register = Register(0);
     const ATTEMPTS: Register = Register(1);

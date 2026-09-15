@@ -37,7 +37,9 @@
 use std::collections::HashMap;
 
 use super::ExprValidator;
-use crate::{diagnostics::UseAfterConsume, resolve::resolver_for_expr, Expr, HasSource, Pat, PatId};
+use crate::{
+    diagnostics::UseAfterConsume, resolve::resolver_for_expr, Expr, HasSource, Pat, PatId,
+};
 
 impl ExprValidator<'_> {
     pub(super) fn validate_move_checking(&self, sink: &mut crate::DiagnosticSink<'_>) {
@@ -78,7 +80,8 @@ impl ExprValidator<'_> {
             *count += 1;
             if *count > 1 {
                 let Some(syntax) = self.body_source_map.expr_syntax(expr_id).map(|sp| {
-                    sp.value.either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr())
+                    sp.value
+                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr())
                 }) else {
                     continue;
                 };

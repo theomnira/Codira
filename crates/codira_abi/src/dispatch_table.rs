@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::c_void, slice};
 
 use crate::FunctionPrototype;
@@ -323,4 +322,3 @@ mod tests {
         assert_eq!(dispatch_table.get_ptr_mut(0), Some(&mut fn_ptrs[0]));
     }
 }
-

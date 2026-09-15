@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     hash::{Hash, Hasher},
     iter::successors,
@@ -123,4 +122,3 @@ impl<N: AstNode> From<AstPtr<N>> for SyntaxNodePtr {
         ptr.raw
     }
 }
-

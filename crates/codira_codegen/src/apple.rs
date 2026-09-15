@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     collections::HashMap,
     env, io,
@@ -82,7 +81,7 @@ fn find_apple_sdk_root(sdk_name: &str) -> Result<PathBuf, String> {
             } else {
                 let error = String::from_utf8(output.stderr);
                 let error = format!("process exit with error: {}", error.unwrap());
-                Err(io::Error::new(io::ErrorKind::Other, &error[..]))
+                Err(io::Error::other(&error[..]))
             }
         });
 
@@ -91,4 +90,3 @@ fn find_apple_sdk_root(sdk_name: &str) -> Result<PathBuf, String> {
         Err(e) => Err(format!("failed to get SDK path: {e}")),
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::convert::{TryFrom, TryInto};
 
 /// The difference of one type when comparing an old and new ordered set.
@@ -232,4 +231,3 @@ pub fn split_diff<T: Clone>(diff: &[Diff<T>]) -> (Vec<Change<T>>, Vec<Change<T>>
 
     (deletions, insertions)
 }
-

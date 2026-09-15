@@ -4,10 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use inkwell::{
     types::{BasicType, PointerType},
-    values::PointerValue,
     AddressSpace,
 };
 
@@ -234,4 +232,3 @@ impl_array_type!(
     inkwell::types::StructType<'ink> => inkwell::values::StructValue<'ink>,
     inkwell::types::PointerType<'ink> => inkwell::values::PointerValue<'ink>
 );
-

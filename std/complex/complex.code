@@ -7,7 +7,7 @@
 // Complex
 // A complex number z = real + imag*i, stored as two f64 components.
 // ---------------------------------------------------------------------------
-public struct(value) Complex {
+public struct Complex {
     real: f64,
     imag: f64,
 }

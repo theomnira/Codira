@@ -1,6 +1,6 @@
 // std/testing/testing.code
 // Test assertion utilities for Codira.
-// Provides assertion functions for use in unit tests. Each function
+// Provides assertion functions for import in unit tests. Each function
 // panics with a descriptive message when the assertion fails.
 
 // ---------------------------------------------------------------------------

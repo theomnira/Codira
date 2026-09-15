@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use la_arena::{Arena, Idx};
@@ -168,4 +167,3 @@ fn compute_expr_scopes(expr: ExprId, body: &Body, scopes: &mut ExprScopes, scope
         e => e.walk_child_exprs(|e| compute_expr_scopes(e, body, scopes, scope)),
     };
 }
-

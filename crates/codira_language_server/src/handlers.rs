@@ -4,9 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
-use lsp_types::{CompletionContext, DocumentSymbol};
 use codira_syntax::{AstNode, TextSize};
+use lsp_types::{CompletionContext, DocumentSymbol};
 
 use crate::{
     from_lsp, state::LanguageServerSnapshot, to_lsp, to_lsp::completion_items, FilePosition,
@@ -203,4 +202,3 @@ mod tests {
         );
     }
 }
-

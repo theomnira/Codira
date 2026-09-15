@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
     declarations, error_block, generics, name, name_recovery, opt_visibility, traits, types,
     Marker, Parser, ENUM_DEF, ENUM_VARIANT, ENUM_VARIANT_LIST, IDENT, RECORD_FIELD_DEF,
@@ -53,7 +52,8 @@ pub(super) fn type_alias_def(p: &mut Parser<'_>, m: Marker) {
     m.complete(p, TYPE_ALIAS_DEF);
 }
 
-/// Parses `enum Name { Variant, Variant(Type, ..), Variant { field: Type, .. } }`.
+/// Parses `enum Name { Variant, Variant(Type, ..), Variant { field: Type, .. }
+/// }`.
 pub(super) fn enum_def(p: &mut Parser<'_>, m: Marker) {
     assert!(p.at(T![enum]));
     p.bump(T![enum]);
@@ -182,4 +182,3 @@ fn record_field_def(p: &mut Parser<'_>) {
         p.error_and_bump("expected a field declaration");
     }
 }
-

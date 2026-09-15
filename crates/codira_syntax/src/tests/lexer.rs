@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt::Write;
 
 fn dump_tokens(tokens: &[crate::Token], text: &str) -> String {
@@ -444,4 +443,3 @@ fn binary_cmp() {
     WHITESPACE 5 "\n    "
     "#);
 }
-

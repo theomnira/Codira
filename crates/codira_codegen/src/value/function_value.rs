@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use inkwell::types::BasicType;
 
 use super::{ConcreteValueType, IrTypeContext, PointerValueType, SizedValueType, ValueType};
@@ -85,4 +84,3 @@ into_function_info_impl! {
     fn(A, B, C, D, E, F, G, H, I) -> R;
     fn(A, B, C, D, E, F, G, H, I, J) -> R;
 }
-

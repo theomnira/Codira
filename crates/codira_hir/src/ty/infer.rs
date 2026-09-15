@@ -4,11 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{convert::identity, ops::Index, sync::Arc};
 
-use la_arena::ArenaMap;
 use codira_hir_input::ModuleId;
+use la_arena::ArenaMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
@@ -18,6 +17,7 @@ use crate::{
     name_resolution::Namespace,
     resolve::{Resolver, TypeNs, ValueNs},
     ty::{
+        cast::{check_cast, CastCheck},
         infer::{diagnostics::InferenceDiagnostic, type_variable::TypeVariableTable},
         lower::LowerDiagnostic,
         op, Ty, TypableDef,
@@ -336,6 +336,7 @@ impl InferenceResultBuilder<'_> {
 
     /// Infer the type of the given expression. Returns the type of the
     /// expression.
+    #[allow(clippy::match_same_arms)]
     fn infer_expr_inner(
         &mut self,
         tgt_expr: ExprId,
@@ -499,6 +500,20 @@ impl InferenceResultBuilder<'_> {
                 let inner_ty =
                     self.infer_expr_inner(*expr, &Expectation::none(), &CheckParams::default());
                 match op {
+                    // `~` is bitwise complement: integers only. `!` keeps
+                    // its historical bool-or-integer behaviour; separating
+                    // them is what lets `~` be type-checked strictly.
+                    UnaryOp::BitNot => match inner_ty.interned() {
+                        TyKind::Int(_) | TyKind::InferenceVar(InferTy::Int(_)) => inner_ty,
+                        _ => {
+                            self.diagnostics
+                                .push(InferenceDiagnostic::CannotApplyUnaryOp {
+                                    id: *expr,
+                                    ty: inner_ty,
+                                });
+                            error_type()
+                        }
+                    },
                     UnaryOp::Not => match inner_ty.interned() {
                         TyKind::Bool | TyKind::Int(_) | TyKind::InferenceVar(InferTy::Int(_)) => {
                             inner_ty
@@ -559,10 +574,61 @@ impl InferenceResultBuilder<'_> {
                     _ => error_type(),
                 }
             }
+            Expr::Cast { expr, type_ref } => self.infer_cast(tgt_expr, *expr, *type_ref),
         };
 
         let ty = self.resolve_ty_as_far_as_possible(ty);
         self.set_expr_type(tgt_expr, ty.clone());
+        ty
+    }
+
+    /// Infers the type of an `expr as Type` cast.
+    ///
+    /// The type of the whole expression is always the written-out target
+    /// type; `as` is an *explicit* conversion, so the target deliberately does
+    /// not flow back into the operand as an expectation (`1 as i64` leaves the
+    /// literal at its own default type rather than making it an `i64`).
+    ///
+    /// The conversion itself must be one the language actually allows: the
+    /// legality matrix lives in [`crate::ty::cast`] and an illegal cast is a
+    /// type error here, never a silent reinterpretation.
+    fn infer_cast(&mut self, tgt_expr: ExprId, operand: ExprId, type_ref: LocalTypeRefId) -> Ty {
+        let source_ty = self.infer_expr(operand, &Expectation::none());
+        let target_ty = self.resolve_type(type_ref);
+
+        let source = self.normalize_for_cast(&source_ty);
+        let target = self.normalize_for_cast(&target_ty);
+        let layout = self.db.target_data_layout();
+
+        if let CastCheck::Illegal(reason) = check_cast(&source, &target, &layout) {
+            self.diagnostics.push(InferenceDiagnostic::InvalidCast {
+                id: tgt_expr,
+                from: source,
+                to: target,
+                reason,
+            });
+        }
+
+        target_ty
+    }
+
+    /// Resolves instantiated inference variables and type aliases so that the
+    /// cast check sees the underlying primitive type of e.g. `type Byte = u8`.
+    ///
+    /// `replace_if_possible` unwraps a single alias level per call, so this
+    /// iterates; the bound keeps a cyclic alias (`type A = B; type B = A;`,
+    /// already reported as `cyclic type`) from looping forever. Whatever is
+    /// left at that point is still a `TypeAlias`, which the cast check treats
+    /// as unknown rather than as an error.
+    fn normalize_for_cast(&mut self, ty: &Ty) -> Ty {
+        let mut ty = ty.clone();
+        for _ in 0..16 {
+            let resolved = self.replace_if_possible(&ty).into_owned();
+            if resolved == ty {
+                break;
+            }
+            ty = resolved;
+        }
         ty
     }
 
@@ -1152,7 +1218,7 @@ impl InferenceResultBuilder<'_> {
     }
 
     fn infer_loop_block(&mut self, body: ExprId, lp: ActiveLoop) -> ActiveLoop {
-        let top_level_loop = std::mem::replace(&mut self.active_loop, Some(lp));
+        let top_level_loop = self.active_loop.replace(lp);
 
         // Infer the body of the loop
         self.infer_expr_coerce(body, &Expectation::has_type(Ty::unit()));
@@ -1197,6 +1263,18 @@ impl InferenceResultBuilder<'_> {
 /// Returns a type used for errors
 fn error_type() -> Ty {
     TyKind::Unknown.intern()
+}
+
+/// Constructs an integer inference variable of the shape an unsuffixed
+/// integer literal produces.
+///
+/// Test-only: the variable is not registered with any `TypeVariableTable`, so
+/// it must never be unified or resolved. It exists so that sibling modules
+/// (notably `crate::ty::cast`) can unit-test how they treat a literal whose
+/// width is not pinned down yet without standing up a whole inference run.
+#[cfg(test)]
+pub(super) fn test_integer_var() -> Ty {
+    TyKind::InferenceVar(InferTy::Int(type_variable::TypeVarId(0))).intern()
 }
 
 /// When inferring an expression, we propagate downward whatever type hint we
@@ -1266,13 +1344,13 @@ mod diagnostics {
         diagnostics::{
             AccessUnknownField, BreakOutsideLoop, BreakWithValueOutsideLoop, CannotApplyBinaryOp,
             CannotApplyUnaryOp, CyclicType, DiagnosticSink, ExpectedFunction, FieldCountMismatch,
-            IncompatibleBranch, InvalidLhs, LiteralOutOfRange, MethodNotFound, MethodNotInScope,
-            MismatchedStructLit, MismatchedType, MissingElseBranch, MissingFields, NoFields,
-            NoSuchField, ParameterCountMismatch, PrivateAccess, ReturnMissingExpression,
-            UnresolvedType, UnresolvedValue,
+            IncompatibleBranch, InvalidCast, InvalidLhs, LiteralOutOfRange, MethodNotFound,
+            MethodNotInScope, MismatchedStructLit, MismatchedType, MissingElseBranch,
+            MissingFields, NoFields, NoSuchField, ParameterCountMismatch, PrivateAccess,
+            ReturnMissingExpression, UnresolvedType, UnresolvedValue,
         },
         ids::FunctionId,
-        ty::infer::ExprOrPatId,
+        ty::{cast::InvalidCastReason, infer::ExprOrPatId},
         type_ref::LocalTypeRefId,
         ExprId, Function, HirDatabase, IntTy, Name, Ty,
     };
@@ -1319,6 +1397,12 @@ mod diagnostics {
         CannotApplyUnaryOp {
             id: ExprId,
             ty: Ty,
+        },
+        InvalidCast {
+            id: ExprId,
+            from: Ty,
+            to: Ty,
+            reason: InvalidCastReason,
         },
         InvalidLhs {
             id: ExprId,
@@ -1542,6 +1626,25 @@ mod diagnostics {
                         ty: ty.clone(),
                     });
                 }
+                InferenceDiagnostic::InvalidCast {
+                    id,
+                    from,
+                    to,
+                    reason,
+                } => {
+                    let expr = body
+                        .expr_syntax(*id)
+                        .unwrap()
+                        .value
+                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    sink.push(InvalidCast {
+                        file,
+                        expr,
+                        from: from.clone(),
+                        to: to.clone(),
+                        reason: *reason,
+                    });
+                }
                 InferenceDiagnostic::InvalidLhs { id, lhs } => {
                     let id = body
                         .expr_syntax(*id)
@@ -1747,4 +1850,3 @@ mod diagnostics {
         }
     }
 }
-

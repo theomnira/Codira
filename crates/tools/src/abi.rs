@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{project_root, update, Mode, Result};
 
 pub const ABI_DIR: &str = "crates/codira_abi";
@@ -20,4 +19,3 @@ pub fn generate(mode: Mode) -> Result<()> {
     let file_contents = String::from_utf8(file_contents)?;
     update(&file_path, &file_contents, mode)
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::{Arc, Weak};
 
 use crate::gc::{GcPtr, GcRuntime, HasIndirectionPtr};
@@ -92,4 +91,3 @@ where
         self.handle.deref()
     }
 }
-

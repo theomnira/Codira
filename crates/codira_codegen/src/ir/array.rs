@@ -53,7 +53,10 @@ impl<'ink> RuntimeArrayValue<'ink> {
     /// Constructs a new instance from an inkwell [`PointerValue`] and its
     /// already-known array type, without checking that `ptr` actually
     /// points to an array of that type.
-    pub unsafe fn from_ptr_unchecked(ptr: PointerValue<'ink>, array_type: StructType<'ink>) -> Self {
+    pub unsafe fn from_ptr_unchecked(
+        ptr: PointerValue<'ink>,
+        array_type: StructType<'ink>,
+    ) -> Self {
         Self(RuntimeReferenceValue::from_ptr_unchecked(ptr, array_type))
     }
 
@@ -72,7 +75,12 @@ impl<'ink> RuntimeArrayValue<'ink> {
         let array_ptr = self.get_array_ptr(builder);
         let value_name = array_ptr.get_name().to_string_lossy();
         builder
-            .build_struct_gep(self.array_data_ty(), array_ptr, 0, &format!("{}->length", &value_name))
+            .build_struct_gep(
+                self.array_data_ty(),
+                array_ptr,
+                0,
+                &format!("{value_name}->length"),
+            )
             .expect("could not get `length` from array struct")
     }
 
@@ -81,10 +89,19 @@ impl<'ink> RuntimeArrayValue<'ink> {
         let array_ptr = self.get_array_ptr(builder);
         let value_name = array_ptr.get_name().to_string_lossy();
         let length_ptr = builder
-            .build_struct_gep(self.array_data_ty(), array_ptr, 1, &format!("{}->capacity", &value_name))
+            .build_struct_gep(
+                self.array_data_ty(),
+                array_ptr,
+                1,
+                &format!("{value_name}->capacity"),
+            )
             .expect("could not get `length` from array struct");
         builder
-            .build_load(self.capacity_ty(), length_ptr, &format!("{}.capacity", &value_name))
+            .build_load(
+                self.capacity_ty(),
+                length_ptr,
+                &format!("{value_name}.capacity"),
+            )
             .expect("failed to build load for array capacity")
             .into_int_value()
     }
@@ -94,7 +111,12 @@ impl<'ink> RuntimeArrayValue<'ink> {
         let array_ptr = self.get_array_ptr(builder);
         let value_name = array_ptr.get_name().to_string_lossy();
         builder
-            .build_struct_gep(self.array_data_ty(), array_ptr, 2, &format!("{}->elements", &value_name))
+            .build_struct_gep(
+                self.array_data_ty(),
+                array_ptr,
+                2,
+                &format!("{value_name}->elements"),
+            )
             .expect("could not get `elements` from array struct")
     }
 
@@ -137,4 +159,3 @@ impl<'ink> From<RuntimeArrayValue<'ink>> for PointerValue<'ink> {
         value.0.into()
     }
 }
-

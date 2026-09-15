@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod lower;
 mod pretty;
 #[cfg(test)]
@@ -20,9 +19,9 @@ use std::{
     sync::Arc,
 };
 
-use la_arena::{Arena, Idx};
 use codira_hir_input::FileId;
 use codira_syntax::ast;
+use la_arena::{Arena, Idx};
 
 use crate::{
     path::ImportAlias,
@@ -391,7 +390,7 @@ pub struct Struct {
     pub generic_params: Box<[GenericParamData]>,
     pub fields: Fields,
     /// Whether this struct carries the Kotlin-style `data` modifier (see
-    /// spec/LANGUAGE_SPEC.md section 16). Downstream consumers use this to
+    /// `spec/LANGUAGE_SPEC.md` section 16). Downstream consumers use this to
     /// derive structural equality/hashing/description from `fields` --
     /// nothing else in the item tree changes shape based on it.
     pub is_data: bool,
@@ -588,4 +587,3 @@ mod diagnostics {
         }
     }
 }
-

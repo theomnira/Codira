@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(dead_code)]
 
 #[macro_export]
@@ -20,4 +19,3 @@ macro_rules! fake_struct {
              .finish()
     }};
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::collections::HashSet;
 
 use super::ExprValidator;
@@ -117,7 +116,7 @@ impl ExprValidator<'_> {
                     };
                 }
             }
-            Expr::UnaryOp { expr, .. } | Expr::Field { expr, .. } => {
+            Expr::UnaryOp { expr, .. } | Expr::Field { expr, .. } | Expr::Cast { expr, .. } => {
                 self.validate_expr_access(sink, initialized_patterns, *expr, ExprKind::Normal);
             }
             Expr::BinaryOp { lhs, rhs, op } => {
@@ -240,4 +239,3 @@ impl ExprValidator<'_> {
         }
     }
 }
-

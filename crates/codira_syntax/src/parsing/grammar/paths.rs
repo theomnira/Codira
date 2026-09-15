@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{declarations, name_ref, Parser, TokenSet, IDENT, PATH, PATH_SEGMENT};
 
 pub(super) const PATH_FIRST: TokenSet =
@@ -84,4 +83,3 @@ fn path_segment(p: &mut Parser<'_>) {
     }
     m.complete(p, PATH_SEGMENT);
 }
-

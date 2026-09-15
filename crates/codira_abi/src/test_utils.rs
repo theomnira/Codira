@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     ffi::{self, CStr},
     os::raw::c_char,
@@ -138,4 +137,3 @@ pub(crate) fn fake_type_definition<'a>(
         data,
     }
 }
-

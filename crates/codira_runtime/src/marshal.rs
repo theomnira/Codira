@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::ptr::NonNull;
 
 use codira_memory::Type;
@@ -42,4 +41,3 @@ pub trait Marshal<'t>: Sized {
     /// Marshals `value` to memory location `ptr` (i.e. Rust -> Codira).
     fn marshal_to_ptr(value: Self, ptr: NonNull<Self::CodiraType>, type_info: &Type);
 }
-

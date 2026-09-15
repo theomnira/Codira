@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 
 use crate::{
     parsing::{lexer::Token, Token as PToken, TokenSource},

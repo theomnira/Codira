@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_syntax::{
     ast::{self, NameOwner, TypeAscriptionOwner},
     match_ast, AstNode, SourceFile, SyntaxNode, TextRange, WalkEvent,
@@ -158,4 +157,3 @@ fn try_convert_to_structure_node(node: &SyntaxNode) -> Option<StructureNode> {
         }
     }
 }
-

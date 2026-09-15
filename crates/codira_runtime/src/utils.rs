@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::cmp;
 
 /// The Levenshtein distance is a string metric for measuring the difference
@@ -69,4 +68,3 @@ mod tests {
         assert_eq!(lev_distance(FIRST_STRING, SECOND_STRING), EXPECTED_DISTANCE);
     }
 }
-

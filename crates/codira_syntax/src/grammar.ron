@@ -229,6 +229,7 @@ Grammar(
         "PREFIX_EXPR",
         "LITERAL",
         "BIN_EXPR",
+        "CAST_EXPR",
         "PAREN_EXPR",
         "CALL_EXPR",
         "METHOD_CALL_EXPR",
@@ -454,6 +455,11 @@ Grammar(
         "PathExpr": (options: ["Path"]),
         "PrefixExpr": (options: ["Expr"]),
         "BinExpr": (),
+        // `expr as Type` -- an explicit primitive numeric conversion. The
+        // operand is the sole child `Expr`; the conversion target is the sole
+        // child `TypeRef`, so `expr()` and `type_ref()` never collide (no
+        // expression node kind is also a type node kind).
+        "CastExpr": (options: [["expr", "Expr"], ["type_ref", "TypeRef"]]),
         "Literal": (),
         "ParenExpr": (options: ["Expr"]),
         "CallExpr": (
@@ -520,6 +526,7 @@ Grammar(
                 "PrefixExpr",
                 "PathExpr",
                 "BinExpr",
+                "CastExpr",
                 "ParenExpr",
                 "CallExpr",
                 "MethodCallExpr",

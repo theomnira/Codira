@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{CompletionContext, Completions, DotAccess};
 
 /// Complete dot accesses, i.e. fields. Adds `CompletionItems` to `result`.
@@ -127,4 +126,3 @@ mod tests {
         ), @"fd bar i32");
     }
 }
-

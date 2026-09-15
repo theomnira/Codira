@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 pub use inkwell::{builder::Builder, context::Context, module::Module, OptimizationLevel};
 
 pub use crate::{
@@ -19,6 +18,7 @@ pub use crate::{
 /// wrapper around LLVM.
 mod code_gen;
 mod db;
+mod eidos_fold;
 #[macro_use]
 mod ir;
 mod assembly;
@@ -37,4 +37,3 @@ pub mod mir_codegen;
 mod module_group;
 mod module_partition;
 pub(crate) mod type_info;
-

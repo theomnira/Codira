@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::ops::Add;
 
 use crate::{
@@ -14,10 +13,15 @@ use crate::{
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum PrefixOp {
-    /// The `not` operator for logical inversion
+    /// The `!` operator for logical inversion. Operates on `bool` only --
+    /// bitwise complement is `~` ([`PrefixOp::BitNot`]), kept separate so
+    /// `!x` on an integer is a type error rather than silently meaning
+    /// something different from what it does on a bool.
     Not,
     /// The `-` operator for negation
     Neg,
+    /// The `~` operator for bitwise complement. Integers only.
+    BitNot,
 }
 
 impl ast::PrefixExpr {
@@ -25,6 +29,7 @@ impl ast::PrefixExpr {
         match self.op_token()?.kind() {
             T![!] => Some(PrefixOp::Not),
             T![-] => Some(PrefixOp::Neg),
+            T![~] => Some(PrefixOp::BitNot),
             _ => None,
         }
     }
@@ -274,4 +279,3 @@ impl ast::IndexExpr {
         children(self).nth(1)
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_paths::AbsPathBuf;
 use codira_project::ProjectManifest;
 
@@ -36,4 +35,3 @@ pub enum FilesWatcher {
     Client,
     Notify,
 }
-

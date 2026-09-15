@@ -103,4 +103,3 @@ impl fmt::Debug for TokenText<'_> {
         fmt::Debug::fmt(self.as_str(), f)
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 macro_rules! intrinsics{
     ($($(#[$attr:meta])* pub fn $name:ident($($arg_name:ident:$arg:ty),+) -> $ret:ty;)+) => {
         $(
@@ -36,4 +35,3 @@ macro_rules! intrinsics{
     };
     ($(#[$attr:meta])*) => {}
 }
-

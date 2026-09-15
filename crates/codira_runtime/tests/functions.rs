@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[macro_use]
 mod util;
 
@@ -128,4 +127,3 @@ fn multiple_match_exists_function() {
         )
     );
 }
-

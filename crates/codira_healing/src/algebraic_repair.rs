@@ -10,15 +10,13 @@
 //!   invariant machinery maps a corrupted value back to the nearest valid
 //!   inhabitant of the type using the type's formal algebraic rules.
 //! - `Bst` is a binary search tree whose *value* carries the spec's BST
-//!   invariant ("every node in the left subtree is < the root, every node
-//!   in the right subtree is > the root, the tree is balanced"). The
-//!   invariant is checked on read (here, on demand), and if it is violated
-//!   (by a race, a bit-flip, or a deliberate corruption), `repair` runs the
-//!   routine the spec describes:
-//!     1. Extract every node reachable from the corrupted tree (DFS
-//!        traversal),
-//!     2. Reconstruct the canonical balanced BST from the extracted node
-//!        set,
+//!   invariant ("every node in the left subtree is < the root, every node in
+//!   the right subtree is > the root, the tree is balanced"). The invariant is
+//!   checked on read (here, on demand), and if it is violated (by a race, a
+//!   bit-flip, or a deliberate corruption), `repair` runs the routine the spec
+//!   describes:
+//!     1. Extract every node reachable from the corrupted tree (DFS traversal),
+//!     2. Reconstruct the canonical balanced BST from the extracted node set,
 //!     3. Return the repaired `BinarySearchTree`.
 //! - Result: the same data, repaired structure, zero data loss -- the node
 //!   multiset is preserved exactly (the only thing that can change is that

@@ -4,11 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{cell::RefCell, mem};
 
-use inkwell::types::AnyType;
 use codira_abi as abi;
+use inkwell::types::AnyType;
 
 use crate::{
     ir::types as ir,
@@ -25,7 +24,8 @@ fn abi_struct_sizes() {
     }
 
     // Get target data for the current host
-    let target = codira_target::spec::Target::host_target().expect("unable to determine host target");
+    let target =
+        codira_target::spec::Target::host_target().expect("unable to determine host target");
     let target_data = inkwell::targets::TargetData::create(&target.data_layout);
 
     // Create an LLVM context and type context to work with.
@@ -52,4 +52,3 @@ fn abi_struct_sizes() {
     test_type_size::<abi::TypeLut<'_>, ir::TypeLut<'_>>(&type_context);
     test_type_size::<abi::AssemblyInfo<'_>, ir::AssemblyInfo<'_>>(&type_context);
 }
-

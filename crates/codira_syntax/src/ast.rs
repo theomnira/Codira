@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod expr_extensions;
 #[macro_use]
 mod extensions;
@@ -86,4 +85,3 @@ fn child_opt<P: AstNode, C: AstNode>(parent: &P) -> Option<C> {
 fn children<P: AstNode, C: AstNode>(parent: &P) -> AstChildren<C> {
     AstChildren::new(parent.syntax())
 }
-

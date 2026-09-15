@@ -4,7 +4,5 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod lexer;
 mod parser;
-

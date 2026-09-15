@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_syntax::ast;
 
 use crate::{
@@ -99,4 +98,3 @@ impl HasSource for TypeAlias {
         self.id.lookup(db).source(db)
     }
 }
-

@@ -1,9 +1,12 @@
+use std::{
+    env,
+    ffi::OsStr,
+    io::{self},
+    path::{Path, PathBuf},
+    process::Command,
+};
+
 use semver::Version;
-use std::env;
-use std::ffi::OsStr;
-use std::io::{self};
-use std::path::{Path, PathBuf};
-use std::process::Command;
 
 lazy_static::lazy_static! {
     /// LLVM version used by this version of the crate.
@@ -85,8 +88,7 @@ fn get_system_libraries() -> Vec<String> {
                 // Same as --libnames, foo.lib
                 assert!(
                     flag.ends_with(".lib"),
-                    "system library {:?} does not appear to be a MSVC library file",
-                    flag
+                    "system library {flag:?} does not appear to be a MSVC library file"
                 );
                 &flag[..flag.len() - 4]
             } else {
@@ -100,7 +102,7 @@ fn get_system_libraries() -> Vec<String> {
                         // library object, including the 'lib' prefix that we need to strip.
                         return flag[5..flag.len() - 4].to_owned();
                     }
-                    return flag[2..].to_owned();
+                    return flag.strip_prefix("-l").unwrap_or(flag).to_owned();
                 }
 
                 let maybe_lib = Path::new(&flag);
@@ -126,13 +128,10 @@ fn get_system_libraries() -> Vec<String> {
 
                     stem.trim_start_matches("lib")
                 } else {
-                    panic!(
-                        "Unable to parse result of llvm-config --system-libs: was {:?}",
-                        flag
-                    )
+                    panic!("Unable to parse result of llvm-config --system-libs: was {flag:?}")
                 }
             }
-                .to_owned()
+            .to_owned()
         })
         .chain(get_system_libcpp().map(str::to_owned))
         .collect::<Vec<String>>()
@@ -184,16 +183,14 @@ fn get_link_libraries() -> Vec<String> {
                 // LLVMfoo.lib
                 assert!(
                     name.ends_with(".lib"),
-                    "library name {:?} does not appear to be a MSVC library file",
-                    name
+                    "library name {name:?} does not appear to be a MSVC library file"
                 );
                 &name[..name.len() - 4]
             } else {
                 // libLLVMfoo.a
                 assert!(
                     name.starts_with("lib") && name.ends_with(".a"),
-                    "library name {:?} does not appear to be a static library",
-                    name
+                    "library name {name:?} does not appear to be a static library"
                 );
                 &name[3..name.len() - 2]
             }
@@ -214,7 +211,7 @@ fn get_llvm_cxxflags() -> String {
         "LLVM_SYS_{}_NO_CLEAN_CFLAGS",
         env!("CARGO_PKG_VERSION_MAJOR")
     ))
-        .is_some();
+    .is_some();
     if no_clean || target_env_is("msvc") {
         // MSVC doesn't accept -W... options, so don't try to strip them and
         // possibly strip something that should be retained. Also do nothing if
@@ -239,9 +236,7 @@ fn main() {
     std::env::set_var("CXXFLAGS", get_llvm_cxxflags());
     let mut build = cc::Build::new();
 
-    build
-        .cpp(true)
-        .file("wrapper/lld-c.cpp");
+    build.cpp(true).file("wrapper/lld-c.cpp");
 
     if build.get_compiler().is_like_msvc() {
         build.flag("/std:c++17");
@@ -261,28 +256,28 @@ fn main() {
 
     // Export information to other crates
     println!("cargo:config_path={}", LLVM_CONFIG_PATH.display()); // will be DEP_LLVM_CONFIG_PATH
-    println!("cargo:libdir={}", libdir); // DEP_LLVM_LIBDIR
+    println!("cargo:libdir={libdir}"); // DEP_LLVM_LIBDIR
 
     // Link LLVM libraries
-    println!("cargo:rustc-link-search=native={}", libdir);
-    let blacklist = vec!["LLVMLineEditor"];
+    println!("cargo:rustc-link-search=native={libdir}");
+    let blacklist = ["LLVMLineEditor"];
     for name in get_link_libraries()
         .iter()
         .filter(|n| !blacklist.iter().any(|blacklisted| n.contains(*blacklisted)))
     {
-        println!("cargo:rustc-link-lib=static={}", name);
+        println!("cargo:rustc-link-lib=static={name}");
     }
 
     // Link system libraries
     for name in get_system_libraries() {
-        println!("cargo:rustc-link-lib=dylib={}", name);
+        println!("cargo:rustc-link-lib=dylib={name}");
     }
 
     let use_debug_msvcrt = env::var_os(format!(
         "LLVM_SYS_{}_USE_DEBUG_MSVCRT",
         env!("CARGO_PKG_VERSION_MAJOR")
     ))
-        .is_some();
+    .is_some();
     if cfg!(target_env = "msvc") && (use_debug_msvcrt || is_llvm_debug()) {
         println!("cargo:rustc-link-lib=msvcrtd");
     }

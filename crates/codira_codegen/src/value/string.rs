@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::ffi::{CStr, CString};
 
 use super::{AsValue, BytesOrPtr, Global, IrTypeContext, IrValueContext, TransparentValue, Value};
@@ -86,4 +85,3 @@ impl<'ink> TransparentValue<'ink> for String {
         );
     }
 }
-

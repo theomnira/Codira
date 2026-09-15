@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     ffi::{c_void, CString},
     mem::ManuallyDrop,
@@ -27,8 +26,8 @@ use crate::{
 /// Additional information of a struct [`Type`].
 ///
 /// Ownership of this type lies with the [`Type`] that created this instance. As
-/// long as the original type is not released through [`codira_type_release`] this
-/// type stays alive.
+/// long as the original type is not released through [`codira_type_release`]
+/// this type stays alive.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct StructInfo(pub(super) *const c_void, pub(super) *const c_void);
@@ -206,8 +205,8 @@ pub unsafe extern "C" fn codira_struct_type_fields(
 /// Information of a field of a struct [`Type`].
 ///
 /// Ownership of this type lies with the [`Type`] that created this instance. As
-/// long as the original type is not released through [`codira_type_release`] this
-/// type stays alive.
+/// long as the original type is not released through [`codira_type_release`]
+/// this type stays alive.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct Field(*const c_void, *const c_void);
@@ -304,10 +303,12 @@ mod test {
     use super::{
         super::{codira_type_kind, codira_type_release, Type, TypeKind},
         codira_field_name, codira_field_offset, codira_field_type, codira_fields_destroy,
-        codira_struct_type_fields, codira_struct_type_guid, codira_struct_type_memory_kind, Field, Fields,
-        StructInfo,
+        codira_struct_type_fields, codira_struct_type_guid, codira_struct_type_memory_kind, Field,
+        Fields, StructInfo,
     };
-    use crate::{r#type::ffi::r#struct::codira_fields_find_by_name, HasStaticType, StructTypeBuilder};
+    use crate::{
+        r#type::ffi::r#struct::codira_fields_find_by_name, HasStaticType, StructTypeBuilder,
+    };
 
     unsafe fn struct_type(ty: Type) -> (Type, StructInfo) {
         assert_getter1!(codira_type_kind(ty, ty_kind));
@@ -548,4 +549,3 @@ mod test {
         assert!(unsafe { codira_type_release(ty) }.is_ok());
     }
 }
-

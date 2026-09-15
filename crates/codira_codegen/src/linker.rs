@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     borrow::Cow,
     env, fmt,
@@ -298,4 +297,3 @@ impl Linker for MsvcLinker {
         run_lld("COFF", "lld-link", &self.args).map_err(LinkerError::LinkError)
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use clap::{Parser, Subcommand};
 use tools::{Overwrite, Result};
 
@@ -37,4 +36,3 @@ fn main() -> Result<()> {
     }
     Ok(())
 }
-

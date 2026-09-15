@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::borrow::Cow;
 
 use codira_abi::StructMemoryKind;
@@ -13,7 +12,7 @@ use text_size::TextRange;
 
 use crate::{
     ast::{self, child_opt, AstNode, NameOwner},
-    SyntaxKind, SyntaxNode, TokenText, T,
+    SyntaxKind, SyntaxNode, TokenText,
 };
 
 impl ast::Name {
@@ -165,7 +164,7 @@ impl ast::StructDef {
     }
 
     /// Whether this declaration carries the `data` modifier (Kotlin-style
-    /// `data class`/`data struct`; see spec/LANGUAGE_SPEC.md section 15).
+    /// `data class`/`data struct`; see `spec/LANGUAGE_SPEC.md` section 15).
     /// `data` derives structural equality, hashing, and a description
     /// (Debug/toString-analog) from the struct's fields.
     pub fn is_data(&self) -> bool {
@@ -271,4 +270,3 @@ impl ast::TypeAliasDef {
         TextRange::new(start, end)
     }
 }
-

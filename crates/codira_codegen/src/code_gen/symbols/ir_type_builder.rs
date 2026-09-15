@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{cell::RefCell, sync::Arc};
 
 use inkwell::{module::Linkage, values::UnnamedAddress};
@@ -76,4 +75,3 @@ impl<'ink, 'a, 'b, 'c> TypeIdBuilder<'ink, 'a, 'b, 'c> {
         }
     }
 }
-

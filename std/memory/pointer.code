@@ -18,11 +18,11 @@
 //   let val = p.read();   // 42
 // =============================================================================
 
-use std.builtin.traits;
-use std.builtin.types;
+import std.builtin.traits;
+import std.builtin.types;
 
 // A safe, typed pointer to a single value of type T.
-public struct(value) Pointer[T] {
+public struct Pointer[T] {
     // Raw address stored as usize.  Zero represents null.
     _addr: usize,
 }

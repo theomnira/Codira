@@ -4,12 +4,11 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
+use codira_paths::RelativePath;
 use itertools::Itertools;
 use la_arena::{Arena, Idx};
-use codira_paths::RelativePath;
 use rustc_hash::FxHashMap;
 
 use self::diagnostics::ModuleTreeDiagnostic;
@@ -240,4 +239,3 @@ mod test {
         insta::assert_debug_snapshot!(module_tree);
     }
 }
-

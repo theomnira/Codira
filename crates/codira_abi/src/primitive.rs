@@ -126,4 +126,3 @@ impl HasStaticTypeId for isize {
         i32::type_id()
     }
 }
-

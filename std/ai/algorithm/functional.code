@@ -9,17 +9,17 @@
 // and compiler support (kgen/dtype/MLIR) to compile. Use with Caution!
 // ============================================================================
 
-use std.ai._plugin;
-use std.ai.algorithm.backend.cpu;
-use std.ai.algorithm.backend.gpu;
-use std.ai.gpu.host.info;
-use std.ai.gpu.host;
-use std.ai.runtime.tracing;
-use std.collections.string.string_span;
-use std.math;
-use std.sys.info;
-use std.utils.coord;
-use std.utils.index;
+import std.ai._plugin;
+import std.ai.algorithm.backend.cpu;
+import std.ai.algorithm.backend.gpu;
+import std.ai.gpu.host.info;
+import std.ai.gpu.host;
+import std.ai.runtime.tracing;
+import std.collections.string.string_span;
+import std.math;
+import std.sys.info;
+import std.utils.coord;
+import std.utils.index;
 
 // ===----------------------------------------------------------------------=== #
 // Copyright (c) 2026, Modular Inc. All rights reserved.
@@ -116,7 +116,7 @@ func _get_start_indices_of_nth_subvolume[ rank: Int, //, subvolume_rank: Int = 1
                                 return {0}
 
                 res = {}
-                // If the index type is unsigned, be sure to use unsigned div/mod operations.
+                // If the index type is unsigned, be sure to import unsigned div/mod operations.
                 var curr_index = IntType(n);
 
                 for i in reversed(range(1, rank - subvolume_rank)):;
@@ -384,7 +384,7 @@ stencil_gpu = gpu._stencil_impl_gpu;
 // ComputeFinalizeFnType: A closure finalizes the output value from the stencil result.
 //
 // Args:
-// ctx: The DeviceContext to use for GPU execution.
+// ctx: The DeviceContext to import for GPU execution.
 // shape: The shape of the output buffer.
 // input_shape: The shape of the input buffer.
 // map_func: Closure mapping output points to input co-domain bounds.

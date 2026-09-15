@@ -5,8 +5,8 @@
 //! Functionality:
 //! - Original module doc-comment restored below.
 //!
-//! Type information in Codira is stored globally. This allows type information to
-//! be stored easily.
+//! Type information in Codira is stored globally. This allows type information
+//! to be stored easily.
 //!
 //! A type is referred to with [`Type`]. A `Type` holds a reference to the
 //! underlying data which is managed by the runtime. `Type`s can be freely
@@ -36,8 +36,8 @@ use std::{
     },
 };
 
-use itertools::izip;
 use codira_abi::{self as abi, static_type_map::StaticTypeMap};
+use itertools::izip;
 use once_cell::sync::Lazy;
 use parking_lot::{lock_api::MutexGuard, Mutex, RawMutex, RwLock};
 
@@ -1291,4 +1291,3 @@ impl<T: HasStaticType + 'static> HasStaticType for *const T {
             .call_once::<T, _>(|| T::type_info().pointer_type(false))
     }
 }
-

@@ -9,18 +9,18 @@
 //! - The spec's patcher rewrites *machine code* (a two-byte nop -> call on
 //!   x86-64 with a locked `CMPXCHG16B`; instruction-cache sync on `AArch64`).
 //!   This crate is explicitly *not* a JIT (see `lib.rs`), so the executable
-//!   counterpart provided here patches the *strategy slot* a guarded call
-//!   site dispatches through: an atomic pointer-sized slot in its own
-//!   table. A reader observes either the old strategy or the new one, never
-//!   a torn half-patch -- which is the paper's "atomicity without stopping
-//!   other threads".
-//! - [`StrategyPatch::patch`] applies a new strategy via
-//!   compare-and-swap, the direct Rust analogue of the locked CMPXCHG the
-//!   spec describes. `patch_no_target` / optimistic retry is left as an
-//!   exercise; callers use `patch` or the CAS-based `patch_if` directly.
-//! - [`StrategyInterner`] keeps the AOT-precompiled strategy set stable so
-//!   tag <-> function resolution is a cache-friendly look-up, mirroring
-//!   "the same mechanism hot-reloading already uses".
+//!   counterpart provided here patches the *strategy slot* a guarded call site
+//!   dispatches through: an atomic pointer-sized slot in its own table. A
+//!   reader observes either the old strategy or the new one, never a torn
+//!   half-patch -- which is the paper's "atomicity without stopping other
+//!   threads".
+//! - [`StrategyPatch::patch`] applies a new strategy via compare-and-swap, the
+//!   direct Rust analogue of the locked CMPXCHG the spec describes.
+//!   `patch_no_target` / optimistic retry is left as an exercise; callers use
+//!   `patch` or the CAS-based `patch_if` directly.
+//! - [`StrategyInterner`] keeps the AOT-precompiled strategy set stable so tag
+//!   <-> function resolution is a cache-friendly look-up, mirroring "the same
+//!   mechanism hot-reloading already uses".
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -173,8 +173,7 @@ impl PatchSites {
     /// `interner` must outlive every added slot.
     pub unsafe fn add(&mut self, interner: &StrategyInterner, initial_tag: usize) -> usize {
         let idx = self.slots.len();
-        self.slots
-            .push(PatchableSlot::new(interner, initial_tag));
+        self.slots.push(PatchableSlot::new(interner, initial_tag));
         idx
     }
 

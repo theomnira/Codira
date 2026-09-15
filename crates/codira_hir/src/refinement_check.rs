@@ -42,6 +42,7 @@
 //! reference to a name other than the binder, ...) is reported as
 //! `NotChecked`, not silently treated as satisfiable.
 
+use ast::BinOp;
 use codira_smt::{Context, SatResult};
 use codira_syntax::ast;
 
@@ -96,25 +97,42 @@ fn lower_expr<'ctx>(
             let inner = lower_expr(ctx, binder_name, &p.expr()?)?;
             match (p.op_kind()?, inner) {
                 (ast::PrefixOp::Not, SmtValue::Bool(b)) => Some(SmtValue::Bool(b.not())),
-                (ast::PrefixOp::Neg, SmtValue::Int(i)) => Some(SmtValue::Int(ctx.int_lit(0).sub(i))),
+                (ast::PrefixOp::Neg, SmtValue::Int(i)) => {
+                    Some(SmtValue::Int(ctx.int_lit(0).sub(i)))
+                }
                 _ => None,
             }
         }
         ast::ExprKind::BinExpr(b) => {
             let lhs = lower_expr(ctx, binder_name, &b.lhs()?)?;
             let rhs = lower_expr(ctx, binder_name, &b.rhs()?)?;
-            use ast::BinOp;
             match (b.op_kind()?, lhs, rhs) {
                 (BinOp::Add, SmtValue::Int(l), SmtValue::Int(r)) => Some(SmtValue::Int(l.add(r))),
-                (BinOp::Subtract, SmtValue::Int(l), SmtValue::Int(r)) => Some(SmtValue::Int(l.sub(r))),
-                (BinOp::Multiply, SmtValue::Int(l), SmtValue::Int(r)) => Some(SmtValue::Int(l.mul(r))),
+                (BinOp::Subtract, SmtValue::Int(l), SmtValue::Int(r)) => {
+                    Some(SmtValue::Int(l.sub(r)))
+                }
+                (BinOp::Multiply, SmtValue::Int(l), SmtValue::Int(r)) => {
+                    Some(SmtValue::Int(l.mul(r)))
+                }
                 (BinOp::Less, SmtValue::Int(l), SmtValue::Int(r)) => Some(SmtValue::Bool(l.lt(r))),
-                (BinOp::LessEqual, SmtValue::Int(l), SmtValue::Int(r)) => Some(SmtValue::Bool(l.le(r))),
-                (BinOp::Greater, SmtValue::Int(l), SmtValue::Int(r)) => Some(SmtValue::Bool(l.gt(r))),
-                (BinOp::GreatEqual, SmtValue::Int(l), SmtValue::Int(r)) => Some(SmtValue::Bool(l.ge(r))),
-                (BinOp::Equals, SmtValue::Int(l), SmtValue::Int(r)) => Some(SmtValue::Bool(l.eq(r))),
-                (BinOp::BooleanAnd, SmtValue::Bool(l), SmtValue::Bool(r)) => Some(SmtValue::Bool(l.and(r))),
-                (BinOp::BooleanOr, SmtValue::Bool(l), SmtValue::Bool(r)) => Some(SmtValue::Bool(l.or(r))),
+                (BinOp::LessEqual, SmtValue::Int(l), SmtValue::Int(r)) => {
+                    Some(SmtValue::Bool(l.le(r)))
+                }
+                (BinOp::Greater, SmtValue::Int(l), SmtValue::Int(r)) => {
+                    Some(SmtValue::Bool(l.gt(r)))
+                }
+                (BinOp::GreatEqual, SmtValue::Int(l), SmtValue::Int(r)) => {
+                    Some(SmtValue::Bool(l.ge(r)))
+                }
+                (BinOp::Equals, SmtValue::Int(l), SmtValue::Int(r)) => {
+                    Some(SmtValue::Bool(l.eq(r)))
+                }
+                (BinOp::BooleanAnd, SmtValue::Bool(l), SmtValue::Bool(r)) => {
+                    Some(SmtValue::Bool(l.and(r)))
+                }
+                (BinOp::BooleanOr, SmtValue::Bool(l), SmtValue::Bool(r)) => {
+                    Some(SmtValue::Bool(l.or(r)))
+                }
                 _ => None,
             }
         }
@@ -138,8 +156,9 @@ pub(crate) fn check_satisfiable(binder_name: &str, predicate: &ast::Expr) -> Ref
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use codira_syntax::{ast::ModuleItemOwner, SourceFile};
+
+    use super::*;
 
     fn predicate_of(src: &str) -> ast::Expr {
         let file = SourceFile::parse(src).tree();

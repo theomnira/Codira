@@ -4,7 +4,7 @@
 //
 // Tuples hold a fixed number of heterogeneously-typed elements.  This
 // module defines explicit struct wrappers (Tuple2 through Tuple8) that
-// carry named accessors and trait implementations, for use wherever the
+// carry named accessors and trait implementations, for import wherever the
 // grammar's lack of an anonymous tuple *type* (see below) needs a
 // workaround.
 //
@@ -15,7 +15,7 @@
 // to parse cleanly via codira_syntax::SourceFile::parse (zero SyntaxErrors).
 // Findings from actually running the parser, not assumed:
 //
-// 1. `struct(value) TupleN[...]` -> `struct TupleN[...]`; every
+// 1. `struct TupleN[...]` -> `struct TupleN[...]`; every
 //    `func TupleN[...].method(...)` moved into one
 //    `extend TupleN[...] { }` block per arity, dropping the `TupleN[...].`
 //    prefix (top-level `func Type.method` is not valid current syntax).

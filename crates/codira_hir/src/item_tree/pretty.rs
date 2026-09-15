@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{fmt, fmt::Write};
 
 use crate::{
@@ -318,4 +317,3 @@ impl Write for Printer<'_> {
         Ok(())
     }
 }
-

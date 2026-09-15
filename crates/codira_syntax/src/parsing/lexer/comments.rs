@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{
     parsing::lexer::cursor::Cursor,
     SyntaxKind::{self, COMMENT},
@@ -52,4 +51,3 @@ fn bump_until_eol(cursor: &mut Cursor<'_>) {
         }
     }
 }
-

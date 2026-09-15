@@ -10,15 +10,17 @@
 //! - Maintains an exponentially-weighted moving average (EWMA) of recovery
 //!   latencies, with configurable decay (default 0.95 per the spec).
 //! - Records recent healing latencies in a ring buffer.
-//! - Tracks per-strategy Bayesian success probabilities via a Beta
-//!   posterior (alpha, beta), updated on each healing attempt.
+//! - Tracks per-strategy Bayesian success probabilities via a Beta posterior
+//!   (alpha, beta), updated on each healing attempt.
 //!
 //! The fingerprint is the shared-memory state the JIT adaptive healing
 //! engine reads and writes on the fast path. All updates are atomic with
 //! respect to the engine via an internal mutex.
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 /// The default EWMA decay factor, from Section 5.2 of the spec.
 const DEFAULT_EWMA_DECAY: f64 = 0.95;
@@ -99,7 +101,10 @@ impl FaultFingerprint {
     /// `success_count + fail_count <= fault_count` by construction.
     pub fn record_recovery(&mut self, strategy: &str, succeeded: bool, latency: Duration) {
         // Update the per-strategy Beta posterior.
-        let entry = self.beta_posterior.entry(strategy.to_owned()).or_insert((1.0, 1.0));
+        let entry = self
+            .beta_posterior
+            .entry(strategy.to_owned())
+            .or_insert((1.0, 1.0));
         if succeeded {
             entry.0 += 1.0;
             self.success_count += 1;
@@ -211,8 +216,7 @@ mod tests {
         }
         let estimate = fp.mttr_estimate();
         // After enough samples the EWMA should be within 5% of the truth.
-        let err = (estimate.as_nanos() as i128 - stable.as_nanos() as i128).abs()
-            as f64
+        let err = (estimate.as_nanos() as i128 - stable.as_nanos() as i128).abs() as f64
             / stable.as_nanos() as f64;
         assert!(err < 0.05, "mttr={estimate:?} vs true={stable:?}");
     }
@@ -238,6 +242,9 @@ mod tests {
             fp.record_recovery("a", true, Duration::ZERO);
         }
         let p = fp.p_success("a").unwrap();
-        assert!(p > 0.95, "20 straight successes should push p high, got {p}");
+        assert!(
+            p > 0.95,
+            "20 straight successes should push p high, got {p}"
+        );
     }
 }

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::SymbolKind;
 
 /// A `CompletionItem` describes a single completion variant in an editor.
@@ -150,4 +149,3 @@ impl Builder {
         self.relevance = relevance;
     }
 }
-

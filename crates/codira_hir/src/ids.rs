@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::hash::{Hash, Hasher};
 
 use codira_hir_input::ModuleId;
@@ -217,4 +216,3 @@ impl From<StructId> for VariantId {
         VariantId::StructId(value)
     }
 }
-

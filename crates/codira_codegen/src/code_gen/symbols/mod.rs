@@ -4,19 +4,17 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{collections::HashSet, convert::TryFrom, ffi::CString};
 
+use codira_abi as abi;
+use codira_hir::{HirDatabase, TyKind};
 use inkwell::{attributes::Attribute, module::Linkage, types::AnyType};
 use ir_type_builder::TypeIdBuilder;
 use itertools::Itertools;
-use codira_abi as abi;
-use codira_hir::{HirDatabase, TyKind};
 
 use crate::{
     ir::{
         dispatch_table::{DispatchTable, DispatchableFunction},
-        function,
         ty::{guid_from_struct, HirTypeCache},
         type_table::TypeTable,
         types as ir,
@@ -42,7 +40,7 @@ fn gen_prototype_from_function<'ink>(
     // Internalize the name of the function prototype
     let name_str = CString::new(name.clone())
         .expect("function prototype name is not a valid CString")
-        .intern(format!("fn_sig::<{}>::name", &name), context);
+        .intern(format!("fn_sig::<{name}>::name"), context);
 
     // Get the `ir::TypeInfo` pointer for the return type of the function
     let fn_sig = function.ty(db).callable_sig(db).unwrap();
@@ -58,7 +56,7 @@ fn gen_prototype_from_function<'ink>(
         .params()
         .iter()
         .map(|ty| ir_type_builder.construct_from_type_id(&hir_types.type_id(ty)))
-        .into_const_private_pointer_or_null(format!("fn_sig::<{}>::arg_types", &name), context);
+        .into_const_private_pointer_or_null(format!("fn_sig::<{name}>::arg_types"), context);
 
     ir::FunctionPrototype {
         name: name_str.as_value(context),
@@ -70,8 +68,8 @@ fn gen_prototype_from_function<'ink>(
     }
 }
 
-/// Construct a `CodiraFunctionPrototype` struct for the specified dispatch table
-/// function.
+/// Construct a `CodiraFunctionPrototype` struct for the specified dispatch
+/// table function.
 fn gen_prototype_from_dispatch_entry<'ink>(
     context: &IrValueContext<'ink, '_, '_>,
     function: &DispatchableFunction<'ink>,
@@ -427,7 +425,7 @@ fn gen_get_info_fn<'ink>(
     module_info: ir::ModuleInfo<'ink>,
     dispatch_table: ir::DispatchTable<'ink>,
     type_lut: ir::TypeLut<'ink>,
-    optimization_level: inkwell::OptimizationLevel,
+    _optimization_level: inkwell::OptimizationLevel,
     dependencies: Vec<String>,
 ) {
     let target = db.target();
@@ -500,32 +498,42 @@ fn gen_get_info_fn<'ink>(
         .expect("could not retrieve `num_dependencies` from result struct");
 
     // Assign the struct values one by one.
-    builder.build_store(symbols_addr, module_info.as_value(context).value);
-    builder.build_store(dispatch_table_addr, dispatch_table.as_value(context).value);
-    builder.build_store(type_lut_addr, type_lut.as_value(context).value);
-    builder.build_store(
-        dependencies_addr,
-        dependencies
-            .iter()
-            .enumerate()
-            .map(|(idx, name)| {
-                CString::new(name.as_str())
-                    .expect("could not convert dependency name to string")
-                    .intern(format!("dependency{idx}"), context)
-                    .as_value(context)
-            })
-            .into_const_private_pointer_or_null("dependencies", context)
-            .value,
-    );
-    builder.build_store(
-        num_dependencies_addr,
-        context.context.i32_type().const_int(
-            u32::try_from(dependencies.len())
-                .expect("too many dependencies")
-                .into(),
-            false,
-        ),
-    );
+    builder
+        .build_store(symbols_addr, module_info.as_value(context).value)
+        .expect("failed to build store");
+    builder
+        .build_store(dispatch_table_addr, dispatch_table.as_value(context).value)
+        .expect("failed to build store");
+    builder
+        .build_store(type_lut_addr, type_lut.as_value(context).value)
+        .expect("failed to build store");
+    builder
+        .build_store(
+            dependencies_addr,
+            dependencies
+                .iter()
+                .enumerate()
+                .map(|(idx, name)| {
+                    CString::new(name.as_str())
+                        .expect("could not convert dependency name to string")
+                        .intern(format!("dependency{idx}"), context)
+                        .as_value(context)
+                })
+                .into_const_private_pointer_or_null("dependencies", context)
+                .value,
+        )
+        .expect("failed to build store");
+    builder
+        .build_store(
+            num_dependencies_addr,
+            context.context.i32_type().const_int(
+                u32::try_from(dependencies.len())
+                    .expect("too many dependencies")
+                    .into(),
+                false,
+            ),
+        )
+        .expect("failed to build store");
 
     // Construct the return statement of the function.
     if target.options.is_like_windows {
@@ -564,13 +572,15 @@ fn gen_set_allocator_handle_fn(context: &IrValueContext<'_, '_, '_>) {
     builder.position_at_end(body_ir);
 
     if let Some(allocator_handle_global) = context.module.get_global("allocatorHandle") {
-        builder.build_store(
-            allocator_handle_global.as_pointer_value(),
-            set_allocator_handle_fn.get_nth_param(0).unwrap(),
-        );
+        builder
+            .build_store(
+                allocator_handle_global.as_pointer_value(),
+                set_allocator_handle_fn.get_nth_param(0).unwrap(),
+            )
+            .expect("failed to build store");
     }
 
-    builder.build_return(None);
+    builder.build_return(None).expect("failed to build return");
 }
 
 /// Generates a `get_version` method that returns the current abi version.
@@ -586,6 +596,7 @@ fn gen_get_version_fn(context: &IrValueContext<'_, '_, '_>) {
     let body_ir = context.context.append_basic_block(get_version_fn, "body");
     builder.position_at_end(body_ir);
 
-    builder.build_return(Some(&abi::ABI_VERSION.as_value(context).value));
+    builder
+        .build_return(Some(&abi::ABI_VERSION.as_value(context).value))
+        .expect("failed to build return");
 }
-

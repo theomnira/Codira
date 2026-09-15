@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::parsing::lexer::cursor::Cursor;
 
 pub(crate) fn scan_string(c: char, cursor: &mut Cursor<'_>) {
@@ -27,4 +26,3 @@ pub(crate) fn scan_string(c: char, cursor: &mut Cursor<'_>) {
         }
     }
 }
-

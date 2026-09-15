@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_hir::AstDatabase;
@@ -108,4 +107,3 @@ impl AnalysisSnapshot {
         self.db.catch_canceled(f)
     }
 }
-

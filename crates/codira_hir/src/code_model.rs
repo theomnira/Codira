@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod function;
 mod r#impl;
 mod module;
@@ -81,4 +80,3 @@ impl DefWithStruct {
         }
     }
 }
-

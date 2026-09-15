@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
     AsValue, AsValueInto, ConcreteValueType, IrTypeContext, IrValueContext, SizedValueType, Value,
     ValueType,
@@ -63,4 +62,3 @@ tuple_impls! { A B C D E F G H I }
 tuple_impls! { A B C D E F G H I J }
 tuple_impls! { A B C D E F G H I J K }
 tuple_impls! { A B C D E F G H I J K L }
-

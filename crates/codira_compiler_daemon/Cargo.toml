@@ -20,8 +20,4 @@ codira_codegen = { version = "0.6.0-dev", path = "../codira_codegen" }
 codira_compiler = { version = "0.6.0-dev", path = "../codira_compiler" }
 codira_project = { version = "0.6.0-dev", path = "../codira_project" }
 codira_hir = { version = "0.6.0-dev", path = "../codira_hir" }
-notify = { version = "4.0", default-features = false }
-
-# Enable std feature for winapi through feature unification to ensure notify uses the correct `c_void` type
-[target.'cfg(windows)'.dependencies]
-winapi = { workspace = true, features = ["std"] }
+notify = { workspace = true }

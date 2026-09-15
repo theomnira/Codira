@@ -65,4 +65,3 @@ fn validate_extend_items(node: ast::Extend, errors: &mut Vec<SyntaxError>) {
         }
     }
 }
-

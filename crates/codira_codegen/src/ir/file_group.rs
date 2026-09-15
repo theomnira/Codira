@@ -4,11 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::collections::BTreeMap;
 
-use inkwell::{module::Module, types::PointerType, values::UnnamedAddress, AddressSpace};
 use codira_hir::{HasVisibility, ModuleDef};
+use inkwell::{module::Module, types::PointerType, values::UnnamedAddress, AddressSpace};
 use rustc_hash::FxHashSet;
 
 use super::{
@@ -155,7 +154,7 @@ pub(crate) fn gen_file_group_ir<'ink>(
 
     // Create the allocator handle global value
     let allocator_handle_type = if needs_alloc {
-        let allocator_handle_type = code_gen.context.i8_type().ptr_type(AddressSpace::default());
+        let allocator_handle_type = code_gen.context.ptr_type(AddressSpace::default());
         let global = llvm_module.add_global(allocator_handle_type, None, "allocatorHandle");
         global.set_initializer(&allocator_handle_type.const_null());
         global.set_unnamed_address(UnnamedAddress::Global);
@@ -172,4 +171,3 @@ pub(crate) fn gen_file_group_ir<'ink>(
         referenced_modules,
     }
 }
-

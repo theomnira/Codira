@@ -35,6 +35,8 @@ bytemuck = { workspace = true }
 codira_hir = { version = "0.6.0-dev", path = "../codira_hir" }
 codira_hir_input = { version = "0.6.0-dev", path = "../codira_hir_input" }
 codira_mir = { version = "0.6.0-dev", path = "../codira_mir" }
+codira_egraph = { version = "0.6.0-dev", path = "../codira_egraph" }
+codira_comptime = { version = "0.6.0-dev", path = "../codira_comptime" }
 inkwell = { workspace = true, features = ["llvm22-1"], default-features = false }
 itertools = { workspace = true }
 codira_codegen_macros = { version = "0.6.0-dev", path = "../codira_codegen_macros" }
@@ -46,6 +48,7 @@ codira_paths = { version = "0.6.0-dev", path = "../codira_paths" }
 rustc-hash = { workspace = true }
 salsa = { workspace = true }
 smallvec = { workspace = true, features = ["union"] }
+smol_str = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 

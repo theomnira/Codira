@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use inkwell::{types::PointerType, AddressSpace};
 
 use super::{
@@ -91,4 +90,3 @@ impl<'ink> AsBytesAndPtrs<'ink> for f64 {
         vec![bytemuck::cast_ref::<f64, [u8; 8]>(self).to_vec().into()]
     }
 }
-

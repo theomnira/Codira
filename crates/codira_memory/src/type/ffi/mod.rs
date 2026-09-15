@@ -5,9 +5,8 @@
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
 //!
-#![allow(dead_code)]
-
 //! Defines an FFI compatible type interface for type information.
+#![allow(dead_code)]
 
 use std::{
     ffi::{c_void, CString},
@@ -357,8 +356,8 @@ mod test {
     use crate::{
         ffi::{codira_types_destroy, Types},
         r#type::ffi::{
-            codira_type_add_reference, codira_type_alignment, codira_type_array_type, codira_type_pointer_type,
-            codira_type_size,
+            codira_type_add_reference, codira_type_alignment, codira_type_array_type,
+            codira_type_pointer_type, codira_type_size,
         },
         HasStaticType,
     };
@@ -598,4 +597,3 @@ mod test {
         assert!(unsafe { codira_types_destroy(types) }.is_ok());
     }
 }
-

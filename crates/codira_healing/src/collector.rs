@@ -12,14 +12,14 @@
 //!      the counterpart of the VEH handler in [`crate::trap`].
 //!   2. **Guard calls** -- [`FaultEventCollector::record_guard_fault`], the
 //!      path a patched guard stub uses to report a fault.
-//!   3. **TTL probes** -- [`TtlWatch`]/[`FaultEventCollector::ttl_tick`],
-//!      the background watchdog that sends a probe to each module's health
-//!      port and converts a missed deadline into a module-level fault.
+//!   3. **TTL probes** -- [`TtlWatch`]/[`FaultEventCollector::ttl_tick`], the
+//!      background watchdog that sends a probe to each module's health port and
+//!      converts a missed deadline into a module-level fault.
 //! - `FaultEventCollector::record_memory_snapshot` runs the **monotonicity
-//!   test** from Section 5.2: if a module's memory usage at snapshot
-//!   boundaries is non-decreasing across the last `W` snapshots, a
-//!   `MemoryLeak` fault event is synthesized and the module-level
-//!   `IsolateAndRestart` healing is scheduled by whoever drains the queue.
+//!   test** from Section 5.2: if a module's memory usage at snapshot boundaries
+//!   is non-decreasing across the last `W` snapshots, a `MemoryLeak` fault
+//!   event is synthesized and the module-level `IsolateAndRestart` healing is
+//!   scheduled by whoever drains the queue.
 //!
 //! The queue is a parking-lot `Mutex`-guarded `VecDeque`; the collector is
 //! thread-safe so the trap path, guard dispatchers, and watchdog can all
@@ -28,8 +28,10 @@
 //! Where the TTL probe's "alive" signal should come from is left to the
 //! host: [`TtlWatch::acknowledge`] is the hook a module's health port calls.
 
-use std::collections::{HashMap, VecDeque};
-use std::time::{Duration, Instant};
+use std::{
+    collections::{HashMap, VecDeque},
+    time::{Duration, Instant},
+};
 
 use parking_lot::Mutex;
 
@@ -74,8 +76,7 @@ pub struct TtlProbe {
 
 /// A watchdog on module health (Section 5.1 item 3: "A background watchdog
 /// thread sends periodic TTL signals to module health ports").
-#[derive(Debug, Clone)]
-#[derive(Default)]
+#[derive(Debug, Clone, Default)]
 pub struct TtlWatch {
     probes: HashMap<u64, TtlProbe>,
 }
@@ -124,7 +125,6 @@ impl TtlWatch {
         self.probes.remove(&site_id);
     }
 }
-
 
 /// Sinks fault signals from all sources, holds the TTL watchdog, and runs
 /// the monotonicity test; feeding the engine's fingerprint state.
@@ -265,10 +265,7 @@ impl FaultEventCollector {
         // Monotonicity test: usage[i] <= usage[i+1] for all i (non-
         // decreasing series => resilience grows without bound => leak).
         let slice = series.make_contiguous();
-        if slice
-            .windows(2)
-            .all(|w| w[0] <= w[1])
-        {
+        if slice.windows(2).all(|w| w[0] <= w[1]) {
             let event = FaultEvent {
                 site_id,
                 fault_class: FAULT_CLASS_MEMORY_LEAK,

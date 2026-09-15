@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use itertools::Itertools;
 
 use crate::{
@@ -69,7 +68,7 @@ fn completions_to_string(completions: Vec<CompletionItem>) -> String {
         .min(16);
     itertools::Itertools::intersperse(
         completions.into_iter().map(|item| {
-            let mut result = format!("{} {}", item.kind.tag(), &item.label);
+            let mut result = format!("{} {}", item.kind.tag(), item.label);
             if let Some(detail) = item.detail {
                 result = format!("{:width$} {}", result, detail, width = label_width + 3);
             }
@@ -79,4 +78,3 @@ fn completions_to_string(completions: Vec<CompletionItem>) -> String {
     )
     .collect()
 }
-

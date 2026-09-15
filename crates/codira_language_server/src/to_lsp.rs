@@ -4,15 +4,14 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     path::{Component, Path, Prefix},
     str::FromStr,
 };
 
-use lsp_types::Url;
 use codira_hir_input::{FileId, LineIndex};
 use codira_syntax::{TextRange, TextSize};
+use lsp_types::Url;
 
 use crate::{
     completion::{CompletionItem, CompletionItemKind},
@@ -171,4 +170,3 @@ pub(crate) fn completion_item_kind(
         CompletionItemKind::Attribute => lsp_types::CompletionItemKind::ENUM_MEMBER,
     }
 }
-

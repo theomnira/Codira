@@ -9,7 +9,7 @@
 
 let BITS_PER_WORD: usize = 64;
 
-struct(gc) BitSet {
+class BitSet {
     words:     Pointer[u64],
     num_words: usize,
     capacity:  usize,  // max bit index + 1

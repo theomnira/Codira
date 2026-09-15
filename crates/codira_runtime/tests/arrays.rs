@@ -4,10 +4,9 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
-use itertools::Itertools;
 use codira_runtime::{ArrayRef, StructRef};
 use codira_test::CompileAndRunTestDriver;
+use itertools::Itertools;
 
 #[test]
 fn arrays() {
@@ -121,4 +120,3 @@ fn construct_array_simple() {
     assert_eq!(array.len(), test_data.len());
     assert_eq!(array.iter().collect_vec(), test_data);
 }
-

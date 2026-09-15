@@ -7,8 +7,8 @@
 //!
 //! Functionality:
 //! - Defines the fault classes a guarded site may encounter (`FaultClass`).
-//! - Defines the ordered recovery strategies from Table 1 of the HERACLES
-//!   spec: `ReturnDefault`, `ReturnCached`, `RetryWithBackoff`,
+//! - Defines the ordered recovery strategies from Table 1 of the HERACLES spec:
+//!   `ReturnDefault`, `ReturnCached`, `RetryWithBackoff`,
 //!   `SubstituteAlternate`, `DegradeGracefully`, `IsolateAndRestart`, and
 //!   `PropagateToParent`.
 //! - Defines the four healing tiers with their latency budgets (Section 6.2).
@@ -19,6 +19,12 @@
 //! resolves these from source annotations and the engine consumes them at
 //! runtime. What it deliberately does *not* do is execute anything -- the
 //! execution semantics live in [`crate::engine`].
+
+#![allow(clippy::match_same_arms, clippy::type_complexity, clippy::unused_self)]
+//! Lint notes: several matches here are *tables* mapping distinct
+//! strategies/faults onto a shared tier or recovery action -- collapsing
+//! the arms would erase which case is which. The `type_complexity`
+//! sites are graph adjacency maps whose shape is the point.
 
 use std::fmt;
 
@@ -162,7 +168,9 @@ impl HealingStrategy {
     /// The tier this strategy executes in.
     pub fn tier(&self) -> HealingTier {
         match self {
-            HealingStrategy::ReturnDefault | HealingStrategy::ReturnCached => HealingTier::Expression,
+            HealingStrategy::ReturnDefault | HealingStrategy::ReturnCached => {
+                HealingTier::Expression
+            }
             HealingStrategy::RetryWithBackoff(_) | HealingStrategy::SubstituteAlternate(_) => {
                 HealingTier::Function
             }
@@ -319,9 +327,8 @@ mod tests {
 
     #[test]
     fn contract_requires_at_least_one_strategy() {
-        let result = std::panic::catch_unwind(|| {
-            HealingContract::new(1, vec![FaultClass::Timeout], vec![])
-        });
+        let result =
+            std::panic::catch_unwind(|| HealingContract::new(1, vec![FaultClass::Timeout], vec![]));
         assert!(result.is_err());
     }
 
@@ -351,14 +358,29 @@ mod tests {
 
     #[test]
     fn strategy_tiers_match_spec_table_1() {
-        assert_eq!(HealingStrategy::ReturnDefault.tier(), HealingTier::Expression);
-        assert_eq!(HealingStrategy::ReturnCached.tier(), HealingTier::Expression);
-        assert_eq!(HealingStrategy::RetryWithBackoff(3).tier(), HealingTier::Function);
+        assert_eq!(
+            HealingStrategy::ReturnDefault.tier(),
+            HealingTier::Expression
+        );
+        assert_eq!(
+            HealingStrategy::ReturnCached.tier(),
+            HealingTier::Expression
+        );
+        assert_eq!(
+            HealingStrategy::RetryWithBackoff(3).tier(),
+            HealingTier::Function
+        );
         assert_eq!(
             HealingStrategy::SubstituteAlternate("f2").tier(),
             HealingTier::Function
         );
-        assert_eq!(HealingStrategy::DegradeGracefully.tier(), HealingTier::Module);
-        assert_eq!(HealingStrategy::IsolateAndRestart.tier(), HealingTier::Module);
+        assert_eq!(
+            HealingStrategy::DegradeGracefully.tier(),
+            HealingTier::Module
+        );
+        assert_eq!(
+            HealingStrategy::IsolateAndRestart.tier(),
+            HealingTier::Module
+        );
     }
 }

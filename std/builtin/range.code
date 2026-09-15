@@ -2,7 +2,7 @@
 // std/builtin/range.code — Range types for iteration and slicing
 // =============================================================================
 //
-// Provides Range, RangeInclusive, and SteppedRange for use with `for`
+// Provides Range, RangeInclusive, and SteppedRange for import with `for`
 // loops, slice indexing, and general sequence generation.
 //
 // Migration note (2026-08-20): rewritten from pre-redesign syntax (`use`,

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::anyhow;
@@ -89,4 +88,3 @@ fn create_tera() -> tera::Tera {
 
     res
 }
-

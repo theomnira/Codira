@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira::{run_with_args, ExitStatus};
 
 /// Main entry point for the `codira` executable.
@@ -17,4 +16,3 @@ fn main() -> Result<(), anyhow::Error> {
     };
     Ok(())
 }
-

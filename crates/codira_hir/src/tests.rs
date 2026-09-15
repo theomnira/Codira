@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_hir_input::{PackageId, SourceDatabase, WithFixture};
@@ -53,4 +52,3 @@ fn check_package_defs_does_not_change() {
         );
     }
 }
-

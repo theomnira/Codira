@@ -10,7 +10,7 @@
 //! for `eq(self, other: Self) -> bool` and splices it onto the end of the
 //! file text before it's parsed (see this module's call site in `db.rs`'s
 //! `parse_query`). This means the derived method goes through the exact
-//! same parse -> item_tree -> body-lowering -> type-inference -> codegen
+//! same parse -> `item_tree` -> body-lowering -> type-inference -> codegen
 //! path as any hand-written `extend` block -- no separate merge mechanism,
 //! no synthetic `FileId`, nothing downstream needs to know this method
 //! wasn't typed by hand. (The alternative -- hand-building HIR nodes with
@@ -37,7 +37,10 @@
 //! byte-for-byte unchanged.
 
 use codira_syntax::{
-    ast::{self, AstNode, GenericParamsOwner, ModuleItemOwner, NameOwner, StructKind, TypeAscriptionOwner},
+    ast::{
+        self, AstNode, GenericParamsOwner, ModuleItemOwner, NameOwner, StructKind,
+        TypeAscriptionOwner,
+    },
     SourceFile,
 };
 
@@ -85,7 +88,10 @@ pub(crate) fn synthesize(text: &str) -> Option<String> {
                 break;
             };
             let ty_text = ty.syntax().text().to_string();
-            if !PrimitiveType::ALL.iter().any(|(_, p)| p.as_str() == ty_text) {
+            if !PrimitiveType::ALL
+                .iter()
+                .any(|(_, p)| p.as_str() == ty_text)
+            {
                 all_primitive = false;
                 break;
             }
@@ -131,7 +137,10 @@ mod tests {
 
     #[test]
     fn non_data_struct_derives_nothing() {
-        assert_eq!(synthesize("struct Foo { x: i32 } // data mentioned in a comment"), None);
+        assert_eq!(
+            synthesize("struct Foo { x: i32 } // data mentioned in a comment"),
+            None
+        );
     }
 
     #[test]
@@ -144,10 +153,7 @@ mod tests {
 
     #[test]
     fn non_primitive_field_is_skipped() {
-        assert_eq!(
-            synthesize("data struct Wrapper { inner: Other }"),
-            None
-        );
+        assert_eq!(synthesize("data struct Wrapper { inner: Other }"), None);
     }
 
     #[test]
@@ -166,10 +172,8 @@ mod tests {
 
     #[test]
     fn plain_struct_alongside_data_struct_is_unaffected() {
-        let derived = synthesize(
-            "data struct Point { x: f64, y: f64 }\nstruct Plain { x: f64 }",
-        )
-        .unwrap();
+        let derived =
+            synthesize("data struct Point { x: f64, y: f64 }\nstruct Plain { x: f64 }").unwrap();
         assert!(derived.contains("extend Point"));
         assert!(!derived.contains("extend Plain"));
     }

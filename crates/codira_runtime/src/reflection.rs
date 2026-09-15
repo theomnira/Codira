@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_memory::{HasStaticType, Type};
 
 use crate::{marshal::Marshal, Runtime};
@@ -147,4 +146,3 @@ where
         <*mut T as HasStaticType>::type_info().name()
     }
 }
-

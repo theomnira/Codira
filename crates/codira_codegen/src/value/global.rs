@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::marker::PhantomData;
 
 use inkwell::{
@@ -182,4 +181,3 @@ impl<'ink, T> AsValueInto<'ink, inkwell::values::PointerValue<'ink>> for Global<
         self.value.as_pointer_value()
     }
 }
-

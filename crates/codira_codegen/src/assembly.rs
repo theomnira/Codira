@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{path::Path, sync::Arc};
 
 use anyhow::anyhow;
@@ -178,4 +177,3 @@ pub(crate) fn build_assembly_ir(
 
     Arc::new(AssemblyIr { file })
 }
-

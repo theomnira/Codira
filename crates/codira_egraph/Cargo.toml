@@ -1,0 +1,18 @@
+[package]
+name = "codira_egraph"
+description = "Equality-saturation optimizer for codira_mir: an egg-style e-graph (Willsey et al. 2021) that explores every rewrite simultaneously and extracts the cheapest equivalent program under an explicit cost model -- the generalization of KGEN's cost-model-search vision (modular/KGEN/docs/DesignOverview.md)"
+keywords = ["game", "hot-reloading", "language", "codira", "compiler"]
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+codira_mir = { version = "0.6.0-dev", path = "../codira_mir" }
+rustc-hash = { workspace = true, features = ["std"] }
+smallvec = { workspace = true }
