@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     ptr::{self, NonNull},
     sync::Arc,
@@ -34,9 +33,9 @@ impl RawStruct {
     }
 }
 
-/// Type-agnostic wrapper for interoperability with a Codira struct. This is merely
-/// a reference to the Codira struct, that will be garbage collected unless it is
-/// rooted.
+/// Type-agnostic wrapper for interoperability with a Codira struct. This is
+/// merely a reference to the Codira struct, that will be garbage collected
+/// unless it is rooted.
 #[derive(Clone)]
 pub struct StructRef<'s> {
     raw: RawStruct,
@@ -112,7 +111,8 @@ impl<'s> StructRef<'s> {
         };
 
         // SAFETY: The offset in the ABI is always valid.
-        let field_ptr = unsafe { self.get_field_ptr_unchecked::<T::CodiraType>(field_info.offset()) };
+        let field_ptr =
+            unsafe { self.get_field_ptr_unchecked::<T::CodiraType>(field_info.offset()) };
         Ok(Marshal::marshal_from_ptr(
             field_ptr,
             self.runtime,
@@ -155,7 +155,8 @@ impl<'s> StructRef<'s> {
         }
 
         // SAFETY: The offset in the ABI is always valid.
-        let field_ptr = unsafe { self.get_field_ptr_unchecked::<T::CodiraType>(field_info.offset()) };
+        let field_ptr =
+            unsafe { self.get_field_ptr_unchecked::<T::CodiraType>(field_info.offset()) };
         let old = Marshal::marshal_from_ptr(field_ptr, self.runtime, &field_info.ty());
         Marshal::marshal_to_ptr(value, field_ptr, &field_info.ty());
         Ok(old)
@@ -195,7 +196,8 @@ impl<'s> StructRef<'s> {
         }
 
         // SAFETY: The offset in the ABI is always valid.
-        let field_ptr = unsafe { self.get_field_ptr_unchecked::<T::CodiraType>(field_info.offset()) };
+        let field_ptr =
+            unsafe { self.get_field_ptr_unchecked::<T::CodiraType>(field_info.offset()) };
         Marshal::marshal_to_ptr(value, field_ptr, &field_info.ty());
         Ok(())
     }
@@ -283,8 +285,8 @@ impl ReturnTypeReflection for StructRef<'_> {
     }
 }
 
-/// Type-agnostic wrapper for interoperability with a Codira struct, that has been
-/// rooted. To marshal, obtain a `StructRef` for the `RootedStruct`.
+/// Type-agnostic wrapper for interoperability with a Codira struct, that has
+/// been rooted. To marshal, obtain a `StructRef` for the `RootedStruct`.
 #[derive(Clone)]
 pub struct RootedStruct {
     handle: GcRootPtr,
@@ -306,4 +308,3 @@ impl RootedStruct {
         StructRef::new(RawStruct(self.handle.handle()), runtime)
     }
 }
-

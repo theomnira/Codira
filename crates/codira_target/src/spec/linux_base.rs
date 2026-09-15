@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::spec::{LinkerFlavor, TargetOptions};
 
 pub fn opts() -> TargetOptions {
@@ -16,4 +15,3 @@ pub fn opts() -> TargetOptions {
         ..Default::default()
     }
 }
-

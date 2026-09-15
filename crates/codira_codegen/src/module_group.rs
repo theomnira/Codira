@@ -76,7 +76,8 @@ impl ModuleGroup {
         Self::new(db, module.full_name(db), vec![module])
     }
 
-    /// Returns true if the specified `codira_hir::Module` is part of this group.
+    /// Returns true if the specified `codira_hir::Module` is part of this
+    /// group.
     pub fn contains(&self, module: codira_hir::Module) -> bool {
         self.modules.contains(&module)
     }
@@ -125,7 +126,8 @@ impl ModuleGroup {
         function.is_extern(db) || !self.modules.contains(&function.module(db))
     }
 
-    /// Returns the `codira_hir::FileId`s that are included in this module group.
+    /// Returns the `codira_hir::FileId`s that are included in this module
+    /// group.
     pub fn files<'s>(&'s self, db: &'s dyn HirDatabase) -> impl Iterator<Item = FileId> + 's {
         self.ordered_modules
             .iter()
@@ -137,4 +139,3 @@ impl ModuleGroup {
         codira_paths::RelativePathBuf::from(self.name.replace("::", "$"))
     }
 }
-

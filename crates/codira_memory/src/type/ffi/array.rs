@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::c_void, mem::ManuallyDrop, ops::Deref, sync::Arc};
 
 use codira_capi_utils::{codira_error_try, try_deref_mut, ErrorHandle};
@@ -17,8 +16,8 @@ use crate::{
 /// Additional information of an array [`Type`].
 ///
 /// Ownership of this type lies with the [`Type`] that created this instance. As
-/// long as the original type is not released through [`codira_type_release`] this
-/// type stays alive.
+/// long as the original type is not released through [`codira_type_release`]
+/// this type stays alive.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct ArrayInfo(pub(super) *const c_void, pub(super) *const c_void);
@@ -86,7 +85,8 @@ mod test {
     use super::{codira_array_type_element_type, ArrayInfo};
     use crate::{
         ffi::{
-            codira_type_array_type, codira_type_equal, codira_type_kind, codira_type_release, Type, TypeKind,
+            codira_type_array_type, codira_type_equal, codira_type_kind, codira_type_release, Type,
+            TypeKind,
         },
         r#type::ffi::primitive::{codira_type_primitive, PrimitiveType},
     };
@@ -141,4 +141,3 @@ mod test {
         unsafe { codira_type_release(ffi_f32) };
     }
 }
-

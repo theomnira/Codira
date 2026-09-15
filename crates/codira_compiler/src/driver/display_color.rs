@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::env;
 #[cfg(target_os = "windows")]
 use std::process::Command;
@@ -56,11 +55,11 @@ fn cmd_supports_ansi() -> bool {
     Command::new("cmd")
         .args(["/C", "ver"])
         .output()
-        .map_or(false, |output| {
-            String::from_utf8(output.stdout).map_or(false, |windows_version| {
+        .is_ok_and(|output| {
+            String::from_utf8(output.stdout).is_ok_and(|windows_version| {
                 let windows_version = windows_version
                     .split(' ') // split to drop "Microsoft", "Windows" and "[Version" from string
-                    .last() // latest element contains Windows version with noisy ']' char
+                    .next_back() // latest element contains Windows version with noisy ']' char
                     .map(|window_version| {
                         let mut window_version: String = window_version.trim().to_string();
 
@@ -89,4 +88,3 @@ fn cmd_supports_ansi() -> bool {
             })
         })
 }
-

@@ -4,9 +4,14 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{collections::HashMap, sync::Arc};
 
+use codira_abi as abi;
+use codira_hir::{
+    ArithOp, BinaryOp, Body, CmpOp, Expr, ExprId, HirDatabase, HirDisplay, InferenceResult,
+    Literal, LogicOp, Name, Ordering, Pat, PatId, Path, ResolveBitness, Resolver, Statement,
+    TyKind, UnaryOp, ValueNs,
+};
 use inkwell::{
     basic_block::BasicBlock,
     builder::Builder,
@@ -16,12 +21,6 @@ use inkwell::{
         GlobalValue, IntValue, PointerValue, StructValue,
     },
     AddressSpace, FloatPredicate, IntPredicate,
-};
-use codira_abi as abi;
-use codira_hir::{
-    ArithOp, BinaryOp, Body, CmpOp, Expr, ExprId, HirDatabase, HirDisplay, InferenceResult,
-    Literal, LogicOp, Name, Ordering, Pat, PatId, Path, ResolveBitness, Resolver, Statement,
-    TyKind, UnaryOp, ValueNs,
 };
 
 use crate::{
@@ -50,6 +49,10 @@ pub(crate) struct ExternalGlobals<'ink> {
 
 pub(crate) struct BodyIrGenerator<'db, 'ink, 't> {
     context: &'ink Context,
+    /// The module being built. Needed to *declare* LLVM intrinsics --
+    /// saturating float-to-int casts call `llvm.fpto{s,u}i.sat`, which
+    /// must be declared in the module before it can be referenced.
+    module: &'t inkwell::module::Module<'ink>,
     db: &'db dyn HirDatabase,
     body: Arc<Body>,
     infer: Arc<InferenceResult>,
@@ -72,6 +75,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         context: &'ink Context,
+        module: &'t inkwell::module::Module<'ink>,
         db: &'db dyn HirDatabase,
         function: (codira_hir::Function, FunctionValue<'ink>),
         function_map: &'t HashMap<codira_hir::Function, FunctionValue<'ink>>,
@@ -94,6 +98,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         BodyIrGenerator {
             context,
+            module,
             db,
             body,
             infer,
@@ -115,6 +120,20 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
     /// Generates IR for the body of the function.
     pub fn gen_fn_body(&mut self) {
+        // Eidos fast path: if the whole body reduces to a compile-time
+        // constant (after inlining, unrolling, equality saturation and
+        // interpretation -- see `crate::eidos_fold`), emit just that
+        // constant. Declining is always safe: the ordinary lowering
+        // below produces correct code either way.
+        if let Some(value) =
+            crate::eidos_fold::fold_to_constant(self.db, self.hir_function, self.fn_value)
+        {
+            self.builder
+                .build_return(Some(&value))
+                .expect("failed to build return for a constant-folded function");
+            return;
+        }
+
         // Iterate over all parameters and their type and store them so we can reference
         // them later in code.
         for (i, (pat, _ty)) in self.body.params().iter().enumerate() {
@@ -125,8 +144,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     let name = name.to_string();
                     let param = self.fn_value.get_nth_param(i as u32).unwrap();
                     let builder = self.new_alloca_builder();
-                    let param_ptr = builder.build_alloca(param.get_type(), &name);
-                    builder.build_store(param_ptr, param);
+                    let param_ptr = builder
+                        .build_alloca(param.get_type(), &name)
+                        .expect("failed to build alloca for parameter");
+                    builder
+                        .build_store(param_ptr, param)
+                        .expect("failed to build store for parameter");
                     self.pat_to_local.insert(*pat, param_ptr);
                     self.pat_to_name.insert(*pat, name);
                 }
@@ -163,9 +186,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .clone();
         if !block_ret_type.is_never() {
             if fn_ret_type.is_empty() {
-                self.builder.build_return(None);
+                self.builder
+                    .build_return(None)
+                    .expect("failed to build return");
             } else if let Some(value) = ret_value {
-                self.builder.build_return(Some(&value));
+                self.builder
+                    .build_return(Some(&value))
+                    .expect("failed to build return");
             }
         }
     }
@@ -180,7 +207,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 let param = self.fn_value.get_nth_param(idx as u32).unwrap();
                 if let Some(s) = ty.as_struct() {
                     if s.data(self.db).memory_kind == abi::StructMemoryKind::Value {
-                        deref_heap_value(&self.builder, param)
+                        deref_heap_value(&self.builder, param, self.hir_types.get_struct_type(s))
                     } else {
                         param
                     }
@@ -204,7 +231,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .clone();
 
             if fn_ret_type.is_empty() {
-                self.builder.build_return(None);
+                self.builder
+                    .build_return(None)
+                    .expect("failed to build return");
             } else if let Some(value) = ret_value {
                 let ret_value = if let Some(hir_struct) = fn_ret_type.as_struct() {
                     if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
@@ -215,7 +244,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 } else {
                     value
                 };
-                self.builder.build_return(Some(&ret_value));
+                self.builder
+                    .build_return(Some(&ret_value))
+                    .expect("failed to build return");
             }
         }
     }
@@ -289,8 +320,156 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             } => self.gen_field(expr, *receiver_expr, name),
             Expr::Array(exprs) => self.gen_array(expr, exprs).map(Into::into),
             Expr::Index { base, index } => self.gen_index(expr, *base, *index),
-            Expr::Missing => unimplemented!("unimplemented expr type {:?}", &body[expr]),
+            Expr::Cast { expr: operand, .. } => self.gen_cast(expr, *operand),
+            Expr::Missing => {
+                unimplemented!("unimplemented expr type {:?}", &body[expr])
+            }
         }
+    }
+
+    /// Generates IR for an `as` cast.
+    ///
+    /// The choice of machine operation is delegated to
+    /// [`codira_hir::check_cast`] -- the *same* function
+    /// `codira_hir::mir_lower` consults when it selects an
+    /// `OpKind::Cast`. Duplicating the matrix here would let the two
+    /// lowering paths disagree about what `as` means, which is exactly
+    /// the class of divergence a single shared decision function exists
+    /// to prevent.
+    ///
+    /// See `spec/LANGUAGE_SPEC.md` section 18 for the normative semantics:
+    /// integer conversions wrap, and float-to-integer conversions
+    /// saturate (with NaN mapping to zero), which is why the latter lower
+    /// to LLVM's `llvm.fpto{s,u}i.sat` intrinsics rather than the raw
+    /// `fptosi`/`fptoui` instructions -- those are *poison* out of range.
+    fn gen_cast(
+        &mut self,
+        cast_expr: ExprId,
+        operand_expr: ExprId,
+    ) -> Option<BasicValueEnum<'ink>> {
+        use codira_hir::{check_cast, CastCheck, CastOp};
+
+        let value = self.gen_expr(operand_expr)?;
+
+        let source = self.infer[operand_expr].clone();
+        let target = self.infer[cast_expr].clone();
+        let layout = self.db.target_data_layout();
+
+        match check_cast(&source, &target, &layout) {
+            // Same machine representation: the cast is a no-op.
+            CastCheck::Legal(CastOp::Identity) => Some(value),
+            CastCheck::Legal(CastOp::Convert(kind, mode)) => {
+                // A `Checked` cast carries an undischarged proof
+                // obligation (refinement types, milestone M7). `as` never
+                // produces one today; if that changes, emitting it as a
+                // silent wrapping conversion would be precisely the
+                // miscompile the mode exists to prevent.
+                if !matches!(mode, codira_mir::CastMode::Wrapping) {
+                    unimplemented!("checked casts require refinement checking (M7)");
+                }
+                let target_ir = self.hir_types.get_basic_type(&target)?;
+                self.build_cast(kind, value, target_ir)
+            }
+            // An illegal cast is a type error that inference already
+            // reported; code generation only runs on bodies that
+            // type-checked, so reaching here means a diagnostic was
+            // missed upstream.
+            CastCheck::Illegal(_) | CastCheck::Undetermined => {
+                unreachable!("cast that failed type checking reached code generation")
+            }
+        }
+    }
+
+    /// Emits the LLVM instruction for one cast kind.
+    fn build_cast(
+        &self,
+        kind: codira_mir::CastKind,
+        source: BasicValueEnum<'ink>,
+        target: inkwell::types::BasicTypeEnum<'ink>,
+    ) -> Option<BasicValueEnum<'ink>> {
+        use codira_mir::CastKind as K;
+        let b = &self.builder;
+        Some(match kind {
+            K::Trunc => b
+                .build_int_truncate(source.into_int_value(), target.into_int_type(), "trunc")
+                .ok()?
+                .into(),
+            K::Zext => b
+                .build_int_z_extend(source.into_int_value(), target.into_int_type(), "zext")
+                .ok()?
+                .into(),
+            K::Sext => b
+                .build_int_s_extend(source.into_int_value(), target.into_int_type(), "sext")
+                .ok()?
+                .into(),
+            K::FpTrunc => b
+                .build_float_trunc(
+                    source.into_float_value(),
+                    target.into_float_type(),
+                    "fptrunc",
+                )
+                .ok()?
+                .into(),
+            K::FpExt => b
+                .build_float_ext(source.into_float_value(), target.into_float_type(), "fpext")
+                .ok()?
+                .into(),
+            K::SiToFp => b
+                .build_signed_int_to_float(
+                    source.into_int_value(),
+                    target.into_float_type(),
+                    "sitofp",
+                )
+                .ok()?
+                .into(),
+            K::UiToFp => b
+                .build_unsigned_int_to_float(
+                    source.into_int_value(),
+                    target.into_float_type(),
+                    "uitofp",
+                )
+                .ok()?
+                .into(),
+            K::FpToSi | K::FpToUi => self.build_saturating_fp_to_int(
+                source.into_float_value(),
+                target.into_int_type(),
+                matches!(kind, K::FpToSi),
+            )?,
+            K::Bitcast => b.build_bit_cast(source, target, "bitcast").ok()?,
+        })
+    }
+
+    /// Saturating float-to-integer conversion via `llvm.fpto{s,u}i.sat`.
+    ///
+    /// See `spec/LANGUAGE_SPEC.md` section 18.3: out-of-range saturates and
+    /// NaN maps to zero. The raw `fptosi`/`fptoui` instructions are poison
+    /// out of range, and poison propagates through `select`, so clamping
+    /// after the fact would be unsound rather than merely slower.
+    fn build_saturating_fp_to_int(
+        &self,
+        source: FloatValue<'ink>,
+        target: inkwell::types::IntType<'ink>,
+        signed: bool,
+    ) -> Option<BasicValueEnum<'ink>> {
+        let module = self.module;
+        let int_bits = target.get_bit_width();
+        let float_bits = if source.get_type() == self.context.f32_type() {
+            32
+        } else {
+            64
+        };
+        let name = format!(
+            "llvm.fpto{}i.sat.i{int_bits}.f{float_bits}",
+            if signed { 's' } else { 'u' }
+        );
+        let intrinsic = inkwell::intrinsics::Intrinsic::find(&name)?;
+        let declaration =
+            intrinsic.get_declaration(module, &[target.into(), source.get_type().into()])?;
+        self.builder
+            .build_call(declaration, &[source.into()], "fptoint_sat")
+            .ok()?
+            .try_as_basic_value()
+            .basic()
     }
 
     /// Generates an IR value that represents the given `Literal`.
@@ -306,10 +485,18 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
                 let context = self.context;
                 let ir_ty = match ty.resolve(&self.db.target_data_layout()).bitness {
-                    codira_hir::IntBitness::X8 => context.i8_type().const_int(v.value as u64, false),
-                    codira_hir::IntBitness::X16 => context.i16_type().const_int(v.value as u64, false),
-                    codira_hir::IntBitness::X32 => context.i32_type().const_int(v.value as u64, false),
-                    codira_hir::IntBitness::X64 => context.i64_type().const_int(v.value as u64, false),
+                    codira_hir::IntBitness::X8 => {
+                        context.i8_type().const_int(v.value as u64, false)
+                    }
+                    codira_hir::IntBitness::X16 => {
+                        context.i16_type().const_int(v.value as u64, false)
+                    }
+                    codira_hir::IntBitness::X32 => {
+                        context.i32_type().const_int(v.value as u64, false)
+                    }
+                    codira_hir::IntBitness::X64 => {
+                        context.i64_type().const_int(v.value as u64, false)
+                    }
                     codira_hir::IntBitness::X128 => {
                         context.i128_type().const_int_arbitrary_precision(&unsafe {
                             std::mem::transmute::<u128, [u64; 2]>(v.value)
@@ -396,12 +583,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         struct_lit: StructValue<'_>,
     ) -> BasicValueEnum<'ink> {
         let struct_ir_ty = self.hir_types.get_struct_type(hir_struct);
-        let new_fn_ptr = self.dispatch_table.gen_intrinsic_lookup(
+        let (new_fn_ty, new_fn_ptr) = self.dispatch_table.gen_intrinsic_lookup(
             self.external_globals.dispatch_table,
             &self.builder,
             &intrinsics::new,
         );
 
+        // Under opaque pointers every pointer is the same untyped `ptr`, so
+        // the bitcast this used to do (retype for the `new` intrinsic's
+        // `i8*` parameter) is a no-op -- `type_info_ptr` is passed as-is.
         let type_info_ptr = self.type_table.gen_type_info_lookup(
             self.context,
             &self.builder,
@@ -409,48 +599,32 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             self.external_globals.type_table,
         );
 
-        // HACK: We should be able to use pointers for built-in struct types like
-        // `TypeInfo` in intrinsics
-        let type_info_ptr = self.builder.build_bitcast(
-            type_info_ptr,
-            self.context.i8_type().ptr_type(AddressSpace::default()),
-            "type_info_ptr_to_i8_ptr",
-        );
-
         let allocator_handle = self.get_allocator_handle_ptr();
 
         // Safety: we can be sure that the new intrinsic returns a reference.
         let untyped_reference = self
             .builder
-            .build_call(
+            .build_indirect_call(
+                new_fn_ty,
                 new_fn_ptr,
                 &[type_info_ptr.into(), allocator_handle.into()],
                 "ref",
             )
+            .expect("failed to build call to `new` intrinsic")
             .try_as_basic_value()
-            .left()
-            .unwrap()
+            .unwrap_basic()
             .into_pointer_value();
 
-        // Cast the object pointer to the struct type
-        let typed_reference = self
-            .builder
-            .build_bitcast(
-                untyped_reference,
-                struct_ir_ty
-                    .ptr_type(AddressSpace::default())
-                    .ptr_type(AddressSpace::default()),
-                &format!("ref<{}>", hir_struct.name(self.db)),
-            )
-            .into_pointer_value();
-
-        // Construct a reference of the object
-        let reference = RuntimeReferenceValue::from_ptr(typed_reference, struct_ir_ty)
+        // Under opaque pointers, `untyped_reference` needs no further cast
+        // to be treated as `**StructTy` -- see note above.
+        let reference = RuntimeReferenceValue::from_ptr(untyped_reference, struct_ir_ty)
             .expect("unable to construct codira reference type");
 
         // Store the struct value
         let struct_ptr = reference.get_data_ptr(&self.builder);
-        self.builder.build_store(struct_ptr, struct_lit);
+        self.builder
+            .build_store(struct_ptr, struct_lit)
+            .expect("failed to build store for struct literal");
 
         reference.into()
     }
@@ -559,12 +733,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     .hir_types
                     .get_basic_type(&pat_ty)
                     .expect("expected basic type");
-                let ptr = builder.build_alloca(ty, &name.to_string());
+                let ptr = builder
+                    .build_alloca(ty, &name.to_string())
+                    .expect("failed to build alloca for let binding");
                 self.pat_to_local.insert(pat, ptr);
                 self.pat_to_name.insert(pat, name.to_string());
                 if !(pat_ty.is_empty() || pat_ty.is_never()) {
                     if let Some(value) = initializer {
-                        self.builder.build_store(ptr, value);
+                        self.builder
+                            .build_store(ptr, value)
+                            .expect("failed to build store for let binding");
                     };
                 }
             }
@@ -594,7 +772,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     *param
                 } else if let Some(ptr) = self.pat_to_local.get(&pat) {
                     let name = self.pat_to_name.get(&pat).expect("could not find pat name");
-                    self.builder.build_load(*ptr, name)
+                    let pat_ty = self.infer[pat].clone();
+                    let ty = self
+                        .hir_types
+                        .get_basic_type(&pat_ty)
+                        .expect("expected basic type");
+                    self.builder
+                        .build_load(ty, *ptr, name)
+                        .expect("failed to build load for local binding")
                 } else {
                     unreachable!("could not find the pattern..");
                 }
@@ -615,10 +800,42 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let ty = &self.infer[expr];
         if let Some(s) = ty.as_struct() {
             if s.data(self.db).memory_kind == codira_hir::StructMemoryKind::Gc {
-                return deref_heap_value(&self.builder, value);
+                return deref_heap_value(&self.builder, value, self.hir_types.get_struct_type(s));
             }
         }
         value
+    }
+
+    /// The place-context counterpart of [`Self::opt_deref_value`]: for heap
+    /// (GC) structs the place slot holds the GC handle (`**T`), so instead of
+    /// loading the whole struct value this resolves the handle to the *data
+    /// pointer* (`*T`), which callers can GEP into.
+    fn opt_deref_place(
+        &mut self,
+        expr: ExprId,
+        place_ptr: inkwell::values::PointerValue<'ink>,
+    ) -> inkwell::values::PointerValue<'ink> {
+        let ty = &self.infer[expr];
+        if let Some(s) = ty.as_struct() {
+            if s.data(self.db).memory_kind == codira_hir::StructMemoryKind::Gc {
+                let struct_ty = self.hir_types.get_struct_type(s);
+                let handle = self
+                    .builder
+                    .build_load(
+                        self.context.ptr_type(AddressSpace::default()),
+                        place_ptr,
+                        "handle",
+                    )
+                    .expect("failed to build load for GC handle")
+                    .into_pointer_value();
+                // Safety: values of GC struct type are always represented as
+                // a runtime reference handle.
+                let reference =
+                    unsafe { RuntimeReferenceValue::from_ptr_unchecked(handle, struct_ty) };
+                return reference.get_data_ptr(&self.builder);
+            }
+        }
+        place_ptr
     }
 
     /// Generates IR for looking up a certain path expression.
@@ -694,8 +911,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .expect("no value")
             .into_float_value();
         match op {
-            UnaryOp::Neg => Some(self.builder.build_float_neg(value, "neg").into()),
-            UnaryOp::Not => unimplemented!("Operator {:?} is not implemented for float", op),
+            UnaryOp::Neg => Some(
+                self.builder
+                    .build_float_neg(value, "neg")
+                    .expect("failed to build float neg")
+                    .into(),
+            ),
+            UnaryOp::Not | UnaryOp::BitNot => {
+                unimplemented!("Operator {:?} is not implemented for float", op)
+            }
         }
     }
 
@@ -714,12 +938,25 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         match op {
             UnaryOp::Neg => {
                 if signedness == codira_hir::Signedness::Signed {
-                    Some(self.builder.build_int_neg(value, "neg").into())
+                    Some(
+                        self.builder
+                            .build_int_neg(value, "neg")
+                            .expect("failed to build int neg")
+                            .into(),
+                    )
                 } else {
                     unimplemented!("Operator {:?} is not implemented for unsigned integer", op)
                 }
             }
-            UnaryOp::Not => Some(self.builder.build_not(value, "not").into()),
+            // Both `!` (on an integer) and `~` are the bitwise complement
+            // at the machine level; inference is what keeps `~` off
+            // non-integers and `!` meaningful on bools.
+            UnaryOp::Not | UnaryOp::BitNot => Some(
+                self.builder
+                    .build_not(value, "not")
+                    .expect("failed to build not")
+                    .into(),
+            ),
             //_ => unimplemented!("Operator {:?} is not implemented for integer", op),
         }
     }
@@ -732,7 +969,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .expect("no value")
             .into_int_value();
         match op {
-            UnaryOp::Not => Some(self.builder.build_not(value, "not").into()),
+            // Both `!` (on an integer) and `~` are the bitwise complement
+            // at the machine level; inference is what keeps `~` off
+            // non-integers and `!` meaningful on bools.
+            UnaryOp::Not | UnaryOp::BitNot => Some(
+                self.builder
+                    .build_not(value, "not")
+                    .expect("failed to build not")
+                    .into(),
+            ),
             UnaryOp::Neg => unimplemented!("Operator {:?} is not implemented for boolean", op),
         }
     }
@@ -760,7 +1005,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder.build_store(place, rhs);
+                self.builder
+                    .build_store(place, rhs)
+                    .expect("failed to build store");
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(op) => Some(self.gen_logic_bin_op(lhs, rhs, op).into()),
@@ -815,6 +1062,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 Some(
                     self.builder
                         .build_float_compare(predicate, lhs, rhs, name)
+                        .expect("failed to build float compare")
                         .into(),
                 )
             }
@@ -824,7 +1072,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder.build_store(place, rhs);
+                self.builder
+                    .build_store(place, rhs)
+                    .expect("failed to build store");
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(_) => {
@@ -862,7 +1112,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder.build_store(place, rhs);
+                self.builder
+                    .build_store(place, rhs)
+                    .expect("failed to build store");
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(_) => {
@@ -893,7 +1145,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder.build_store(place, rhs);
+                self.builder
+                    .build_store(place, rhs)
+                    .expect("failed to build store");
                 Some(self.gen_empty())
             }
             _ => unimplemented!("Operator {:?} is not implemented for struct", op),
@@ -922,7 +1176,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder.build_store(place, rhs);
+                self.builder
+                    .build_store(place, rhs)
+                    .expect("failed to build store");
                 Some(self.gen_empty())
             }
             _ => unimplemented!("Operator {:?} is not implemented for struct", op),
@@ -935,7 +1191,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         rhs: IntValue<'ink>,
         op: ArithOp,
     ) -> IntValue<'ink> {
-        match op {
+        (match op {
             ArithOp::BitAnd => self.builder.build_and(lhs, rhs, "bit_and"),
             ArithOp::BitOr => self.builder.build_or(lhs, rhs, "bit_or"),
             ArithOp::BitXor => self.builder.build_xor(lhs, rhs, "bit_xor"),
@@ -943,7 +1199,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 "Assignment with {:?} operator is not implemented for boolean",
                 op
             ),
-        }
+        })
+        .expect("failed to build boolean bit operation")
     }
 
     fn gen_cmp_bin_op_int(
@@ -998,7 +1255,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             ),
         };
 
-        self.builder.build_int_compare(predicate, lhs, rhs, name)
+        self.builder
+            .build_int_compare(predicate, lhs, rhs, name)
+            .expect("failed to build int compare")
     }
 
     fn gen_arith_bin_op_int(
@@ -1008,18 +1267,22 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         op: ArithOp,
         signedness: codira_hir::Signedness,
     ) -> IntValue<'ink> {
-        match op {
+        (match op {
             ArithOp::Add => self.builder.build_int_add(lhs, rhs, "add"),
             ArithOp::Subtract => self.builder.build_int_sub(lhs, rhs, "sub"),
             ArithOp::Divide => match signedness {
-                codira_hir::Signedness::Signed => self.builder.build_int_signed_div(lhs, rhs, "div"),
+                codira_hir::Signedness::Signed => {
+                    self.builder.build_int_signed_div(lhs, rhs, "div")
+                }
                 codira_hir::Signedness::Unsigned => {
                     self.builder.build_int_unsigned_div(lhs, rhs, "div")
                 }
             },
             ArithOp::Multiply => self.builder.build_int_mul(lhs, rhs, "mul"),
             ArithOp::Remainder => match signedness {
-                codira_hir::Signedness::Signed => self.builder.build_int_signed_rem(lhs, rhs, "rem"),
+                codira_hir::Signedness::Signed => {
+                    self.builder.build_int_signed_rem(lhs, rhs, "rem")
+                }
                 codira_hir::Signedness::Unsigned => {
                     self.builder.build_int_unsigned_rem(lhs, rhs, "rem")
                 }
@@ -1032,7 +1295,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             ArithOp::BitAnd => self.builder.build_and(lhs, rhs, "bit_and"),
             ArithOp::BitOr => self.builder.build_or(lhs, rhs, "bit_or"),
             ArithOp::BitXor => self.builder.build_xor(lhs, rhs, "bit_xor"),
-        }
+        })
+        .expect("failed to build int arithmetic operation")
     }
 
     fn gen_arith_bin_op_float(
@@ -1041,7 +1305,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         rhs: FloatValue<'ink>,
         op: ArithOp,
     ) -> FloatValue<'ink> {
-        match op {
+        (match op {
             ArithOp::Add => self.builder.build_float_add(lhs, rhs, "add"),
             ArithOp::Subtract => self.builder.build_float_sub(lhs, rhs, "sub"),
             ArithOp::Divide => self.builder.build_float_div(lhs, rhs, "div"),
@@ -1054,7 +1318,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             | ArithOp::BitXor => {
                 unreachable!("Operator {:?} is not implemented for float", op)
             }
-        }
+        })
+        .expect("failed to build float arithmetic operation")
     }
 
     fn gen_logic_bin_op(
@@ -1063,10 +1328,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         rhs: IntValue<'ink>,
         op: LogicOp,
     ) -> IntValue<'ink> {
-        match op {
+        (match op {
             LogicOp::And => self.builder.build_and(lhs, rhs, "and"),
             LogicOp::Or => self.builder.build_or(lhs, rhs, "or"),
-        }
+        })
+        .expect("failed to build logic operation")
     }
 
     /// Given an expression generate code that results in a memory address that
@@ -1142,17 +1408,20 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 })
                 .collect();
 
-            let ptr_value = self.dispatch_table.gen_function_lookup(
+            let (fn_ty, fn_ptr) = self.dispatch_table.gen_function_lookup(
                 self.db,
                 self.external_globals.dispatch_table,
                 &self.builder,
                 function,
             );
-            self.builder.build_call(
-                ptr_value,
-                &boxed_args,
-                &function.name(self.db).to_string(),
-            )
+            self.builder
+                .build_indirect_call(
+                    fn_ty,
+                    fn_ptr,
+                    &boxed_args,
+                    &function.name(self.db).to_string(),
+                )
+                .expect("failed to build indirect call")
         } else {
             let llvm_function = self.function_map.get(&function).unwrap_or_else(|| {
                 panic!(
@@ -1162,14 +1431,17 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             });
             self.builder
                 .build_call(*llvm_function, args, &function.name(self.db).to_string())
+                .expect("failed to build call")
         };
 
-        let ret_value = call_site.try_as_basic_value().left();
+        let ret_value = call_site.try_as_basic_value().basic();
 
         if self.should_use_dispatch_table(function) {
             if let Some(hir_struct) = sig.ret().as_struct() {
                 if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
-                    return ret_value.map(|value| deref_heap_value(&self.builder, value));
+                    let struct_ty = self.hir_types.get_struct_type(hir_struct);
+                    return ret_value
+                        .map(|value| deref_heap_value(&self.builder, value, struct_ty));
                 }
             }
         }
@@ -1205,13 +1477,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // Build the actual branching IR for the if statement
         let else_block = else_block_and_expr.map_or(merge_block, |e| e.0);
         self.builder
-            .build_conditional_branch(condition_ir, then_block, else_block);
+            .build_conditional_branch(condition_ir, then_block, else_block)
+            .expect("failed to build conditional_branch");
 
         // Fill the then block
         self.builder.position_at_end(then_block);
         let then_block_ir = self.gen_expr(then_branch);
         if !self.infer[then_branch].is_never() {
-            self.builder.build_unconditional_branch(merge_block);
+            self.builder
+                .build_unconditional_branch(merge_block)
+                .expect("failed to build unconditional_branch");
         }
         then_block = self.builder.get_insert_block().unwrap();
 
@@ -1223,7 +1498,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             self.builder.position_at_end(else_block);
             let result_ir = self.gen_expr(*else_branch);
             if result_ir.is_some() {
-                self.builder.build_unconditional_branch(merge_block);
+                self.builder
+                    .build_unconditional_branch(merge_block)
+                    .expect("failed to build unconditional_branch");
             }
             Some((result_ir, self.builder.get_insert_block().unwrap()))
         } else {
@@ -1238,7 +1515,10 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // Construct phi block if a value was returned
         if let Some(then_block_ir) = then_block_ir {
             if let Some((Some(else_block_ir), else_block)) = else_ir_and_block {
-                let phi = self.builder.build_phi(then_block_ir.get_type(), "iftmp");
+                let phi = self
+                    .builder
+                    .build_phi(then_block_ir.get_type(), "iftmp")
+                    .expect("failed to build phi");
                 phi.add_incoming(&[(&then_block_ir, then_block), (&else_block_ir, else_block)]);
                 Some(phi.as_basic_value())
             } else {
@@ -1268,9 +1548,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         // Construct a return statement from the returned value of the body
         if let Some(value) = ret_value {
-            self.builder.build_return(Some(&value));
+            self.builder
+                .build_return(Some(&value))
+                .expect("failed to build return");
         } else {
-            self.builder.build_return(None);
+            self.builder
+                .build_return(None)
+                .expect("failed to build return");
         }
 
         None
@@ -1295,7 +1579,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     self.builder.get_insert_block().unwrap(),
                 )));
                 self.builder
-                    .build_unconditional_branch(loop_info.exit_block);
+                    .build_unconditional_branch(loop_info.exit_block)
+                    .expect("failed to build unconditional_branch");
             }
         } else {
             // If the break expression doesnt contain a break statement. Add a none to the
@@ -1303,7 +1588,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             let loop_info = self.active_loop.as_mut().unwrap();
             loop_info.break_values.push(None);
             self.builder
-                .build_unconditional_branch(loop_info.exit_block);
+                .build_unconditional_branch(loop_info.exit_block)
+                .expect("failed to build unconditional_branch");
         };
 
         None
@@ -1325,7 +1611,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         };
 
         // Replace previous loop info
-        let prev_loop = std::mem::replace(&mut self.active_loop, Some(loop_info));
+        let prev_loop = self.active_loop.replace(loop_info);
 
         // Start generating code inside the loop
         let value = self.gen_expr(block);
@@ -1350,30 +1636,29 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let exit_block = context.append_basic_block(self.fn_value, "afterwhile");
 
         // Insert an explicit fall through from the current block to the condition check
-        self.builder.build_unconditional_branch(cond_block);
+        self.builder
+            .build_unconditional_branch(cond_block)
+            .expect("failed to build unconditional_branch");
 
         // Generate condition block
         self.builder.position_at_end(cond_block);
         let condition_ir = self
             .gen_expr(condition_expr)
             .map(|value| self.opt_deref_value(condition_expr, value));
-        if let Some(condition_ir) = condition_ir {
-            self.builder.build_conditional_branch(
-                condition_ir.into_int_value(),
-                loop_block,
-                exit_block,
-            );
-        } else {
-            // If the condition doesn't return a value, we also immediately return without a
-            // value. This can happen if the expression is a `never` expression.
-            return None;
+        {
+            let condition_ir = condition_ir?;
+            self.builder
+                .build_conditional_branch(condition_ir.into_int_value(), loop_block, exit_block)
+                .expect("failed to build conditional_branch");
         }
 
         // Generate loop block
         self.builder.position_at_end(loop_block);
         let (exit_block, _, value) = self.gen_loop_block_expr(body_expr, exit_block);
         if value.is_some() {
-            self.builder.build_unconditional_branch(cond_block);
+            self.builder
+                .build_unconditional_branch(cond_block)
+                .expect("failed to build unconditional_branch");
         }
 
         // Generate exit block
@@ -1388,13 +1673,17 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let exit_block = context.append_basic_block(self.fn_value, "exit");
 
         // Insert an explicit fall through from the current block to the loop
-        self.builder.build_unconditional_branch(loop_block);
+        self.builder
+            .build_unconditional_branch(loop_block)
+            .expect("failed to build unconditional_branch");
 
         // Generate the body of the loop
         self.builder.position_at_end(loop_block);
         let (exit_block, break_values, value) = self.gen_loop_block_expr(body_expr, exit_block);
         if value.is_some() {
-            self.builder.build_unconditional_branch(loop_block);
+            self.builder
+                .build_unconditional_branch(loop_block)
+                .expect("failed to build unconditional_branch");
         }
 
         if break_values.is_empty() {
@@ -1413,7 +1702,10 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             // generate a phi value. This then assumes that all breaks had
             // values.
             if let Some(Some((value, _))) = break_values.first() {
-                let phi = self.builder.build_phi(value.get_type(), "exit");
+                let phi = self
+                    .builder
+                    .build_phi(value.get_type(), "exit")
+                    .expect("failed to build phi");
                 for (value, block) in break_values.into_iter().map(Option::unwrap) {
                     phi.add_incoming(&[(&value, block)]);
                 }
@@ -1445,13 +1737,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         let field_ir_name = &format!("{hir_struct_name}.{name}");
         if self.is_place_expr(receiver_expr) {
+            let struct_ty = self.hir_types.get_struct_type(hir_struct);
             let receiver_ptr = self.gen_place_expr(receiver_expr)?;
-            let receiver_ptr = self
-                .opt_deref_value(receiver_expr, receiver_ptr.into())
-                .into_pointer_value();
+            let receiver_ptr = self.opt_deref_place(receiver_expr, receiver_ptr);
             let field_ptr = self
                 .builder
                 .build_struct_gep(
+                    struct_ty,
                     receiver_ptr,
                     field_idx,
                     &format!("{hir_struct_name}->{name}"),
@@ -1461,7 +1753,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                         "could not get pointer to field `{hir_struct_name}::{name}` at index {field_idx}"
                     )
                 });
-            Some(self.builder.build_load(field_ptr, field_ir_name))
+            let field_ty = struct_ty
+                .get_field_type_at_index(field_idx)
+                .expect("field index out of bounds");
+            Some(
+                self.builder
+                    .build_load(field_ty, field_ptr, field_ir_name)
+                    .expect("failed to build load for struct field"),
+            )
         } else {
             let receiver_value = self.gen_expr(receiver_expr)?;
             let receiver_value = self.opt_deref_value(receiver_expr, receiver_value);
@@ -1469,12 +1768,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             Some(
                 self.builder
                     .build_extract_value(receiver_struct, field_idx, field_ir_name)
-                    .ok_or_else(|| {
-                        format!(
+                    .unwrap_or_else(|_| {
+                        panic!(
                             "could not extract field {name} (index: {field_idx}) from struct {hir_struct_name}"
                         )
-                    })
-                    .unwrap(),
+                    }),
             )
         }
     }
@@ -1497,12 +1795,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .index(self.db);
 
         let receiver_ptr = self.gen_place_expr(receiver_expr)?;
-        let receiver_ptr = self
-            .opt_deref_value(receiver_expr, receiver_ptr.into())
-            .into_pointer_value();
+        let receiver_ptr = self.opt_deref_place(receiver_expr, receiver_ptr);
         Some(
             self.builder
                 .build_struct_gep(
+                    self.hir_types.get_struct_type(hir_struct),
                     receiver_ptr,
                     field_idx,
                     &format!("{hir_struct_name}->{name}"),
@@ -1523,25 +1820,19 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .as_array()
             .expect("the type of an array literal expression must be an Array");
 
-        let new_array_fn_ptr = self.dispatch_table.gen_intrinsic_lookup(
+        let (new_array_fn_ty, new_array_fn_ptr) = self.dispatch_table.gen_intrinsic_lookup(
             self.external_globals.dispatch_table,
             &self.builder,
             &intrinsics::new_array,
         );
 
+        // No bitcast needed under opaque pointers -- see gen_struct_alloc_on_heap's
+        // note.
         let type_info_ptr = self.type_table.gen_type_info_lookup(
             self.context,
             &self.builder,
             &self.hir_types.type_id(array_ty),
             self.external_globals.type_table,
-        );
-
-        // HACK: We should be able to use pointers for built-in struct types like
-        // `TypeInfo` in intrinsics
-        let type_info_ptr = self.builder.build_bitcast(
-            type_info_ptr,
-            self.context.i8_type().ptr_type(AddressSpace::default()),
-            "type_info_ptr_to_i8_ptr",
         );
 
         let allocator_handle = self.get_allocator_handle_ptr();
@@ -1556,7 +1847,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // *mut std::ffi::c_void`.
         let untyped_array_ptr = self
             .builder
-            .build_call(
+            .build_indirect_call(
+                new_array_fn_ty,
                 new_array_fn_ptr,
                 &[
                     type_info_ptr.into(),
@@ -1565,44 +1857,42 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 ],
                 "ref",
             )
+            .expect("failed to build call to `new_array` intrinsic")
             .try_as_basic_value()
-            .left()
-            .unwrap()
+            .unwrap_basic()
             .into_pointer_value();
 
-        // Cast the object pointer to the array struct type
+        // No cast needed under opaque pointers -- `untyped_array_ptr` is
+        // treated as `**ArrayValueT` directly, see gen_struct_alloc_on_heap.
         let array_ty = self.hir_types.get_array_type(element_ty);
-        let array_ptr = self
-            .builder
-            .build_bitcast(
-                untyped_array_ptr,
-                array_ty
-                    .ptr_type(AddressSpace::default())
-                    .ptr_type(AddressSpace::default()),
-                &format!("ref<[{}]>", element_ty.display(self.db)),
-            )
-            .into_pointer_value();
-
-        let array = RuntimeArrayValue::from_ptr(array_ptr, array_ty)
+        let array = RuntimeArrayValue::from_ptr(untyped_array_ptr, array_ty)
             .expect("unable to convert pointer to typed reference");
         let array_elements = array.get_elements(&self.builder);
+        let element_basic_ty = array.element_ty();
         for (idx, expr) in exprs.iter().enumerate() {
             let element_ptr = unsafe {
-                self.builder.build_gep(
-                    array_elements,
-                    &[self.context.i64_type().const_int(idx as u64, false)],
-                    &format!("{}[{}]", array_elements.get_name().to_string_lossy(), idx),
-                )
+                self.builder
+                    .build_gep(
+                        element_basic_ty,
+                        array_elements,
+                        &[self.context.i64_type().const_int(idx as u64, false)],
+                        &format!("{}[{}]", array_elements.get_name().to_string_lossy(), idx),
+                    )
+                    .expect("failed to build GEP into array elements")
             };
 
             let expr_value = self.gen_expr(*expr)?;
-            self.builder.build_store(element_ptr, expr_value);
+            self.builder
+                .build_store(element_ptr, expr_value)
+                .expect("failed to build store for array element");
         }
 
         // Once all values have been stored in the array, update the length of the array
         let length = array.length_ty().const_int(exprs.len() as u64, false);
         let array_length_ptr = array.get_length_ptr(&self.builder);
-        self.builder.build_store(array_length_ptr, length);
+        self.builder
+            .build_store(array_length_ptr, length)
+            .expect("failed to build store for array length");
 
         Some(array)
     }
@@ -1614,8 +1904,19 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         base: ExprId,
         index: ExprId,
     ) -> Option<BasicValueEnum<'ink>> {
+        let element_ty = self.infer[base]
+            .as_array()
+            .expect("indexing base must be an array");
+        let element_basic_ty = self
+            .hir_types
+            .get_basic_type(element_ty)
+            .expect("expected basic type");
         let element_ptr = self.gen_place_index(expr, base, index)?;
-        Some(self.builder.build_load(element_ptr, ""))
+        Some(
+            self.builder
+                .build_load(element_basic_ty, element_ptr, "")
+                .expect("failed to build load for array index"),
+        )
     }
 
     /// Generates an index into an array
@@ -1625,33 +1926,45 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         base: ExprId,
         index: ExprId,
     ) -> Option<PointerValue<'ink>> {
+        let element_ty = self.infer[base]
+            .as_array()
+            .expect("indexing base must be an array");
+        let array_ty = self.hir_types.get_array_type(element_ty);
+
         // Safety: place expression can only be generated if the base expression is an
         // array.
         let base = unsafe {
-            RuntimeArrayValue::from_ptr_unchecked(self.gen_expr(base)?.into_pointer_value())
+            RuntimeArrayValue::from_ptr_unchecked(
+                self.gen_expr(base)?.into_pointer_value(),
+                array_ty,
+            )
         };
         let index = self.gen_expr(index)?.into_int_value();
 
         let elements = base.get_elements(&self.builder);
+        let element_basic_ty = base.element_ty();
         Some(unsafe {
-            self.builder.build_gep(
-                elements,
-                &[index],
-                &format!("{}+index", elements.get_name().to_string_lossy()),
-            )
+            self.builder
+                .build_gep(
+                    element_basic_ty,
+                    elements,
+                    &[index],
+                    &format!("{}+index", elements.get_name().to_string_lossy()),
+                )
+                .expect("failed to build GEP for array index")
         })
     }
 
     /// Returns a pointer to the allocator handle
     fn get_allocator_handle_ptr(&self) -> PointerValue<'ink> {
+        let global = self
+            .external_globals
+            .alloc_handle
+            .expect("no allocator handle was specified, this is required for structs");
+        let value_type = global.get_value_type().into_pointer_type();
         self.builder
-            .build_load(
-                self.external_globals
-                    .alloc_handle
-                    .expect("no allocator handle was specified, this is required for structs")
-                    .as_pointer_value(),
-                "allocator_handle",
-            )
+            .build_load(value_type, global.as_pointer_value(), "allocator_handle")
+            .expect("failed to build load for allocator handle")
             .into_pointer_value()
     }
 }
@@ -1659,14 +1972,24 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 /// Derefs a heap-allocated value. As we introduce a layer of indirection for
 /// hot reloading, we need to first load the pointer that points to the memory
 /// block.
+///
+/// `value_type` is the type of the struct stored on the heap -- every
+/// caller already knows this (it's how they decided to call this function
+/// in the first place), and it's now required up front rather than
+/// recovered from `value`'s LLVM pointer type (impossible under opaque
+/// pointers -- see `RuntimeReferenceValue`'s doc comment).
 fn deref_heap_value<'ink>(
     builder: &Builder<'ink>,
     value: BasicValueEnum<'ink>,
+    value_type: inkwell::types::StructType<'ink>,
 ) -> BasicValueEnum<'ink> {
     // Safety: we can assume that the input is a RuntimeReferenceValue
-    let mem_ptr = unsafe { RuntimeReferenceValue::from_ptr_unchecked(value.into_pointer_value()) }
-        .get_data_ptr(builder);
+    let mem_ptr = unsafe {
+        RuntimeReferenceValue::from_ptr_unchecked(value.into_pointer_value(), value_type)
+    }
+    .get_data_ptr(builder);
 
-    builder.build_load(mem_ptr, "deref")
+    builder
+        .build_load(value_type, mem_ptr, "deref")
+        .expect("failed to build load for heap value deref")
 }
-

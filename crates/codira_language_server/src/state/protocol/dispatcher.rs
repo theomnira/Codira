@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use lsp_server::ExtractError;
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -208,4 +207,3 @@ where
         }
     }
 }
-

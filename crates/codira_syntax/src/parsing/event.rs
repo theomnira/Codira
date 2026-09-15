@@ -103,4 +103,3 @@ pub(super) fn process(sink: &mut dyn TreeSink, mut events: Vec<Event>) {
         }
     }
 }
-

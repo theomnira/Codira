@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 pub mod myers;
 
 use self::myers::Change;
@@ -434,4 +433,3 @@ fn field_diff(old: &[UniqueFieldInfo<'_>], new: &[UniqueFieldInfo<'_>]) -> Vec<F
     mapping.shrink_to_fit();
     mapping
 }
-

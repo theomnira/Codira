@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 macro_rules! impl_froms {
     ($e:ident: $($v:ident $(($($sv:ident),*))?),*) => {
         $(
@@ -23,4 +22,3 @@ macro_rules! impl_froms {
         )*
     }
 }
-

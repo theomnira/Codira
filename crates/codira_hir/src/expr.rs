@@ -4,11 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{borrow::Cow, ops::Index, str::FromStr, sync::Arc};
 
-use either::Either;
-use la_arena::{Arena, ArenaMap, Idx};
 use codira_hir_input::FileId;
 pub use codira_syntax::ast::PrefixOp as UnaryOp;
 use codira_syntax::{
@@ -16,6 +13,8 @@ use codira_syntax::{
     ast::{ArgListOwner, BinOp, LoopBodyOwner, NameOwner, TypeAscriptionOwner},
     AstNode, AstPtr,
 };
+use either::Either;
+use la_arena::{Arena, ArenaMap, Idx};
 use rustc_hash::FxHashMap;
 
 pub use self::scope::ExprScopes;
@@ -344,6 +343,14 @@ pub enum Expr {
         name: Name,
     },
     Array(Vec<ExprId>),
+    /// An explicit conversion, `expr as Type`. `type_ref` is the written-out
+    /// target type, recorded the same way `let x: T` and `RecordLit` record
+    /// theirs; it is resolved to a `Ty` during inference, which is also where
+    /// the cast's legality is enforced (see `crate::ty::cast`).
+    Cast {
+        expr: ExprId,
+        type_ref: LocalTypeRefId,
+    },
     Literal(Literal),
 }
 
@@ -422,7 +429,7 @@ impl Expr {
                 f(*lhs);
                 f(*rhs);
             }
-            Expr::Field { expr, .. } | Expr::UnaryOp { expr, .. } => {
+            Expr::Field { expr, .. } | Expr::UnaryOp { expr, .. } | Expr::Cast { expr, .. } => {
                 f(*expr);
             }
             Expr::If {
@@ -472,12 +479,17 @@ impl Expr {
 /// Similar to `ast::PatKind`
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Pat {
-    Missing,               // Indicates an error
-    Wild,                  // `_`
-    Path(Path),            // E.g. a qualified enum-variant pattern like `Shape.Point`
-    Bind { name: Name },   // E.g. `a`
-    Literal(Literal),      // E.g. `42`
-    TupleStruct { path: Option<Path>, args: Vec<PatId> }, // E.g. `Shape.Circle(radius)`
+    Missing,    // Indicates an error
+    Wild,       // `_`
+    Path(Path), // E.g. a qualified enum-variant pattern like `Shape.Point`
+    Bind {
+        name: Name,
+    }, // E.g. `a`
+    Literal(Literal), // E.g. `42`
+    TupleStruct {
+        path: Option<Path>,
+        args: Vec<PatId>,
+    }, // E.g. `Shape.Circle(radius)`
 }
 
 impl Pat {
@@ -934,6 +946,19 @@ impl<'a> ExprCollector<'a> {
                 let index = self.collect_expr_opt(e.index());
                 self.alloc_expr(Expr::Index { base, index }, syntax_ptr)
             }
+            ast::ExprKind::CastExpr(e) => {
+                let inner = self.collect_expr_opt(e.expr());
+                let type_ref = self
+                    .type_ref_builder
+                    .alloc_from_node_opt(e.type_ref().as_ref());
+                self.alloc_expr(
+                    Expr::Cast {
+                        expr: inner,
+                        type_ref,
+                    },
+                    syntax_ptr,
+                )
+            }
             // `comptime { .. }` lowers its inner block exactly as before (so
             // anything inside still fully type-checks like an ordinary
             // block), then attempts to fold it to a concrete literal via
@@ -1007,18 +1032,18 @@ impl<'a> ExprCollector<'a> {
                 .and_then(Path::from_ast)
                 .map_or(Pat::Missing, Pat::Path),
             ast::PatKind::LiteralPat(lit_pat) => {
-                let literal = lit_pat.literal().and_then(|lit| match lit.kind() {
-                    ast::LiteralKind::Bool(value) => Some(Literal::Bool(value)),
+                let literal = lit_pat.literal().map(|lit| match lit.kind() {
+                    ast::LiteralKind::Bool(value) => Literal::Bool(value),
                     ast::LiteralKind::IntNumber(lit) => {
                         let (text, suffix) = lit.split_into_parts();
-                        Some(integer_lit(text, suffix).0)
+                        integer_lit(text, suffix).0
                     }
                     ast::LiteralKind::FloatNumber(lit) => {
                         let (text, suffix) = lit.split_into_parts();
-                        Some(float_lit(text, suffix).0)
+                        float_lit(text, suffix).0
                     }
-                    ast::LiteralKind::String(_) => Some(Literal::String(String::default())),
-                    ast::LiteralKind::Nil => Some(Literal::Nil),
+                    ast::LiteralKind::String(_) => Literal::String(String::default()),
+                    ast::LiteralKind::Nil => Literal::Nil,
                 });
                 literal.map_or(Pat::Missing, Pat::Literal)
             }
@@ -1555,4 +1580,3 @@ mod diagnostics {
         }
     }
 }
-

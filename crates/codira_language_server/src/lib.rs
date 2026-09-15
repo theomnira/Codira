@@ -4,15 +4,14 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::convert::TryFrom;
 
-pub use config::{Config, FilesWatcher};
-pub use main_loop::main_loop;
 use codira_hir_input::FileId;
 use codira_paths::AbsPathBuf;
 use codira_project::ProjectManifest;
 use codira_syntax::{TextRange, TextSize};
+pub use config::{Config, FilesWatcher};
+pub use main_loop::main_loop;
 use serde::{de::DeserializeOwned, Serialize};
 pub(crate) use state::LanguageServerState;
 pub(crate) use symbol_kind::SymbolKind;
@@ -155,4 +154,3 @@ pub fn run_server() -> anyhow::Result<()> {
     io_threads.join()?;
     Ok(())
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[macro_use]
 mod util;
 
@@ -197,4 +196,3 @@ fn reloadable_struct_decl_multi_file() {
         1
     );
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_target::spec::Target;
 use parking_lot::Mutex;
 
@@ -66,4 +65,3 @@ impl MockDatabase {
             .collect()
     }
 }
-

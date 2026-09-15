@@ -164,4 +164,3 @@ impl Whitespace {
             .is_some_and(|idx| text[idx + 1..].contains('\n'))
     }
 }
-

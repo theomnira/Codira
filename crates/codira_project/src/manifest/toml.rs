@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use serde_derive::{Deserialize, Serialize};
 
 use super::{Manifest, ManifestMetadata, PackageId};
@@ -43,4 +42,3 @@ impl TomlManifest {
         })
     }
 }
-

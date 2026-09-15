@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use inkwell::{types::PointerType, AddressSpace};
 
 use super::{
@@ -102,4 +101,3 @@ where
         vec![BytesOrPtr::UntypedPtr(self.value)]
     }
 }
-

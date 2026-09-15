@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[cfg(test)]
 use crate::utils::tests::*;
 
@@ -193,4 +192,3 @@ fn test_type_alias_with_private_type_alias() {
     "#,
     ), @"17..39: type alias `Foo` is private");
 }
-

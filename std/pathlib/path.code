@@ -8,7 +8,7 @@
 // A heap-allocated path object. Stores the raw path string and provides
 // methods inspired by Python's pathlib.Path and Mojo's pathlib.Path.
 // ---------------------------------------------------------------------------
-public struct(gc) Path {
+public class Path {
     _raw: String,
 }
 

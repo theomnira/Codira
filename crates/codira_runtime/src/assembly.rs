@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     collections::{HashMap, VecDeque},
     ffi::c_void,
@@ -13,8 +12,6 @@ use std::{
     sync::Arc,
 };
 
-use itertools::Itertools;
-use log::error;
 use codira_abi as abi;
 use codira_libloader::{CodiraLibrary, TempLibrary};
 use codira_memory::{
@@ -22,6 +19,7 @@ use codira_memory::{
     type_table::TypeTable,
     Type,
 };
+use itertools::Itertools;
 
 use crate::{garbage_collector::GarbageCollector, DispatchTable};
 
@@ -430,9 +428,9 @@ impl Assembly {
             Assembly::link_all_functions(&dispatch_table, &type_table, functions_to_link)?;
 
             // Remove this assembly from the dependencies
-            dependencies
-                .values_mut()
-                .for_each(|dependencies| dependencies.retain(|path| path != &new_path));
+            for dependencies in dependencies.values_mut() {
+                dependencies.retain(|path| path != &new_path);
+            }
 
             // Remove assemblies that no longer have dependencies
             dependencies.retain(|_, dependencies| !dependencies.is_empty());
@@ -479,4 +477,3 @@ impl Assembly {
         self.library
     }
 }
-

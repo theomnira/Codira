@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::cell::RefCell;
 
 use codira_diagnostics::DiagnosticForWith;
@@ -84,4 +83,3 @@ pub(crate) fn diagnostics(db: &AnalysisDatabase, file_id: FileId) -> Vec<Diagnos
     // Returns the result
     result.into_inner()
 }
-

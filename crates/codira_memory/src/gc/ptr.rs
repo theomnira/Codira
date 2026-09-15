@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 /// A `GcPtr` is what you interact with outside of the allocator. It is a
 /// pointer to a piece of memory that points to the actual data stored in
 /// memory.
@@ -67,4 +66,3 @@ impl GcPtr {
         self.0
     }
 }
-

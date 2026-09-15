@@ -6,18 +6,29 @@
 // in Codira.  It carries a human-readable message and an optional numeric
 // error code, similar to Mojo's Error type.
 //
-// Errors are value types (no heap allocation for the struct itself).  The
-// `message` field is a String, which may internally heap-allocate.
+// Migration note (2026-08-20): rewritten from pre-redesign syntax -- verified
+// to parse cleanly via codira_syntax::SourceFile::parse (zero SyntaxErrors).
+// All `func Error.method(...)` declarations moved into one `extend Error { }`
+// block. `&Hasher` lost its `&` (no reference sigil in the grammar). Two
+// things were dropped, not just re-spelled:
 //
-// Convention:
-//   - Functions that can fail return `Result[T, Error]`.
-//   - The `?` operator propagates errors to the caller.
+// 1. `panic`/`panic_with_context` declared `-> !` (a Rust-style "never"
+//    return type). `!` does not parse in type position at all (confirmed:
+//    `func f() -> ! { ... }` fails with "expected type"); rewritten to
+//    `-> void` since both functions unconditionally panic anyway --  this
+//    loses the static "never returns" guarantee (which the language
+//    doesn't check today regardless), not any actual behavior.
+// 2. `into_result` returned `Result[T, Error]`. Per
+//    agents/RUST_TO_CODIRA_MIGRATION.md §6, `Result[T, Error]` "does not
+//    exist anywhere else in std/ or the spec" -- it was aspirational in
+//    the original file, not a real type. Dropped rather than referencing
+//    a type that isn't there.
 // =============================================================================
 
-use std.builtin.traits;
+import std.builtin.traits
 
 // Represents an error with a message and an optional numeric code.
-public struct(value) Error {
+public struct Error {
     // Human-readable description of the error.
     message: String,
 
@@ -26,148 +37,134 @@ public struct(value) Error {
     code: i32,
 }
 
-// =============================================================================
-// Construction
-// =============================================================================
+extend Error {
+    // ---- Construction ---------------------------------------------------
 
-// Create an Error from a message string with code 0.
-public func Error.new(message: String) -> Error {
-    return Error { message: message, code: 0 };
-}
-
-// Create an Error from a message and a numeric code.
-public func Error.with_code(message: String, code: i32) -> Error {
-    return Error { message: message, code: code };
-}
-
-// Create a generic "unknown error".
-public func Error.unknown() -> Error {
-    return Error { message: "unknown error", code: -1 };
-}
-
-// Create an "out of bounds" error with context about the index and length.
-public func Error.out_of_bounds(index: usize, length: usize) -> Error {
-    let msg = "index out of bounds: index="
-        + __intrinsic_to_string(index)
-        + " length="
-        + __intrinsic_to_string(length);
-    return Error { message: msg, code: 1 };
-}
-
-// Create an "invalid argument" error.
-public func Error.invalid_argument(detail: String) -> Error {
-    return Error { message: "invalid argument: " + detail, code: 2 };
-}
-
-// Create a "not found" error.
-public func Error.not_found(what: String) -> Error {
-    return Error { message: "not found: " + what, code: 3 };
-}
-
-// Create an "already exists" error.
-public func Error.already_exists(what: String) -> Error {
-    return Error { message: "already exists: " + what, code: 4 };
-}
-
-// Create a "permission denied" error.
-public func Error.permission_denied(detail: String) -> Error {
-    return Error { message: "permission denied: " + detail, code: 5 };
-}
-
-// Create a "not implemented" error.
-public func Error.not_implemented(feature: String) -> Error {
-    return Error { message: "not implemented: " + feature, code: 6 };
-}
-
-// Create an "overflow" error.
-public func Error.overflow(detail: String) -> Error {
-    return Error { message: "overflow: " + detail, code: 7 };
-}
-
-// Create a "timeout" error.
-public func Error.timeout(detail: String) -> Error {
-    return Error { message: "timeout: " + detail, code: 8 };
-}
-
-// =============================================================================
-// Accessors
-// =============================================================================
-
-// Return the error message.
-public func Error.get_message(self) -> String {
-    return self.message;
-}
-
-// Return the numeric error code.
-public func Error.get_code(self) -> i32 {
-    return self.code;
-}
-
-// Return true if this error has a specific (non-zero) code.
-public func Error.has_code(self) -> bool {
-    return self.code != 0;
-}
-
-// =============================================================================
-// Trait implementations
-// =============================================================================
-
-// Stringable — display the error for end-users.
-public func Error.to_string(self) -> String {
-    if self.code != 0 {
-        return "Error(" + __intrinsic_to_string(self.code) + "): " + self.message;
+    // Create an Error from a message string with code 0.
+    func new(message: String) -> Error {
+        Error { message: message, code: 0 }
     }
-    return "Error: " + self.message;
-}
 
-// Representable — debug representation.
-public func Error.repr(self) -> String {
-    return "Error { message: \""
-        + self.message
-        + "\", code: "
-        + __intrinsic_to_string(self.code)
-        + " }";
-}
+    // Create an Error from a message and a numeric code.
+    func with_code(message: String, code: i32) -> Error {
+        Error { message: message, code: code }
+    }
 
-// EqualityComparable — two errors are equal when both message and code match.
-public func Error.eq(self, other: Error) -> bool {
-    return self.code == other.code & self.message == other.message;
-}
+    // Create a generic "unknown error".
+    func unknown() -> Error {
+        Error { message: "unknown error", code: -1 }
+    }
 
-public func Error.ne(self, other: Error) -> bool {
-    return !(self.eq(other));
-}
+    // Create an "out of bounds" error with context about the index and length.
+    func out_of_bounds(index: usize, length: usize) -> Error {
+        let msg = "index out of bounds: index="
+            + __intrinsic_to_string(index)
+            + " length="
+            + __intrinsic_to_string(length)
+        Error { message: msg, code: 1 }
+    }
 
-// Copyable — Errors are copyable (the String inside may ref-count or COW).
-public func Error.copy(self) -> Error {
-    return Error { message: self.message, code: self.code };
-}
+    // Create an "invalid argument" error.
+    func invalid_argument(detail: String) -> Error {
+        Error { message: "invalid argument: " + detail, code: 2 }
+    }
 
-// Hashable
-public func Error.hash(self, hasher: &Hasher) -> void {
-    hasher.write_i32(self.code);
-    hasher.write_string(self.message);
-}
+    // Create a "not found" error.
+    func not_found(what: String) -> Error {
+        Error { message: "not found: " + what, code: 3 }
+    }
 
-// =============================================================================
-// Panic helpers
-// =============================================================================
+    // Create an "already exists" error.
+    func already_exists(what: String) -> Error {
+        Error { message: "already exists: " + what, code: 4 }
+    }
 
-// Raise this error as a panic, immediately terminating the program.
-public func Error.panic(self) -> ! {
-    __panic(self.to_string());
-}
+    // Create a "permission denied" error.
+    func permission_denied(detail: String) -> Error {
+        Error { message: "permission denied: " + detail, code: 5 }
+    }
 
-// Raise this error as a panic with an additional context message.
-public func Error.panic_with_context(self, context: String) -> ! {
-    __panic(context + ": " + self.to_string());
-}
+    // Create a "not implemented" error.
+    func not_implemented(feature: String) -> Error {
+        Error { message: "not implemented: " + feature, code: 6 }
+    }
 
-// =============================================================================
-// Result interop
-// =============================================================================
+    // Create an "overflow" error.
+    func overflow(detail: String) -> Error {
+        Error { message: "overflow: " + detail, code: 7 }
+    }
 
-// Wrap this error in a Result.err.
-public func Error.into_result[T](self) -> Result[T, Error] {
-    return Result.err(self);
+    // Create a "timeout" error.
+    func timeout(detail: String) -> Error {
+        Error { message: "timeout: " + detail, code: 8 }
+    }
+
+    // ---- Accessors --------------------------------------------------------
+
+    // Return the error message.
+    func get_message(self) -> String {
+        self.message
+    }
+
+    // Return the numeric error code.
+    func get_code(self) -> i32 {
+        self.code
+    }
+
+    // Return true if this error has a specific (non-zero) code.
+    func has_code(self) -> bool {
+        self.code != 0
+    }
+
+    // ---- Trait implementations ---------------------------------------------
+
+    // Stringable — display the error for end-users.
+    func to_string(self) -> String {
+        if self.code != 0 {
+            return "Error(" + __intrinsic_to_string(self.code) + "): " + self.message
+        }
+        "Error: " + self.message
+    }
+
+    // Representable — debug representation.
+    func repr(self) -> String {
+        "Error { message: \""
+            + self.message
+            + "\", code: "
+            + __intrinsic_to_string(self.code)
+            + " }"
+    }
+
+    // EqualityComparable — two errors are equal when both message and code match.
+    func eq(self, other: Error) -> bool {
+        self.code == other.code & self.message == other.message
+    }
+
+    func ne(self, other: Error) -> bool {
+        !(self.eq(other))
+    }
+
+    // Copyable — Errors are copyable (the String inside may ref-count or COW).
+    func copy(self) -> Error {
+        Error { message: self.message, code: self.code }
+    }
+
+    // Hashable
+    func hash(self, hasher: Hasher) -> void {
+        hasher.write_i32(self.code)
+        hasher.write_string(self.message)
+    }
+
+    // ---- Panic helpers ------------------------------------------------------
+
+    // Raise this error as a panic, immediately terminating the program.
+    // (See migration note above re: dropping the `!` never-return type.)
+    func panic(self) -> void {
+        __panic(self.to_string())
+    }
+
+    // Raise this error as a panic with an additional context message.
+    func panic_with_context(self, context: String) -> void {
+        __panic(context + ": " + self.to_string())
+    }
 }

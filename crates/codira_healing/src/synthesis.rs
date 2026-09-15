@@ -6,21 +6,21 @@
 //! Date: August 7, 2026
 //!
 //! Functionality (per Theorem 4 and Section 2.7.1):
-//! - When a guarded function violates its postcondition `ψ`, recovery does
-//!   not *have* to pick from a static list of pre-written strategies.
-//!   Instead, the engine can formulate a constraint satisfaction problem:
-//!   "find a value `x` such that `ψ(x)` holds", and let a real SMT solver
-//!   (Z3, via `codira_smt`) verify candidate corrections deterministically.
+//! - When a guarded function violates its postcondition `ψ`, recovery does not
+//!   *have* to pick from a static list of pre-written strategies. Instead, the
+//!   engine can formulate a constraint satisfaction problem: "find a value `x`
+//!   such that `ψ(x)` holds", and let a real SMT solver (Z3, via `codira_smt`)
+//!   verify candidate corrections deterministically.
 //! - `PatchSynthesizer::synthesize_minimal` searches a bounded domain of
-//!   candidate repairs starting at `lower` and asks Z3, for each candidate
-//!   `v`, whether `ψ(v)` is provably satisfiable. The first candidate the
-//!   solver proves valid is returned: a logically verified patch, not a
-//!   guess. This is the executable, value-level counterpart of the paper's
-//!   "λ patch. (σ + patch) ⊨ ψ" query over linear integer arithmetic.
+//!   candidate repairs starting at `lower` and asks Z3, for each candidate `v`,
+//!   whether `ψ(v)` is provably satisfiable. The first candidate the solver
+//!   proves valid is returned: a logically verified patch, not a guess. This is
+//!   the executable, value-level counterpart of the paper's "λ patch. (σ +
+//!   patch) ⊨ ψ" query over linear integer arithmetic.
 //! - If no candidate in a bounded prefix of the domain satisfies `ψ`, the
-//!   search is exhausted (`DomainExhausted`). Whether that means "UNSAT for
-//!   all future candidates" is only knowable when the caller bounds the
-//!   domain; the synthesizer reports what it could prove.
+//!   search is exhausted (`DomainExhausted`). Whether that means "UNSAT for all
+//!   future candidates" is only knowable when the caller bounds the domain; the
+//!   synthesizer reports what it could prove.
 //!
 //! This module deliberately *does not* emit machine code (consistent with
 //! the crate root's "not a JIT" scope cut -- see `lib.rs`): it synthesizes
@@ -97,8 +97,8 @@ impl PatchSynthesizer {
     /// `|ctx, x| x.gt(ctx.int_lit(0))`).
     ///
     /// Guarantees on each return:
-    /// - `Verified { value }`: Z3 proved `predicate` satisfiable with
-    ///   `x = value`; the value is a logical fact, not a heuristic.
+    /// - `Verified { value }`: Z3 proved `predicate` satisfiable with `x =
+    ///   value`; the value is a logical fact, not a heuristic.
     /// - `DomainExhausted`: every integer from `lower` up to (but not
     ///   including) `lower + budget` failed verification.
     /// - `Disabled`: SMT is off; no work done.
@@ -121,10 +121,8 @@ impl PatchSynthesizer {
         let mut candidates_tried = 0u64;
         let mut candidate = 1i64;
         while candidates_tried < self.max_candidates {
-            let result = codira_smt::is_satisfiable(
-                context,
-                x.eq(context.int_lit(candidate)).and(pred),
-            );
+            let result =
+                codira_smt::is_satisfiable(context, x.eq(context.int_lit(candidate)).and(pred));
             if result == codira_smt::SatResult::Sat {
                 return SynthesisOutcome::Verified { value: candidate };
             } else {
@@ -152,9 +150,7 @@ mod tests {
         let synth = PatchSynthesizer::new();
         // Postcondition of a divide-by-zero recovery: the repaired divisor
         // must be non-zero (and we additionally require it positive).
-        let outcome = synth.synthesize(&context, "d", |ctx, d| {
-            d.gt(ctx.int_lit(0))
-        });
+        let outcome = synth.synthesize(&context, "d", |ctx, d| d.gt(ctx.int_lit(0)));
         match outcome {
             SynthesisOutcome::Verified { value } => {
                 assert_eq!(value, 1, "smallest positive divisor is 1");
@@ -170,9 +166,7 @@ mod tests {
         // small so we expect DomainExhausted, proving the solver checked
         // candidates and none passed.
         let synth = PatchSynthesizer::new_with_options(true, 8);
-        let outcome = synth.synthesize(&context, "d", |ctx, d| {
-            d.lt(ctx.int_lit(0))
-        });
+        let outcome = synth.synthesize(&context, "d", |ctx, d| d.lt(ctx.int_lit(0)));
         match outcome {
             SynthesisOutcome::DomainExhausted { candidates_tried } => {
                 assert_eq!(candidates_tried, 8);
@@ -185,9 +179,7 @@ mod tests {
     fn disabled_synthesizer_refuses_to_guess() {
         let context = Context::new();
         let synth = PatchSynthesizer::new_with_options(false, 8);
-        let outcome = synth.synthesize(&context, "d", |ctx, d| {
-            d.gt(ctx.int_lit(0))
-        });
+        let outcome = synth.synthesize(&context, "d", |ctx, d| d.gt(ctx.int_lit(0)));
         assert_eq!(outcome, SynthesisOutcome::Disabled);
     }
 

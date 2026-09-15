@@ -4,9 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
-use la_arena::ArenaMap;
 use codira_hir_input::{FileId, ModuleId, PackageId, PackageModuleId};
+use la_arena::ArenaMap;
 use rustc_hash::FxHashMap;
 
 use super::PackageDefs;
@@ -648,4 +647,3 @@ struct DefData<'a> {
     visibility: &'a RawVisibility,
     has_constructor: bool,
 }
-

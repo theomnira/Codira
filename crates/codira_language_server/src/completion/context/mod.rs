@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(dead_code)]
 
 mod analysis;
@@ -167,4 +166,3 @@ fn find_node_in_file<N: AstNode>(syntax: &SyntaxNode, node: &N) -> Option<N> {
         .ancestors()
         .find_map(N::cast)
 }
-

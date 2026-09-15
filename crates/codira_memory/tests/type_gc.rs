@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_memory::{HasStaticType, StructTypeBuilder, Type};
 
 #[test]
@@ -41,4 +40,3 @@ fn test_type_collection() {
     assert_eq!(current_stats.collected_types, 1);
     assert_eq!(current_stats.remaining_types, 3);
 }
-

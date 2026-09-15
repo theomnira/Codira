@@ -20,6 +20,7 @@ codira_paths = { version = "0.6.0-dev", path="../codira_paths" }
 codira_hir_input = { version = "0.6.0-dev", path="../codira_hir_input" }
 codira_mir = { version = "0.6.0-dev", path = "../codira_mir" }
 codira_comptime = { version = "0.6.0-dev", path = "../codira_comptime" }
+codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }
 drop_bomb = { workspace = true }
 either = { workspace = true }
 ena = { workspace = true }
@@ -29,6 +30,7 @@ rustc-hash = { workspace = true }
 salsa = { workspace = true }
 smallvec = { workspace = true, features = ["union"] }
 bitflags = { workspace = true }
+smol_str = { workspace = true }
 
 [dev-dependencies]
 codira_test = { path = "../codira_test" }

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::iter::successors;
 
 use codira_hir_input::{ModuleId, PackageId, PackageModuleId};
@@ -156,4 +155,3 @@ impl PackageDefs {
         )
     }
 }
-

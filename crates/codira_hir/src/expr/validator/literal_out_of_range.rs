@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::ExprValidator;
 use crate::{
     diagnostics::{DiagnosticSink, LiteralOutOfRange},
@@ -49,4 +48,3 @@ impl ExprValidator<'_> {
         });
     }
 }
-

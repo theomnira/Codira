@@ -11,11 +11,11 @@
 //! context of the current state.
 //!
 //! Our compilation databases (e.g. `HirDatabase`) provides a lot of steps to go
-//! from a syntax tree (as provided by the [`codira_syntax::ast`] module) to more
-//! abstract representations of the source through the process of `lowering`.
-//! However, for IDE purposes we often want to cut through all this and go from
-//! source locations straight to lowered data structures and back. This is what
-//! [`Semantics`] enables.
+//! from a syntax tree (as provided by the [`codira_syntax::ast`] module) to
+//! more abstract representations of the source through the process of
+//! `lowering`. However, for IDE purposes we often want to cut through all this
+//! and go from source locations straight to lowered data structures and back.
+//! This is what [`Semantics`] enables.
 
 mod source_to_def;
 
@@ -276,4 +276,3 @@ impl SemanticsScope<'_> {
         });
     }
 }
-

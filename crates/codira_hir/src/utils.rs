@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 /// Helper for mutating `Arc<[T]>` (i.e. `Arc::make_mut` for Arc slices).
@@ -48,4 +47,3 @@ pub mod tests {
         diags.join("\n")
     }
 }
-

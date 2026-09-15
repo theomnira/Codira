@@ -4,11 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod function;
 
-use function::FunctionRender;
 use codira_hir::{semantics::ScopeDef, HirDisplay, ModuleDef, Ty};
+use function::FunctionRender;
 
 use super::{CompletionContext, CompletionItem, CompletionItemKind};
 use crate::{completion::item::CompletionRelevance, db::AnalysisDatabase, SymbolKind};
@@ -122,4 +121,3 @@ impl<'a> Render<'a> {
             .finish()
     }
 }
-

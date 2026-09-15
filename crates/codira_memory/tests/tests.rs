@@ -4,9 +4,7 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod diff;
 mod gc;
 #[macro_use]
 mod util;
-

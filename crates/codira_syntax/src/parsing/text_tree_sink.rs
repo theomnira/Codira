@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::mem;
 
 use crate::{
@@ -159,4 +158,3 @@ fn n_attached_trivias<'a>(
         _ => 0,
     }
 }
-

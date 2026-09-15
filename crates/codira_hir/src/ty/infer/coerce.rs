@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::InferenceResultBuilder;
 use crate::{ty::TyKind, Ty};
 
@@ -41,4 +40,3 @@ impl InferenceResultBuilder<'_> {
         self.unify(&from_ty, to_ty)
     }
 }
-

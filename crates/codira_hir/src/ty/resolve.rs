@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_target::{abi, abi::TargetDataLayout};
 
 use super::primitives::IntTy;
@@ -52,4 +51,3 @@ impl ResolveBitness for FloatTy {
         }
     }
 }
-

@@ -13,8 +13,8 @@
 // characteristics.
 // =============================================================================
 
-use std.builtin.types;
-use std.math;
+import std.builtin.types;
+import std.math;
 
 // Common multiplier constants.
 public let KB: usize = 1024;
@@ -27,7 +27,7 @@ public let KB: usize = 1024;
 //
 // This struct captures the shared characteristics across GPUs in the same
 // architecture family, reducing redundancy when defining new GPU models.
-public struct(value) AcceleratorArchitectureFamily {
+public struct AcceleratorArchitectureFamily {
     warp_size: usize,
     threads_per_multiprocessor: usize,
     shared_memory_per_multiprocessor: usize,
@@ -40,7 +40,7 @@ public struct(value) AcceleratorArchitectureFamily {
 // =============================================================================
 
 // Detailed specification of a concrete GPU model.
-public struct(value) GPUInfo {
+public struct GPUInfo {
     name: String,
     api: String,
     arch_name: String,

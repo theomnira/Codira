@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::CStr, os::raw::c_char, slice, str};
 
 use crate::{type_id::TypeId, Guid};
@@ -167,7 +166,7 @@ mod tests {
         let type_id = i32::type_id();
 
         let field_names = &[field_name.as_ptr()];
-        let field_types = &[type_id.clone()];
+        let field_types = std::slice::from_ref(type_id);
         let field_offsets = &[1];
         let struct_info = fake_struct_definition(
             &struct_name,
@@ -203,4 +202,3 @@ mod tests {
         assert_eq!(struct_info.memory_kind, struct_memory_kind);
     }
 }
-

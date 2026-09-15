@@ -4,19 +4,17 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{collections::HashSet, convert::TryFrom, ffi::CString};
 
+use codira_abi as abi;
+use codira_hir::{HirDatabase, TyKind};
 use inkwell::{attributes::Attribute, module::Linkage, types::AnyType};
 use ir_type_builder::TypeIdBuilder;
 use itertools::Itertools;
-use codira_abi as abi;
-use codira_hir::{HirDatabase, TyKind};
 
 use crate::{
     ir::{
         dispatch_table::{DispatchTable, DispatchableFunction},
-        function,
         ty::{guid_from_struct, HirTypeCache},
         type_table::TypeTable,
         types as ir,
@@ -42,7 +40,7 @@ fn gen_prototype_from_function<'ink>(
     // Internalize the name of the function prototype
     let name_str = CString::new(name.clone())
         .expect("function prototype name is not a valid CString")
-        .intern(format!("fn_sig::<{}>::name", &name), context);
+        .intern(format!("fn_sig::<{name}>::name"), context);
 
     // Get the `ir::TypeInfo` pointer for the return type of the function
     let fn_sig = function.ty(db).callable_sig(db).unwrap();
@@ -58,7 +56,7 @@ fn gen_prototype_from_function<'ink>(
         .params()
         .iter()
         .map(|ty| ir_type_builder.construct_from_type_id(&hir_types.type_id(ty)))
-        .into_const_private_pointer_or_null(format!("fn_sig::<{}>::arg_types", &name), context);
+        .into_const_private_pointer_or_null(format!("fn_sig::<{name}>::arg_types"), context);
 
     ir::FunctionPrototype {
         name: name_str.as_value(context),
@@ -70,11 +68,11 @@ fn gen_prototype_from_function<'ink>(
     }
 }
 
-/// Construct a `CodiraFunctionPrototype` struct for the specified dispatch table
-/// function.
+/// Construct a `CodiraFunctionPrototype` struct for the specified dispatch
+/// table function.
 fn gen_prototype_from_dispatch_entry<'ink>(
     context: &IrValueContext<'ink, '_, '_>,
-    function: &DispatchableFunction,
+    function: &DispatchableFunction<'ink>,
     ir_type_builder: &TypeIdBuilder<'ink, '_, '_, '_>,
 ) -> ir::FunctionPrototype<'ink> {
     // Internalize the name of the function prototype
@@ -427,7 +425,7 @@ fn gen_get_info_fn<'ink>(
     module_info: ir::ModuleInfo<'ink>,
     dispatch_table: ir::DispatchTable<'ink>,
     type_lut: ir::TypeLut<'ink>,
-    optimization_level: inkwell::OptimizationLevel,
+    _optimization_level: inkwell::OptimizationLevel,
     dependencies: Vec<String>,
 ) {
     let target = db.target();
@@ -467,6 +465,8 @@ fn gen_get_info_fn<'ink>(
     let body_ir = context.context.append_basic_block(get_symbols_fn, "body");
     builder.position_at_end(body_ir);
 
+    let result_ty = Value::<ir::AssemblyInfo<'ink>>::get_ir_type(context.type_context);
+
     // Get a pointer to the IR value that will hold the return value. Again this
     // differs depending on the C ABI.
     let result_ptr = if target.options.is_like_windows {
@@ -475,66 +475,84 @@ fn gen_get_info_fn<'ink>(
             .unwrap()
             .into_pointer_value()
     } else {
-        builder.build_alloca(
-            Value::<ir::AssemblyInfo<'ink>>::get_ir_type(context.type_context),
-            "",
-        )
+        builder
+            .build_alloca(result_ty, "")
+            .expect("failed to build alloca for result struct")
     };
 
     // Get access to the structs internals
     let symbols_addr = builder
-        .build_struct_gep(result_ptr, 1, "symbols")
+        .build_struct_gep(result_ty, result_ptr, 1, "symbols")
         .expect("could not retrieve `symbols` from result struct");
     let dispatch_table_addr = builder
-        .build_struct_gep(result_ptr, 3, "dispatch_table")
+        .build_struct_gep(result_ty, result_ptr, 3, "dispatch_table")
         .expect("could not retrieve `dispatch_table` from result struct");
     let type_lut_addr = builder
-        .build_struct_gep(result_ptr, 5, "type_lut")
+        .build_struct_gep(result_ty, result_ptr, 5, "type_lut")
         .expect("could not retrieve `type_lut` from result struct");
     let dependencies_addr = builder
-        .build_struct_gep(result_ptr, 7, "dependencies")
+        .build_struct_gep(result_ty, result_ptr, 7, "dependencies")
         .expect("could not retrieve `dependencies` from result struct");
     let num_dependencies_addr = builder
-        .build_struct_gep(result_ptr, 9, "num_dependencies")
+        .build_struct_gep(result_ty, result_ptr, 9, "num_dependencies")
         .expect("could not retrieve `num_dependencies` from result struct");
 
     // Assign the struct values one by one.
-    builder.build_store(symbols_addr, module_info.as_value(context).value);
-    builder.build_store(dispatch_table_addr, dispatch_table.as_value(context).value);
-    builder.build_store(type_lut_addr, type_lut.as_value(context).value);
-    builder.build_store(
-        dependencies_addr,
-        dependencies
-            .iter()
-            .enumerate()
-            .map(|(idx, name)| {
-                CString::new(name.as_str())
-                    .expect("could not convert dependency name to string")
-                    .intern(format!("dependency{idx}"), context)
-                    .as_value(context)
-            })
-            .into_const_private_pointer_or_null("dependencies", context)
-            .value,
-    );
-    builder.build_store(
-        num_dependencies_addr,
-        context.context.i32_type().const_int(
-            u32::try_from(dependencies.len())
-                .expect("too many dependencies")
-                .into(),
-            false,
-        ),
-    );
+    builder
+        .build_store(symbols_addr, module_info.as_value(context).value)
+        .expect("failed to build store");
+    builder
+        .build_store(dispatch_table_addr, dispatch_table.as_value(context).value)
+        .expect("failed to build store");
+    builder
+        .build_store(type_lut_addr, type_lut.as_value(context).value)
+        .expect("failed to build store");
+    builder
+        .build_store(
+            dependencies_addr,
+            dependencies
+                .iter()
+                .enumerate()
+                .map(|(idx, name)| {
+                    CString::new(name.as_str())
+                        .expect("could not convert dependency name to string")
+                        .intern(format!("dependency{idx}"), context)
+                        .as_value(context)
+                })
+                .into_const_private_pointer_or_null("dependencies", context)
+                .value,
+        )
+        .expect("failed to build store");
+    builder
+        .build_store(
+            num_dependencies_addr,
+            context.context.i32_type().const_int(
+                u32::try_from(dependencies.len())
+                    .expect("too many dependencies")
+                    .into(),
+                false,
+            ),
+        )
+        .expect("failed to build store");
 
     // Construct the return statement of the function.
     if target.options.is_like_windows {
-        builder.build_return(None);
+        builder.build_return(None).expect("failed to build return");
     } else {
-        builder.build_return(Some(&builder.build_load(result_ptr, "")));
+        let result_value = builder
+            .build_load(result_ty, result_ptr, "")
+            .expect("failed to build load of result struct");
+        builder
+            .build_return(Some(&result_value))
+            .expect("failed to build return");
     }
 
-    // Run the function optimizer on the generate function
-    function::create_pass_manager(context.module, optimization_level).run_on(&get_symbols_fn);
+    // Note: no per-function optimization pass here (the old legacy
+    // `PassManager`/`create_pass_manager` this used to call is gone on
+    // LLVM 22 -- see `crate::code_gen::optimize_module`'s doc comment).
+    // `get_symbols_fn` lives in `context.module`, which the caller
+    // (`AssemblyBuilder::build`) already runs a module-wide optimization
+    // pass over right after calling this, so nothing is lost.
 }
 
 /// Generates a method `void set_allocator_handle(void*)` that stores the
@@ -554,13 +572,15 @@ fn gen_set_allocator_handle_fn(context: &IrValueContext<'_, '_, '_>) {
     builder.position_at_end(body_ir);
 
     if let Some(allocator_handle_global) = context.module.get_global("allocatorHandle") {
-        builder.build_store(
-            allocator_handle_global.as_pointer_value(),
-            set_allocator_handle_fn.get_nth_param(0).unwrap(),
-        );
+        builder
+            .build_store(
+                allocator_handle_global.as_pointer_value(),
+                set_allocator_handle_fn.get_nth_param(0).unwrap(),
+            )
+            .expect("failed to build store");
     }
 
-    builder.build_return(None);
+    builder.build_return(None).expect("failed to build return");
 }
 
 /// Generates a `get_version` method that returns the current abi version.
@@ -576,6 +596,7 @@ fn gen_get_version_fn(context: &IrValueContext<'_, '_, '_>) {
     let body_ir = context.context.append_basic_block(get_version_fn, "body");
     builder.position_at_end(body_ir);
 
-    builder.build_return(Some(&abi::ABI_VERSION.as_value(context).value));
+    builder
+        .build_return(Some(&abi::ABI_VERSION.as_value(context).value))
+        .expect("failed to build return");
 }
-

@@ -102,7 +102,9 @@ impl StrategyRanker {
     /// Records the outcome of trying `strategy`, updating its posterior.
     pub fn record_outcome(&self, strategy: &str, succeeded: bool) {
         let mut arms = self.arms.lock();
-        let stats = arms.entry(strategy.to_owned()).or_insert_with(ArmStats::new);
+        let stats = arms
+            .entry(strategy.to_owned())
+            .or_insert_with(ArmStats::new);
         if succeeded {
             stats.successes += 1.0;
         } else {
@@ -127,9 +129,9 @@ impl Default for StrategyRanker {
 
 #[cfg(test)]
 mod tests {
+    use rand::{rngs::StdRng, SeedableRng};
+
     use super::*;
-    use rand::SeedableRng;
-    use rand::rngs::StdRng;
 
     #[test]
     fn selects_among_registered_strategies() {
@@ -159,7 +161,10 @@ mod tests {
             ranker.record_outcome("a", true);
         }
         let after = ranker.mean_success_rate("a").unwrap();
-        assert!(after > before, "20 successes should raise the mean above 0.5, got {after}");
+        assert!(
+            after > before,
+            "20 successes should raise the mean above 0.5, got {after}"
+        );
     }
 
     /// The real statistical property Thompson sampling is supposed to
@@ -207,4 +212,3 @@ mod tests {
         );
     }
 }
-

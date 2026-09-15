@@ -155,9 +155,9 @@ mod test {
             RelativePath::new("main.code")
         );
         assert_eq!(
-            compute_source_relative_path(source_dir, &source_dir.join("foo/bar/main.code")).unwrap(),
+            compute_source_relative_path(source_dir, &source_dir.join("foo/bar/main.code"))
+                .unwrap(),
             RelativePath::new("foo/bar/main.code")
         );
     }
 }
-

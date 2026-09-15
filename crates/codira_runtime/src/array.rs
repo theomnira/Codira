@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{marker::PhantomData, ptr::NonNull, sync::Arc};
 
 use codira_memory::{
@@ -33,9 +32,9 @@ impl RawArray {
     }
 }
 
-/// Type-agnostic wrapper for interoperability with a Codira array. This is merely
-/// a reference to the Codira array, that will be garbage collected unless it is
-/// rooted.
+/// Type-agnostic wrapper for interoperability with a Codira array. This is
+/// merely a reference to the Codira array, that will be garbage collected
+/// unless it is rooted.
 #[derive(Clone)]
 pub struct ArrayRef<'a, T> {
     raw: RawArray,
@@ -169,8 +168,8 @@ impl<'a, T: Marshal<'a> + 'a> Marshal<'a> for ArrayRef<'a, T> {
     }
 }
 
-/// Type-agnostic wrapper for interoperability with a Codira struct, that has been
-/// rooted. To marshal, obtain a `ArrayRef` for the `RootedArray`.
+/// Type-agnostic wrapper for interoperability with a Codira struct, that has
+/// been rooted. To marshal, obtain a `ArrayRef` for the `RootedArray`.
 #[derive(Clone)]
 pub struct RootedArray<T> {
     handle: GcRootPtr,
@@ -197,4 +196,3 @@ impl<T> RootedArray<T> {
         ArrayRef::new(RawArray(self.handle.handle()), runtime)
     }
 }
-

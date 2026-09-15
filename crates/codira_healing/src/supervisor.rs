@@ -7,18 +7,20 @@
 //! Functionality (per Section 3.5 and the spec's distributed model):
 //! - Erlang/OTP-style supervisor trees: parent modules supervise children.
 //! - Restart strategies: `OneForOne` (restart only the failed child),
-//!   `OneForAll` (restart all children), `RestForOne` (restart the failed
-//!   child and all started after it).
+//!   `OneForAll` (restart all children), `RestForOne` (restart the failed child
+//!   and all started after it).
 //! - Restart intensity bounds: `max_restarts` within `max_time` seconds,
 //!   matching the OTP `maxR`/`maxT` model; exceeding the bound escalates.
-//! - Child restart types: `Permanent` (always restart), `Transient`
-//!   (restart only on abnormal exit), `Temporary` (never restart).
-//! - `SupervisorTree`: a registry of supervisors and their child links, used
-//!   by the engine for module-tier healing (`DegradeGracefully` /
+//! - Child restart types: `Permanent` (always restart), `Transient` (restart
+//!   only on abnormal exit), `Temporary` (never restart).
+//! - `SupervisorTree`: a registry of supervisors and their child links, used by
+//!   the engine for module-tier healing (`DegradeGracefully` /
 //!   `IsolateAndRestart` / `PropagateToParent`).
 
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::{
+    collections::HashMap,
+    time::{Duration, Instant},
+};
 
 use parking_lot::Mutex;
 
@@ -160,7 +162,11 @@ impl SupervisorTree {
     /// replaces its children and resets its runtime state.
     pub fn register_supervisor(&self, spec: SupervisorSpec) {
         let supervisor_name = spec.name.clone();
-        let hierarchy_children = spec.children.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
+        let hierarchy_children = spec
+            .children
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>();
         let children = spec
             .children
             .iter()
@@ -177,7 +183,9 @@ impl SupervisorTree {
             recent_restarts: Vec::new(),
             alive: true,
         };
-        self.supervisors.lock().insert(state.spec.name.clone(), state);
+        self.supervisors
+            .lock()
+            .insert(state.spec.name.clone(), state);
         self.hierarchy
             .lock()
             .insert(supervisor_name, hierarchy_children);

@@ -4,16 +4,15 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     sync::Arc,
 };
 
-use la_arena::{Arena, Idx};
 use codira_hir_input::FileId;
 use codira_syntax::{ast, AstNode, AstPtr, SyntaxNode, SyntaxNodePtr, WalkEvent};
+use la_arena::{Arena, Idx};
 
 use crate::{db::AstDatabase, in_file::InFile};
 
@@ -185,4 +184,3 @@ fn bdfs(node: &SyntaxNode, mut f: impl FnMut(SyntaxNode) -> TreeOrder) {
         std::mem::swap(&mut curr_layer, &mut next_layer);
     }
 }
-

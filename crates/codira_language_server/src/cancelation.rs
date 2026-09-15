@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::error::Error;
 
 /// An error signifying a cancelled operation.
@@ -43,4 +42,3 @@ impl std::error::Error for Canceled {}
 pub(crate) fn is_canceled(e: &(dyn Error + 'static)) -> bool {
     e.downcast_ref::<Canceled>().is_some()
 }
-

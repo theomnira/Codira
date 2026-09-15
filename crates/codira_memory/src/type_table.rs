@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_abi::{self as abi, Guid};
 use rustc_hash::FxHashMap;
 
@@ -124,4 +123,3 @@ impl Default for TypeTable {
         type_table
     }
 }
-

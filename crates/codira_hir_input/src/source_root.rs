@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_paths::{RelativePath, RelativePathBuf};
 use rustc_hash::FxHashMap;
 
@@ -48,4 +47,3 @@ impl SourceRoot {
 /// When referring to a [`SourceRoot`] it is preferable to use this identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SourceRootId(pub u32);
-

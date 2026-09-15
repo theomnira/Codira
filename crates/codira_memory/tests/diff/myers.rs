@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_memory::diff::myers;
 
 use super::util::apply_myers_diff;
@@ -48,4 +47,3 @@ fn remove2() {
     let diff = myers::compute_diff(&old, &new);
     assert_eq!(apply_myers_diff(&old, diff), new);
 }
-

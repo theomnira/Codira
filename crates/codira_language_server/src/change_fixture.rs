@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_hir_input::{FileId, Fixture, PackageSet, SourceRoot, SourceRootId};
@@ -112,4 +111,3 @@ pub fn extract_range_or_offset(text: &str) -> (RangeOrOffset, String) {
         panic!("text should contain a cursor marker")
     }
 }
-

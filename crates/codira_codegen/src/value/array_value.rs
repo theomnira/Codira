@@ -4,10 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use inkwell::{
     types::{BasicType, PointerType},
-    values::PointerValue,
     AddressSpace,
 };
 
@@ -29,20 +27,13 @@ impl<'ink, T: PointerValueType<'ink>> PointerValueType<'ink> for [T] {
     }
 }
 
-impl<'ink, I, T: AddressableType<'ink, I>> AddressableType<'ink, I> for [T] {
-    fn ptr_cast(
-        value: PointerValue<'ink>,
-        _context: &IrValueContext<'ink, '_, '_>,
-    ) -> PointerValue<'ink> {
-        let ptr_type = value
-            .get_type()
-            .get_element_type()
-            .into_array_type()
-            .get_element_type()
-            .ptr_type(value.get_type().get_address_space());
-        value.const_cast(ptr_type)
-    }
-}
+// Under opaque pointers (LLVM 15+) every pointer is the same untyped `ptr`,
+// so there is nothing left to cast -- the trait's default `ptr_cast`
+// (identity) is exactly correct here. The old body tried to recover the
+// array's element type from `value`'s LLVM pointer type via
+// `get_element_type()` (removed in LLVM 15) purely to build a same-typed
+// "cast," which under opaque pointers was already a no-op in practice.
+impl<'ink, I, T: AddressableType<'ink, I>> AddressableType<'ink, I> for [T] {}
 
 macro_rules! impl_array(
     ($($size:expr),+) => {
@@ -241,4 +232,3 @@ impl_array_type!(
     inkwell::types::StructType<'ink> => inkwell::values::StructValue<'ink>,
     inkwell::types::PointerType<'ink> => inkwell::values::PointerValue<'ink>
 );
-

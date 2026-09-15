@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_paths::RelativePathBuf;
@@ -55,4 +54,3 @@ fn line_index_query(db: &dyn SourceDatabase, file_id: FileId) -> Arc<LineIndex> 
     let text = db.file_text(file_id);
     Arc::new(LineIndex::new(text.as_ref()))
 }
-

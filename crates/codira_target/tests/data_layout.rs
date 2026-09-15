@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_target::{abi::TargetDataLayout, spec::Target};
 
 #[test]
@@ -29,4 +28,3 @@ fn data_layout_linux() {
 
     insta::assert_debug_snapshot!(layout);
 }
-

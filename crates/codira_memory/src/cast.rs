@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(clippy::mutable_key_type)]
 
 use std::{collections::HashMap, ptr::NonNull};
@@ -255,4 +254,3 @@ mod tests {
         assert_cast(5u64, 0u128);
     }
 }
-

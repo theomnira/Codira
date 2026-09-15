@@ -4,18 +4,20 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(clippy::type_repetition_in_bounds)]
 
 use std::sync::Arc;
 
-use la_arena::ArenaMap;
 use codira_hir_input::{FileId, PackageId, SourceDatabase};
 use codira_syntax::{ast, Parse, SourceFile};
 use codira_target::{abi, spec::Target};
+use la_arena::ArenaMap;
+use smol_str::SmolStr;
 
 use crate::{
-    code_model::{r#struct::LocalFieldId, FunctionData, ImplData, StructData, TypeAliasData},
+    code_model::{
+        r#struct::LocalFieldId, Function, FunctionData, ImplData, StructData, TypeAliasData,
+    },
     expr::BodySourceMap,
     ids,
     ids::{DefWithBodyId, FunctionId, ImplId, VariantId},
@@ -129,10 +131,45 @@ pub trait HirDatabase: DefDatabase {
 
     #[salsa::invoke(InherentImpls::inherent_impls_in_package_query)]
     fn inherent_impls_in_package(&self, package: PackageId) -> Arc<InherentImpls>;
+
+    /// Lowers a function's HIR body to a `codira_mir::Generator` -- see
+    /// `crate::mir_lower`. `None` if the body uses a construct outside
+    /// that pass's current scope (see its module doc).
+    ///
+    /// Takes the public `Function` wrapper (not the crate-private
+    /// `FunctionId`) so this query is actually callable by downstream
+    /// crates like `codira_codegen` -- an incremental query nobody outside
+    /// `codira_hir` can invoke isn't wired into anything.
+    #[salsa::invoke(crate::mir_lower::mir_generator_query)]
+    fn mir_generator(&self, func: Function) -> Option<Arc<codira_mir::Generator>>;
+
+    /// Elaborates (monomorphizes) a function's generator with concrete
+    /// values bound to some/all of its generic parameters -- see
+    /// `crate::mir_lower` and `codira_comptime::elaborate`. Memoized per
+    /// `(func, bindings)` by salsa -- see architecture doc §4.1 and this
+    /// query's implementation doc comment for why that's the point.
+    #[salsa::invoke(crate::mir_lower::elaborate_generator_query)]
+    fn elaborate_generator(
+        &self,
+        func: Function,
+        bindings: Vec<(SmolStr, codira_comptime::Value)>,
+    ) -> Option<Arc<codira_mir::Body>>;
 }
 
 fn parse_query(db: &dyn AstDatabase, file_id: FileId) -> Parse<SourceFile> {
     let text = db.file_text(file_id);
+    // `data` structs' derived methods (see `crate::data_derive` and
+    // `spec/LANGUAGE_SPEC.md` §16) are spliced onto the file's own source
+    // text *before* parsing, rather than merged in as a separate tree --
+    // see `data_derive`'s module doc for why. `synthesize` is a no-op
+    // (`None`) unless `text` actually contains a `data` declaration, so
+    // this is behavior-preserving for every other file.
+    if let Some(derived) = crate::data_derive::synthesize(&text) {
+        let mut combined = String::with_capacity(text.len() + derived.len());
+        combined.push_str(&text);
+        combined.push_str(&derived);
+        return SourceFile::parse(&combined);
+    }
     SourceFile::parse(&text)
 }
 
@@ -142,4 +179,3 @@ fn target_data_layout(db: &dyn HirDatabase) -> Arc<abi::TargetDataLayout> {
         .expect("unable to create TargetDataLayout from target");
     Arc::new(data_layout)
 }
-

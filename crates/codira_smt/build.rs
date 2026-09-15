@@ -11,10 +11,10 @@
 //! dependency this crate doesn't need for the small API surface it uses.
 //!
 //! Search order for the Z3 install:
-//! 1. `Z3_LIB_DIR` env var, if set (points directly at the directory
-//!    containing `libz3.lib`).
-//! 2. `Z3_ROOT` env var, if set (a Z3 install prefix; `bin/bin` and `lib`
-//!    are both tried underneath it).
+//! 1. `Z3_LIB_DIR` env var, if set (points directly at the directory containing
+//!    `libz3.lib`).
+//! 2. `Z3_ROOT` env var, if set (a Z3 install prefix; `bin/bin` and `lib` are
+//!    both tried underneath it).
 //! 3. The default Chocolatey install location on Windows.
 
 use std::{env, path::PathBuf};
@@ -33,10 +33,7 @@ fn candidate_dirs() -> Vec<PathBuf> {
     }
 
     if let Ok(local_app_data) = env::var("LOCALAPPDATA") {
-        dirs.push(
-            PathBuf::from(&local_app_data)
-                .join("UniGetUI/Chocolatey/lib/z3/tools/bin/bin"),
-        );
+        dirs.push(PathBuf::from(&local_app_data).join("UniGetUI/Chocolatey/lib/z3/tools/bin/bin"));
         dirs.push(PathBuf::from(local_app_data).join("Chocolatey/lib/z3/tools/bin/bin"));
     }
     if let Ok(program_data) = env::var("ProgramData") {
@@ -54,7 +51,9 @@ fn main() {
         "libz3.so"
     };
 
-    let found_dir = candidate_dirs().into_iter().find(|dir| dir.join(lib_file).is_file());
+    let found_dir = candidate_dirs()
+        .into_iter()
+        .find(|dir| dir.join(lib_file).is_file());
 
     let Some(dir) = found_dir else {
         panic!(

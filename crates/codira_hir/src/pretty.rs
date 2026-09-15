@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{fmt, fmt::Write, iter};
 
 use either::Either;
@@ -64,4 +63,3 @@ pub(crate) fn print_path(_db: &dyn DefDatabase, path: &Path, buf: &mut dyn Write
     // Format the segments of the path seperated by '::'.
     write!(buf, "{}", segments.format("::"))
 }
-

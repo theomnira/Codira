@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use unicode_xid::UnicodeXID;
 
 pub fn is_whitespace(c: char) -> bool {
@@ -29,4 +28,3 @@ pub fn is_ident_continue(c: char) -> bool {
 pub fn is_dec_digit(c: char) -> bool {
     c.is_ascii_digit()
 }
-

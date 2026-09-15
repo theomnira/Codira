@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     hash::Hash,
     sync::{Arc, OnceLock},
@@ -84,7 +83,7 @@ impl<T: HasStaticTypeId + 'static> HasStaticTypeId for *const T {
             .call_once::<T, _>(|| {
                 let element_type_id = T::type_id().clone();
                 Arc::new(TypeId {
-                    name: format!("*const {}", &element_type_id.name),
+                    name: format!("*const {}", element_type_id.name),
                     data: TypeIdData::Pointer(PointerTypeId {
                         pointee: element_type_id,
                         mutable: false,
@@ -101,7 +100,7 @@ impl<T: HasStaticTypeId + 'static> HasStaticTypeId for *mut T {
             .call_once::<T, _>(|| {
                 let element_type_id = T::type_id().clone();
                 Arc::new(TypeId {
-                    name: format!("*mut {}", &element_type_id.name),
+                    name: format!("*mut {}", element_type_id.name),
                     data: TypeIdData::Pointer(PointerTypeId {
                         pointee: element_type_id,
                         mutable: true,
@@ -110,4 +109,3 @@ impl<T: HasStaticTypeId + 'static> HasStaticTypeId for *mut T {
             })
     }
 }
-

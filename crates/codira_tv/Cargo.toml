@@ -1,0 +1,18 @@
+[package]
+name = "codira_tv"
+description = "SMT-backed translation validation for codira_mir: proves (or refutes with a counterexample) that an optimizer rewrite of a loop-free function body preserved semantics, using the real Z3 solver via codira_smt"
+keywords = ["game", "hot-reloading", "language", "codira", "compiler"]
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+codira_mir = { version = "0.6.0-dev", path = "../codira_mir" }
+codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }
+rustc-hash = { workspace = true, features = ["std"] }

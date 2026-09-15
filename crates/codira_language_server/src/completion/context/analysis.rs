@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir::semantics::Semantics;
 use codira_syntax::{ast, match_ast, utils::find_node_at_offset, AstNode, SyntaxNode, TextSize};
 
@@ -37,6 +36,9 @@ pub fn analyze(
     None
 }
 
+// The block is a `match_ast!` expansion; clippy's `?` rewrite does
+// not apply to a macro-generated match.
+#[allow(clippy::question_mark)]
 fn classify_name_ref(
     sema: &Semantics<'_>,
     original_file: &SyntaxNode,
@@ -121,4 +123,3 @@ fn path_or_use_tree_qualifier(path: &ast::Path) -> Option<(ast::Path, bool)> {
         .and_then(ast::UseTree::cast)?;
     Some((use_tree.path()?, true))
 }
-

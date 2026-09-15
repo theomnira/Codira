@@ -126,6 +126,7 @@ pub enum SyntaxKind {
     OUT_KW,
     MUT_KW,
     DEF_KW,
+    DATA_KW,
     INT_NUMBER,
     FLOAT_NUMBER,
     STRING,
@@ -180,6 +181,7 @@ pub enum SyntaxKind {
     PREFIX_EXPR,
     LITERAL,
     BIN_EXPR,
+    CAST_EXPR,
     PAREN_EXPR,
     CALL_EXPR,
     METHOD_CALL_EXPR,
@@ -543,6 +545,9 @@ macro_rules! T {
     (def) => {
         $crate::SyntaxKind::DEF_KW
     };
+    (data) => {
+        $crate::SyntaxKind::DATA_KW
+    };
 }
 
 impl From<u16> for SyntaxKind {
@@ -614,6 +619,7 @@ impl SyntaxKind {
         | OUT_KW
         | MUT_KW
         | DEF_KW
+        | DATA_KW
         )
     }
 
@@ -787,6 +793,7 @@ impl SyntaxKind {
             OUT_KW => &SyntaxInfo { name: "OUT_KW" },
             MUT_KW => &SyntaxInfo { name: "MUT_KW" },
             DEF_KW => &SyntaxInfo { name: "DEF_KW" },
+            DATA_KW => &SyntaxInfo { name: "DATA_KW" },
             INT_NUMBER => &SyntaxInfo { name: "INT_NUMBER" },
             FLOAT_NUMBER => &SyntaxInfo { name: "FLOAT_NUMBER" },
             STRING => &SyntaxInfo { name: "STRING" },
@@ -841,6 +848,7 @@ impl SyntaxKind {
             PREFIX_EXPR => &SyntaxInfo { name: "PREFIX_EXPR" },
             LITERAL => &SyntaxInfo { name: "LITERAL" },
             BIN_EXPR => &SyntaxInfo { name: "BIN_EXPR" },
+            CAST_EXPR => &SyntaxInfo { name: "CAST_EXPR" },
             PAREN_EXPR => &SyntaxInfo { name: "PAREN_EXPR" },
             CALL_EXPR => &SyntaxInfo { name: "CALL_EXPR" },
             METHOD_CALL_EXPR => &SyntaxInfo { name: "METHOD_CALL_EXPR" },

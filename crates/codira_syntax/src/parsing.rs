@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{syntax_node::GreenNode, SyntaxError, SyntaxKind};
 
 #[macro_use]
@@ -82,4 +81,3 @@ where
 fn parse(token_source: &mut dyn TokenSource, tree_sink: &mut dyn TreeSink) {
     parse_from_tokens(token_source, tree_sink, grammar::root);
 }
-

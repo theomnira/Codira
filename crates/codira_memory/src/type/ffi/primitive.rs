@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{r#type::ffi::Type, HasStaticType};
 
 /// Types of primitives supported by Codira.
@@ -98,4 +97,3 @@ mod test {
         test_primitive::<std::ffi::c_void>(Void);
     }
 }
-

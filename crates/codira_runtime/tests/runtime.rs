@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_runtime::LinkFunctionsError;
 use codira_test::CompileAndRunTestDriver;
 
@@ -328,4 +327,3 @@ fn cyclic_struct() {
         .ty();
     assert_eq!(foo_foo_ty, foo_ty);
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir_input::{FileId, ModuleId};
 
 use super::{r#impl::Impl, AssocItem, Function, Package, PrimitiveType, Struct, TypeAlias};
@@ -220,4 +219,3 @@ impl From<ItemDefinitionId> for ModuleDef {
         }
     }
 }
-

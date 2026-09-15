@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::c_void, mem::ManuallyDrop, ops::Deref, sync::Arc};
 
 use codira_capi_utils::{codira_error_try, try_deref_mut, ErrorHandle};
@@ -15,8 +14,8 @@ use crate::r#type::{PointerData, Type as RustType, TypeDataStore};
 /// Additional information of a pointer [`Type`].
 ///
 /// Ownership of this type lies with the [`Type`] that created this instance. As
-/// long as the original type is not released through [`codira_type_release`] this
-/// type stays alive.
+/// long as the original type is not released through [`codira_type_release`]
+/// this type stays alive.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct PointerInfo(pub(super) *const c_void, pub(super) *const c_void);
@@ -208,4 +207,3 @@ mod test {
         unsafe { codira_type_release(ffi_f32) };
     }
 }
-

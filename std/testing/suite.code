@@ -80,7 +80,7 @@ public func suite_results_report(r: SuiteResults) -> String {
 // TestSuite
 // Collects test cases and runs them.
 // ---------------------------------------------------------------------------
-public struct(gc) TestSuite {
+public class TestSuite {
     name: String,
     tests: Array<TestCase>,
 }

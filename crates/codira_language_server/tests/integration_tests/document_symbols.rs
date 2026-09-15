@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use itertools::Itertools;
 use lsp_types::{DocumentSymbolResponse, PartialResultParams, WorkDoneProgressParams};
 use text_trees::FormatCharacters;
@@ -95,4 +94,3 @@ fn format_document_symbol(symbol: &lsp_types::DocumentSymbol) -> text_trees::Str
         symbol.children.iter().flatten().map(format_document_symbol),
     )
 }
-

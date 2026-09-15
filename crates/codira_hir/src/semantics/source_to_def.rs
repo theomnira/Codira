@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir_input::{FileId, ModuleId};
 use codira_syntax::{ast, match_ast, AstNode, SyntaxNode};
 use rustc_hash::FxHashMap;
@@ -206,4 +205,3 @@ pub(crate) struct SourceToDefMap {
     structs: FxHashMap<InFile<ast::StructDef>, StructId>,
     type_aliases: FxHashMap<InFile<ast::TypeAliasDef>, TypeAliasId>,
 }
-

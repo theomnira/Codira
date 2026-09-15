@@ -8,6 +8,11 @@ repository = "https://github.com/theomnira/codira"
 license = "MIT OR Apache-2.0"
 categories = ["linkers", "compilers"]
 
+[features]
+# Skip linking LLVM/LLD system libraries -- for doc builds and tooling
+# that only needs the crate to typecheck (checked by build.rs).
+no-llvm-linking = []
+
 [dependencies]
 libc = "0.2.138"
 llvm-sys = "221.0.0"

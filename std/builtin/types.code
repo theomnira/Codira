@@ -27,6 +27,18 @@
 //   BFloat16    bf16               16  (brain-float)
 //   ISize       isize              ptr-width
 //   USize       usize              ptr-width
+//
+// Migration note (2026-08-20): verified to parse cleanly under the current
+// grammar (codira_syntax::SourceFile::parse, zero SyntaxErrors) after one
+// change: the "Helper constants" section used `public let NAME: TYPE =
+// VALUE;` module-level bindings, which are not a valid top-level item in
+// the current grammar (no top-level `let`/const item exists at all --
+// confirmed empirically, see std/math/constants.code's migration note for
+// the full explanation). Rewritten as niladic functions, called as
+// `INT8_MAX()` rather than referenced as `INT8_MAX`. `type` aliases, the
+// `enum` with positional (unnamed) payloads, and `__intrinsic_name[T]()`
+// explicit-generic-argument calls were all already valid as written --
+// checked directly rather than assumed.
 // =============================================================================
 
 // ---- Signed integer aliases -------------------------------------------------
@@ -90,7 +102,7 @@ public type USize = usize;
 // ---- Scalar union type ------------------------------------------------------
 
 // Scalar represents any single numeric value.  It is a sum type over
-// every fixed-width numeric primitive.  The compiler may use it for
+// every fixed-width numeric primitive.  The compiler may import it for
 // generic numeric code and SIMD element types.
 public enum Scalar {
     SI8(i8),
@@ -112,36 +124,69 @@ public enum Scalar {
 // ---- Helper constants -------------------------------------------------------
 
 // Maximum value for each signed integer type.
-public let INT8_MAX:  i8   = 127;
-public let INT16_MAX: i16  = 32767;
-public let INT32_MAX: i32  = 2147483647;
-public let INT64_MAX: i64  = 9223372036854775807;
+public func INT8_MAX() -> i8 {
+    127
+}
+
+public func INT16_MAX() -> i16 {
+    32767
+}
+
+public func INT32_MAX() -> i32 {
+    2147483647
+}
+
+public func INT64_MAX() -> i64 {
+    9223372036854775807
+}
 
 // Minimum value for each signed integer type.
-public let INT8_MIN:  i8   = -128;
-public let INT16_MIN: i16  = -32768;
-public let INT32_MIN: i32  = -2147483648;
-public let INT64_MIN: i64  = -9223372036854775808;
+public func INT8_MIN() -> i8 {
+    -128
+}
+
+public func INT16_MIN() -> i16 {
+    -32768
+}
+
+public func INT32_MIN() -> i32 {
+    -2147483648
+}
+
+public func INT64_MIN() -> i64 {
+    -9223372036854775808
+}
 
 // Maximum value for each unsigned integer type.
-public let UINT8_MAX:  u8   = 255;
-public let UINT16_MAX: u16  = 65535;
-public let UINT32_MAX: u32  = 4294967295;
-public let UINT64_MAX: u64  = 18446744073709551615;
+public func UINT8_MAX() -> u8 {
+    255
+}
+
+public func UINT16_MAX() -> u16 {
+    65535
+}
+
+public func UINT32_MAX() -> u32 {
+    4294967295
+}
+
+public func UINT64_MAX() -> u64 {
+    18446744073709551615
+}
 
 // ---- Type-query helpers -----------------------------------------------------
 
 // Returns the size in bytes of the given type.
 public func type_sizeof[T]() -> usize {
-    return __intrinsic_sizeof[T]();
+    __intrinsic_sizeof[T]()
 }
 
 // Returns the alignment in bytes of the given type.
 public func type_alignof[T]() -> usize {
-    return __intrinsic_alignof[T]();
+    __intrinsic_alignof[T]()
 }
 
 // Returns the bit-width of the given type.
 public func type_bitwidth[T]() -> usize {
-    return __intrinsic_sizeof[T]() * 8;
+    __intrinsic_sizeof[T]() * 8
 }

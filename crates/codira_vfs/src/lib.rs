@@ -4,13 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::mem;
 
+use codira_paths::{AbsPath, AbsPathBuf};
 pub use monitor::{
     Monitor, MonitorConfig, MonitorDirectories, MonitorEntry, MonitorMessage, NotifyMonitor,
 };
-use codira_paths::{AbsPath, AbsPathBuf};
 use path_interner::PathInterner;
 
 mod monitor;
@@ -245,4 +244,3 @@ mod tests {
         assert_eq!(entries, expected_entries);
     }
 }
-

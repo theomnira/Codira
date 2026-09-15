@@ -6,12 +6,19 @@
 //! - A wrapper around LLD in Rust Programming Language.
 //!   An Interface between C++ and Rust.
 
-#include <lld/Common/CommonLinkerContext.h>
 #include <lld/Common/Driver.h>
 
 #include <cstdlib>
-#include <iostream>
+#include <cstring>
 #include <mutex>
+#include <string>
+#include <vector>
+
+LLD_HAS_DRIVER(coff)
+LLD_HAS_DRIVER(elf)
+LLD_HAS_DRIVER(mingw)
+LLD_HAS_DRIVER(macho)
+LLD_HAS_DRIVER(wasm)
 
 const char *codira_alloc_str(const std::string &str) {
     size_t size = str.length();
@@ -23,8 +30,8 @@ const char *codira_alloc_str(const std::string &str) {
     return nullptr;
 }
 
-// LLD seems not to be thread safe. This is terrible. We basically only allow single threaded access
-// to the driver using mutexes.
+// LLD is not thread safe: the drivers mutate global state. We only allow
+// single threaded access to lldMain using a mutex.
 std::mutex concurrencyMutex;
 
 extern "C" {
@@ -48,17 +55,18 @@ void codira_link_free_result(LldInvokeResult *result) {
 }
 }
 
-auto getLinkerForFlavor(LldFlavor flavor) {
+// lldMain dispatches on argv[0]; these program names select the right driver.
+static const char *getProgramNameForFlavor(LldFlavor flavor) {
     switch (flavor) {
         case Wasm:
-            return lld::wasm::link;
+            return "wasm-ld";
         case MachO:
-            return lld::macho::link;
+            return "ld64.lld";
         case Coff:
-            return lld::coff::link;
+            return "lld-link";
         case Elf:
         default:
-            return lld::elf::link;
+            return "ld.lld";
     }
 }
 
@@ -67,31 +75,21 @@ extern "C" {
 LldInvokeResult codira_lld_link(LldFlavor flavor, int argc, const char *const *argv) {
     LldInvokeResult result;
 
-    // Determine which specific linker to use
-    auto link = getLinkerForFlavor(flavor);
-
     // Construct stdout and stderr streams
     std::string outputString, errorString;
     llvm::raw_string_ostream outputStream(outputString);
     llvm::raw_string_ostream errorStream(errorString);
 
-    // Copy arguments
-    std::vector<const char *> args(argv, argv + argc);
-
-    // All linkers expect the first argument to be the executable name.
-    if (flavor == Coff) {
-        args.insert(args.begin(), "lld.exe");
-    } else {
-        args.insert(args.begin(), "lld");
-    }
+    // Copy arguments, prefixed by the program name that selects the driver.
+    std::vector<const char *> args;
+    args.reserve(static_cast<size_t>(argc) + 1);
+    args.push_back(getProgramNameForFlavor(flavor));
+    args.insert(args.end(), argv, argv + argc);
 
     // LLD is not thread-safe at all, so we guard parallel invocation with a mutex
     std::unique_lock<std::mutex> lock(concurrencyMutex);
-    result.success = link(args, outputStream, errorStream, false, false);
-
-    // Delete the global context and clear the global context pointer, so that it
-    // cannot be accessed anymore.
-    lld::CommonLinkerContext::destroy();
+    lld::Result linkResult = lld::lldMain(args, outputStream, errorStream, LLD_ALL_DRIVERS);
+    result.success = linkResult.retCode == 0;
 
     std::string resultMessage = errorStream.str() + outputStream.str();
     result.messages = codira_alloc_str(resultMessage);

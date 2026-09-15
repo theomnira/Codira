@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_hir_input::FileId;
@@ -90,6 +89,7 @@ impl TypeAlias {
         validator.validate_target_type_existence(sink);
         validator.validate_target_type_privacy(sink);
         validator.validate_acyclic(sink);
+        validator.validate_refinement_satisfiability(sink);
     }
 }
 
@@ -137,4 +137,3 @@ impl HasVisibility for TypeAlias {
         self.data(db).visibility.resolve(db, &self.id.resolver(db))
     }
 }
-

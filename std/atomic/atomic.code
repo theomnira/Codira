@@ -9,7 +9,7 @@
 // Specifies memory ordering constraints for atomic operations.
 // Mirrors the C++11 / LLVM memory ordering model.
 // ---------------------------------------------------------------------------
-public struct(value) MemoryOrder {
+public struct MemoryOrder {
     _value: u8,
 }
 

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::path::PathBuf;
 
 use anyhow::anyhow;
@@ -34,7 +33,7 @@ pub fn start(args: Args) -> anyhow::Result<ExitStatus> {
         .ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                format!("Failed to obtain entry point '{}'", &args.entry),
+                format!("Failed to obtain entry point '{}'", args.entry),
             )
         })?;
 
@@ -71,4 +70,3 @@ pub fn start(args: Args) -> anyhow::Result<ExitStatus> {
     };
     Ok(ExitStatus::Success)
 }
-

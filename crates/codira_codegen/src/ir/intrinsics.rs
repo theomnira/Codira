@@ -4,11 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{collections::BTreeMap, sync::Arc};
 
-use inkwell::{context::Context, targets::TargetData, types::FunctionType};
 use codira_hir::{Body, Expr, ExprId, HirDatabase, InferenceResult, ValueNs};
+use inkwell::{context::Context, targets::TargetData, types::FunctionType};
 
 use crate::{
     intrinsics::{self, Intrinsic},
@@ -127,4 +126,3 @@ pub fn collect_wrapper_body<'ink>(
     // self.collect_intrinsic(entries, &intrinsics::drop, module);
     *needs_alloc = true;
 }
-

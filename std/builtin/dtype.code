@@ -19,8 +19,8 @@
 // code generator can pattern-match it.
 // =============================================================================
 
-use std.builtin.types;
-use std.collections.optional;
+import std.builtin.types;
+import std.collections.optional;
 
 // =============================================================================
 // DType
@@ -30,7 +30,7 @@ use std.collections.optional;
 // with it.  A DType behaves like a compile-time enum: users reference the
 // compiler-provided constants (e.g. `DType.float32`) rather than constructing
 // instances.
-public struct(value) DType {
+public struct DType {
     // u8-tag encoding the concrete dtype, matching the `!kgen.dtype`
     // constant tags used by the GPU code generator.
     _ui8: u8,

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use inkwell::module::{Linkage, Module};
 use rustc_hash::FxHashSet;
 
@@ -115,7 +114,11 @@ impl<'db, 'ink, 'ctx, 't> AssemblyBuilder<'db, 'ink, 'ctx, 't> {
         );
 
         // Optimize the assembly module
-        optimize_module(&self.assembly_module, self.code_gen.optimization_level);
+        optimize_module(
+            &self.assembly_module,
+            &self.code_gen.target_machine,
+            self.code_gen.optimization_level,
+        );
 
         // Debug print the IR
         //println!("{}", assembly_module.print_to_string().to_string());
@@ -123,4 +126,3 @@ impl<'db, 'ink, 'ctx, 't> AssemblyBuilder<'db, 'ink, 'ctx, 't> {
         Ok(Assembly::new(self.code_gen, self.assembly_module))
     }
 }
-

@@ -420,4 +420,3 @@ mod tests {
         assert!(CHECKPOINT.with(|c| c.get().is_null()));
     }
 }
-

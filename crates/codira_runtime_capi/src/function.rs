@@ -14,14 +14,14 @@ use std::{
     sync::Arc,
 };
 
-use codira_capi_utils::{error::ErrorHandle, codira_error_try, try_deref_mut};
+use codira_capi_utils::{codira_error_try, error::ErrorHandle, try_deref_mut};
 use codira_memory::ffi::{Type, Types};
 
 /// Describes a `Function` accessible from a Codira [`super::runtime::Runtime`].
 ///
 /// An instance of `Function` shares ownership of the underlying data. To create
-/// a copy of the `Function` object call [`codira_function_add_reference`] to make
-/// sure the number of references to the data is properly tracked. Calling
+/// a copy of the `Function` object call [`codira_function_add_reference`] to
+/// make sure the number of references to the data is properly tracked. Calling
 /// [`codira_function_release`] signals the runtime that the data is no longer
 /// referenced through the specified object. When all references are released
 /// the underlying data is deallocated.
@@ -407,4 +407,3 @@ pub(crate) mod tests {
         assert!(unsafe { codira_type_equal(return_type, i32::type_info().clone().into()) });
     }
 }
-

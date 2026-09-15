@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::ffi;
 
 use inkwell::{context::Context, targets::TargetData, types::FunctionType};
@@ -14,8 +13,8 @@ use crate::ir::dispatch_table::FunctionPrototype;
 #[macro_use]
 mod macros;
 
-/// Defines the properties of an intrinsic function that can be called from Codira.
-/// These functions are mostly used internally.
+/// Defines the properties of an intrinsic function that can be called from
+/// Codira. These functions are mostly used internally.
 pub trait Intrinsic: Sync {
     /// Returns the prototype of the intrinsic
     fn prototype(&self) -> FunctionPrototype;
@@ -34,4 +33,3 @@ intrinsics! {
     /// Note that the elements in the array are left uninitialized.
     pub fn new_array(type_handle: *const ffi::c_void, length: usize, alloc_handle: *mut ffi::c_void) -> *const *mut ffi::c_void;
 }
-

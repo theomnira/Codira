@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod apple_base;
 mod linux_base;
 mod windows_msvc_base;
@@ -159,4 +158,3 @@ impl Target {
         Self::search(host_triple())
     }
 }
-

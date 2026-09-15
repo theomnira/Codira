@@ -18,9 +18,9 @@
 //   get_option(name) — get the value of "--key=value" or "--key value"
 // =============================================================================
 
-use std.builtin.types;
-use std.builtin.error;
-use std.builtin.traits;
+import std.builtin.types;
+import std.builtin.error;
+import std.builtin.traits;
 
 // =============================================================================
 // Raw access

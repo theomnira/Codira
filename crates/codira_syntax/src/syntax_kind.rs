@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[macro_use]
 mod generated;
 
@@ -28,4 +27,3 @@ impl SyntaxKind {
         matches!(self, SyntaxKind::WHITESPACE | SyntaxKind::COMMENT)
     }
 }
-

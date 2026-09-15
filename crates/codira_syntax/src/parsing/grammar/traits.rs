@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
     declarations::{declaration, fn_def},
     error_block, generics, name, name_recovery, types, Marker, Parser, EFFECT_DEF, EFFECT_OP,
@@ -34,7 +33,7 @@ pub(super) fn opt_inheritance_list(p: &mut Parser<'_>) {
 /// trait/superclass name, but may be prefixed with `~` to explicitly opt
 /// out of an implicit marker trait, e.g. `struct GPUBuffer: ~Copyable { .. }`
 /// declaring a linear, non-duplicable resource type (see
-/// spec/LANGUAGE_SPEC.md section 14). Parse-level scaffolding only: the
+/// `spec/LANGUAGE_SPEC.md` section 14). Parse-level scaffolding only: the
 /// HIR does not yet have a `Copyable` marker trait to opt out of, so `~`
 /// currently parses but has no enforced effect (no move-checking).
 fn inheritance_entry(p: &mut Parser<'_>) {
@@ -191,4 +190,3 @@ fn extern_item(p: &mut Parser<'_>) {
         p.error_and_bump("expected `func`");
     }
 }
-

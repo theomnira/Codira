@@ -7,8 +7,8 @@
 //!
 //! The Codira Runtime
 //!
-//! The Codira Runtime provides functionality for automatically hot reloading Codira C
-//! ABI compliant shared libraries.
+//! The Codira Runtime provides functionality for automatically hot reloading
+//! Codira C ABI compliant shared libraries.
 #![warn(missing_docs)]
 
 mod assembly;
@@ -38,9 +38,6 @@ use std::{
 };
 
 use assembly::LoadError;
-use dispatch_table::DispatchTable;
-use garbage_collector::GarbageCollector;
-use log::{debug, error, info};
 use codira_abi as abi;
 use codira_memory::{
     gc::{self, Array, GcRuntime},
@@ -49,6 +46,9 @@ use codira_memory::{
 // Re-export some useful types so crates dont have to depend on codira_memory as well.
 pub use codira_memory::{Field, FieldData, HasStaticType, PointerType, StructType, Type};
 use codira_project::LOCKFILE_NAME;
+use dispatch_table::DispatchTable;
+use garbage_collector::GarbageCollector;
+use log::{debug, error, info};
 use notify::{event::ModifyKind, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 pub use crate::{
@@ -667,13 +667,13 @@ pub struct InvokeErr<'name, T> {
 
 impl<T> Debug for InvokeErr<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", &self.msg)
+        write!(f, "{}", self.msg)
     }
 }
 
 impl<T> Display for InvokeErr<'_, T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", &self.msg)
+        write!(f, "{}", self.msg)
     }
 }
 
@@ -845,7 +845,7 @@ impl Runtime {
             return Err(InvokeErr {
                 msg: format!(
                     "unexpected return type, got '{}', expected '{}",
-                    &function_info.prototype.signature.return_type.name(),
+                    function_info.prototype.signature.return_type.name(),
                     ReturnType::type_hint()
                 ),
                 function_name,
@@ -857,4 +857,3 @@ impl Runtime {
         Ok(Marshal::marshal_from(result, self))
     }
 }
-

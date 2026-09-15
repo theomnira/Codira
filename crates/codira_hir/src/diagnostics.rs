@@ -4,14 +4,14 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{any::Any, fmt};
 
 use codira_hir_input::FileId;
 use codira_syntax::{ast, AstPtr, SmolStr, SyntaxNode, SyntaxNodePtr, TextRange};
 
 use crate::{
-    code_model::StructKind, ids::FunctionId, in_file::InFile, HirDatabase, IntTy, Name, Ty,
+    code_model::StructKind, ids::FunctionId, in_file::InFile, ty::cast::InvalidCastReason,
+    HirDatabase, IntTy, Name, Ty,
 };
 
 /// Diagnostic defines `codira_hir` API for errors and warnings.
@@ -368,6 +368,34 @@ impl Diagnostic for CannotApplyUnaryOp {
     }
 }
 
+/// An `expr as Type` cast that the legality matrix in [`crate::ty::cast`]
+/// rejects. `as` never silently reinterprets: a cast it cannot perform is a
+/// type error.
+#[derive(Debug)]
+pub struct InvalidCast {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+    /// The inferred type of the operand.
+    pub from: Ty,
+    /// The resolved target type that was written after `as`.
+    pub to: Ty,
+    pub reason: InvalidCastReason,
+}
+
+impl Diagnostic for InvalidCast {
+    fn message(&self) -> String {
+        self.reason.message().to_string()
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
 #[derive(Debug)]
 pub struct DuplicateDefinition {
     pub name: String,
@@ -604,6 +632,123 @@ impl Diagnostic for PossiblyUninitializedVariable {
 
     fn source(&self) -> InFile<SyntaxNodePtr> {
         InFile::new(self.file, self.pat.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// A call to a function declaring `uses Effect, ...` (see
+/// `spec/LANGUAGE_SPEC.md` section 6) from a caller that doesn't itself
+/// declare `Effect` in its own `uses` clause. Emitted by
+/// `expr::validator::effect_obligation` -- the "declare `uses` and
+/// propagate the obligation" half of the spec's effect-obligation rule
+/// (the "or be inside a matching `handle` block" half is not checked yet,
+/// since `handle` still lowers to `Expr::Missing`; see that validator's
+/// module doc for the precise scope).
+#[derive(Debug)]
+pub struct UndeclaredEffect {
+    pub file: FileId,
+    pub call: SyntaxNodePtr,
+    pub effect: Name,
+    pub callee: Name,
+}
+
+impl Diagnostic for UndeclaredEffect {
+    fn message(&self) -> String {
+        format!(
+            "call to `{}` requires effect `{}`, which is not declared in this function's `uses` clause",
+            self.callee, self.effect
+        )
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.call.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// A refinement type (`Type { binder | predicate }`, see
+/// `spec/LANGUAGE_SPEC.md` §7) whose predicate `codira_smt` (a real Z3
+/// solver -- see `crate::refinement_check`) has proven unsatisfiable: no
+/// value can ever inhabit this type. Emitted for `type` alias declarations
+/// only (see `refinement_check`'s module doc for why).
+#[derive(Debug)]
+pub struct UnsatisfiableRefinement {
+    pub file: FileId,
+    pub type_ref: SyntaxNodePtr,
+    pub predicate_text: String,
+}
+
+impl Diagnostic for UnsatisfiableRefinement {
+    fn message(&self) -> String {
+        format!(
+            "unsatisfiable refinement type: no value can ever satisfy `{}` (proven by SMT solver, not just a heuristic)",
+            self.predicate_text
+        )
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.type_ref.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// A `@heal(..., postcondition: <expr>)` healing contract (see
+/// `crate::heal_check`) whose postcondition `codira_smt` has proven
+/// unsatisfiable: no return value could ever discharge it, so the contract
+/// can never be honored by any recovery strategy.
+#[derive(Debug)]
+pub struct UnsatisfiableHealingPostcondition {
+    pub file: FileId,
+    pub func: SyntaxNodePtr,
+}
+
+impl Diagnostic for UnsatisfiableHealingPostcondition {
+    fn message(&self) -> String {
+        "unsatisfiable healing-contract postcondition: no return value can ever satisfy it (proven by SMT solver, not just a heuristic)".to_string()
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.func.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// A `consuming` parameter (see `spec/LANGUAGE_SPEC.md` section 14) used
+/// more than once in an `@strict` function's body (section 17). The first
+/// use is the move; any further use is a use-after-consume, the same class
+/// of bug a real borrow checker rejects -- see
+/// `expr::validator::move_check`'s module doc for exactly what this v1
+/// does and does not catch.
+#[derive(Debug)]
+pub struct UseAfterConsume {
+    pub file: FileId,
+    /// The second (or later) use -- the first use is not itself an error.
+    pub use_site: SyntaxNodePtr,
+    pub binding: Name,
+}
+
+impl Diagnostic for UseAfterConsume {
+    fn message(&self) -> String {
+        format!(
+            "use of `{}` after it was consumed -- `consuming` parameters may only be used once in an `@strict` function",
+            self.binding
+        )
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.use_site.clone())
     }
 
     fn as_any(&self) -> &(dyn Any + Send + 'static) {
@@ -909,7 +1054,7 @@ pub struct MethodNotFound {
 
 impl Diagnostic for MethodNotFound {
     fn message(&self) -> String {
-        format!("method `{}` does not exist", &self.method_name)
+        format!("method `{}` does not exist", self.method_name)
     }
 
     fn source(&self) -> InFile<SyntaxNodePtr> {
@@ -922,7 +1067,7 @@ impl Diagnostic for MethodNotFound {
 }
 
 /// An error emitted when a `supervisor` block declares two `child` entries
-/// with the same name (see spec/self_healing_programming_language.md
+/// with the same name (see `spec/self_healing_programming_language.md`
 /// section 3.5). Structural validation only: `supervisor`/`child` blocks
 /// parse into a full syntax tree (`codira_syntax`) but are not lowered into
 /// name-resolvable HIR items, so this walks the raw syntax tree directly
@@ -936,7 +1081,10 @@ pub struct DuplicateSupervisorChild {
 
 impl Diagnostic for DuplicateSupervisorChild {
     fn message(&self) -> String {
-        format!("a child named `{}` is already declared in this supervisor", self.name)
+        format!(
+            "a child named `{}` is already declared in this supervisor",
+            self.name
+        )
     }
 
     fn source(&self) -> InFile<SyntaxNodePtr> {
@@ -970,4 +1118,3 @@ impl Diagnostic for DuplicateSupervisorEntry {
         self
     }
 }
-

@@ -23,12 +23,12 @@ mod name_ref;
 mod test_utils;
 mod tests;
 
+use codira_hir::semantics::ScopeDef;
 use context::{
     CompletionAnalysis, CompletionContext, DotAccess, NameRefContext, NameRefKind,
     PathCompletionContext, PathExprContext, PathKind, Qualified,
 };
 pub use item::{CompletionItem, CompletionItemKind};
-use codira_hir::semantics::ScopeDef;
 
 use crate::{
     completion::render::{render_field, render_fn, render_resolution, RenderContext},
@@ -111,4 +111,3 @@ impl Completions {
         }
     }
 }
-

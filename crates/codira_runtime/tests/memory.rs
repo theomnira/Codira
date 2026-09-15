@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_runtime::{ArrayRef, StructRef};
 use codira_test::CompileAndRunTestDriver;
 
@@ -822,12 +821,9 @@ fn map_array_to_array_different_array_to_struct_different() {
 
         assert_eq!(array.iter().count(), 3);
 
-        array
-            .iter()
-            .zip([b, a, b].into_iter())
-            .for_each(|(lhs, rhs)| {
-                assert_eq!(lhs.get::<i64>("0").unwrap(), i64::from(rhs));
-            });
+        array.iter().zip([b, a, b]).for_each(|(lhs, rhs)| {
+            assert_eq!(lhs.get::<i64>("0").unwrap(), i64::from(rhs));
+        });
     }
 
     assert_eq!(
@@ -896,12 +892,9 @@ fn map_array_to_array_different_array_to_struct_same() {
 
         assert_eq!(array.iter().count(), 3);
 
-        array
-            .iter()
-            .zip([b, a, b].into_iter())
-            .for_each(|(lhs, rhs)| {
-                assert_eq!(lhs.get::<i32>("0").unwrap(), rhs);
-            });
+        array.iter().zip([b, a, b]).for_each(|(lhs, rhs)| {
+            assert_eq!(lhs.get::<i32>("0").unwrap(), rhs);
+        });
     }
 
     assert_eq!(
@@ -1206,21 +1199,18 @@ fn map_array_to_array_different_struct_to_array_different() {
 
         assert_eq!(array.iter().count(), 3);
 
-        array
-            .iter()
-            .zip([b, a, b].into_iter())
-            .for_each(|(lhs, rhs)| {
-                assert_eq!(lhs.iter().count(), 1);
+        array.iter().zip([b, a, b]).for_each(|(lhs, rhs)| {
+            assert_eq!(lhs.iter().count(), 1);
 
-                assert_eq!(
-                    lhs.iter()
-                        .next()
-                        .expect("Array must have a value.")
-                        .get::<i64>("0")
-                        .unwrap(),
-                    i64::from(rhs)
-                );
-            });
+            assert_eq!(
+                lhs.iter()
+                    .next()
+                    .expect("Array must have a value.")
+                    .get::<i64>("0")
+                    .unwrap(),
+                i64::from(rhs)
+            );
+        });
     }
 
     assert_eq!(
@@ -1289,21 +1279,18 @@ fn map_array_to_array_different_struct_to_array_same() {
 
         assert_eq!(array.iter().count(), 3);
 
-        array
-            .iter()
-            .zip([b, a, b].into_iter())
-            .for_each(|(lhs, rhs)| {
-                assert_eq!(lhs.iter().count(), 1);
+        array.iter().zip([b, a, b]).for_each(|(lhs, rhs)| {
+            assert_eq!(lhs.iter().count(), 1);
 
-                assert_eq!(
-                    lhs.iter()
-                        .next()
-                        .expect("Array must have a value.")
-                        .get::<i32>("0")
-                        .unwrap(),
-                    rhs
-                );
-            });
+            assert_eq!(
+                lhs.iter()
+                    .next()
+                    .expect("Array must have a value.")
+                    .get::<i32>("0")
+                    .unwrap(),
+                rhs
+            );
+        });
     }
 
     assert_eq!(
@@ -1373,12 +1360,9 @@ fn map_array_to_array_different_struct_to_struct() {
 
         assert_eq!(array.iter().count(), 3);
 
-        array
-            .iter()
-            .zip([b, a, b].into_iter())
-            .for_each(|(lhs, rhs)| {
-                assert_eq!(lhs.get::<i64>("0").unwrap(), i64::from(rhs));
-            });
+        array.iter().zip([b, a, b]).for_each(|(lhs, rhs)| {
+            assert_eq!(lhs.get::<i64>("0").unwrap(), i64::from(rhs));
+        });
     }
 
     assert_eq!(
@@ -2517,4 +2501,3 @@ fn test_type_table() {
     // These types should be equal
     assert_eq!(foo_bar_field_type, bar_type);
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_memory::{
@@ -127,4 +126,3 @@ fn trace_cycle() {
     assert_eq!(events.next(), Some(Event::End));
     assert_eq!(events.next(), None);
 }
-

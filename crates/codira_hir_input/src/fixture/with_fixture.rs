@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{convert::TryInto, sync::Arc};
 
 pub use crate::fixture::Fixture;
@@ -54,4 +53,3 @@ fn with_files(db: &mut dyn SourceDatabase, fixture: &str) -> Vec<FileId> {
 
     files
 }
-

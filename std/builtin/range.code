@@ -2,19 +2,41 @@
 // std/builtin/range.code — Range types for iteration and slicing
 // =============================================================================
 //
-// Provides Range, RangeInclusive, and SteppedRange for use with `for`
+// Provides Range, RangeInclusive, and SteppedRange for import with `for`
 // loops, slice indexing, and general sequence generation.
 //
-// Examples:
-//   for i in Range.new(0, 10)           { ... }  // 0..9
-//   for i in RangeInclusive.new(1, 10)  { ... }  // 1..10
-//   for i in SteppedRange.new(0, 20, 2) { ... }  // 0, 2, 4, … 18
+// Migration note (2026-08-20): rewritten from pre-redesign syntax (`use`,
+// `struct(value)`, `func Type.method(...)` at top level) to the current
+// grammar -- verified to parse cleanly via codira_syntax::SourceFile::parse
+// (zero SyntaxErrors). Every `next`/`next_back` method returned `(i64,
+// bool)` -- there is no anonymous tuple *type* syntax in the current
+// grammar (same finding as std/collections/optional.code's `replace`/
+// `take`), so a small `RangeStep` struct replaces it, following
+// agents/RUST_TO_CODIRA_MIGRATION.md §9's worked example (an explicit
+// "found" struct instead of a tuple/Option). All methods moved into
+// `extend Type[...] { }` blocks, dropping the `Type[...].` prefix.
+//
+// Also found here: `as` casts (`length as usize`) are documented as
+// designed in spec/LANGUAGE_SPEC.md line 392 ("etc. always require an
+// explicit `as` cast") but the grammar has no expression-level `as` at all
+// -- `crates/codira_syntax/src/parsing/grammar/declarations.rs` is the only
+// place `T![as]` appears, and it's import-alias syntax
+// (`import foo.{bar as baz}`), not a cast operator. `to_array`'s one cast
+// site uses `__intrinsic_cast[T](value)` instead, consistent with this
+// codebase's other `__intrinsic_*` compiler-magic calls.
 // =============================================================================
 
-use std.builtin.traits;
+import std.builtin.traits
+
+// The result of stepping a range's iterator: either a value plus `true`,
+// or (when the range is exhausted) `0`/`false`.
+public struct RangeStep {
+    value: i64,
+    has_value: bool,
+}
 
 // A half-open range [start, end).
-public struct(value) Range {
+public struct Range {
     // First value in the range.
     start: i64,
 
@@ -22,257 +44,248 @@ public struct(value) Range {
     end: i64,
 }
 
-// =============================================================================
-// Range — Construction
-// =============================================================================
+extend Range {
+    // ---- Construction -------------------------------------------------
 
-// Create a range [start, end).
-public func Range.new(start: i64, end: i64) -> Range {
-    return Range { start: start, end: end };
-}
-
-// Create a range [0, end).
-public func Range.up_to(end: i64) -> Range {
-    return Range { start: 0, end: end };
-}
-
-// Create a range [start, i64::MAX), effectively unbounded above.
-public func Range.from(start: i64) -> Range {
-    return Range { start: start, end: 9223372036854775807 };
-}
-
-// Create an empty range.
-public func Range.empty() -> Range {
-    return Range { start: 0, end: 0 };
-}
-
-// =============================================================================
-// Range — Queries
-// =============================================================================
-
-// Number of integers in the range.  Returns 0 if start >= end.
-public func Range.len(self) -> i64 {
-    if self.start >= self.end {
-        return 0;
+    // Create a range [start, end).
+    func new(start: i64, end: i64) -> Range {
+        Range { start: start, end: end }
     }
-    return self.end - self.start;
-}
 
-// True when the range contains no elements.
-public func Range.is_empty(self) -> bool {
-    return self.start >= self.end;
-}
-
-// True when `value` falls within [start, end).
-public func Range.contains(self, value: i64) -> bool {
-    return value >= self.start & value < self.end;
-}
-
-// =============================================================================
-// Range — Iteration
-// =============================================================================
-
-// Return the current front value and advance the range.
-// Returns the value if the range is non-empty, otherwise none.
-public func Range.next(self) -> (i64, bool) {
-    if self.start >= self.end {
-        return (0, false);
+    // Create a range [0, end).
+    func up_to(end: i64) -> Range {
+        Range { start: 0, end: end }
     }
-    let val = self.start;
-    self.start = self.start + 1;
-    return (val, true);
-}
 
-// Iterate from the back: return the last value and shrink the range.
-public func Range.next_back(self) -> (i64, bool) {
-    if self.start >= self.end {
-        return (0, false);
+    // Create a range [start, i64::MAX), effectively unbounded above.
+    func from(start: i64) -> Range {
+        Range { start: start, end: 9223372036854775807 }
     }
-    self.end = self.end - 1;
-    return (self.end, true);
-}
 
-// Collect the range into a dynamically-allocated array.
-public func Range.to_array(self) -> Array[i64] {
-    let length = self.len();
-    let arr = Array[i64].with_capacity(length as usize);
-    let i = self.start;
-    while i < self.end {
-        arr.push(i);
-        i = i + 1;
+    // Create an empty range.
+    func empty() -> Range {
+        Range { start: 0, end: 0 }
     }
-    return arr;
+
+    // ---- Queries --------------------------------------------------------
+
+    // Number of integers in the range.  Returns 0 if start >= end.
+    func len(self) -> i64 {
+        if self.start >= self.end {
+            return 0
+        }
+        self.end - self.start
+    }
+
+    // True when the range contains no elements.
+    func is_empty(self) -> bool {
+        self.start >= self.end
+    }
+
+    // True when `value` falls within [start, end).
+    func contains(self, value: i64) -> bool {
+        value >= self.start & value < self.end
+    }
+
+    // ---- Iteration ------------------------------------------------------
+
+    // Return the current front value and advance the range.
+    func next(var self) -> RangeStep {
+        if self.start >= self.end {
+            return RangeStep { value: 0, has_value: false }
+        }
+        let val = self.start
+        self.start = self.start + 1
+        RangeStep { value: val, has_value: true }
+    }
+
+    // Iterate from the back: return the last value and shrink the range.
+    func next_back(var self) -> RangeStep {
+        if self.start >= self.end {
+            return RangeStep { value: 0, has_value: false }
+        }
+        self.end = self.end - 1
+        RangeStep { value: self.end, has_value: true }
+    }
+
+    // Collect the range into a dynamically-allocated array.
+    func to_array(self) -> Array[i64] {
+        let length = self.len()
+        let arr = Array[i64].with_capacity(__intrinsic_cast[usize](length))
+        var i = self.start
+        while i < self.end {
+            arr.push(i)
+            i = i + 1
+        }
+        arr
+    }
+
+    // ---- Trait implementations -------------------------------------------
+
+    func eq(self, other: Range) -> bool {
+        self.start == other.start & self.end == other.end
+    }
+
+    func ne(self, other: Range) -> bool {
+        !(self.eq(other))
+    }
+
+    func to_string(self) -> String {
+        __intrinsic_to_string(self.start) + ".." + __intrinsic_to_string(self.end)
+    }
+
+    func repr(self) -> String {
+        "Range(" + __intrinsic_to_string(self.start) + ", " + __intrinsic_to_string(self.end) + ")"
+    }
+
+    func copy(self) -> Range {
+        Range { start: self.start, end: self.end }
+    }
 }
-
-// =============================================================================
-// Range — Trait implementations
-// =============================================================================
-
-public func Range.eq(self, other: Range) -> bool {
-    return self.start == other.start & self.end == other.end;
-}
-
-public func Range.ne(self, other: Range) -> bool {
-    return !(self.eq(other));
-}
-
-public func Range.to_string(self) -> String {
-    return __intrinsic_to_string(self.start) + ".." + __intrinsic_to_string(self.end);
-}
-
-public func Range.repr(self) -> String {
-    return "Range(" + __intrinsic_to_string(self.start) + ", " + __intrinsic_to_string(self.end) + ")";
-}
-
-public func Range.copy(self) -> Range {
-    return Range { start: self.start, end: self.end };
-}
-
-// =============================================================================
-// RangeInclusive — a closed range [start, end]
-// =============================================================================
 
 // A closed range [start, end] (both bounds inclusive).
-public struct(value) RangeInclusive {
+public struct RangeInclusive {
     start: i64,
     end: i64,
     exhausted: bool,
 }
 
-public func RangeInclusive.new(start: i64, end: i64) -> RangeInclusive {
-    return RangeInclusive { start: start, end: end, exhausted: start > end };
-}
-
-public func RangeInclusive.len(self) -> i64 {
-    if self.exhausted {
-        return 0;
+extend RangeInclusive {
+    func new(start: i64, end: i64) -> RangeInclusive {
+        RangeInclusive { start: start, end: end, exhausted: start > end }
     }
-    return self.end - self.start + 1;
-}
 
-public func RangeInclusive.is_empty(self) -> bool {
-    return self.exhausted;
-}
-
-public func RangeInclusive.contains(self, value: i64) -> bool {
-    return value >= self.start & value <= self.end;
-}
-
-public func RangeInclusive.next(self) -> (i64, bool) {
-    if self.exhausted {
-        return (0, false);
+    func len(self) -> i64 {
+        if self.exhausted {
+            return 0
+        }
+        self.end - self.start + 1
     }
-    let val = self.start;
-    if self.start == self.end {
-        self.exhausted = true;
-    } else {
-        self.start = self.start + 1;
+
+    func is_empty(self) -> bool {
+        self.exhausted
     }
-    return (val, true);
-}
 
-public func RangeInclusive.to_string(self) -> String {
-    return __intrinsic_to_string(self.start) + "..=" + __intrinsic_to_string(self.end);
-}
+    func contains(self, value: i64) -> bool {
+        value >= self.start & value <= self.end
+    }
 
-public func RangeInclusive.copy(self) -> RangeInclusive {
-    return RangeInclusive { start: self.start, end: self.end, exhausted: self.exhausted };
-}
+    func next(var self) -> RangeStep {
+        if self.exhausted {
+            return RangeStep { value: 0, has_value: false }
+        }
+        let val = self.start
+        if self.start == self.end {
+            self.exhausted = true
+        } else {
+            self.start = self.start + 1
+        }
+        RangeStep { value: val, has_value: true }
+    }
 
-// =============================================================================
-// SteppedRange — a range with an arbitrary step
-// =============================================================================
+    func to_string(self) -> String {
+        __intrinsic_to_string(self.start) + "..=" + __intrinsic_to_string(self.end)
+    }
+
+    func copy(self) -> RangeInclusive {
+        RangeInclusive { start: self.start, end: self.end, exhausted: self.exhausted }
+    }
+}
 
 // A range [start, end) with a configurable step size.
 // Supports both positive and negative steps.
-public struct(value) SteppedRange {
+public struct SteppedRange {
     start: i64,
     end: i64,
     step: i64,
 }
 
-// Create a stepped range.  Panics if step is zero.
-public func SteppedRange.new(start: i64, end: i64, step: i64) -> SteppedRange {
-    if step == 0 {
-        __panic("SteppedRange.new: step must be non-zero");
-    }
-    return SteppedRange { start: start, end: end, step: step };
-}
-
-// Number of elements in the stepped range.
-public func SteppedRange.len(self) -> i64 {
-    if self.step > 0 {
-        if self.start >= self.end {
-            return 0;
+extend SteppedRange {
+    // Create a stepped range.  Panics if step is zero.
+    func new(start: i64, end: i64, step: i64) -> SteppedRange {
+        if step == 0 {
+            __panic("SteppedRange.new: step must be non-zero")
         }
-        return (self.end - self.start + self.step - 1) / self.step;
+        SteppedRange { start: start, end: end, step: step }
     }
-    // step < 0
-    if self.start <= self.end {
-        return 0;
-    }
-    let neg_step = 0 - self.step;
-    return (self.start - self.end + neg_step - 1) / neg_step;
-}
 
-public func SteppedRange.is_empty(self) -> bool {
-    return self.len() == 0;
-}
-
-public func SteppedRange.contains(self, value: i64) -> bool {
-    if self.step > 0 {
-        if value < self.start | value >= self.end {
-            return false;
+    // Number of elements in the stepped range.
+    func len(self) -> i64 {
+        if self.step > 0 {
+            if self.start >= self.end {
+                return 0
+            }
+            return (self.end - self.start + self.step - 1) / self.step
         }
-        return (value - self.start) % self.step == 0;
+        // step < 0
+        if self.start <= self.end {
+            return 0
+        }
+        let neg_step = 0 - self.step
+        (self.start - self.end + neg_step - 1) / neg_step
     }
-    // step < 0
-    if value > self.start | value <= self.end {
-        return false;
+
+    func is_empty(self) -> bool {
+        self.len() == 0
     }
-    return (self.start - value) % (0 - self.step) == 0;
+
+    func contains(self, value: i64) -> bool {
+        if self.step > 0 {
+            if value < self.start | value >= self.end {
+                return false
+            }
+            return (value - self.start) % self.step == 0
+        }
+        // step < 0
+        if value > self.start | value <= self.end {
+            return false
+        }
+        (self.start - value) % (0 - self.step) == 0
+    }
+
+    // Advance the range and return the next value.
+    func next(var self) -> RangeStep {
+        if self.step > 0 & self.start >= self.end {
+            return RangeStep { value: 0, has_value: false }
+        }
+        if self.step < 0 & self.start <= self.end {
+            return RangeStep { value: 0, has_value: false }
+        }
+        let val = self.start
+        self.start = self.start + self.step
+        RangeStep { value: val, has_value: true }
+    }
+
+    func to_string(self) -> String {
+        __intrinsic_to_string(self.start)
+            + ".."
+            + __intrinsic_to_string(self.end)
+            + " step "
+            + __intrinsic_to_string(self.step)
+    }
+
+    func copy(self) -> SteppedRange {
+        SteppedRange { start: self.start, end: self.end, step: self.step }
+    }
 }
 
-// Advance the range and return the next value.
-public func SteppedRange.next(self) -> (i64, bool) {
-    if self.step > 0 & self.start >= self.end {
-        return (0, false);
-    }
-    if self.step < 0 & self.start <= self.end {
-        return (0, false);
-    }
-    let val = self.start;
-    self.start = self.start + self.step;
-    return (val, true);
-}
-
-public func SteppedRange.to_string(self) -> String {
-    return __intrinsic_to_string(self.start)
-        + ".."
-        + __intrinsic_to_string(self.end)
-        + " step "
-        + __intrinsic_to_string(self.step);
-}
-
-public func SteppedRange.copy(self) -> SteppedRange {
-    return SteppedRange { start: self.start, end: self.end, step: self.step };
-}
-
-// =============================================================================
-// Free-standing helper functions
-// =============================================================================
+// ---- Free-standing helper functions -----------------------------------------
+//
+// The original file overloaded three `range(...)` functions by arity;
+// function overloading is actively rejected by the compiler today
+// (agents/RUST_TO_CODIRA_MIGRATION.md §5), so each gets a distinct name.
 
 // Create a range [0, n) — convenient shortcut.
-public func range(n: i64) -> Range {
-    return Range.new(0, n);
+public func range_to(n: i64) -> Range {
+    Range.new(0, n)
 }
 
 // Create a range [start, end).
 public func range(start: i64, end: i64) -> Range {
-    return Range.new(start, end);
+    Range.new(start, end)
 }
 
 // Create a stepped range [start, end) with the given step.
-public func range(start: i64, end: i64, step: i64) -> SteppedRange {
-    return SteppedRange.new(start, end, step);
+public func stepped_range(start: i64, end: i64, step: i64) -> SteppedRange {
+    SteppedRange.new(start, end, step)
 }

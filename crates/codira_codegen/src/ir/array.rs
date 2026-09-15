@@ -35,7 +35,10 @@ use crate::ir::reference::RuntimeReferenceValue;
 
 /// A helper struct that wraps a [`PointerValue`] which points to an in memory
 /// Codira array value.
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+///
+/// Note: no `Hash` -- see `RuntimeReferenceValue`'s doc comment (it now
+/// stores a `BasicTypeEnum`, which inkwell doesn't implement `Hash` for).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct RuntimeArrayValue<'ink>(RuntimeReferenceValue<'ink>);
 
 impl<'ink> RuntimeArrayValue<'ink> {
@@ -47,10 +50,14 @@ impl<'ink> RuntimeArrayValue<'ink> {
         RuntimeReferenceValue::from_ptr(ptr, array_type).map(Self)
     }
 
-    /// Constructs a new instance from an inkwell [`PointerValue`] without
-    /// checking if this is actually a pointer to an array.
-    pub unsafe fn from_ptr_unchecked(ptr: PointerValue<'ink>) -> Self {
-        Self(RuntimeReferenceValue::from_ptr_unchecked(ptr))
+    /// Constructs a new instance from an inkwell [`PointerValue`] and its
+    /// already-known array type, without checking that `ptr` actually
+    /// points to an array of that type.
+    pub unsafe fn from_ptr_unchecked(
+        ptr: PointerValue<'ink>,
+        array_type: StructType<'ink>,
+    ) -> Self {
+        Self(RuntimeReferenceValue::from_ptr_unchecked(ptr, array_type))
     }
 
     /// Returns the name of the array
@@ -68,7 +75,12 @@ impl<'ink> RuntimeArrayValue<'ink> {
         let array_ptr = self.get_array_ptr(builder);
         let value_name = array_ptr.get_name().to_string_lossy();
         builder
-            .build_struct_gep(array_ptr, 0, &format!("{}->length", &value_name))
+            .build_struct_gep(
+                self.array_data_ty(),
+                array_ptr,
+                0,
+                &format!("{value_name}->length"),
+            )
             .expect("could not get `length` from array struct")
     }
 
@@ -77,10 +89,20 @@ impl<'ink> RuntimeArrayValue<'ink> {
         let array_ptr = self.get_array_ptr(builder);
         let value_name = array_ptr.get_name().to_string_lossy();
         let length_ptr = builder
-            .build_struct_gep(array_ptr, 1, &format!("{}->capacity", &value_name))
+            .build_struct_gep(
+                self.array_data_ty(),
+                array_ptr,
+                1,
+                &format!("{value_name}->capacity"),
+            )
             .expect("could not get `length` from array struct");
         builder
-            .build_load(length_ptr, &format!("{}.capacity", &value_name))
+            .build_load(
+                self.capacity_ty(),
+                length_ptr,
+                &format!("{value_name}.capacity"),
+            )
+            .expect("failed to build load for array capacity")
             .into_int_value()
     }
 
@@ -89,12 +111,17 @@ impl<'ink> RuntimeArrayValue<'ink> {
         let array_ptr = self.get_array_ptr(builder);
         let value_name = array_ptr.get_name().to_string_lossy();
         builder
-            .build_struct_gep(array_ptr, 2, &format!("{}->elements", &value_name))
+            .build_struct_gep(
+                self.array_data_ty(),
+                array_ptr,
+                2,
+                &format!("{value_name}->elements"),
+            )
             .expect("could not get `elements` from array struct")
     }
 
     /// Returns the type of the `length` field
-    pub fn length_ty(&self) -> IntType<'_> {
+    pub fn length_ty(&self) -> IntType<'ink> {
         self.array_data_ty()
             .get_field_type_at_index(0)
             .expect("an array must have a second field")
@@ -102,7 +129,7 @@ impl<'ink> RuntimeArrayValue<'ink> {
     }
 
     /// Returns the type of the `length` field
-    pub fn capacity_ty(&self) -> IntType<'_> {
+    pub fn capacity_ty(&self) -> IntType<'ink> {
         self.array_data_ty()
             .get_field_type_at_index(1)
             .expect("an array must have a second field")
@@ -132,4 +159,3 @@ impl<'ink> From<RuntimeArrayValue<'ink>> for PointerValue<'ink> {
         value.0.into()
     }
 }
-

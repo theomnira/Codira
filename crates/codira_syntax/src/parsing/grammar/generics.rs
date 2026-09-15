@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
     name, types, Parser, GENERIC_ARG_LIST, GENERIC_PARAM, GENERIC_PARAM_LIST, WHERE_CLAUSE,
     WHERE_PRED,
@@ -76,4 +75,3 @@ pub(super) fn opt_where_clause(p: &mut Parser<'_>) {
     }
     m.complete(p, WHERE_CLAUSE);
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
@@ -115,4 +114,3 @@ mod tests {
         insta::assert_snapshot!(compilation_errors("\n\nfunc foo() { let a = 3; a(); }"));
     }
 }
-

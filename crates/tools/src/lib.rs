@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 pub type Result<T> = std::result::Result<T, anyhow::Error>;
 
 use std::{
@@ -89,4 +88,3 @@ mod tests {
         }
     }
 }
-

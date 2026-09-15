@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use rustc_hash::FxHashMap;
 
 use crate::{AbsPath, AbsPathBuf, FileId};
@@ -73,4 +72,3 @@ mod tests {
         assert_eq!(&abs_file, interner.lookup(file_id));
     }
 }
-

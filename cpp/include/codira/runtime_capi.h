@@ -140,9 +140,9 @@ typedef struct CodiraExternalFunctionDefinition {
  */
 typedef struct CodiraRuntimeOptions {
     /**
-     * Function definitions that should be inserted in the runtime before a codira
-     * library is loaded. This is useful to initialize `extern` functions
-     * used in a codira library.
+     * Function definitions that should be inserted in the runtime before a
+     * codira library is loaded. This is useful to initialize `extern`
+     * functions used in a codira library.
      *
      * If the [`num_functions`] fields is non-zero this field must contain a
      * pointer to an array of [`abi::FunctionDefinition`]s.
@@ -158,8 +158,8 @@ typedef struct CodiraRuntimeOptions {
  * Describes a `Function` accessible from a Codira [`super::runtime::Runtime`].
  *
  * An instance of `Function` shares ownership of the underlying data. To create
- * a copy of the `Function` object call [`codira_function_add_reference`] to make
- * sure the number of references to the data is properly tracked. Calling
+ * a copy of the `Function` object call [`codira_function_add_reference`] to
+ * make sure the number of references to the data is properly tracked. Calling
  * [`codira_function_release`] signals the runtime that the data is no longer
  * referenced through the specified object. When all references are released
  * the underlying data is deallocated.
@@ -263,8 +263,8 @@ typedef struct CodiraTypes {
  * Additional information of a pointer [`Type`].
  *
  * Ownership of this type lies with the [`Type`] that created this instance. As
- * long as the original type is not released through [`codira_type_release`] this
- * type stays alive.
+ * long as the original type is not released through [`codira_type_release`]
+ * this type stays alive.
  */
 typedef struct CodiraPointerInfo {
     const void *_0;
@@ -275,8 +275,8 @@ typedef struct CodiraPointerInfo {
  * Additional information of a struct [`Type`].
  *
  * Ownership of this type lies with the [`Type`] that created this instance. As
- * long as the original type is not released through [`codira_type_release`] this
- * type stays alive.
+ * long as the original type is not released through [`codira_type_release`]
+ * this type stays alive.
  */
 typedef struct CodiraStructInfo {
     const void *_0;
@@ -287,8 +287,8 @@ typedef struct CodiraStructInfo {
  * Additional information of an array [`Type`].
  *
  * Ownership of this type lies with the [`Type`] that created this instance. As
- * long as the original type is not released through [`codira_type_release`] this
- * type stays alive.
+ * long as the original type is not released through [`codira_type_release`]
+ * this type stays alive.
  */
 typedef struct CodiraArrayInfo {
     const void *_0;
@@ -336,8 +336,8 @@ typedef union CodiraTypeKind {
  * Information of a field of a struct [`Type`].
  *
  * Ownership of this type lies with the [`Type`] that created this instance. As
- * long as the original type is not released through [`codira_type_release`] this
- * type stays alive.
+ * long as the original type is not released through [`codira_type_release`]
+ * this type stays alive.
  */
 typedef struct CodiraField {
     const void *_0;
@@ -417,8 +417,9 @@ struct CodiraErrorHandle codira_gc_root(struct CodiraRuntime runtime, CodiraGcPt
  * Unroots the specified `obj`, potentially allowing it and objects it
  * references to be collected. An object can be rooted multiple times, so you
  * must make sure to call `codira_gc_unroot` the same number of times as
- * `codira_gc_root` was called before the object can be collected. If successful,
- * `obj` has been unrooted, otherwise a non-zero error handle is returned.
+ * `codira_gc_root` was called before the object can be collected. If
+ * successful, `obj` has been unrooted, otherwise a non-zero error handle is
+ * returned.
  *
  * If a non-zero error handle is returned, it must be manually destructed using
  * [`codira_error_destroy`].

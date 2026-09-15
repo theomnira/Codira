@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     fmt,
     path::{Path, PathBuf},
@@ -79,4 +78,3 @@ impl fmt::Display for Package {
         write!(f, "{}", self.package_id())
     }
 }
-

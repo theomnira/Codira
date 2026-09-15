@@ -86,4 +86,3 @@ impl From<SecondaryAnnotation> for SourceAnnotation {
         }
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{
     ty::{infer::InferTy, TyKind},
     ArithOp, BinaryOp, Ty,
@@ -80,4 +79,3 @@ pub(super) fn binary_op_return_ty(op: BinaryOp, rhs_ty: Ty) -> Ty {
         BinaryOp::Assignment { .. } => Ty::unit(),
     }
 }
-

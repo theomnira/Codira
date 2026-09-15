@@ -4,18 +4,17 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{sync::Arc, time::Instant};
 
+use codira_hir_input::{FileId, PackageId, PackageSet};
+use codira_paths::AbsPathBuf;
+use codira_vfs::VirtualFileSystem;
 use crossbeam_channel::{select, unbounded, Receiver, Sender};
 use lsp_server::{ReqQueue, Response};
 use lsp_types::{
     notification::{Notification, PublishDiagnostics},
     PublishDiagnosticsParams,
 };
-use codira_hir_input::{FileId, PackageId, PackageSet};
-use codira_paths::AbsPathBuf;
-use codira_vfs::VirtualFileSystem;
 use parking_lot::RwLock;
 use rustc_hash::FxHashSet;
 
@@ -107,11 +106,12 @@ impl LanguageServerState {
     pub fn new(sender: Sender<lsp_server::Message>, config: Config) -> Self {
         // Construct the virtual filesystem monitor
         let (vfs_monitor_sender, vfs_monitor_receiver) = unbounded::<codira_vfs::MonitorMessage>();
-        let vfs_monitor: codira_vfs::NotifyMonitor = codira_vfs::Monitor::new(Box::new(move |msg| {
-            vfs_monitor_sender
-                .send(msg)
-                .expect("error sending vfs monitor message to foreground");
-        }));
+        let vfs_monitor: codira_vfs::NotifyMonitor =
+            codira_vfs::Monitor::new(Box::new(move |msg| {
+                vfs_monitor_sender
+                    .send(msg)
+                    .expect("error sending vfs monitor message to foreground");
+            }));
         let vfs_monitor = Box::new(vfs_monitor) as Box<dyn codira_vfs::Monitor>;
 
         // Construct a task channel
@@ -384,4 +384,3 @@ impl Drop for LanguageServerState {
         self.thread_pool.join();
     }
 }
-

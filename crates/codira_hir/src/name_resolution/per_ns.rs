@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Namespace {
     Types,
@@ -110,4 +109,3 @@ impl<T> PerNs<T> {
         }
     }
 }
-

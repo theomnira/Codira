@@ -2,158 +2,204 @@
 // std/builtin/tuple.code — Heterogeneous tuple types
 // =============================================================================
 //
-// Tuples hold a fixed number of heterogeneously-typed elements.  Codira
-// provides built-in tuple syntax `(A, B, C)`, but this module defines
-// explicit struct wrappers (Tuple2 through Tuple8) that carry named
-// accessors and trait implementations.
+// Tuples hold a fixed number of heterogeneously-typed elements.  This
+// module defines explicit struct wrappers (Tuple2 through Tuple8) that
+// carry named accessors and trait implementations, for import wherever the
+// grammar's lack of an anonymous tuple *type* (see below) needs a
+// workaround.
 //
 // All tuple structs are value types and satisfy Copyable when every
 // element type is Copyable.
 //
-// Examples:
-//   let pair = Tuple2[i32, String].new(42, "hello");
-//   let a = pair.first();   // 42
-//   let b = pair.second();  // "hello"
+// Migration note (2026-08-20): rewritten from pre-redesign syntax -- verified
+// to parse cleanly via codira_syntax::SourceFile::parse (zero SyntaxErrors).
+// Findings from actually running the parser, not assumed:
+//
+// 1. `struct TupleN[...]` -> `struct TupleN[...]`; every
+//    `func TupleN[...].method(...)` moved into one
+//    `extend TupleN[...] { }` block per arity, dropping the `TupleN[...].`
+//    prefix (top-level `func Type.method` is not valid current syntax).
+// 2. `map_first`/`map_second` took a `func(A) -> C`-typed parameter --
+//    Codira has no closure/function-value type at all (same finding as
+//    std/collections/optional.code), so both are dropped.
+// 3. The free `tuple(...)` constructor was overloaded three ways by arity.
+//    Function overloading is actively rejected by the compiler today
+//    (agents/RUST_TO_CODIRA_MIGRATION.md §5) -- renamed to
+//    `tuple2`/`tuple3`/`tuple4`, and given the `[A, B]`-style generic
+//    parameter lists the originals were missing (an original-file bug:
+//    `func tuple(a: A, b: B) -> Tuple2[A, B]` used `A`/`B` without ever
+//    declaring them as the function's own generic parameters).
+// 4. `zip` declared `min_len` with `let` then reassigned it -- another
+//    original-file bug (`let` is immutable; needs `var`), fixed here.
+// 5. `unzip` returned `(Array[A], Array[B])` -- there is no anonymous
+//    tuple *type* syntax in the grammar (same finding as `optional.code`'s
+//    `replace`/`take`); dropped rather than faked.
+// 6. `Tuple2[A, B].new(a, b)`-style explicit-generic-argument call syntax
+//    does not parse once there is more than one generic argument
+//    (confirmed via minimal probes: `Box[T].new(x)` parses, `Pair[A,
+//    B].new(a, b)` does not -- "expected R_BRACKET" right at the comma).
+//    The expression-position parser appears to only disambiguate
+//    "index-or-generic-args" for a single bracketed argument. Every such
+//    call site (the `tupleN` helpers, `zip`) drops the explicit type
+//    arguments and relies on inference (`Tuple2.new(a, b)`), consistent
+//    with the "no turbofish" rule already documented for other positions.
 // =============================================================================
 
-use std.builtin.traits;
+import std.builtin.traits
 
 // =============================================================================
 // Tuple2 — pair
 // =============================================================================
 
 // A pair of two values of possibly different types.
-public struct(value) Tuple2[A, B] {
+public struct Tuple2[A, B] {
     _0: A,
     _1: B,
 }
 
-public func Tuple2[A, B].new(a: A, b: B) -> Tuple2[A, B] {
-    return Tuple2[A, B] { _0: a, _1: b };
-}
+extend Tuple2[A, B] {
+    func new(a: A, b: B) -> Tuple2[A, B] {
+        Tuple2 { _0: a, _1: b }
+    }
 
-public func Tuple2[A, B].first(self) -> A {
-    return self._0;
-}
+    func first(self) -> A {
+        self._0
+    }
 
-public func Tuple2[A, B].second(self) -> B {
-    return self._1;
-}
+    func second(self) -> B {
+        self._1
+    }
 
-public func Tuple2[A, B].swap(self) -> Tuple2[B, A] {
-    return Tuple2[B, A] { _0: self._1, _1: self._0 };
-}
+    func swap(self) -> Tuple2[B, A] {
+        Tuple2 { _0: self._1, _1: self._0 }
+    }
 
-public func Tuple2[A, B].map_first[C](self, f: func(A) -> C) -> Tuple2[C, B] {
-    return Tuple2[C, B] { _0: f(self._0), _1: self._1 };
-}
+    func to_string(self) -> String {
+        "("
+            + __intrinsic_to_string(self._0)
+            + ", "
+            + __intrinsic_to_string(self._1)
+            + ")"
+    }
 
-public func Tuple2[A, B].map_second[C](self, f: func(B) -> C) -> Tuple2[A, C] {
-    return Tuple2[A, C] { _0: self._0, _1: f(self._1) };
-}
+    func eq(self, other: Tuple2[A, B]) -> bool {
+        self._0 == other._0 & self._1 == other._1
+    }
 
-public func Tuple2[A, B].to_string(self) -> String {
-    return "("
-        + __intrinsic_to_string(self._0)
-        + ", "
-        + __intrinsic_to_string(self._1)
-        + ")";
-}
+    func ne(self, other: Tuple2[A, B]) -> bool {
+        !(self.eq(other))
+    }
 
-public func Tuple2[A, B].eq(self, other: Tuple2[A, B]) -> bool {
-    return self._0 == other._0 & self._1 == other._1;
-}
+    func copy(self) -> Tuple2[A, B] {
+        Tuple2 { _0: self._0, _1: self._1 }
+    }
 
-public func Tuple2[A, B].ne(self, other: Tuple2[A, B]) -> bool {
-    return !(self.eq(other));
-}
-
-public func Tuple2[A, B].copy(self) -> Tuple2[A, B] {
-    return Tuple2[A, B] { _0: self._0, _1: self._1 };
-}
-
-public func Tuple2[A, B].hash(self, hasher: &Hasher) -> void {
-    hasher.write(self._0);
-    hasher.write(self._1);
+    func hash(self, hasher: Hasher) -> void {
+        hasher.write(self._0)
+        hasher.write(self._1)
+    }
 }
 
 // =============================================================================
 // Tuple3 — triple
 // =============================================================================
 
-public struct(value) Tuple3[A, B, C] {
+public struct Tuple3[A, B, C] {
     _0: A,
     _1: B,
     _2: C,
 }
 
-public func Tuple3[A, B, C].new(a: A, b: B, c: C) -> Tuple3[A, B, C] {
-    return Tuple3[A, B, C] { _0: a, _1: b, _2: c };
-}
+extend Tuple3[A, B, C] {
+    func new(a: A, b: B, c: C) -> Tuple3[A, B, C] {
+        Tuple3 { _0: a, _1: b, _2: c }
+    }
 
-public func Tuple3[A, B, C].first(self) -> A { return self._0; }
-public func Tuple3[A, B, C].second(self) -> B { return self._1; }
-public func Tuple3[A, B, C].third(self) -> C { return self._2; }
+    func first(self) -> A {
+        self._0
+    }
 
-public func Tuple3[A, B, C].to_string(self) -> String {
-    return "("
-        + __intrinsic_to_string(self._0) + ", "
-        + __intrinsic_to_string(self._1) + ", "
-        + __intrinsic_to_string(self._2)
-        + ")";
-}
+    func second(self) -> B {
+        self._1
+    }
 
-public func Tuple3[A, B, C].eq(self, other: Tuple3[A, B, C]) -> bool {
-    return self._0 == other._0 & self._1 == other._1 & self._2 == other._2;
-}
+    func third(self) -> C {
+        self._2
+    }
 
-public func Tuple3[A, B, C].copy(self) -> Tuple3[A, B, C] {
-    return Tuple3[A, B, C] { _0: self._0, _1: self._1, _2: self._2 };
+    func to_string(self) -> String {
+        "("
+            + __intrinsic_to_string(self._0) + ", "
+            + __intrinsic_to_string(self._1) + ", "
+            + __intrinsic_to_string(self._2)
+            + ")"
+    }
+
+    func eq(self, other: Tuple3[A, B, C]) -> bool {
+        self._0 == other._0 & self._1 == other._1 & self._2 == other._2
+    }
+
+    func copy(self) -> Tuple3[A, B, C] {
+        Tuple3 { _0: self._0, _1: self._1, _2: self._2 }
+    }
 }
 
 // =============================================================================
 // Tuple4 — quadruple
 // =============================================================================
 
-public struct(value) Tuple4[A, B, C, D] {
+public struct Tuple4[A, B, C, D] {
     _0: A,
     _1: B,
     _2: C,
     _3: D,
 }
 
-public func Tuple4[A, B, C, D].new(a: A, b: B, c: C, d: D) -> Tuple4[A, B, C, D] {
-    return Tuple4[A, B, C, D] { _0: a, _1: b, _2: c, _3: d };
-}
+extend Tuple4[A, B, C, D] {
+    func new(a: A, b: B, c: C, d: D) -> Tuple4[A, B, C, D] {
+        Tuple4 { _0: a, _1: b, _2: c, _3: d }
+    }
 
-public func Tuple4[A, B, C, D].first(self) -> A { return self._0; }
-public func Tuple4[A, B, C, D].second(self) -> B { return self._1; }
-public func Tuple4[A, B, C, D].third(self) -> C { return self._2; }
-public func Tuple4[A, B, C, D].fourth(self) -> D { return self._3; }
+    func first(self) -> A {
+        self._0
+    }
 
-public func Tuple4[A, B, C, D].to_string(self) -> String {
-    return "("
-        + __intrinsic_to_string(self._0) + ", "
-        + __intrinsic_to_string(self._1) + ", "
-        + __intrinsic_to_string(self._2) + ", "
-        + __intrinsic_to_string(self._3)
-        + ")";
-}
+    func second(self) -> B {
+        self._1
+    }
 
-public func Tuple4[A, B, C, D].eq(self, other: Tuple4[A, B, C, D]) -> bool {
-    return self._0 == other._0 & self._1 == other._1
-         & self._2 == other._2 & self._3 == other._3;
-}
+    func third(self) -> C {
+        self._2
+    }
 
-public func Tuple4[A, B, C, D].copy(self) -> Tuple4[A, B, C, D] {
-    return Tuple4[A, B, C, D] { _0: self._0, _1: self._1, _2: self._2, _3: self._3 };
+    func fourth(self) -> D {
+        self._3
+    }
+
+    func to_string(self) -> String {
+        "("
+            + __intrinsic_to_string(self._0) + ", "
+            + __intrinsic_to_string(self._1) + ", "
+            + __intrinsic_to_string(self._2) + ", "
+            + __intrinsic_to_string(self._3)
+            + ")"
+    }
+
+    func eq(self, other: Tuple4[A, B, C, D]) -> bool {
+        self._0 == other._0 & self._1 == other._1
+            & self._2 == other._2 & self._3 == other._3
+    }
+
+    func copy(self) -> Tuple4[A, B, C, D] {
+        Tuple4 { _0: self._0, _1: self._1, _2: self._2, _3: self._3 }
+    }
 }
 
 // =============================================================================
 // Tuple5
 // =============================================================================
 
-public struct(value) Tuple5[A, B, C, D, E] {
+public struct Tuple5[A, B, C, D, E] {
     _0: A,
     _1: B,
     _2: C,
@@ -161,43 +207,59 @@ public struct(value) Tuple5[A, B, C, D, E] {
     _4: E,
 }
 
-public func Tuple5[A, B, C, D, E].new(a: A, b: B, c: C, d: D, e: E) -> Tuple5[A, B, C, D, E] {
-    return Tuple5[A, B, C, D, E] { _0: a, _1: b, _2: c, _3: d, _4: e };
-}
+extend Tuple5[A, B, C, D, E] {
+    func new(a: A, b: B, c: C, d: D, e: E) -> Tuple5[A, B, C, D, E] {
+        Tuple5 { _0: a, _1: b, _2: c, _3: d, _4: e }
+    }
 
-public func Tuple5[A, B, C, D, E].first(self) -> A { return self._0; }
-public func Tuple5[A, B, C, D, E].second(self) -> B { return self._1; }
-public func Tuple5[A, B, C, D, E].third(self) -> C { return self._2; }
-public func Tuple5[A, B, C, D, E].fourth(self) -> D { return self._3; }
-public func Tuple5[A, B, C, D, E].fifth(self) -> E { return self._4; }
+    func first(self) -> A {
+        self._0
+    }
 
-public func Tuple5[A, B, C, D, E].to_string(self) -> String {
-    return "("
-        + __intrinsic_to_string(self._0) + ", "
-        + __intrinsic_to_string(self._1) + ", "
-        + __intrinsic_to_string(self._2) + ", "
-        + __intrinsic_to_string(self._3) + ", "
-        + __intrinsic_to_string(self._4)
-        + ")";
-}
+    func second(self) -> B {
+        self._1
+    }
 
-public func Tuple5[A, B, C, D, E].eq(self, other: Tuple5[A, B, C, D, E]) -> bool {
-    return self._0 == other._0 & self._1 == other._1
-         & self._2 == other._2 & self._3 == other._3
-         & self._4 == other._4;
-}
+    func third(self) -> C {
+        self._2
+    }
 
-public func Tuple5[A, B, C, D, E].copy(self) -> Tuple5[A, B, C, D, E] {
-    return Tuple5[A, B, C, D, E] {
-        _0: self._0, _1: self._1, _2: self._2, _3: self._3, _4: self._4,
-    };
+    func fourth(self) -> D {
+        self._3
+    }
+
+    func fifth(self) -> E {
+        self._4
+    }
+
+    func to_string(self) -> String {
+        "("
+            + __intrinsic_to_string(self._0) + ", "
+            + __intrinsic_to_string(self._1) + ", "
+            + __intrinsic_to_string(self._2) + ", "
+            + __intrinsic_to_string(self._3) + ", "
+            + __intrinsic_to_string(self._4)
+            + ")"
+    }
+
+    func eq(self, other: Tuple5[A, B, C, D, E]) -> bool {
+        self._0 == other._0 & self._1 == other._1
+            & self._2 == other._2 & self._3 == other._3
+            & self._4 == other._4
+    }
+
+    func copy(self) -> Tuple5[A, B, C, D, E] {
+        Tuple5 {
+            _0: self._0, _1: self._1, _2: self._2, _3: self._3, _4: self._4,
+        }
+    }
 }
 
 // =============================================================================
 // Tuple6
 // =============================================================================
 
-public struct(value) Tuple6[A, B, C, D, E, F] {
+public struct Tuple6[A, B, C, D, E, F] {
     _0: A,
     _1: B,
     _2: C,
@@ -206,88 +268,111 @@ public struct(value) Tuple6[A, B, C, D, E, F] {
     _5: F,
 }
 
-public func Tuple6[A, B, C, D, E, F].new(a: A, b: B, c: C, d: D, e: E, f: F) -> Tuple6[A, B, C, D, E, F] {
-    return Tuple6[A, B, C, D, E, F] { _0: a, _1: b, _2: c, _3: d, _4: e, _5: f };
-}
+extend Tuple6[A, B, C, D, E, F] {
+    func new(a: A, b: B, c: C, d: D, e: E, f: F) -> Tuple6[A, B, C, D, E, F] {
+        Tuple6 { _0: a, _1: b, _2: c, _3: d, _4: e, _5: f }
+    }
 
-public func Tuple6[A, B, C, D, E, F].first(self) -> A { return self._0; }
-public func Tuple6[A, B, C, D, E, F].second(self) -> B { return self._1; }
-public func Tuple6[A, B, C, D, E, F].third(self) -> C { return self._2; }
-public func Tuple6[A, B, C, D, E, F].fourth(self) -> D { return self._3; }
-public func Tuple6[A, B, C, D, E, F].fifth(self) -> E { return self._4; }
-public func Tuple6[A, B, C, D, E, F].sixth(self) -> F { return self._5; }
+    func first(self) -> A {
+        self._0
+    }
 
-public func Tuple6[A, B, C, D, E, F].to_string(self) -> String {
-    return "("
-        + __intrinsic_to_string(self._0) + ", "
-        + __intrinsic_to_string(self._1) + ", "
-        + __intrinsic_to_string(self._2) + ", "
-        + __intrinsic_to_string(self._3) + ", "
-        + __intrinsic_to_string(self._4) + ", "
-        + __intrinsic_to_string(self._5)
-        + ")";
-}
+    func second(self) -> B {
+        self._1
+    }
 
-public func Tuple6[A, B, C, D, E, F].eq(self, other: Tuple6[A, B, C, D, E, F]) -> bool {
-    return self._0 == other._0 & self._1 == other._1
-         & self._2 == other._2 & self._3 == other._3
-         & self._4 == other._4 & self._5 == other._5;
-}
+    func third(self) -> C {
+        self._2
+    }
 
-public func Tuple6[A, B, C, D, E, F].copy(self) -> Tuple6[A, B, C, D, E, F] {
-    return Tuple6[A, B, C, D, E, F] {
-        _0: self._0, _1: self._1, _2: self._2,
-        _3: self._3, _4: self._4, _5: self._5,
-    };
+    func fourth(self) -> D {
+        self._3
+    }
+
+    func fifth(self) -> E {
+        self._4
+    }
+
+    func sixth(self) -> F {
+        self._5
+    }
+
+    func to_string(self) -> String {
+        "("
+            + __intrinsic_to_string(self._0) + ", "
+            + __intrinsic_to_string(self._1) + ", "
+            + __intrinsic_to_string(self._2) + ", "
+            + __intrinsic_to_string(self._3) + ", "
+            + __intrinsic_to_string(self._4) + ", "
+            + __intrinsic_to_string(self._5)
+            + ")"
+    }
+
+    func eq(self, other: Tuple6[A, B, C, D, E, F]) -> bool {
+        self._0 == other._0 & self._1 == other._1
+            & self._2 == other._2 & self._3 == other._3
+            & self._4 == other._4 & self._5 == other._5
+    }
+
+    func copy(self) -> Tuple6[A, B, C, D, E, F] {
+        Tuple6 {
+            _0: self._0, _1: self._1, _2: self._2,
+            _3: self._3, _4: self._4, _5: self._5,
+        }
+    }
 }
 
 // =============================================================================
 // Tuple7
 // =============================================================================
 
-public struct(value) Tuple7[A, B, C, D, E, F, G] {
+public struct Tuple7[A, B, C, D, E, F, G] {
     _0: A, _1: B, _2: C, _3: D, _4: E, _5: F, _6: G,
 }
 
-public func Tuple7[A, B, C, D, E, F, G].new(a: A, b: B, c: C, d: D, e: E, f: F, g: G) -> Tuple7[A, B, C, D, E, F, G] {
-    return Tuple7[A, B, C, D, E, F, G] { _0: a, _1: b, _2: c, _3: d, _4: e, _5: f, _6: g };
-}
+extend Tuple7[A, B, C, D, E, F, G] {
+    func new(a: A, b: B, c: C, d: D, e: E, f: F, g: G) -> Tuple7[A, B, C, D, E, F, G] {
+        Tuple7 { _0: a, _1: b, _2: c, _3: d, _4: e, _5: f, _6: g }
+    }
 
-public func Tuple7[A, B, C, D, E, F, G].to_string(self) -> String {
-    return "("
-        + __intrinsic_to_string(self._0) + ", "
-        + __intrinsic_to_string(self._1) + ", "
-        + __intrinsic_to_string(self._2) + ", "
-        + __intrinsic_to_string(self._3) + ", "
-        + __intrinsic_to_string(self._4) + ", "
-        + __intrinsic_to_string(self._5) + ", "
-        + __intrinsic_to_string(self._6)
-        + ")";
+    func to_string(self) -> String {
+        "("
+            + __intrinsic_to_string(self._0) + ", "
+            + __intrinsic_to_string(self._1) + ", "
+            + __intrinsic_to_string(self._2) + ", "
+            + __intrinsic_to_string(self._3) + ", "
+            + __intrinsic_to_string(self._4) + ", "
+            + __intrinsic_to_string(self._5) + ", "
+            + __intrinsic_to_string(self._6)
+            + ")"
+    }
 }
 
 // =============================================================================
 // Tuple8
 // =============================================================================
 
-public struct(value) Tuple8[A, B, C, D, E, F, G, H] {
+public struct Tuple8[A, B, C, D, E, F, G, H] {
     _0: A, _1: B, _2: C, _3: D, _4: E, _5: F, _6: G, _7: H,
 }
 
-public func Tuple8[A, B, C, D, E, F, G, H].new(a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H) -> Tuple8[A, B, C, D, E, F, G, H] {
-    return Tuple8[A, B, C, D, E, F, G, H] { _0: a, _1: b, _2: c, _3: d, _4: e, _5: f, _6: g, _7: h };
-}
+extend Tuple8[A, B, C, D, E, F, G, H] {
+    func new(a: A, b: B, c: C, d: D, e: E, f: F, g: G, h: H) -> Tuple8[A, B, C, D, E, F, G, H] {
+        Tuple8 { _0: a, _1: b, _2: c, _3: d, _4: e, _5: f, _6: g, _7: h }
+    }
 
-public func Tuple8[A, B, C, D, E, F, G, H].to_string(self) -> String {
-    return "("
-        + __intrinsic_to_string(self._0) + ", "
-        + __intrinsic_to_string(self._1) + ", "
-        + __intrinsic_to_string(self._2) + ", "
-        + __intrinsic_to_string(self._3) + ", "
-        + __intrinsic_to_string(self._4) + ", "
-        + __intrinsic_to_string(self._5) + ", "
-        + __intrinsic_to_string(self._6) + ", "
-        + __intrinsic_to_string(self._7)
-        + ")";
+    func to_string(self) -> String {
+        "("
+            + __intrinsic_to_string(self._0) + ", "
+            + __intrinsic_to_string(self._1) + ", "
+            + __intrinsic_to_string(self._2) + ", "
+            + __intrinsic_to_string(self._3) + ", "
+            + __intrinsic_to_string(self._4) + ", "
+            + __intrinsic_to_string(self._5) + ", "
+            + __intrinsic_to_string(self._6) + ", "
+            + __intrinsic_to_string(self._7)
+            + ")"
+    }
 }
 
 // =============================================================================
@@ -295,46 +380,32 @@ public func Tuple8[A, B, C, D, E, F, G, H].to_string(self) -> String {
 // =============================================================================
 
 // Create a Tuple2 from positional arguments.
-public func tuple(a: A, b: B) -> Tuple2[A, B] {
-    return Tuple2[A, B].new(a, b);
+public func tuple2[A, B](a: A, b: B) -> Tuple2[A, B] {
+    Tuple2.new(a, b)
 }
 
 // Create a Tuple3 from positional arguments.
-public func tuple(a: A, b: B, c: C) -> Tuple3[A, B, C] {
-    return Tuple3[A, B, C].new(a, b, c);
+public func tuple3[A, B, C](a: A, b: B, c: C) -> Tuple3[A, B, C] {
+    Tuple3.new(a, b, c)
 }
 
 // Create a Tuple4 from positional arguments.
-public func tuple(a: A, b: B, c: C, d: D) -> Tuple4[A, B, C, D] {
-    return Tuple4[A, B, C, D].new(a, b, c, d);
+public func tuple4[A, B, C, D](a: A, b: B, c: C, d: D) -> Tuple4[A, B, C, D] {
+    Tuple4.new(a, b, c, d)
 }
 
 // Zip two slices into an array of Tuple2 pairs.
 // Stops at the shorter slice's length.
 public func zip[A, B](a: Slice[A], b: Slice[B]) -> Array[Tuple2[A, B]] {
-    let min_len = a.len();
+    var min_len = a.len()
     if b.len() < min_len {
-        min_len = b.len();
+        min_len = b.len()
     }
-    let result = Array[Tuple2[A, B]].with_capacity(min_len);
-    let i: usize = 0;
+    let result = Array.with_capacity(min_len)
+    var i: usize = 0
     while i < min_len {
-        result.push(Tuple2[A, B].new(a.get(i), b.get(i)));
-        i = i + 1;
+        result.push(Tuple2.new(a.get(i), b.get(i)))
+        i = i + 1
     }
-    return result;
-}
-
-// Unzip an array of Tuple2 into two separate arrays.
-public func unzip[A, B](pairs: Slice[Tuple2[A, B]]) -> (Array[A], Array[B]) {
-    let as_arr = Array[A].with_capacity(pairs.len());
-    let bs_arr = Array[B].with_capacity(pairs.len());
-    let i: usize = 0;
-    while i < pairs.len() {
-        let p = pairs.get(i);
-        as_arr.push(p.first());
-        bs_arr.push(p.second());
-        i = i + 1;
-    }
-    return (as_arr, bs_arr);
+    result
 }

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt;
 
 use text_size::{TextRange, TextSize};
@@ -98,4 +97,3 @@ impl fmt::Display for SyntaxErrorKind {
         }
     }
 }
-

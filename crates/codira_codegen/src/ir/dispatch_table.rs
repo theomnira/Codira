@@ -4,20 +4,19 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
 };
 
+use codira_hir::{Body, Expr, ExprId, HirDatabase, InferenceResult};
 use inkwell::{
     context::Context,
     module::Module,
     targets::TargetData,
     types::{BasicTypeEnum, FunctionType},
-    values::{BasicValueEnum, CallableValue},
+    values::{BasicValueEnum, PointerValue},
 };
-use codira_hir::{Body, Expr, ExprId, HirDatabase, InferenceResult};
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -51,7 +50,7 @@ pub struct DispatchTable<'ink> {
     // Prototype to function index
     prototype_to_idx: HashMap<FunctionPrototype, usize>,
     // This contains an ordered list of all the function in the dispatch table
-    entries: Vec<DispatchableFunction>,
+    entries: Vec<DispatchableFunction<'ink>>,
     // Contains a reference to the global value containing the DispatchTable
     table_ref: Option<inkwell::values::GlobalValue<'ink>>,
     //
@@ -70,9 +69,14 @@ pub struct FunctionPrototype {
 /// A `DispatchableFunction` is an entry in the dispatch table that may or may
 /// not be pointing to an existing `codira_hir` function.
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DispatchableFunction {
+pub struct DispatchableFunction<'ink> {
     pub prototype: FunctionPrototype,
     pub codira_hir: Option<codira_hir::Function>,
+    /// The LLVM signature of this slot. Needed to call through the
+    /// resolved function pointer (`build_indirect_call`) now that opaque
+    /// pointers removed `CallableValue`'s ability to carry a callee's type
+    /// alongside its address -- see `gen_function_lookup_by_index`.
+    pub ir_type: FunctionType<'ink>,
 }
 
 impl<'ink> DispatchTable<'ink> {
@@ -82,20 +86,23 @@ impl<'ink> DispatchTable<'ink> {
     }
 
     /// Returns a slice containing all the functions in the dispatch table.
-    pub fn entries(&self) -> &[DispatchableFunction] {
+    pub fn entries(&self) -> &[DispatchableFunction<'ink>] {
         &self.entries
     }
 
     /// Generate a function lookup through the `DispatchTable`, equivalent to
     /// something along the lines of: `dispatchTable[i]`, where i is the
-    /// index of the function and `dispatchTable` is a struct
+    /// index of the function and `dispatchTable` is a struct. Returns the
+    /// function's LLVM signature alongside the resolved pointer -- both are
+    /// required to call through it with `build_indirect_call` now that
+    /// opaque pointers removed `CallableValue`.
     pub fn gen_function_lookup(
         &self,
         db: &dyn HirDatabase,
         table_ref: Option<inkwell::values::GlobalValue<'ink>>,
         builder: &inkwell::builder::Builder<'ink>,
         function: codira_hir::Function,
-    ) -> CallableValue<'ink> {
+    ) -> (FunctionType<'ink>, PointerValue<'ink>) {
         let function_name = function.name(db).to_string();
 
         // Get the index of the function
@@ -104,7 +111,7 @@ impl<'ink> DispatchTable<'ink> {
             .get(&function)
             .expect("unknown function");
 
-        Self::gen_function_lookup_by_index(table_ref, builder, &function_name, index)
+        self.gen_function_lookup_by_index(table_ref, builder, &function_name, index)
     }
 
     /// Generates a function lookup through the `DispatchTable`, equivalent to
@@ -115,7 +122,7 @@ impl<'ink> DispatchTable<'ink> {
         table_ref: Option<inkwell::values::GlobalValue<'ink>>,
         builder: &inkwell::builder::Builder<'ink>,
         intrinsic: &impl Intrinsic,
-    ) -> CallableValue<'ink> {
+    ) -> (FunctionType<'ink>, PointerValue<'ink>) {
         let prototype = intrinsic.prototype();
 
         // Get the index of the intrinsic
@@ -124,25 +131,28 @@ impl<'ink> DispatchTable<'ink> {
             .get(&prototype)
             .expect("unknown function");
 
-        Self::gen_function_lookup_by_index(table_ref, builder, &prototype.name, index)
+        self.gen_function_lookup_by_index(table_ref, builder, &prototype.name, index)
     }
 
     /// Generates a function lookup through the `DispatchTable`, equivalent to
     /// something along the lines of: `dispatchTable[i]`, where i is the
     /// index and `dispatchTable` is a struct
     fn gen_function_lookup_by_index(
+        &self,
         table_ref: Option<inkwell::values::GlobalValue<'ink>>,
         builder: &inkwell::builder::Builder<'ink>,
         function_name: &str,
         index: usize,
-    ) -> CallableValue<'ink> {
+    ) -> (FunctionType<'ink>, PointerValue<'ink>) {
         // Get the internal table reference
         let table_ref = table_ref.expect("no dispatch table defined");
+        let table_type = self.table_type.expect("no dispatch table type defined");
 
         // Create an expression that finds the associated field in the table and returns
         // this as a pointer access
         let ptr_to_function_ptr = builder
             .build_struct_gep(
+                table_type,
                 table_ref.as_pointer_value(),
                 index as u32,
                 &format!("{function_name}_ptr_ptr"),
@@ -151,11 +161,17 @@ impl<'ink> DispatchTable<'ink> {
                 panic!("could not get {function_name} (index: {index}) from dispatch table")
             });
 
-        builder
-            .build_load(ptr_to_function_ptr, &format!("{function_name}_ptr"))
-            .into_pointer_value()
-            .try_into()
-            .expect("Pointer value is not a valid function pointer.")
+        let ir_type = self.entries[index].ir_type;
+        let function_ptr = builder
+            .build_load(
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                ptr_to_function_ptr,
+                &format!("{function_name}_ptr"),
+            )
+            .expect("failed to build load for dispatch table entry")
+            .into_pointer_value();
+
+        (ir_type, function_ptr)
     }
 
     /// Returns the value that represents the dispatch table in IR or `None` if
@@ -198,7 +214,7 @@ pub(crate) struct DispatchTableBuilder<'db, 'ink, 't> {
 }
 
 struct TypedDispatchableFunction<'ink> {
-    function: DispatchableFunction,
+    function: DispatchableFunction<'ink>,
     ir_type: FunctionType<'ink>,
 }
 
@@ -238,6 +254,7 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
                     function: DispatchableFunction {
                         prototype: prototype.clone(),
                         codira_hir: None,
+                        ir_type: *ir_type,
                     },
                     ir_type: *ir_type,
                 });
@@ -326,6 +343,7 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
                 function: DispatchableFunction {
                     prototype: prototype.clone(),
                     codira_hir: Some(function),
+                    ir_type,
                 },
                 ir_type,
             });
@@ -345,8 +363,8 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
     ///
     /// # Parameters
     ///
-    /// * **functions**: Mapping of *defined* Codira functions to their respective
-    ///   IR values.
+    /// * **functions**: Mapping of *defined* Codira functions to their
+    ///   respective IR values.
     ///
     /// Returns the `DispatchTable` and a set of dependencies for the module.
     pub fn build(self) -> (DispatchTable<'ink>, FxHashSet<codira_hir::Module>) {
@@ -354,7 +372,16 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
         let table_body: Vec<BasicTypeEnum<'ink>> = self
             .entries
             .iter()
-            .map(|f| f.ir_type.ptr_type(inkwell::AddressSpace::default()).into())
+            .map(|f| {
+                // Every dispatch-table slot is a function pointer. Under
+                // opaque pointers the pointee signature does not change the
+                // LLVM type, but `ir_type` is still the record of what the
+                // slot holds and is read elsewhere for call construction.
+                let _signature = f.ir_type;
+                self.context
+                    .ptr_type(inkwell::AddressSpace::default())
+                    .into()
+            })
             .collect();
 
         // We can fill in the DispatchTable body, i.e: struct DispatchTable { <this
@@ -417,4 +444,3 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
         )
     }
 }
-

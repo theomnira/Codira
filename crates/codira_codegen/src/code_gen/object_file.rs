@@ -4,11 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{io::Write, path::Path};
 
-use inkwell::targets::{FileType, TargetMachine};
 use codira_target::spec;
+use inkwell::targets::{FileType, TargetMachine};
 use tempfile::NamedTempFile;
 
 use crate::{code_gen::CodeGenerationError, linker};
@@ -54,4 +53,3 @@ impl ObjectFile {
         Ok(())
     }
 }
-

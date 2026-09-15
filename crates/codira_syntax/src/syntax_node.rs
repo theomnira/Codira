@@ -92,4 +92,3 @@ impl SyntaxTreeBuilder {
         self.errors.push(error);
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir_input::FileId;
 use codira_syntax::SyntaxNode;
 
@@ -49,4 +48,3 @@ impl<T: Clone> InFile<&T> {
         self.with_value(self.value.clone())
     }
 }
-

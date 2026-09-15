@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{borrow::Cow, fmt};
 
 use ena::unify::{InPlaceUnificationTable, NoError, UnifyKey, UnifyValue};
@@ -356,4 +355,3 @@ impl TypeVariableTable {
     //     })
     // }
 }
-

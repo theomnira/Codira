@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::CString, io::stderr, path::Path, ptr};
 
 use codira_compiler::{Config, DisplayColor, Driver, PathOrInline, RelativePathBuf};
@@ -12,7 +11,8 @@ use codira_compiler::{Config, DisplayColor, Driver, PathOrInline, RelativePathBu
 use crate::runtime::{codira_runtime_create, codira_runtime_destroy, Runtime, RuntimeOptions};
 
 /// Combines a compiler and runtime in one. Use of the `TestDriver` allows for
-/// quick testing of Codira constructs in the runtime with hot-reloading support.
+/// quick testing of Codira constructs in the runtime with hot-reloading
+/// support.
 pub(crate) struct TestDriver {
     _temp_dir: tempfile::TempDir,
     pub(crate) runtime: Runtime,
@@ -96,4 +96,3 @@ macro_rules! test_invalid_runtime {
         )+
     };
 }
-

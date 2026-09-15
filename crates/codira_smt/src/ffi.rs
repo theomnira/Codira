@@ -31,6 +31,7 @@ opaque_handle!(Z3_sort);
 opaque_handle!(Z3_ast);
 opaque_handle!(Z3_solver);
 opaque_handle!(Z3_model);
+opaque_handle!(Z3_params);
 
 pub type Z3_string = *const c_char;
 
@@ -77,5 +78,65 @@ extern "C" {
     pub fn Z3_solver_to_string(c: Z3_context, s: Z3_solver) -> Z3_string;
 
     pub fn Z3_ast_to_string(c: Z3_context, a: Z3_ast) -> Z3_string;
-}
 
+    // ---- if-then-else and remaining boolean connectives ---------------------
+    pub fn Z3_mk_ite(c: Z3_context, cond: Z3_ast, then_: Z3_ast, else_: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_xor(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_iff(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+
+    // ---- fixed-width bitvector theory ---------------------------------------
+    // Exact two's-complement machine arithmetic -- the theory that models
+    // `codira_mir::fold_op`'s wrapping-i64 semantics with no
+    // unbounded-integer approximation. `Z3_mk_bvsdiv`/`Z3_mk_bvsrem`
+    // truncate toward zero, matching Rust's (and fold_op's) `/`/`%`.
+    pub fn Z3_mk_bv_sort(c: Z3_context, sz: std::ffi::c_uint) -> Z3_sort;
+    pub fn Z3_mk_int64(c: Z3_context, v: i64, ty: Z3_sort) -> Z3_ast;
+    pub fn Z3_mk_bvadd(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsub(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvmul(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsdiv(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsrem(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvneg(c: Z3_context, t1: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvand(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvor(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvxor(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvnot(c: Z3_context, t1: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvshl(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvashr(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvlshr(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvslt(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsle(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsgt(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+    pub fn Z3_mk_bvsge(c: Z3_context, t1: Z3_ast, t2: Z3_ast) -> Z3_ast;
+
+    // ---- incremental solving ------------------------------------------------
+    pub fn Z3_solver_push(c: Z3_context, s: Z3_solver);
+    pub fn Z3_solver_pop(c: Z3_context, s: Z3_solver, num_scopes: std::ffi::c_uint);
+
+    // ---- solver parameters (timeouts) ---------------------------------------
+    pub fn Z3_mk_params(c: Z3_context) -> Z3_params;
+    pub fn Z3_params_inc_ref(c: Z3_context, p: Z3_params);
+    pub fn Z3_params_dec_ref(c: Z3_context, p: Z3_params);
+    pub fn Z3_params_set_uint(c: Z3_context, p: Z3_params, k: Z3_symbol, v: std::ffi::c_uint);
+    pub fn Z3_solver_set_params(c: Z3_context, s: Z3_solver, p: Z3_params);
+
+    // ---- model extraction ---------------------------------------------------
+    // `bool` here is C99 `_Bool`, which Rust's `bool` is ABI-compatible
+    // with; Z3 >= 4.8 declares these exactly so (`Z3_bool_opt` is gone).
+    pub fn Z3_solver_get_model(c: Z3_context, s: Z3_solver) -> Z3_model;
+    pub fn Z3_model_inc_ref(c: Z3_context, m: Z3_model);
+    pub fn Z3_model_dec_ref(c: Z3_context, m: Z3_model);
+    pub fn Z3_model_eval(
+        c: Z3_context,
+        m: Z3_model,
+        t: Z3_ast,
+        model_completion: bool,
+        v: *mut Z3_ast,
+    ) -> bool;
+    pub fn Z3_get_numeral_int64(c: Z3_context, v: Z3_ast, i: *mut i64) -> bool;
+    // Bitvector numerals are unsigned in Z3's view; a 64-bit BV whose top
+    // bit is set only extracts via the u64 variant (then reinterpreted as
+    // two's-complement i64 on the Rust side).
+    pub fn Z3_get_numeral_uint64(c: Z3_context, v: Z3_ast, u: *mut u64) -> bool;
+    pub fn Z3_get_bool_value(c: Z3_context, a: Z3_ast) -> Z3_lbool;
+}

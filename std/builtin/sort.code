@@ -12,13 +12,13 @@
 //
 // All functions accept a comparator `cmp: func(T, T) -> i32` where
 // cmp(a,b) < 0  means a < b, == 0  means a == b, > 0  means a > b.
-// Convenience overloads that use the natural `Comparable` ordering are
+// Convenience overloads that import the natural `Comparable` ordering are
 // provided for types that implement Comparable.
 // =============================================================================
 
-use std.builtin.traits;
-use std.builtin.slice;
-use std.builtin.swap;
+import std.builtin.traits;
+import std.builtin.slice;
+import std.builtin.swap;
 
 // =============================================================================
 // sort — Unstable introsort

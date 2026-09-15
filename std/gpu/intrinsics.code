@@ -21,11 +21,11 @@
 // underlying GPU architecture.
 // =============================================================================
 
-use std.builtin.types;
-use std.builtin.simd;
-use std.sys.info;
-use std.sys.intrinsics;
-use std.gpu.warp;
+import std.builtin.types;
+import std.builtin.simd;
+import std.sys.info;
+import std.sys.intrinsics;
+import std.gpu.warp;
 
 // =============================================================================
 // CacheOperation
@@ -36,7 +36,7 @@ use std.gpu.warp;
 // This struct defines various caching behaviors for GPU memory operations,
 // controlling how data is cached and evicted at different cache levels.
 // The policies affect performance and memory coherency.
-public struct(value) CacheOperation {
+public struct CacheOperation {
     _value: i32,
 }
 
@@ -276,7 +276,7 @@ public func mulwide_i32(a: i32, b: i32) -> i64 {
 // =============================================================================
 
 // Represents memory synchronization scope levels for GPU memory operations.
-public struct(value) Scope {
+public struct Scope {
     _value: i32,
 }
 
@@ -340,7 +340,7 @@ public func threadfence(scope: i32) -> void {
 
 // 128-bit descriptor for a buffer resource on AMD GPUs.  Used for
 // buffer_load / buffer_store instructions.
-public struct(value) AMDBufferResource {
+public struct AMDBufferResource {
     desc: SIMD[u32, 4],
 }
 

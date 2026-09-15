@@ -4,9 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
-use itertools::Itertools;
 use codira_paths::RelativePathBuf;
+use itertools::Itertools;
 
 mod with_fixture;
 
@@ -231,4 +230,3 @@ mod test {
         );
     }
 }
-

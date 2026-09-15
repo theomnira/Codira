@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     ffi::{c_void, CStr},
     os::raw::c_char,
@@ -167,7 +166,7 @@ mod tests {
     fn test_fn_signature_arg_types_some() {
         let type_id = i32::type_id();
 
-        let arg_types = &[type_id.clone()];
+        let arg_types = std::slice::from_ref(type_id);
         let fn_signature = fake_fn_signature(arg_types, None);
 
         assert_eq!(fn_signature.arg_types(), arg_types);
@@ -191,4 +190,3 @@ mod tests {
         assert_eq!(fn_signature.return_type(), return_type);
     }
 }
-

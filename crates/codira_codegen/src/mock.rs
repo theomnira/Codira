@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::sync::Arc;
 
 use codira_hir::HirDatabase;
@@ -100,4 +99,3 @@ impl MockDatabase {
             .collect()
     }
 }
-

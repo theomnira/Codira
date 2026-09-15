@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir::HirDisplay;
 use codira_syntax::{ast, AstNode, TextRange};
 
@@ -73,4 +72,3 @@ impl<'db, 'diag, DB: codira_hir::HirDatabase> MissingFields<'db, 'diag, DB> {
         }
     }
 }
-

@@ -4,11 +4,13 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{iter::once, sync::Arc};
 
 use codira_hir_input::FileId;
-use codira_syntax::{ast, ast::TypeAscriptionOwner};
+use codira_syntax::{
+    ast,
+    ast::{AttributeOwner, GenericParamsOwner, NameOwner, TypeAscriptionOwner},
+};
 
 use super::Module;
 use crate::{
@@ -16,6 +18,7 @@ use crate::{
     has_module::HasModule,
     ids::{FunctionId, Lookup},
     item_tree::FunctionFlags,
+    name::AsName,
     name_resolution::Namespace,
     resolve::HasResolver,
     type_ref::{LocalTypeRefId, TypeRefMap, TypeRefSourceMap},
@@ -44,6 +47,32 @@ pub struct FunctionData {
     type_ref_map: TypeRefMap,
     type_ref_source_map: TypeRefSourceMap,
     flags: FunctionFlags,
+    /// Names of this function's own `[T, N: usize]`-style generic
+    /// parameters, in declaration order. Unlike `item_tree::Function`
+    /// (which also records each parameter's bound), only the *name* is
+    /// kept here -- that's all `codira_hir::mir_lower` needs to recognize a
+    /// `Expr::Path` reference to one of them and lower it to
+    /// `codira_mir::OpKind::ParamRef`. Re-derived directly from the AST
+    /// (like the rest of this query) rather than threaded from
+    /// `item_tree::Function.generic_params`, since `FunctionData` already
+    /// builds its own independent `TypeRefMap` from source instead of
+    /// reusing the item tree's.
+    generic_params: Box<[Name]>,
+    /// This function's declared `uses Effect, ...` clause -- see
+    /// `item_tree::Function::effects`'s doc comment for the same
+    /// single-segment-name restriction. This is the copy
+    /// `expr::validator::effect_obligation` actually queries (via
+    /// `Function::data`), the same relationship `generic_params` has to
+    /// `codira_hir::mir_lower`.
+    effects: Box<[Name]>,
+    /// Parallel to `params`: whether each ordinary (non-`self`) parameter
+    /// carries the `consuming` ownership-convention keyword. Consumed by
+    /// `expr::validator::move_check`'s `@strict` checker (see
+    /// `spec/LANGUAGE_SPEC.md` section 17).
+    consuming_params: Vec<bool>,
+    /// Whether this function carries the `@strict` attribute, opting it
+    /// into `expr::validator::move_check`'s use-after-consume checking.
+    is_strict: bool,
 }
 
 impl FunctionData {
@@ -56,12 +85,22 @@ impl FunctionData {
         let mut type_ref_builder = TypeRefMap::builder();
 
         let mut params = Vec::new();
+        let mut consuming_params = Vec::new();
         if let Some(param_list) = src.param_list() {
             for param in param_list.params() {
                 let type_ref = type_ref_builder.alloc_from_node_opt(param.ascribed_type().as_ref());
                 params.push(type_ref);
+                consuming_params.push(param.is_consuming());
             }
         }
+
+        let is_strict = src.attribute_list().is_some_and(|attrs| {
+            attrs.attributes().any(|attr| {
+                attr.path()
+                    .and_then(|p| p.segment())
+                    .is_some_and(|s| matches!(s.kind(), Some(ast::PathSegmentKind::Name(n)) if n.text() == "strict"))
+            })
+        });
 
         let ret_type = if let Some(type_ref) = src.ret_type().and_then(|rt| rt.type_ref()) {
             type_ref_builder.alloc_from_node(&type_ref)
@@ -71,6 +110,15 @@ impl FunctionData {
 
         let (type_ref_map, type_ref_source_map) = type_ref_builder.finish();
 
+        let generic_params = src
+            .generic_param_list()
+            .map(|list| {
+                list.generic_params()
+                    .filter_map(|param| Some(param.name()?.as_name()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         Arc::new(FunctionData {
             name: func.name.clone(),
             params,
@@ -79,6 +127,10 @@ impl FunctionData {
             type_ref_source_map,
             flags: func.flags,
             visibility: item_tree[func.visibility].clone(),
+            generic_params,
+            effects: func.effects.clone(),
+            consuming_params,
+            is_strict,
         })
     }
 
@@ -124,6 +176,46 @@ impl FunctionData {
     /// `foo.len()` but you can't call `foo.new()`.
     pub fn has_self_param(&self) -> bool {
         self.flags.has_self_param()
+    }
+
+    /// Names of this function's own generic parameters, in declaration
+    /// order (e.g. `[N]` for `func add[N](x: i64) -> i64 { x + N }`).
+    pub fn generic_params(&self) -> &[Name] {
+        &self.generic_params
+    }
+
+    /// This function's declared `uses Effect, ...` clause (see
+    /// `spec/LANGUAGE_SPEC.md` section 6), in source order.
+    pub fn effects(&self) -> &[Name] {
+        &self.effects
+    }
+
+    /// A function is *declared-pure* when it has no `uses` clause of its
+    /// own. This is a purely syntactic notion (what the signature says),
+    /// not a proof the body performs no effects -- `perform`/`handle`
+    /// still lower to `Expr::Missing` (see `expr.rs`), so nothing yet
+    /// checks a function's *body* against this claim the way
+    /// `expr::validator::effect_obligation` checks its *calls*. Still
+    /// real and useful on its own: hot-reload-safety analysis and the
+    /// healing engine's retry/idempotency decisions (see this session's
+    /// KGEN-superset status doc) can already consult a function's
+    /// declared effect row today, where previously it was silently
+    /// dropped during lowering.
+    pub fn is_declared_pure(&self) -> bool {
+        self.effects.is_empty()
+    }
+
+    /// Parallel to `params()`: whether each ordinary parameter carries the
+    /// `consuming` ownership-convention keyword.
+    pub fn consuming_params(&self) -> &[bool] {
+        &self.consuming_params
+    }
+
+    /// Whether this function opts into `expr::validator::move_check`'s
+    /// use-after-consume checking via `@strict` (see
+    /// `spec/LANGUAGE_SPEC.md` section 17).
+    pub fn is_strict(&self) -> bool {
+        self.is_strict
     }
 }
 
@@ -265,4 +357,3 @@ impl HasVisibility for Function {
         db.function_visibility(self.id)
     }
 }
-

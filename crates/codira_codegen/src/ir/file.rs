@@ -4,11 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use inkwell::module::Module;
 use codira_hir::{HasVisibility, ModuleDef};
+use inkwell::module::Module;
 
 use super::body::ExternalGlobals;
 use crate::{
@@ -92,13 +91,11 @@ pub(crate) fn gen_file_ir<'ink>(
         }
     };
 
-    // Construct requirements for generating the bodies
-    let fn_pass_manager = function::create_pass_manager(&llvm_module, code_gen.optimization_level);
-
     // Generate the function bodies
     for (hir_function, llvm_function) in functions.iter() {
         let mut code_gen = BodyIrGenerator::new(
             code_gen.context,
+            &llvm_module,
             code_gen.db,
             (*hir_function, *llvm_function),
             &functions,
@@ -110,12 +107,12 @@ pub(crate) fn gen_file_ir<'ink>(
         );
 
         code_gen.gen_fn_body();
-        fn_pass_manager.run_on(llvm_function);
     }
 
     for (hir_function, llvm_function) in wrapper_functions.iter() {
         let mut code_gen = BodyIrGenerator::new(
             code_gen.context,
+            &llvm_module,
             code_gen.db,
             (*hir_function, *llvm_function),
             &functions,
@@ -127,8 +124,16 @@ pub(crate) fn gen_file_ir<'ink>(
         );
 
         code_gen.gen_fn_wrapper();
-        fn_pass_manager.run_on(llvm_function);
     }
+
+    // Optimize all generated function bodies in one pass now that they've
+    // all been emitted (LLVM's new pass manager operates module-wide, not
+    // per-function -- see `crate::code_gen::optimize_module`'s doc comment).
+    crate::code_gen::optimize_module(
+        &llvm_module,
+        &code_gen.target_machine,
+        code_gen.optimization_level,
+    );
 
     // Filter private methods
     let function_definitions: HashSet<codira_hir::Function> = functions
@@ -143,4 +148,3 @@ pub(crate) fn gen_file_ir<'ink>(
         type_definitions,
     }
 }
-

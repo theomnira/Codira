@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_hir::HirDisplay;
 use codira_syntax::TextRange;
 
@@ -51,4 +50,3 @@ impl<'db, 'diag, DB: codira_hir::HirDatabase> ExpectedFunction<'db, 'diag, DB> {
         ExpectedFunction { db, diag }
     }
 }
-

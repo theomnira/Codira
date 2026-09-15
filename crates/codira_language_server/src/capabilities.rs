@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use lsp_types::{
     ClientCapabilities, CompletionOptions, OneOf, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextDocumentSyncOptions, WorkDoneProgressOptions,
@@ -36,4 +35,3 @@ pub fn server_capabilities(_client_caps: &ClientCapabilities) -> ServerCapabilit
         ..Default::default()
     }
 }
-

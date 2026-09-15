@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::{
     parsing::lexer::{
         classes::{is_ident_continue, is_ident_start},
@@ -83,4 +82,3 @@ fn scan_float_exponent(cursor: &mut Cursor<'_>) {
         scan_digits(cursor, false);
     }
 }
-

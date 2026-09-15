@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{fmt, path::Path, str::FromStr};
 
 mod toml;
@@ -117,4 +116,3 @@ mod tests {
         assert_eq!(format!("{}", manifest.package_id()), "test v0.2.0");
     }
 }
-

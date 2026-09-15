@@ -8,6 +8,20 @@
 //! This module provides constructs to enable type safe handling of inkwell
 //! types.
 
+#![allow(deprecated)]
+//! LLVM 15 unified all pointer types into a single opaque `ptr`, which
+//! deprecates inkwell's pointee-typed `T::ptr_type(..)` constructors in
+//! favour of `Context::ptr_type(..)`.
+//!
+//! This module *is* the pointee-typed pointer abstraction: traits like
+//! `IsPointerType` / `PointerValueType` exist precisely to compute "the
+//! pointer type for pointee `T`", a question LLVM no longer distinguishes
+//! answers to. The right fix is to delete the abstraction and have
+//! callers ask the context directly -- a design change, not a mechanical
+//! one. Until then the deprecation is allowed *here only*, so that a
+//! genuinely new deprecation elsewhere in the crate still fails the
+//! build.
+
 mod array_value;
 mod float_value;
 mod function_value;
@@ -254,6 +268,7 @@ impl_value_type_value!(
     inkwell::types::FloatType<'ink> => inkwell::values::FloatValue<'ink>,
     inkwell::types::ArrayType<'ink> => inkwell::values::ArrayValue<'ink>,
     inkwell::types::VectorType<'ink> => inkwell::values::VectorValue<'ink>,
+    inkwell::types::ScalableVectorType<'ink> => inkwell::values::ScalableVectorValue<'ink>,
     inkwell::types::StructType<'ink> => inkwell::values::StructValue<'ink>,
     inkwell::types::PointerType<'ink> => inkwell::values::PointerValue<'ink>,
     inkwell::types::FunctionType<'ink> => inkwell::values::FunctionValue<'ink>
@@ -276,6 +291,7 @@ impl_addressable_type_values!(
     inkwell::types::FloatType<'ink>,
     inkwell::types::ArrayType<'ink>,
     inkwell::types::VectorType<'ink>,
+    inkwell::types::ScalableVectorType<'ink>,
     inkwell::types::StructType<'ink>,
     inkwell::types::PointerType<'ink>,
     inkwell::types::FunctionType<'ink>
@@ -290,6 +306,11 @@ impl<'ink> AddressableTypeValue<'ink> for inkwell::types::BasicTypeEnum<'ink> {
             BasicTypeEnum::PointerType(ty) => ty.ptr_type(address_space),
             BasicTypeEnum::StructType(ty) => ty.ptr_type(address_space),
             BasicTypeEnum::VectorType(ty) => ty.ptr_type(address_space),
+            // LLVM 22 added scalable vector types (SVE/RVV); opaque
+            // pointers mean every case here already produces the same
+            // untyped `ptr` regardless of pointee, so this is just
+            // completeness, not a new pointer representation.
+            BasicTypeEnum::ScalableVectorType(ty) => ty.ptr_type(address_space),
         }
     }
 }
@@ -532,4 +553,3 @@ mod tests {
 
     test_as_bytes_and_ptrs_primitive!(u8, u16, u32, u64, i8, i16, i32, i64, f32, f64);
 }
-

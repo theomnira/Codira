@@ -4,30 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
-use inkwell::{
-    passes::{PassManager, PassManagerBuilder},
-    values::FunctionValue,
-};
 use codira_hir::HirDatabase;
+use inkwell::{module::Module, values::FunctionValue};
 
-use crate::{ir::ty::HirTypeCache, Module, OptimizationLevel};
-
-/// Constructs a `PassManager` to optimize functions for the given optimization
-/// level.
-pub(crate) fn create_pass_manager<'ink>(
-    module: &Module<'ink>,
-    optimization_lvl: OptimizationLevel,
-) -> PassManager<FunctionValue<'ink>> {
-    let pass_builder = PassManagerBuilder::create();
-    pass_builder.set_optimization_level(optimization_lvl);
-
-    let function_pass_manager = PassManager::create(module);
-    pass_builder.populate_function_pass_manager(&function_pass_manager);
-    function_pass_manager.initialize();
-
-    function_pass_manager
-}
+use crate::ir::ty::HirTypeCache;
 
 /// Generates a `FunctionValue` for a `codira_hir::Function`. This function does
 /// not generate a body for the `codira_hir::Function`. That task is left to the
@@ -61,4 +41,3 @@ pub(crate) fn gen_public_prototype<'db, 'ink>(
     let ir_ty = types.get_public_function_type(func);
     module.add_function(&name, ir_ty, None)
 }
-

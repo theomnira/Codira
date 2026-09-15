@@ -3,34 +3,38 @@
 // =============================================================================
 //
 // Provides generic swap functions for exchanging values without requiring
-// explicit temporary variables.  Works with any Movable type.
+// explicit temporary variables.
 //
-//   let a: i32 = 1;
-//   let b: i32 = 2;
-//   swap(&a, &b);
-//   // a == 2, b == 1
+// Migration note (2026-08-20): rewritten from pre-redesign syntax -- verified
+// to parse cleanly via codira_syntax::SourceFile::parse (zero SyntaxErrors).
+// Two real findings, not cosmetic:
+//
+// 1. `swap[T](a: &T, b: &T)` used `&T`/`*a` reference and deref syntax that
+//    does not exist in the grammar at all (no `&`/`&mut`/`*`, see
+//    agents/RUST_TO_CODIRA_MIGRATION.md §3). `swap_elements`/
+//    `swap_nonoverlapping` later in this same original file already used
+//    `Pointer[T]` with `.read()`/`.write()`/`.offset()` methods instead --
+//    `swap`/`replace`/`take` are rewritten to match that established,
+//    already-pointer-based pattern rather than the reference-based one.
+// 2. `i as isize` casts do not parse -- there is no expression-level `as`
+//    in the grammar despite spec/LANGUAGE_SPEC.md documenting it as
+//    designed (see std/builtin/range.code's migration note for the full
+//    finding). Replaced with `__intrinsic_cast[T](value)`.
 // =============================================================================
 
-use std.builtin.traits;
+import std.builtin.traits
 
 // =============================================================================
-// swap — Exchange two values via mutable references
+// swap — Exchange the values behind two pointers
 // =============================================================================
 
-// Exchange the values behind two mutable references.
+// Exchange the values behind two pointers.
 //
-// Both references must be valid and non-overlapping.
-// Works with any type that satisfies Movable (which includes all value types).
-//
-// Example:
-//   let x = 10;
-//   let y = 20;
-//   swap(&x, &y);
-//   // x == 20, y == 10
-public func swap[T](a: &T, b: &T) -> void {
-    let tmp: T = *a;
-    *a = *b;
-    *b = tmp;
+// Both pointers must be valid and non-overlapping.
+public func swap[T](a: Pointer[T], b: Pointer[T]) -> void {
+    let tmp = a.read()
+    a.write(b.read())
+    b.write(tmp)
 }
 
 // =============================================================================
@@ -39,25 +43,20 @@ public func swap[T](a: &T, b: &T) -> void {
 
 // Swap elements at indices `i` and `j` within a mutable slice.
 // Panics if either index is out of bounds.
-//
-// Example:
-//   let arr = Array[i32].from(1, 2, 3);
-//   swap_elements(arr.as_mut_slice(), 0, 2);
-//   // arr is now [3, 2, 1]
 public func swap_elements[T](data: Slice[T], i: usize, j: usize) -> void {
     if i >= data.len() {
-        __panic("swap_elements: index i out of bounds");
+        __panic("swap_elements: index i out of bounds")
     }
     if j >= data.len() {
-        __panic("swap_elements: index j out of bounds");
+        __panic("swap_elements: index j out of bounds")
     }
     if i == j {
-        return;
+        return
     }
-    let ptr = data.data();
-    let tmp = ptr.offset(i as isize).read();
-    ptr.offset(i as isize).write(ptr.offset(j as isize).read());
-    ptr.offset(j as isize).write(tmp);
+    let ptr = data.data()
+    let tmp = ptr.offset(__intrinsic_cast[isize](i)).read()
+    ptr.offset(__intrinsic_cast[isize](i)).write(ptr.offset(__intrinsic_cast[isize](j)).read())
+    ptr.offset(__intrinsic_cast[isize](j)).write(tmp)
 }
 
 // =============================================================================
@@ -69,14 +68,14 @@ public func swap_elements[T](data: Slice[T], i: usize, j: usize) -> void {
 // The caller MUST guarantee that [a, a+count) and [b, b+count) do not
 // overlap.  Behavior is undefined if they do.
 public func swap_nonoverlapping[T](a: Pointer[T], b: Pointer[T], count: usize) -> void {
-    let i: usize = 0;
+    var i: usize = 0
     while i < count {
-        let pa = a.offset(i as isize);
-        let pb = b.offset(i as isize);
-        let tmp = pa.read();
-        pa.write(pb.read());
-        pb.write(tmp);
-        i = i + 1;
+        let pa = a.offset(__intrinsic_cast[isize](i))
+        let pb = b.offset(__intrinsic_cast[isize](i))
+        let tmp = pa.read()
+        pa.write(pb.read())
+        pb.write(tmp)
+        i = i + 1
     }
 }
 
@@ -85,15 +84,10 @@ public func swap_nonoverlapping[T](a: Pointer[T], b: Pointer[T], count: usize) -
 // =============================================================================
 
 // Write `new_value` into `dest` and return the previous value.
-//
-// Example:
-//   let x: i32 = 42;
-//   let old = replace(&x, 99);
-//   // x == 99, old == 42
-public func replace[T](dest: &T, new_value: T) -> T {
-    let old: T = *dest;
-    *dest = new_value;
-    return old;
+public func replace[T](dest: Pointer[T], new_value: T) -> T {
+    let old = dest.read()
+    dest.write(new_value)
+    old
 }
 
 // =============================================================================
@@ -102,11 +96,6 @@ public func replace[T](dest: &T, new_value: T) -> T {
 
 // Move the value out of `src`, leaving `T::default()` behind.
 // Requires T: Defaultable.
-//
-// Example:
-//   let s = String.from("hello");
-//   let taken = take(&s);
-//   // taken == "hello", s == ""
-public func take[T: Defaultable](src: &T) -> T {
-    return replace[T](src, T.default());
+public func take[T: Defaultable](src: Pointer[T]) -> T {
+    replace[T](src, T.default())
 }

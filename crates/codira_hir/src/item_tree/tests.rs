@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt;
 
 use codira_hir_input::WithFixture;
@@ -105,6 +104,44 @@ fn test_generic_params() {
 }
 
 #[test]
+fn test_data_struct() {
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    data struct Point {
+        x: f64,
+        y: f64,
+    }
+    struct Plain {
+        x: f64,
+    }
+    data struct Pair[T] {
+        first: T,
+        second: T,
+    }
+    "#
+    )
+    .unwrap());
+}
+
+#[test]
+fn test_effects() {
+    insta::assert_snapshot!(print_item_tree(
+        r#"
+    effect Logger {
+        func log(message: String)
+    }
+    func risky() uses Logger -> i32 {
+        42
+    }
+    func pure_fn() -> i32 {
+        1
+    }
+    "#
+    )
+    .unwrap());
+}
+
+#[test]
 fn test_duplicate_import() {
     insta::assert_snapshot!(print_item_tree(
         r#"
@@ -116,4 +153,3 @@ fn test_duplicate_import() {
     )
     .unwrap());
 }
-

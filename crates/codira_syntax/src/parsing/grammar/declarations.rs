@@ -4,13 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
     adt, error_block, expressions, generics, name, name_recovery, opt_attribute_list,
-    opt_visibility, params, paths, traits, types, IDENT, Marker, Parser, TokenSet, EOF, ERROR,
-    EXTERN, FUNCTION_DEF, MACRO_DEF, RENAME, RET_TYPE, USE, USES_CLAUSE, USE_TREE, USE_TREE_LIST,
+    opt_visibility, params, paths, traits, types, Marker, Parser, TokenSet, EOF, ERROR, EXTERN,
+    FUNCTION_DEF, IDENT, MACRO_DEF, RENAME, RET_TYPE, USE, USES_CLAUSE, USE_TREE, USE_TREE_LIST,
 };
-use crate::{parsing::grammar::paths::is_use_path_start, T};
+use crate::parsing::grammar::paths::is_use_path_start;
 
 pub(super) const DECLARATION_RECOVERY_SET: TokenSet = TokenSet::new(&[
     T![func],
@@ -59,6 +58,17 @@ pub(super) fn maybe_declaration(p: &mut Parser<'_>, m: Marker) -> Result<(), Mar
     opt_attribute_list(p);
     opt_visibility(p);
 
+    // `data` is a Kotlin-style contextual modifier on `struct`/`class` (see
+    // spec/LANGUAGE_SPEC.md section 15): like `def` and the param-ownership
+    // keywords, the lexer emits a plain `IDENT` for it, so it must be
+    // promoted here via `bump_remap` -- and only when it's actually
+    // introducing a struct/class, so `data` stays usable as an ordinary
+    // identifier everywhere else (a field, a binding, a function named
+    // `data`).
+    if p.at_contextual_kw("data") && (p.nth_at(1, T![struct]) || p.nth_at(1, T![class])) {
+        p.bump_remap(T![data]);
+    }
+
     let m = match declarations_without_modifiers(p, m) {
         Ok(()) => return Ok(()),
         Err(m) => m,
@@ -78,7 +88,15 @@ pub(super) fn maybe_declaration(p: &mut Parser<'_>, m: Marker) -> Result<(), Mar
     }
 
     match p.current() {
-        T![func] | T![def] => {
+        T![func] => {
+            fn_def(p);
+            m.complete(p, FUNCTION_DEF);
+        }
+        // `def` is a contextual keyword (see params.rs's `eat_contextual_kw`
+        // doc comment / grammar.ron): the lexer emits a plain `IDENT` for it,
+        // so it can't be matched via `p.current() == T![def]` the way `func`
+        // (a real reserved keyword) can.
+        IDENT if p.at_contextual_kw("def") => {
             fn_def(p);
             m.complete(p, FUNCTION_DEF);
         }
@@ -136,7 +154,7 @@ fn declarations_without_modifiers(p: &mut Parser<'_>, m: Marker) -> Result<(), M
 }
 
 /// Parses `supervisor Name { key: value, .. child Name { .. } }` (see
-/// spec/self_healing_programming_language.md section 3.5). This only covers
+/// `spec/self_healing_programming_language.md` section 3.5). This only covers
 /// the declaration surface: parsing and, at the HIR level, registering the
 /// supervisor/child hierarchy and its config entries -- not the OTP-style
 /// restart-strategy runtime described in the paper, which needs a process
@@ -214,15 +232,19 @@ fn macro_def(p: &mut Parser<'_>, m: Marker) {
 }
 
 pub(super) fn fn_def(p: &mut Parser<'_>) {
-    assert!(p.at(T![func]) || p.at(T![def]));
+    assert!(p.at(T![func]) || p.at_contextual_kw("def"));
 
     // `def` declares a Mojo/Python-style dynamically-typed function (see
     // spec/LANGUAGE_SPEC.md section 14): parameters may omit their types, and
     // the body is parsed exactly like a `func` body. Both keywords lower to
     // the same `FunctionDef` node; the leading keyword records which style was
     // written. Parse-level scaffolding only.
-    let is_def = p.at(T![def]);
-    p.bump_any();
+    let is_def = p.at_contextual_kw("def");
+    if is_def {
+        p.bump_remap(T![def]);
+    } else {
+        p.bump_any();
+    }
 
     name_recovery(p, DECLARATION_RECOVERY_SET.union(TokenSet::new(&[T![')']])));
 
@@ -353,4 +375,3 @@ fn opt_rename(p: &mut Parser<'_>) {
         m.complete(p, RENAME);
     }
 }
-

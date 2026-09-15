@@ -244,4 +244,3 @@ fn api_walkthrough() {
     let name = name.unwrap();
     assert_eq!(name.text(), "foo");
 }
-

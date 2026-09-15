@@ -4,8 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
-use crate::SourceFile;
+use crate::{
+    ast::{self, AstNode},
+    SourceFile, SyntaxKind,
+};
 
 #[test]
 fn class_and_trait_and_extend() {
@@ -195,7 +197,7 @@ fn refinement_types_and_supervisor() {
 }
 
 /// Covers the ownership/hardware/concurrency scaffolding keywords in
-/// spec/LANGUAGE_SPEC.md section 14: `consuming`/`borrowing` parameter
+/// `spec/LANGUAGE_SPEC.md` section 14: `consuming`/`borrowing` parameter
 /// conventions, `~Trait` inheritance-list opt-out, `@target(..)` (which
 /// reuses the pre-existing generic `@name(..)` attribute grammar), and
 /// `spawn <expr>`.
@@ -225,7 +227,7 @@ fn ownership_and_concurrency_scaffolding() {
     .debug_dump());
 }
 
-/// Covers the remaining spec/LANGUAGE_SPEC.md section-14 scaffolding:
+/// Covers the remaining `spec/LANGUAGE_SPEC.md` section-14 scaffolding:
 /// `def` (Python-style dynamic functions with untyped parameters),
 /// `inout`/`mut`/`out` parameter conventions, postfix `x^` transfer,
 /// `<-ch` channel receive, and `ch <- x` channel send.
@@ -289,7 +291,8 @@ fn index_expr() {
         a[0] = c;
         let a = { [3,4,5] }[1];
     }"#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -302,7 +305,8 @@ fn array_expr() {
         let a = [call(123)]
         let a = [Struct { }, Struct { }]
     }"#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -312,7 +316,8 @@ fn missing_field_expr() {
     func foo() {
         value.
     }"#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -325,7 +330,9 @@ fn impl_block() {
             struct Baz {}
         }
         public extend FooBar {}
-        "#).debug_dump());
+        "#
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -335,7 +342,8 @@ fn array_type() {
     func main(a: [int]) {
         let a:[[bool]];
     }"#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -356,7 +364,8 @@ fn function() {
     public func d() {}
     public func c()->never {}
     func b(value:number)->number {}"#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -368,7 +377,8 @@ fn block() {
         let b:i32;
         let c:string;
     }"#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -383,7 +393,8 @@ fn literals() {
         let e = "Hello, world!"
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -410,7 +421,8 @@ fn struct_def() {
     struct Foo(f64,);
     struct Foo(f64, i32)
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -422,7 +434,8 @@ fn unary_expr() {
         let b = !!true;
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -434,7 +447,8 @@ fn binary_expr() {
         let b = 3*4+10/2
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -450,7 +464,8 @@ fn expression_statement() {
         -3
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -465,7 +480,8 @@ fn function_calls() {
     func qux(self, i:number) { }
     func foo(self i:number) { } // error: expected comma
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -477,7 +493,8 @@ fn patterns() {
        let _ = a;
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -497,7 +514,8 @@ fn arithmetic_operands() {
         let _ = a ^ b;
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -518,7 +536,8 @@ fn assignment_operands() {
         a ^= b;
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -535,7 +554,8 @@ fn compare_operands() {
         let _ = a >= b;
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -547,7 +567,8 @@ fn logic_operands() {
         let _ = a && b;
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -561,7 +582,8 @@ fn if_expr() {
         if {true} {} else {}
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -572,7 +594,8 @@ fn block_expr() {
         {3}
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -584,7 +607,8 @@ fn return_expr() {
         return 50;
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -594,7 +618,8 @@ fn loop_expr() {
     func foo() {
         loop {}
     }"#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -607,7 +632,8 @@ fn break_expr() {
         if break 4 { 3; }
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -619,7 +645,8 @@ fn while_expr() {
         while { true } {};
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -636,7 +663,8 @@ fn struct_lit() {
         T(1.23, 4,)
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -654,7 +682,8 @@ fn struct_field_index() {
         foo.a.0
     }
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -669,7 +698,39 @@ fn struct_and_class_memory_kind() {
     class Baz {};
     struct Bar {};
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
+}
+
+#[test]
+fn data_struct_and_class() {
+    // `data` (see spec/LANGUAGE_SPEC.md section 16) is a contextual keyword,
+    // only promoted when immediately followed by `struct`/`class` -- it must
+    // stay usable as an ordinary identifier everywhere else (a field name,
+    // a binding, a plain function call).
+    insta::assert_snapshot!(SourceFile::parse(
+        r#"
+    data struct Point {
+        x: f64,
+        y: f64,
+    }
+    data class Actor {
+        var health: i32,
+    }
+    public data struct Pair[T] {
+        first: T,
+        second: T,
+    }
+    func use_data_as_ident() {
+        let data = 5;
+        data
+    }
+    struct HasDataField {
+        data: i32,
+    }
+    "#,
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -682,7 +743,8 @@ fn visibility() {
     internal func bar() {}
     public func baz() {}
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -691,7 +753,8 @@ fn extern_fn() {
         r#"
     public extern func foo();
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -701,7 +764,8 @@ fn type_alias_def() {
     type Foo = i32;
     type Bar = Foo;
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -713,7 +777,8 @@ fn function_return_path() {
         func main2() -> root.Foo {}
         func main3() -> root.foo.Foo {}
     "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
 #[test]
@@ -748,6 +813,178 @@ fn use_() {
         };
         import Foo as _;
         "#,
-    ).debug_dump());
+    )
+    .debug_dump());
 }
 
+// --------------------------------------------------------------------------
+// `expr as Type` casts
+// --------------------------------------------------------------------------
+
+/// Parses `func main() { let _ = <src>; }` and hands back the initializer of
+/// that single `let`, asserting along the way that the source parsed without a
+/// syntax error. The precedence tests below are all about the *shape* of one
+/// expression, so going through the typed AST states exactly that and nothing
+/// more -- unlike a whole-file snapshot, which also pins down every scrap of
+/// trivia around it.
+fn only_initializer(src: &str) -> ast::Expr {
+    let text = format!("func main() {{ let _ = {src}; }}");
+    let parse = SourceFile::parse(&text);
+    assert!(
+        parse.errors().is_empty(),
+        "`{src}` failed to parse: {:?}",
+        parse.errors()
+    );
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    let_stmt
+        .initializer()
+        .unwrap_or_else(|| panic!("`{src}` produced a `let` with no initializer"))
+}
+
+/// Unwraps `expr` as a `CastExpr`, naming what was found instead on failure.
+fn as_cast(expr: &ast::Expr) -> ast::CastExpr {
+    ast::CastExpr::cast(expr.syntax().clone())
+        .unwrap_or_else(|| panic!("expected a CAST_EXPR, found {:?}", expr.syntax().kind()))
+}
+
+/// Unwraps `expr` as a `BinExpr`, naming what was found instead on failure.
+fn as_bin(expr: &ast::Expr) -> ast::BinExpr {
+    ast::BinExpr::cast(expr.syntax().clone())
+        .unwrap_or_else(|| panic!("expected a BIN_EXPR, found {:?}", expr.syntax().kind()))
+}
+
+/// The simplest cast: a path operand and a primitive target type.
+#[test]
+fn cast_expr_simple() {
+    let cast = as_cast(&only_initializer("x as i32"));
+    assert_eq!(cast.expr().unwrap().syntax().text(), "x");
+    assert_eq!(cast.type_ref().unwrap().syntax().text(), "i32");
+}
+
+/// Casts chain left-associatively: `x as i32 as i64` is `((x as i32) as i64)`,
+/// never `x as (i32 as i64)` (which would not even name a type). Chains have
+/// to work -- the stdlib uses them to widen through an intermediate width.
+#[test]
+fn cast_expr_chained_is_left_associative() {
+    let outer = as_cast(&only_initializer("x as i32 as i64"));
+    assert_eq!(outer.type_ref().unwrap().syntax().text(), "i64");
+
+    let inner = as_cast(&outer.expr().unwrap());
+    assert_eq!(inner.type_ref().unwrap().syntax().text(), "i32");
+    assert_eq!(inner.expr().unwrap().syntax().text(), "x");
+}
+
+/// `as` binds tighter than every binary operator, so a cast to the left of one
+/// claims only its own operand: `a as i32 + b` is `BinExpr(CastExpr(a), b)`.
+#[test]
+fn cast_expr_binds_tighter_than_binary_lhs() {
+    let bin = as_bin(&only_initializer("a as i32 + b"));
+    let lhs = as_cast(&bin.lhs().unwrap());
+    assert_eq!(lhs.expr().unwrap().syntax().text(), "a");
+    assert_eq!(lhs.type_ref().unwrap().syntax().text(), "i32");
+    assert_eq!(bin.rhs().unwrap().syntax().text(), "b");
+}
+
+/// The mirror image: `a + b as i32` is `BinExpr(a, CastExpr(b))`. This holds
+/// for the tightest-binding binary operators too (`a * b as i32`), since `as`
+/// outranks all of them.
+#[test]
+fn cast_expr_binds_tighter_than_binary_rhs() {
+    let bin = as_bin(&only_initializer("a + b as i32"));
+    assert_eq!(bin.lhs().unwrap().syntax().text(), "a");
+    let rhs = as_cast(&bin.rhs().unwrap());
+    assert_eq!(rhs.expr().unwrap().syntax().text(), "b");
+    assert_eq!(rhs.type_ref().unwrap().syntax().text(), "i32");
+
+    let bin = as_bin(&only_initializer("a * b as i32"));
+    assert_eq!(bin.rhs().unwrap().syntax().kind(), SyntaxKind::CAST_EXPR);
+}
+
+/// `as` binds *looser* than the postfix operators, so `f() as u8` casts the
+/// call's result rather than trying to cast the callee.
+#[test]
+fn cast_expr_of_call_casts_the_result() {
+    let cast = as_cast(&only_initializer("f() as u8"));
+    let operand = cast.expr().unwrap();
+    assert_eq!(operand.syntax().kind(), SyntaxKind::CALL_EXPR);
+    assert_eq!(operand.syntax().text(), "f()");
+    assert_eq!(cast.type_ref().unwrap().syntax().text(), "u8");
+}
+
+/// Looser than the prefix operators as well: `-x as i64` is `(-x) as i64`.
+#[test]
+fn cast_expr_of_prefix_casts_the_result() {
+    let cast = as_cast(&only_initializer("-x as i64"));
+    assert_eq!(
+        cast.expr().unwrap().syntax().kind(),
+        SyntaxKind::PREFIX_EXPR
+    );
+    assert_eq!(cast.type_ref().unwrap().syntax().text(), "i64");
+}
+
+/// The target is a full type, not merely a primitive name: a qualified path
+/// and a generic argument list both parse. Whether such a cast is *legal* is a
+/// later type-checking question, not a parsing one.
+#[test]
+fn cast_expr_path_and_generic_target_types() {
+    let cast = as_cast(&only_initializer("x as Foo"));
+    assert_eq!(cast.type_ref().unwrap().syntax().text(), "Foo");
+
+    let cast = as_cast(&only_initializer("x as bit.Mask"));
+    assert_eq!(cast.type_ref().unwrap().syntax().text(), "bit.Mask");
+
+    let cast = as_cast(&only_initializer("x as Box[i32]"));
+    assert_eq!(cast.type_ref().unwrap().syntax().text(), "Box[i32]");
+}
+
+/// A cast is an ordinary expression, so it appears wherever one does --
+/// including as a `let` initializer sitting next to a type ascription, which
+/// is how the stdlib writes the overwhelming majority of its conversions.
+#[test]
+fn cast_expr_in_let_initializer() {
+    let parse = SourceFile::parse(
+        r#"
+    func main() {
+        let widened: u64 = narrow as u64;
+    }
+    "#,
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    let cast = as_cast(&let_stmt.initializer().unwrap());
+    assert_eq!(cast.expr().unwrap().syntax().text(), "narrow");
+    assert_eq!(cast.type_ref().unwrap().syntax().text(), "u64");
+}
+
+/// A whole-tree snapshot of the same cases, pinning down the exact `CAST_EXPR`
+/// nesting and the `AS_KW` token's place inside it.
+#[test]
+fn cast_expr() {
+    insta::assert_snapshot!(SourceFile::parse(
+        r#"
+    func main() {
+        let _ = x as i32;
+        let _ = x as i32 as i64;
+        let _ = a as i32 + b;
+        let _ = a + b as i32;
+        let _ = f() as u8;
+        let _ = -x as i64;
+        let _ = x as Foo;
+        let _ = x as Box[i32];
+        let widened: u64 = narrow as u64;
+        let _ = (a as i32) * (b as i32);
+    }
+    "#,
+    )
+    .debug_dump());
+}

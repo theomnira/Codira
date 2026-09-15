@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{iter::Peekable, str::CharIndices};
 
 use crate::ast::{self, AstToken};
@@ -160,4 +159,3 @@ mod tests {
         );
     }
 }
-

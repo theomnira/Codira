@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ops::Index, sync::Arc};
 
 use codira_hir_input::FileId;
@@ -95,4 +94,3 @@ pub(crate) fn build_partition(db: &dyn CodeGenDatabase) -> Arc<ModulePartition> 
     }
     Arc::new(partition)
 }
-

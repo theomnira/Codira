@@ -4,20 +4,19 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     collections::{HashMap, HashSet},
     convert::TryInto,
     sync::Arc,
 };
 
+use codira_hir::{Body, ExprId, HirDatabase, InferenceResult};
 use inkwell::{
     context::Context,
     module::{Linkage, Module},
     types::ArrayType,
     values::PointerValue,
 };
-use codira_hir::{Body, ExprId, HirDatabase, InferenceResult};
 
 use crate::{
     ir::{
@@ -77,15 +76,27 @@ impl<'ink> TypeTable<'ink> {
         let array_index = context.i64_type().const_int(index, false);
 
         let ptr_to_type_info_ptr = unsafe {
-            builder.build_gep(
-                table_ref.into(),
-                &[global_index, array_index],
-                &format!("{}_ptr_ptr", type_info.name),
-            )
+            builder
+                .build_gep(
+                    self.table_type,
+                    table_ref.into(),
+                    &[global_index, array_index],
+                    &format!("{}_ptr_ptr", type_info.name),
+                )
+                .expect("failed to build GEP into type table")
         };
 
+        // `ptr_to_type_info_ptr` points at one array element; that
+        // element's own type (already a pointer type, since the table
+        // holds `*const c_void` entries) is the correct pointee type here.
+        let element_ty = self.table_type.get_element_type();
         builder
-            .build_load(ptr_to_type_info_ptr, &format!("{}_ptr", type_info.name))
+            .build_load(
+                element_ty,
+                ptr_to_type_info_ptr,
+                &format!("{}_ptr", type_info.name),
+            )
+            .expect("failed to build load from type table")
             .into_pointer_value()
     }
 
@@ -257,4 +268,3 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
         }
     }
 }
-

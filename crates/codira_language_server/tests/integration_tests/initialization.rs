@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::Project;
 
 #[test]
@@ -25,4 +24,3 @@ fn add(a: i32, b: i32) -> i32 {
     .server()
     .wait_until_workspace_is_loaded();
 }
-

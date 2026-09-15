@@ -4,9 +4,8 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//! - Defines `AbsPathBuf`/`AbsPath`, wrapper types around `PathBuf`/`Path`
-//!   that carry the invariant that the path is absolute.
-//!
+//! - Defines `AbsPathBuf`/`AbsPath`, wrapper types around `PathBuf`/`Path` that
+//!   carry the invariant that the path is absolute.
 use std::{
     borrow::Borrow,
     convert::{TryFrom, TryInto},
@@ -135,4 +134,3 @@ impl AbsPath {
         AbsPathBuf::try_from(self.0.to_path_buf()).unwrap()
     }
 }
-

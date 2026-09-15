@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{convert::TryFrom, thread, time::Duration};
 
 use crossbeam_channel::{never, select, unbounded, Receiver, Sender};
@@ -305,4 +304,3 @@ mod tests {
         let _monitor = NotifyMonitor::new(Box::new(|_| {}));
     }
 }
-

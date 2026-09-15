@@ -20,15 +20,15 @@
 //   // p is freed at end of scope
 // =============================================================================
 
-use std.builtin.traits;
-use std.builtin.types;
-use std.memory.unsafe_pointer;
+import std.builtin.traits;
+import std.builtin.types;
+import std.memory.unsafe_pointer;
 
 // A uniquely-owned, heap-allocated value of type T.
 //
 // OwnedPointer is itself a value-type struct (stored inline on the stack)
 // that holds the address of the heap allocation.
-public struct(value) OwnedPointer[T] {
+public struct OwnedPointer[T] {
     _inner: UnsafePointer[T],
 }
 

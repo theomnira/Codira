@@ -1,10 +1,15 @@
+#![allow(clippy::cloned_ref_to_slice_refs)]
+//! These diff tests build `old`/`new` struct snapshots and then *move*
+//! the originals into the expected-result assertions. Clippy suggests
+//! `std::slice::from_ref`, but borrowing here makes the later move fail
+//! to compile -- the clone is load-bearing, not redundant.
+
 //! Copyright (c) 2026 Omnira CJSC
 //! Author: Tunjay Akbarli
 //! Date: August 6, 2026
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_abi::StructMemoryKind;
 use codira_memory::{
     diff::{compute_struct_diff, FieldDiff, FieldEditKind, StructDiff},
@@ -535,4 +540,3 @@ fn rename_field2() {
     );
     assert_eq_struct(&apply_diff(old, diff), &[struct2]);
 }
-

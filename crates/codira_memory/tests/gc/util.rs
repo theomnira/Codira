@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(dead_code, unused_macros)]
 
 use codira_memory::gc::{self, GcPtr};
@@ -58,4 +57,3 @@ macro_rules! assert_variant {
         }
     }}; // TODO: Additional patterns for trailing args, like assert and assert_eq
 }
-

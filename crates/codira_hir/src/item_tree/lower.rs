@@ -9,18 +9,18 @@
 
 use std::{collections::HashMap, convert::TryInto, marker::PhantomData, sync::Arc};
 
-use la_arena::{Idx, RawIdx};
 use codira_hir_input::FileId;
 use codira_syntax::ast::{
     self, ExternOwner, GenericParamsOwner, ModuleItemOwner, NameOwner, StructKind,
     TypeAscriptionOwner,
 };
+use la_arena::{Idx, RawIdx};
 use smallvec::SmallVec;
 
 use super::{
-    diagnostics, AssociatedItem, Field, Fields, Function, FunctionFlags, GenericParamData,
-    IdRange, Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities, LocalItemTreeId,
-    ModItem, Param, ParamAstId, RawVisibilityId, Struct, TypeAlias,
+    diagnostics, AssociatedItem, Field, Fields, Function, FunctionFlags, GenericParamData, IdRange,
+    Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities, LocalItemTreeId, ModItem, Param,
+    ParamAstId, RawVisibilityId, Struct, TypeAlias,
 };
 use crate::{
     item_tree::Import,
@@ -176,6 +176,8 @@ impl Context {
     /// Bounds are allocated into `types` so callers can resolve them the
     /// same way they resolve param/field/return types (see
     /// [`GenericParamData`]).
+    // Keeps `&mut self` for symmetry with the sibling `lower_*` methods.
+    #[allow(clippy::unused_self)]
     fn lower_generic_params(
         &mut self,
         owner: &impl GenericParamsOwner,
@@ -193,11 +195,35 @@ impl Context {
             .collect()
     }
 
+    /// Lowers a function's `uses Effect, ...` clause (see
+    /// `spec/LANGUAGE_SPEC.md` section 6) to the simple names of the
+    /// effects it declares. Only single-segment paths are recognized
+    /// (`uses Logger`, not `uses some.module.Logger`) -- see the doc
+    /// comment on `item_tree::Function::effects` for why that's an
+    /// intentional restriction for now, not an oversight.
+    // Keeps `&self` for symmetry with the sibling `lower_*` methods,
+    // which all take the collector; making this one associated would
+    // make the call sites inconsistent.
+    #[allow(clippy::unused_self)]
+    fn lower_uses_clause(&self, func: &ast::FunctionDef) -> Box<[crate::name::Name]> {
+        let Some(uses_clause) = func.uses_clause() else {
+            return Box::new([]);
+        };
+        uses_clause
+            .effects()
+            .filter_map(|path| match path.segment()?.kind()? {
+                ast::PathSegmentKind::Name(name_ref) => Some(name_ref.as_name()),
+                _ => None,
+            })
+            .collect()
+    }
+
     fn lower_function(&mut self, func: &ast::FunctionDef) -> Option<LocalItemTreeId<Function>> {
         let name = func.name()?.as_name();
         let visibility = lower_visibility(func);
         let mut types = TypeRefMap::builder();
         let generic_params = self.lower_generic_params(func, &mut types);
+        let effects = self.lower_uses_clause(func);
 
         // Lower all the params
         let start_param_idx = self.next_param_idx();
@@ -255,6 +281,7 @@ impl Context {
             generic_params,
             params,
             ret_type,
+            effects,
             ast_id,
             flags,
         };
@@ -269,6 +296,7 @@ impl Context {
         let mut types = TypeRefMap::builder();
         let generic_params = self.lower_generic_params(strukt, &mut types);
         let fields = self.lower_fields(&strukt.kind(), &mut types);
+        let is_data = strukt.is_data();
         let ast_id = self.source_ast_id_map.ast_id(strukt);
 
         let (types, _types_source_map) = types.finish();
@@ -278,6 +306,7 @@ impl Context {
             types,
             generic_params,
             fields,
+            is_data,
             ast_id,
         };
         Some(self.data.structs.alloc(res).into())
@@ -422,4 +451,3 @@ fn lower_visibility(item: &impl ast::VisibilityOwner) -> RawVisibilityId {
     let vis = RawVisibility::from_ast(item.visibility());
     ItemVisibilities::alloc(vis)
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{fs, io, path::Path};
 
 use libloading::Library;
@@ -72,4 +71,3 @@ impl TempLibrary {
         &self.library
     }
 }
-

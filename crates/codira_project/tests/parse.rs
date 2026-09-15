@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{path::Path, str::FromStr};
 
 use codira_project::{Manifest, Package};
@@ -28,9 +27,8 @@ fn package_from_file() {
     assert_eq!(package.manifest().metadata().authors, vec!["Codira Team"]);
     assert_eq!(package.manifest_path(), &manifest_path);
     assert_eq!(&package.root(), &manifest_path.parent().unwrap());
-    assert_eq!(format!("{}", &package), "test v0.2.0");
+    assert_eq!(format!("{package}"), "test v0.2.0");
 
     let source_dir = package.source_directory();
     assert_eq!(source_dir, manifest_path.parent().unwrap().join("src"));
 }
-

@@ -4,15 +4,14 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 mod collector;
 #[cfg(test)]
 mod tests;
 
 use std::{ops::Index, sync::Arc};
 
-use la_arena::ArenaMap;
 use codira_hir_input::{ModuleTree, PackageId, PackageModuleId};
+use la_arena::ArenaMap;
 
 use crate::{item_scope::ItemScope, DefDatabase, DiagnosticSink};
 
@@ -154,4 +153,3 @@ mod diagnostics {
         }
     }
 }
-

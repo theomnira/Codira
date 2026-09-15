@@ -5,8 +5,8 @@
 //! Functionality:
 //! - Original module content restored; copyright header moved to top.
 //!
-//! A crate to generate and run Codira tests based on mdbook content. It is based
-//! on [mdbook-test](https://github.com/Michael-F-Bryan/mdbook-test) and
+//! A crate to generate and run Codira tests based on mdbook content. It is
+//! based on [mdbook-test](https://github.com/Michael-F-Bryan/mdbook-test) and
 //! [rust-skeptic](https://github.com/budziq/rust-skeptic).
 
 #![warn(missing_docs)]
@@ -106,8 +106,8 @@ struct Test {
     compile_fail: bool,
 }
 
-/// Extracts all the Codira tests from the specified markdown. The `file_stem` is
-/// appended to the name of the tests.
+/// Extracts all the Codira tests from the specified markdown. The `file_stem`
+/// is appended to the name of the tests.
 fn extract_tests_from_string(markdown: &str, file_stem: &str) -> Vec<Test> {
     enum Block {
         None,
@@ -198,8 +198,8 @@ struct CodeBlockInfo {
     compile_fail: bool,
 }
 
-/// Parses the code following code block tags for valid codira tokens. These tokens
-/// are similar to rustdoc.
+/// Parses the code following code block tags for valid codira tokens. These
+/// tokens are similar to rustdoc.
 fn parse_code_block_info(info: &str) -> CodeBlockInfo {
     let tokens = info.split(|c: char| !(c == '_' || c == '-' || c.is_alphanumeric()));
 
@@ -311,4 +311,3 @@ fn write_if_contents_changed(name: &Path, contents: &str) -> io::Result<()> {
     file.write_all(contents.as_bytes())?;
     Ok(())
 }
-

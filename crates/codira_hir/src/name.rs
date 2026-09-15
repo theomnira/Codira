@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt;
 
 use codira_syntax::{ast, SmolStr};
@@ -147,4 +146,3 @@ pub mod known {
 }
 
 pub use crate::name;
-

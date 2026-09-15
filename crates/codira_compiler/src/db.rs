@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_codegen::{CodeGenDatabase, CodeGenDatabaseStorage};
 use codira_hir::{salsa, HirDatabase};
 
@@ -44,4 +43,3 @@ impl CompilerDatabase {
 }
 
 impl salsa::Database for CompilerDatabase {}
-

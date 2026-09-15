@@ -16,7 +16,7 @@
 // allocation beyond the formatted message.
 // =============================================================================
 
-use std.time;
+import std.time;
 
 // =============================================================================
 // ProfileBlock
@@ -28,7 +28,7 @@ use std.time;
 // called, then prints the elapsed nanoseconds to stderr.  A block may also be
 // constructed directly from an existing start timestamp, which is convenient
 // for code that must timestamp before entering the block.
-public struct(value) ProfileBlock {
+public struct ProfileBlock {
     _name: String,
     _start_time: u64,
 }

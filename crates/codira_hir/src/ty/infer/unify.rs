@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::borrow::Cow;
 
 use crate::{ty::infer::InferenceResultBuilder, Ty};
@@ -30,4 +29,3 @@ impl InferenceResultBuilder<'_> {
         self.type_variables.resolve_ty_as_far_as_possible(ty)
     }
 }
-

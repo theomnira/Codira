@@ -4,13 +4,12 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::cell::RefCell;
 
-use inkwell::{context::Context, OptimizationLevel};
 use codira_hir::{diagnostics::DiagnosticSink, HirDatabase};
 use codira_hir_input::{SourceDatabase, WithFixture};
 use codira_target::spec::Target;
+use inkwell::{context::Context, OptimizationLevel};
 
 use crate::{
     code_gen::{AssemblyBuilder, CodeGenContext},
@@ -1152,3 +1151,90 @@ fn test_snapshot_with_optimization(name: &str, text: &str, opt: OptimizationLeve
     insta::assert_snapshot!(name, value, text);
 }
 
+// ---- Eidos whole-function constant folding ------------------------------
+//
+// These run at `OptimizationLevel::None` deliberately. LLVM's own pipeline
+// is switched off, so anything folded in the snapshots below was folded by
+// the Eidos mid-level stack (`codira_mir` passes + `codira_egraph`
+// equality saturation + `codira_comptime` evaluation) in
+// `crate::eidos_fold`, not by the backend.
+
+#[test]
+fn eidos_folds_arithmetic_body() {
+    test_snapshot_unoptimized(
+        "eidos_folds_arithmetic_body",
+        r#"
+    public func answer() -> i64 {
+        40 + 2
+    }"#,
+    );
+}
+
+#[test]
+fn eidos_folds_across_a_call() {
+    // `outer` is only constant *after* `inner` is inlined -- this is the
+    // interprocedural fold that the `inline` pass enables.
+    test_snapshot_unoptimized(
+        "eidos_folds_across_a_call",
+        r#"
+    public func inner() -> i64 {
+        6 * 7
+    }
+
+    public func outer() -> i64 {
+        inner() + 0
+    }"#,
+    );
+}
+
+#[test]
+fn eidos_declines_when_a_parameter_is_involved() {
+    // Not constant: the fold must decline and leave ordinary lowering in
+    // place, so the parameter still reaches the arithmetic.
+    test_snapshot_unoptimized(
+        "eidos_declines_when_a_parameter_is_involved",
+        r#"
+    public func add_one(a: i64) -> i64 {
+        a + 1
+    }"#,
+    );
+}
+
+// ---- `as` casts through the PRODUCTION path -----------------------------
+//
+// These go through `gen_file_ir` -> `BodyIrGenerator::gen_expr`, the path a
+// real `codira build` takes -- not the MIR pipeline. An adversarial review
+// of S6 found that every `as` cast ICEd here while the MIR path worked,
+// because the two paths are independent. These tests pin the production
+// path specifically.
+
+#[test]
+fn cast_int_widening_and_narrowing() {
+    test_snapshot_unoptimized(
+        "cast_int_widening_and_narrowing",
+        r#"
+    public func widen_signed(a: i32) -> i64 { a as i64 }
+    public func widen_unsigned(a: u32) -> i64 { a as i64 }
+    public func narrow(a: i64) -> i32 { a as i32 }"#,
+    );
+}
+
+#[test]
+fn cast_int_float_conversions() {
+    test_snapshot_unoptimized(
+        "cast_int_float_conversions",
+        r#"
+    public func to_float(a: i32) -> f64 { a as f64 }
+    public func from_float(a: f64) -> i32 { a as i32 }
+    public func narrow_float(a: f64) -> f32 { a as f32 }"#,
+    );
+}
+
+#[test]
+fn cast_identity_emits_nothing() {
+    test_snapshot_unoptimized(
+        "cast_identity_emits_nothing",
+        r#"
+    public func same(a: i32) -> i32 { a as i32 }"#,
+    );
+}

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::str::Chars;
 
 use crate::TextSize;
@@ -173,4 +172,3 @@ mod tests {
         assert_eq!(cursor.current(), Some('o'));
     }
 }
-

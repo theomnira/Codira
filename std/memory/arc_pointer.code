@@ -28,18 +28,18 @@
 //   // a dropped → count = 0 → freed
 // =============================================================================
 
-use std.builtin.traits;
-use std.builtin.types;
-use std.memory.unsafe_pointer;
+import std.builtin.traits;
+import std.builtin.types;
+import std.memory.unsafe_pointer;
 
 // Internal control block stored before the payload.
-struct(value) _ArcControlBlock {
+struct _ArcControlBlock {
     strong_count: u64,
     weak_count: u64,
 }
 
 // An atomically reference-counted, shared-ownership heap pointer.
-public struct(value) ArcPointer[T] {
+public struct ArcPointer[T] {
     // Points to the start of the control block (not the payload).
     _block: UnsafePointer[_ArcControlBlock],
 }
@@ -232,7 +232,7 @@ public func ArcPointer[T].destroy(self) -> void {
 // Trait implementations
 // =============================================================================
 
-// ArcPointer is NOT Copyable — use clone() explicitly.
+// ArcPointer is NOT Copyable — import clone() explicitly.
 // ArcPointer IS Movable.
 public func ArcPointer[T].move(self) -> ArcPointer[T] {
     let moved = ArcPointer[T] { _block: self._block };

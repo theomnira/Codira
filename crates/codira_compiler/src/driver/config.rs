@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::path::PathBuf;
 
 pub use codira_codegen::OptimizationLevel;
@@ -40,4 +39,3 @@ impl Default for Config {
         }
     }
 }
-

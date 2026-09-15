@@ -115,6 +115,29 @@ impl Context {
         };
         Solver { ctx: self, raw }
     }
+
+    fn bv64_sort(&self) -> ffi::Z3_sort {
+        unsafe { ffi::Z3_mk_bv_sort(self.raw, 64) }
+    }
+
+    /// Declares a free 64-bit bitvector variable: exact two's-complement
+    /// machine-integer semantics, the theory that models
+    /// `codira_mir::fold_op`'s wrapping `i64` arithmetic with *no*
+    /// unbounded-integer approximation (unlike [`Context::int_var`]).
+    pub fn bv64_var(&self, name: &str) -> BvExpr<'_> {
+        let c_name = CString::new(name).expect("variable name must not contain a NUL byte");
+        let raw = unsafe {
+            let symbol = ffi::Z3_mk_string_symbol(self.raw, c_name.as_ptr());
+            ffi::Z3_mk_const(self.raw, symbol, self.bv64_sort())
+        };
+        BvExpr { ctx: self, raw }
+    }
+
+    /// A 64-bit bitvector literal (two's-complement encoding of `value`).
+    pub fn bv64_lit(&self, value: i64) -> BvExpr<'_> {
+        let raw = unsafe { ffi::Z3_mk_int64(self.raw, value, self.bv64_sort()) };
+        BvExpr { ctx: self, raw }
+    }
 }
 
 impl Default for Context {
@@ -145,6 +168,13 @@ pub struct IntExpr<'ctx> {
 }
 
 impl<'ctx> IntExpr<'ctx> {
+    // clippy::should_implement_trait fires on `add`/`sub`/`mul`/`bitand`
+    // and friends. Implementing `std::ops` here would be wrong: these do
+    // not compute a value, they *build an SMT term* in a solver context,
+    // and they take `self` by value while borrowing the context. The
+    // names deliberately mirror the operations they construct.
+    #![allow(clippy::should_implement_trait)]
+
     fn binop(
         self,
         other: IntExpr<'ctx>,
@@ -204,6 +234,136 @@ impl<'ctx> IntExpr<'ctx> {
     }
 }
 
+/// A 64-bit bitvector-sorted Z3 expression: exact two's-complement machine
+/// arithmetic. `sdiv`/`srem` truncate toward zero, matching Rust's (and
+/// `codira_mir::fold_op`'s) `/`/`%`; `shl`/`ashr`/`lshr` with a shift
+/// amount `>= 64` produce Z3's defined total-function results (0 or the
+/// sign-fill), *not* an error -- callers modeling `fold_op`'s checked
+/// shifts must constrain the amount themselves.
+#[derive(Clone, Copy)]
+pub struct BvExpr<'ctx> {
+    ctx: &'ctx Context,
+    raw: ffi::Z3_ast,
+}
+
+impl<'ctx> BvExpr<'ctx> {
+    // clippy::should_implement_trait fires on `add`/`sub`/`mul`/`bitand`
+    // and friends. Implementing `std::ops` here would be wrong: these do
+    // not compute a value, they *build an SMT term* in a solver context,
+    // and they take `self` by value while borrowing the context. The
+    // names deliberately mirror the operations they construct.
+    #![allow(clippy::should_implement_trait)]
+
+    fn binop(
+        self,
+        other: BvExpr<'ctx>,
+        f: unsafe extern "C" fn(ffi::Z3_context, ffi::Z3_ast, ffi::Z3_ast) -> ffi::Z3_ast,
+    ) -> BvExpr<'ctx> {
+        BvExpr {
+            ctx: self.ctx,
+            raw: unsafe { f(self.ctx.raw, self.raw, other.raw) },
+        }
+    }
+
+    fn cmp(
+        self,
+        other: BvExpr<'ctx>,
+        f: unsafe extern "C" fn(ffi::Z3_context, ffi::Z3_ast, ffi::Z3_ast) -> ffi::Z3_ast,
+    ) -> BoolExpr<'ctx> {
+        BoolExpr {
+            ctx: self.ctx,
+            raw: unsafe { f(self.ctx.raw, self.raw, other.raw) },
+        }
+    }
+
+    pub fn add(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvadd)
+    }
+
+    pub fn sub(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvsub)
+    }
+
+    pub fn mul(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvmul)
+    }
+
+    /// Signed division, truncating toward zero. Division by zero is Z3's
+    /// defined total-function result (an unconstrained value), not an
+    /// error -- see the type-level doc for the caller's obligations.
+    pub fn sdiv(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvsdiv)
+    }
+
+    /// Signed remainder (sign follows the dividend), matching Rust `%`.
+    pub fn srem(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvsrem)
+    }
+
+    pub fn neg(self) -> BvExpr<'ctx> {
+        BvExpr {
+            ctx: self.ctx,
+            raw: unsafe { ffi::Z3_mk_bvneg(self.ctx.raw, self.raw) },
+        }
+    }
+
+    pub fn bitand(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvand)
+    }
+
+    pub fn bitor(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvor)
+    }
+
+    pub fn bitxor(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvxor)
+    }
+
+    pub fn bitnot(self) -> BvExpr<'ctx> {
+        BvExpr {
+            ctx: self.ctx,
+            raw: unsafe { ffi::Z3_mk_bvnot(self.ctx.raw, self.raw) },
+        }
+    }
+
+    pub fn shl(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvshl)
+    }
+
+    /// Arithmetic (sign-propagating) right shift, matching `i64 >>`.
+    pub fn ashr(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvashr)
+    }
+
+    /// Logical (zero-filling) right shift.
+    pub fn lshr(self, other: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        self.binop(other, ffi::Z3_mk_bvlshr)
+    }
+
+    pub fn slt(self, other: BvExpr<'ctx>) -> BoolExpr<'ctx> {
+        self.cmp(other, ffi::Z3_mk_bvslt)
+    }
+
+    pub fn sle(self, other: BvExpr<'ctx>) -> BoolExpr<'ctx> {
+        self.cmp(other, ffi::Z3_mk_bvsle)
+    }
+
+    pub fn sgt(self, other: BvExpr<'ctx>) -> BoolExpr<'ctx> {
+        self.cmp(other, ffi::Z3_mk_bvsgt)
+    }
+
+    pub fn sge(self, other: BvExpr<'ctx>) -> BoolExpr<'ctx> {
+        self.cmp(other, ffi::Z3_mk_bvsge)
+    }
+
+    pub fn eq(self, other: BvExpr<'ctx>) -> BoolExpr<'ctx> {
+        BoolExpr {
+            ctx: self.ctx,
+            raw: unsafe { ffi::Z3_mk_eq(self.ctx.raw, self.raw, other.raw) },
+        }
+    }
+}
+
 /// A boolean-sorted Z3 expression, borrowed from the [`Context`] that
 /// created it.
 #[derive(Clone, Copy)]
@@ -213,6 +373,13 @@ pub struct BoolExpr<'ctx> {
 }
 
 impl<'ctx> BoolExpr<'ctx> {
+    // clippy::should_implement_trait fires on `add`/`sub`/`mul`/`bitand`
+    // and friends. Implementing `std::ops` here would be wrong: these do
+    // not compute a value, they *build an SMT term* in a solver context,
+    // and they take `self` by value while borrowing the context. The
+    // names deliberately mirror the operations they construct.
+    #![allow(clippy::should_implement_trait)]
+
     pub fn not(self) -> BoolExpr<'ctx> {
         BoolExpr {
             ctx: self.ctx,
@@ -240,6 +407,46 @@ impl<'ctx> BoolExpr<'ctx> {
         BoolExpr {
             ctx: self.ctx,
             raw: unsafe { ffi::Z3_mk_implies(self.ctx.raw, self.raw, other.raw) },
+        }
+    }
+
+    pub fn xor(self, other: BoolExpr<'ctx>) -> BoolExpr<'ctx> {
+        BoolExpr {
+            ctx: self.ctx,
+            raw: unsafe { ffi::Z3_mk_xor(self.ctx.raw, self.raw, other.raw) },
+        }
+    }
+
+    /// Bidirectional implication (`<=>`): boolean equality as a single
+    /// binder instead of two `implies` calls.
+    pub fn iff(self, other: BoolExpr<'ctx>) -> BoolExpr<'ctx> {
+        BoolExpr {
+            ctx: self.ctx,
+            raw: unsafe { ffi::Z3_mk_iff(self.ctx.raw, self.raw, other.raw) },
+        }
+    }
+
+    /// `if self then a else b` over integer expressions.
+    pub fn ite_int(self, then: IntExpr<'ctx>, otherwise: IntExpr<'ctx>) -> IntExpr<'ctx> {
+        IntExpr {
+            ctx: self.ctx,
+            raw: unsafe { ffi::Z3_mk_ite(self.ctx.raw, self.raw, then.raw, otherwise.raw) },
+        }
+    }
+
+    /// `if self then a else b` over boolean expressions.
+    pub fn ite_bool(self, then: BoolExpr<'ctx>, otherwise: BoolExpr<'ctx>) -> BoolExpr<'ctx> {
+        BoolExpr {
+            ctx: self.ctx,
+            raw: unsafe { ffi::Z3_mk_ite(self.ctx.raw, self.raw, then.raw, otherwise.raw) },
+        }
+    }
+
+    /// `if self then a else b` over 64-bit bitvector expressions.
+    pub fn ite_bv(self, then: BvExpr<'ctx>, otherwise: BvExpr<'ctx>) -> BvExpr<'ctx> {
+        BvExpr {
+            ctx: self.ctx,
+            raw: unsafe { ffi::Z3_mk_ite(self.ctx.raw, self.raw, then.raw, otherwise.raw) },
         }
     }
 
@@ -304,11 +511,103 @@ impl<'ctx> Solver<'ctx> {
             }
         }
     }
+
+    /// Pushes a backtracking point: assertions added after this call are
+    /// retracted by the matching [`Solver::pop`]. Makes counterexample
+    /// probing incremental instead of solver-per-probe.
+    pub fn push(&self) {
+        unsafe { ffi::Z3_solver_push(self.ctx.raw, self.raw) };
+    }
+
+    /// Pops `n` backtracking points, retracting the assertions made since
+    /// the matching pushes.
+    pub fn pop(&self, n: u32) {
+        unsafe { ffi::Z3_solver_pop(self.ctx.raw, self.raw, n) };
+    }
+
+    /// Bounds each subsequent `check` to at most `ms` milliseconds; a
+    /// check that exceeds it comes back [`SatResult::Unknown`], so callers
+    /// can budget validation cost instead of risking an unbounded solve.
+    pub fn set_timeout_ms(&self, ms: u32) {
+        let key = CString::new("timeout").unwrap();
+        unsafe {
+            let params = ffi::Z3_mk_params(self.ctx.raw);
+            ffi::Z3_params_inc_ref(self.ctx.raw, params);
+            let symbol = ffi::Z3_mk_string_symbol(self.ctx.raw, key.as_ptr());
+            ffi::Z3_params_set_uint(self.ctx.raw, params, symbol, ms);
+            ffi::Z3_solver_set_params(self.ctx.raw, self.raw, params);
+            ffi::Z3_params_dec_ref(self.ctx.raw, params);
+        }
+    }
+
+    /// Retrieves the satisfying model after a [`SatResult::Sat`] check.
+    /// Returns `None` if no model is available (the last check was not
+    /// SAT, or nothing was checked yet).
+    pub fn model(&self) -> Option<Model<'ctx>> {
+        let raw = unsafe { ffi::Z3_solver_get_model(self.ctx.raw, self.raw) };
+        if raw.0.is_null() {
+            return None;
+        }
+        unsafe { ffi::Z3_model_inc_ref(self.ctx.raw, raw) };
+        Some(Model { ctx: self.ctx, raw })
+    }
 }
 
 impl Drop for Solver<'_> {
     fn drop(&mut self) {
         unsafe { ffi::Z3_solver_dec_ref(self.ctx.raw, self.raw) };
+    }
+}
+
+/// A satisfying assignment extracted from a SAT [`Solver`] -- the direct
+/// counterexample a translation-validation refutation reports, replacing
+/// bounded probing.
+pub struct Model<'ctx> {
+    ctx: &'ctx Context,
+    raw: ffi::Z3_model,
+}
+
+impl<'ctx> Model<'ctx> {
+    fn eval_raw(&self, ast: ffi::Z3_ast) -> Option<ffi::Z3_ast> {
+        let mut out = ffi::Z3_ast(std::ptr::null_mut());
+        // `model_completion = true`: variables the model doesn't constrain
+        // get an arbitrary-but-consistent value instead of failing, which
+        // is exactly what a counterexample witness wants.
+        let ok = unsafe { ffi::Z3_model_eval(self.ctx.raw, self.raw, ast, true, &mut out) };
+        (ok && !out.0.is_null()).then_some(out)
+    }
+
+    /// The model's value for an integer expression, if it fits in `i64`.
+    pub fn eval_int(&self, expr: IntExpr<'ctx>) -> Option<i64> {
+        let value = self.eval_raw(expr.raw)?;
+        let mut out: i64 = 0;
+        unsafe { ffi::Z3_get_numeral_int64(self.ctx.raw, value, &mut out) }.then_some(out)
+    }
+
+    /// The model's value for a 64-bit bitvector expression, as the
+    /// two's-complement `i64` it encodes.
+    pub fn eval_bv64(&self, expr: BvExpr<'ctx>) -> Option<i64> {
+        let value = self.eval_raw(expr.raw)?;
+        // BV numerals are unsigned in Z3's view; a value with the top bit
+        // set only extracts via the u64 accessor.
+        let mut out: u64 = 0;
+        unsafe { ffi::Z3_get_numeral_uint64(self.ctx.raw, value, &mut out) }.then_some(out as i64)
+    }
+
+    /// The model's value for a boolean expression.
+    pub fn eval_bool(&self, expr: BoolExpr<'ctx>) -> Option<bool> {
+        let value = self.eval_raw(expr.raw)?;
+        match unsafe { ffi::Z3_get_bool_value(self.ctx.raw, value) } {
+            ffi::Z3_L_TRUE => Some(true),
+            ffi::Z3_L_FALSE => Some(false),
+            _ => None,
+        }
+    }
+}
+
+impl Drop for Model<'_> {
+    fn drop(&mut self) {
+        unsafe { ffi::Z3_model_dec_ref(self.ctx.raw, self.raw) };
     }
 }
 
@@ -400,6 +699,111 @@ mod tests {
     }
 
     #[test]
+    fn bitvector_arithmetic_wraps_exactly() {
+        let ctx = Context::new();
+        // i64::MAX + 1 == i64::MIN under two's complement -- the exact
+        // wrapping semantics `codira_mir::fold_op` defines, which the
+        // unbounded Int theory cannot express.
+        let max = ctx.bv64_lit(i64::MAX);
+        let one = ctx.bv64_lit(1);
+        let min = ctx.bv64_lit(i64::MIN);
+        assert_eq!(is_satisfiable(&ctx, max.add(one).eq(min)), SatResult::Sat);
+        // ...and it's not just satisfiable, it's forced:
+        let solver = ctx.solver();
+        solver.assert(max.add(one).eq(min).not());
+        assert_eq!(solver.check(), SatResult::Unsat);
+    }
+
+    #[test]
+    fn bitvector_division_truncates_toward_zero() {
+        let ctx = Context::new();
+        // -7 / 2 == -3 (truncation, Rust semantics), not -4 (floor).
+        let solver = ctx.solver();
+        solver.assert(
+            ctx.bv64_lit(-7)
+                .sdiv(ctx.bv64_lit(2))
+                .eq(ctx.bv64_lit(-3))
+                .not(),
+        );
+        assert_eq!(solver.check(), SatResult::Unsat);
+    }
+
+    #[test]
+    fn bitvector_shift_matches_mul() {
+        let ctx = Context::new();
+        // forall x: x << 3 == x * 8 -- exact even where x*8 overflows.
+        let x = ctx.bv64_var("x");
+        let solver = ctx.solver();
+        solver.assert(x.shl(ctx.bv64_lit(3)).eq(x.mul(ctx.bv64_lit(8))).not());
+        assert_eq!(solver.check(), SatResult::Unsat);
+    }
+
+    #[test]
+    fn ite_selects_branches() {
+        let ctx = Context::new();
+        let c = ctx.bool_var("c");
+        let picked = c.ite_int(ctx.int_lit(1), ctx.int_lit(2));
+        // c => picked == 1
+        assert!(implies(&ctx, c, picked.eq(ctx.int_lit(1))));
+        // !c => picked == 2
+        assert!(implies(&ctx, c.not(), picked.eq(ctx.int_lit(2))));
+    }
+
+    #[test]
+    fn model_extraction_yields_witness() {
+        let ctx = Context::new();
+        let x = ctx.int_var("x");
+        let solver = ctx.solver();
+        // x > 41 && x < 43 has the unique witness x = 42.
+        solver.assert(x.gt(ctx.int_lit(41)).and(x.lt(ctx.int_lit(43))));
+        assert_eq!(solver.check(), SatResult::Sat);
+        let model = solver.model().expect("SAT check must produce a model");
+        assert_eq!(model.eval_int(x), Some(42));
+    }
+
+    #[test]
+    fn model_extraction_bv_negative_witness() {
+        let ctx = Context::new();
+        let x = ctx.bv64_var("x");
+        let solver = ctx.solver();
+        // Unique witness x = -1 (top bit set: exercises the u64 accessor).
+        solver.assert(x.eq(ctx.bv64_lit(-1)));
+        assert_eq!(solver.check(), SatResult::Sat);
+        let model = solver.model().expect("SAT check must produce a model");
+        assert_eq!(model.eval_bv64(x), Some(-1));
+        assert_eq!(
+            model.eval_bool(x.slt(ctx.bv64_lit(0))),
+            Some(true),
+            "model evaluation works on derived expressions too"
+        );
+    }
+
+    #[test]
+    fn push_pop_retracts_assertions() {
+        let ctx = Context::new();
+        let x = ctx.int_var("x");
+        let solver = ctx.solver();
+        solver.assert(x.gt(ctx.int_lit(0)));
+        solver.push();
+        solver.assert(x.lt(ctx.int_lit(0)));
+        assert_eq!(solver.check(), SatResult::Unsat);
+        solver.pop(1);
+        assert_eq!(solver.check(), SatResult::Sat, "popped back to x > 0 alone");
+    }
+
+    #[test]
+    fn timeout_is_settable() {
+        // Only checks the parameter plumbing doesn't crash and a trivial
+        // query still solves inside a generous budget -- forcing an actual
+        // timeout would make the test slow and flaky by design.
+        let ctx = Context::new();
+        let solver = ctx.solver();
+        solver.set_timeout_ms(10_000);
+        solver.assert(ctx.bool_true());
+        assert_eq!(solver.check(), SatResult::Sat);
+    }
+
+    #[test]
     fn division_by_zero_precondition_is_checkable() {
         // Models the exact kind of check a healing strategy would need:
         // "given what we know about `divisor` at the fault site, would a
@@ -420,4 +824,3 @@ mod tests {
         assert!(implies(&ctx, premise, conclusion));
     }
 }
-

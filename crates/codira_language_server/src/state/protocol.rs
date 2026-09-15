@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::time::Instant;
 
 use dispatcher::{NotificationDispatcher, RequestDispatcher};
@@ -183,4 +182,3 @@ impl LanguageServerState {
             .expect("error sending lsp message to the outgoing channel");
     }
 }
-

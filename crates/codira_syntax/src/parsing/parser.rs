@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::cell::Cell;
 
 use drop_bomb::DropBomb;
@@ -365,4 +364,3 @@ impl CompletedMarker {
         self.kind
     }
 }
-

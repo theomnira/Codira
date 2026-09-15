@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::path::PathBuf;
 
 use crate::{
@@ -39,4 +38,3 @@ pub fn new(args: Args) -> Result<ExitStatus, anyhow::Error> {
     create_dir(&args.path)?;
     create_project(&args.path, project_name)
 }
-

@@ -217,4 +217,3 @@ mod tests {
         assert!(config.contains_dir(abs_manifest_dir.join("src")));
     }
 }
-

@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_syntax::TextSize;
 use rustc_hash::FxHashMap;
 
@@ -274,4 +273,3 @@ mod tests {
         assert_eq!(index.line_offset(2), 9);
     }
 }
-

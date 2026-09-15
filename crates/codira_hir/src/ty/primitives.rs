@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::fmt::{self};
 
 use codira_target::{abi, abi::Integer};
@@ -218,4 +217,3 @@ impl From<PrimitiveFloat> for FloatTy {
         FloatTy { bitness: t.bitness }
     }
 }
-

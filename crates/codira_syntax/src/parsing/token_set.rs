@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use crate::SyntaxKind;
 
 /// A bit-set of `SyntaxKind`s
@@ -47,4 +46,3 @@ fn token_set_works_for_tokens() {
     assert!(ts.contains(T![=]));
     assert!(!ts.contains(PLUS));
 }
-

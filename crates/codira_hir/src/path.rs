@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{fmt, fmt::Formatter};
 
 use codira_syntax::{
@@ -272,4 +271,3 @@ impl From<Name> for Path {
         }
     }
 }
-

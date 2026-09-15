@@ -8,7 +8,7 @@
 // Represents an owned, null-terminated C string stored on the heap.
 // The underlying memory is a contiguous array of u8 values terminated by 0x00.
 // ---------------------------------------------------------------------------
-public struct(gc) CString {
+public class CString {
     _data: Array<u8>,   // includes the trailing null byte
     _len: usize,        // length excluding the null terminator
 }

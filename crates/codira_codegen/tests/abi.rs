@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_abi as abi;
 use codira_libloader::CodiraLibrary;
 use codira_test::CompileTestDriver;
@@ -18,14 +17,17 @@ fn test_abi_compatibility() {
     let struct_name2 = "Bar";
     let driver = CompileTestDriver::from_file(&format!(
         r#"
-    pub fn {fn_name}(_: f64) -> i32 {{ 0 }}
-    pub fn {fn_name2}() {{
+    public func {fn_name}(_: f64) -> i32 {{ 0 }}
+    public func {fn_name2}() {{
         let a = {struct_name}(1.0, 2.0);
         let b = [1,2,3]
     }}
 
-    pub struct {struct_name}(f64, f64);
-    pub struct(value) {struct_name2} {{ a: i32, b: i32 }};
+    // `class` is the heap/GC-allocated form and `struct` the by-value
+    // one; this test pins both so the ABI snapshot below exercises
+    // `memory_kind: Gc` and `memory_kind: Value` together.
+    public class {struct_name}(f64, f64);
+    public struct {struct_name2} {{ a: i32, b: i32 }};
     "#,
     ));
 
@@ -184,4 +186,3 @@ fn test_abi_compatibility() {
     )
     "#);
 }
-

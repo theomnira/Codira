@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{ffi::c_void, path::Path};
 
 use codira_abi as abi;
@@ -49,9 +48,9 @@ impl CodiraLibrary {
         // not the case for codiralibs.
         let library = TempLibrary::new(library_path)?;
 
-        // Verify that the `*.codiralib` contains all required functions. Note that this is
-        // an unsafe operation because the loaded symbols don't actually contain
-        // type information. Casting is therefore unsafe.
+        // Verify that the `*.codiralib` contains all required functions. Note that this
+        // is an unsafe operation because the loaded symbols don't actually
+        // contain type information. Casting is therefore unsafe.
         let _get_abi_version_fn: libloading::Symbol<'_, extern "C" fn() -> u32> = library
             .library()
             .get(abi::GET_VERSION_FN_NAME.as_bytes())
@@ -79,9 +78,9 @@ impl CodiraLibrary {
     ///
     /// # Safety
     ///
-    /// This operations executes a function in the codiralib. There is no guarantee
-    /// that the execution of the function wont result in undefined
-    /// behavior.
+    /// This operations executes a function in the codiralib. There is no
+    /// guarantee that the execution of the function wont result in
+    /// undefined behavior.
     pub unsafe fn get_abi_version(&self) -> u32 {
         let get_abi_version_fn: libloading::Symbol<'_, extern "C" fn() -> u32> = self
             .0
@@ -96,9 +95,9 @@ impl CodiraLibrary {
     ///
     /// # Safety
     ///
-    /// This operations executes a function in the codiralib. There is no guarantee
-    /// that the execution of the function wont result in undefined
-    /// behavior.
+    /// This operations executes a function in the codiralib. There is no
+    /// guarantee that the execution of the function wont result in
+    /// undefined behavior.
     pub unsafe fn get_info(&self) -> abi::AssemblyInfo<'static> {
         let get_info_fn: libloading::Symbol<'_, extern "C" fn() -> abi::AssemblyInfo<'static>> =
             self.0
@@ -114,9 +113,9 @@ impl CodiraLibrary {
     ///
     /// # Safety
     ///
-    /// This operations executes a function in the codiralib. There is no guarantee
-    /// that the execution of the function wont result in undefined
-    /// behavior.
+    /// This operations executes a function in the codiralib. There is no
+    /// guarantee that the execution of the function wont result in
+    /// undefined behavior.
     pub unsafe fn set_allocator_handle(&mut self, allocator_ptr: *mut c_void) {
         let set_allocator_handle_fn: libloading::Symbol<'_, extern "C" fn(*mut c_void)> = self
             .0
@@ -127,4 +126,3 @@ impl CodiraLibrary {
         set_allocator_handle_fn(allocator_ptr);
     }
 }
-

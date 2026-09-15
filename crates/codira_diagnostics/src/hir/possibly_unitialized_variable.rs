@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use codira_syntax::TextRange;
 
 use super::HirDiagnostic;
@@ -57,4 +56,3 @@ impl<'db, 'diag, DB: codira_hir::HirDatabase> PossiblyUninitializedVariable<'db,
         }
     }
 }
-

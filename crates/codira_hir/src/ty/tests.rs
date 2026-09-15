@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{fmt::Write, sync::Arc};
 
 use codira_hir_input::WithFixture;
@@ -612,6 +611,174 @@ fn infer_call_method() {
     func main() {
         let a = Foo {};
         a.with_self();
+    }
+    "#
+    ));
+}
+
+/// The `data struct` derive (`crate::data_derive`, see
+/// `spec/LANGUAGE_SPEC.md` §16) synthesizes an `eq` method purely from
+/// source text spliced in before parsing -- this test is the actual proof
+/// that the synthesized body type-checks (not just parses): a call site
+/// resolves `eq` to `bool`, and no diagnostics are produced for either the
+/// synthesized method body or the call.
+#[test]
+fn data_struct_eq_type_checks() {
+    insta::assert_snapshot!(infer(
+        r#"
+    data struct Point {
+        x: f64,
+        y: f64,
+    }
+
+    func main() {
+        let a = Point { x: 1.0, y: 2.0 };
+        let b = Point { x: 1.0, y: 2.0 };
+        a.eq(b);
+    }
+    "#
+    ));
+}
+
+/// `expr::validator::effect_obligation` proof, negative case: a caller
+/// invoking an effectful function without declaring the effect itself gets
+/// a real diagnostic (not just "designed" per
+/// `spec/LANGUAGE_SPEC.md` §6's previous "designed above but not
+/// implemented" status).
+#[test]
+fn undeclared_effect_is_a_real_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    effect Logger {
+        func log(message: String)
+    }
+
+    func risky() uses Logger -> i32 {
+        42
+    }
+
+    func caller() -> i32 {
+        risky()
+    }
+    "#
+    ));
+}
+
+/// Same shape as `undeclared_effect_is_a_real_diagnostic`, but the caller
+/// *does* declare `uses Logger` -- proves the check isn't just always-fire,
+/// it actually looks at the caller's own declared effects.
+#[test]
+fn declared_effect_produces_no_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    effect Logger {
+        func log(message: String)
+    }
+
+    func risky() uses Logger -> i32 {
+        42
+    }
+
+    func caller() uses Logger -> i32 {
+        risky()
+    }
+    "#
+    ));
+}
+
+/// `crate::refinement_check` proof, end to end through the real diagnostic
+/// pipeline (not just the module's own unit tests): a `type` alias to an
+/// unsatisfiable refinement predicate gets a real diagnostic, backed by an
+/// actual Z3 UNSAT proof -- the first real (not just designed) use of
+/// `codira_smt` from the compiler pipeline itself.
+#[test]
+fn unsatisfiable_refinement_type_is_a_real_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    type Impossible = i32 { x | x > 0 && x < 0 };
+    "#
+    ));
+}
+
+/// Same shape, but the predicate is satisfiable -- proves this isn't a
+/// blanket "refinement types are always flagged" false positive.
+#[test]
+fn satisfiable_refinement_type_produces_no_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    type Positive = i32 { x | x > 0 };
+    "#
+    ));
+}
+
+/// `crate::heal_check` proof, end to end through the real diagnostic
+/// pipeline: a `@heal(..., postcondition: ...)` healing contract whose
+/// postcondition can never be satisfied gets a real, SMT-backed
+/// diagnostic.
+#[test]
+fn unsatisfiable_healing_postcondition_is_a_real_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    @heal(on: [Timeout], postcondition: result > 0 && result < 0)
+    func risky() -> i32 {
+        1
+    }
+    "#
+    ));
+}
+
+/// Same shape, satisfiable postcondition -- proves this isn't a blanket
+/// "any @heal is flagged" false positive.
+#[test]
+fn satisfiable_healing_postcondition_produces_no_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    @heal(on: [Timeout], postcondition: result >= 0)
+    func risky() -> i32 {
+        1
+    }
+    "#
+    ));
+}
+
+/// `expr::validator::move_check` proof, negative case: a `consuming`
+/// parameter used twice in an `@strict` function is a real diagnostic.
+#[test]
+fn use_after_consume_is_a_real_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    @strict
+    func take(consuming buf: i32) -> i32 {
+        buf + buf
+    }
+    "#
+    ));
+}
+
+/// Same shape, but the function is *not* `@strict` -- proves the check is
+/// genuinely opt-in, not a blanket rule that just happens to have a name
+/// suggesting it's scoped.
+#[test]
+fn double_use_without_strict_produces_no_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    func take(consuming buf: i32) -> i32 {
+        buf + buf
+    }
+    "#
+    ));
+}
+
+/// A single use of a `consuming` parameter in an `@strict` function is
+/// exactly the intended, unflagged case -- proves this isn't "any mention
+/// of a consuming param is an error."
+#[test]
+fn single_use_in_strict_function_produces_no_diagnostic() {
+    insta::assert_snapshot!(infer(
+        r#"
+    @strict
+    func take(consuming buf: i32) -> i32 {
+        buf
     }
     "#
     ));
@@ -1463,6 +1630,244 @@ fn recursive_alias() {
     ");
 }
 
+// ---------------------------------------------------------------------------
+// `expr as Type` casts (S6). The legality matrix these exercise lives in
+// `crate::ty::cast`.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn infer_cast_literal_to_int() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> i64 {
+        1 as i64
+    }"),
+    @"
+    19..35 '{     ... i64 }': i64
+    25..26 '1': i32
+    25..33 '1 as i64': i64
+    ");
+}
+
+#[test]
+fn infer_cast_int_to_float() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main(x: i32) -> f64 {
+        x as f64
+    }"),
+    @"
+    10..11 'x': i32
+    25..41 '{     ... f64 }': f64
+    31..32 'x': i32
+    31..39 'x as f64': f64
+    ");
+}
+
+#[test]
+fn infer_cast_chained() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main(x: u8) -> i64 {
+        x as i32 as i64
+    }"),
+    @"
+    10..11 'x': u8
+    24..47 '{     ... i64 }': i64
+    30..31 'x': u8
+    30..38 'x as i32': i32
+    30..45 'x as i32 as i64': i64
+    ");
+}
+
+#[test]
+fn infer_cast_identity() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main(x: i32) -> i32 {
+        x as i32
+    }"),
+    @"
+    10..11 'x': i32
+    25..41 '{     ... i32 }': i32
+    31..32 'x': i32
+    31..39 'x as i32': i32
+    ");
+}
+
+#[test]
+fn infer_cast_numeric_matrix() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main(i: i32, u: u64, f: f32, d: f64, b: bool) {
+        let narrow = i as i8;
+        let widen_signed = i as i64;
+        let widen_unsigned = u as u128;
+        let reinterpret = i as u32;
+        let to_float = i as f64;
+        let from_float = f as i16;
+        let from_float_unsigned = d as u8;
+        let float_widen = f as f64;
+        let float_narrow = d as f32;
+        let from_bool = b as i32;
+    }"),
+    @"
+    10..11 'i': i32
+    18..19 'u': u64
+    26..27 'f': f32
+    34..35 'd': f64
+    42..43 'b': bool
+    51..375 '{     ...i32; }': ()
+    61..67 'narrow': i8
+    70..71 'i': i32
+    70..77 'i as i8': i8
+    87..99 'widen_signed': i64
+    102..103 'i': i32
+    102..110 'i as i64': i64
+    120..134 'widen_unsigned': u128
+    137..138 'u': u64
+    137..146 'u as u128': u128
+    156..167 'reinterpret': u32
+    170..171 'i': i32
+    170..178 'i as u32': u32
+    188..196 'to_float': f64
+    199..200 'i': i32
+    199..207 'i as f64': f64
+    217..227 'from_float': i16
+    230..231 'f': f32
+    230..238 'f as i16': i16
+    248..267 'from_f...signed': u8
+    270..271 'd': f64
+    270..277 'd as u8': u8
+    287..298 'float_widen': f64
+    301..302 'f': f32
+    301..309 'f as f64': f64
+    319..331 'float_narrow': f32
+    334..335 'd': f64
+    334..342 'd as f32': f32
+    352..361 'from_bool': i32
+    364..365 'b': bool
+    364..372 'b as i32': i32
+    ");
+}
+
+#[test]
+fn infer_cast_to_bool_is_an_error() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main(i: i32, f: f64, b: bool) {
+        let a = i as bool;
+        let c = f as bool;
+        let d = b as bool;
+    }"),
+    @"
+    49..58: cannot cast to `bool` with `as`; use a comparison instead
+    72..81: cannot cast to `bool` with `as`; use a comparison instead
+    10..11 'i': i32
+    18..19 'f': f64
+    26..27 'b': bool
+    35..107 '{     ...ool; }': ()
+    45..46 'a': bool
+    49..50 'i': i32
+    49..58 'i as bool': bool
+    68..69 'c': bool
+    72..73 'f': f64
+    72..81 'f as bool': bool
+    91..92 'd': bool
+    95..96 'b': bool
+    95..104 'b as bool': bool
+    ");
+}
+
+#[test]
+fn infer_cast_bool_to_float_is_an_error() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main(b: bool) {
+        let a = b as f64;
+    }"),
+    @"
+    33..41: `bool` can only be cast to an integer type
+    10..11 'b': bool
+    19..44 '{     ...f64; }': ()
+    29..30 'a': f64
+    33..34 'b': bool
+    33..41 'b as f64': f64
+    ");
+}
+
+#[test]
+fn infer_cast_aggregates_is_an_error() {
+    insta::assert_snapshot!(infer(
+        r"
+    struct Foo;
+
+    func main() {
+        let a = Foo as i32;
+        let b = 1 as Foo;
+        let c = [1, 2, 3] as i32;
+    }"),
+    @"
+    39..49: `as` can only convert between primitive numeric types
+    63..71: `as` can only convert between primitive numeric types
+    85..101: `as` can only convert between primitive numeric types
+    25..104 '{     ...i32; }': ()
+    35..36 'a': i32
+    39..42 'Foo': Foo
+    39..49 'Foo as i32': i32
+    59..60 'b': Foo
+    63..64 '1': i32
+    63..71 '1 as Foo': Foo
+    81..82 'c': i32
+    85..94 '[1, 2, 3]': [i32]
+    85..101 '[1, 2,...as i32': i32
+    86..87 '1': i32
+    89..90 '2': i32
+    92..93 '3': i32
+    ");
+}
+
+#[test]
+fn infer_cast_through_type_alias() {
+    insta::assert_snapshot!(infer(
+        r"
+    type Byte = u8;
+    type Flag = bool;
+
+    func main(x: i32) {
+        let a = x as Byte;
+        let b = x as Flag;
+    }"),
+    @"
+    90..99: cannot cast to `bool` with `as`; use a comparison instead
+    45..46 'x': i32
+    53..102 '{     ...lag; }': ()
+    63..64 'a': Byte
+    67..68 'x': i32
+    67..76 'x as Byte': Byte
+    86..87 'b': Flag
+    90..91 'x': i32
+    90..99 'x as Flag': Flag
+    ");
+}
+
+#[test]
+fn infer_cast_unresolved_target_does_not_cascade() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main(x: i32) {
+        let a = x as DoesNotExist;
+    }"),
+    @"
+    37..49: undefined type
+    10..11 'x': i32
+    18..52 '{     ...ist; }': ()
+    28..29 'a': {unknown}
+    32..33 'x': i32
+    32..49 'x as D...tExist': {unknown}
+    ");
+}
+
 fn infer(content: &str) -> String {
     let db = MockDatabase::with_files(content);
 
@@ -1576,4 +1981,3 @@ fn ellipsize(mut text: String, max_len: usize) -> String {
     text.replace_range(prefix_len..text.len() - suffix_len, ellipsis);
     text
 }
-

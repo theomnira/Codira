@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use lsp_server::Connection;
 
 use crate::{Config, LanguageServerState};
@@ -15,4 +14,3 @@ pub fn main_loop(connection: Connection, config: Config) -> anyhow::Result<()> {
     log::info!("initial config: {:#?}", config);
     LanguageServerState::new(connection.sender, config).run(connection.receiver)
 }
-

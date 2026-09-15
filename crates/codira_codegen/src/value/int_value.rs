@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use inkwell::AddressSpace;
 
 use super::{
@@ -187,4 +186,3 @@ impl<'ink> AsBytesAndPtrs<'ink> for bool {
         vec![bytemuck::cast_ref::<bool, [u8; 1]>(self).to_vec().into()]
     }
 }
-

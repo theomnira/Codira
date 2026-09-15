@@ -4,10 +4,9 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use super::{
-    expressions, name, paths, CompletedMarker, Parser, TokenSet, BIND_PAT, IDENT,
-    LITERAL_PAT, PATH_PAT, PLACEHOLDER_PAT, TUPLE_STRUCT_PAT,
+    expressions, name, paths, CompletedMarker, Parser, TokenSet, BIND_PAT, IDENT, LITERAL_PAT,
+    PATH_PAT, PLACEHOLDER_PAT, TUPLE_STRUCT_PAT,
 };
 
 pub(super) const PATTERN_FIRST: TokenSet = expressions::LITERAL_FIRST
@@ -88,4 +87,3 @@ fn bind_pat(p: &mut Parser<'_>) -> CompletedMarker {
     name(p);
     m.complete(p, BIND_PAT)
 }
-

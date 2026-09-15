@@ -10,13 +10,13 @@
 //! Functionality (per the HERACLES spec):
 //! - Maintains a registry of [`HealingContract`]s keyed by `site_id`.
 //! - On a fault event, looks up the site's contract, uses the Thompson-
-//!   sampling [`ranker::StrategyRanker`] to pick the next strategy,
-//!   optionally verifies strategy feasibility with `codira_smt`, executes
-//!   the strategy, verifies the postcondition, and records the outcome in
-//!   the site's [`fingerprint::FaultFingerprint`].
+//!   sampling [`ranker::StrategyRanker`] to pick the next strategy, optionally
+//!   verifies strategy feasibility with `codira_smt`, executes the strategy,
+//!   verifies the postcondition, and records the outcome in the site's
+//!   [`fingerprint::FaultFingerprint`].
 //! - Drives module-tier healing through a [`supervisor::SupervisorTree`].
-//! - Emits [`deficiency::HealingDeficiencyReport`]s when the dominant
-//!   strategy at a site drops below the success threshold (Section 6.1).
+//! - Emits [`deficiency::HealingDeficiencyReport`]s when the dominant strategy
+//!   at a site drops below the success threshold (Section 6.1).
 //!
 //! # What this is *not*: a JIT
 //!
@@ -27,18 +27,25 @@
 //! supervisor records), not rewriting executable memory. This is the honest
 //! scope cut described in the crate's root doc comment.
 
-use std::collections::HashMap;
-use std::time::Instant;
+#![allow(clippy::match_same_arms, clippy::type_complexity, clippy::unused_self)]
+//! Lint notes: several matches here are *tables* mapping distinct
+//! strategies/faults onto a shared tier or recovery action -- collapsing
+//! the arms would erase which case is which. The `type_complexity`
+//! sites are graph adjacency maps whose shape is the point.
+
+use std::{collections::HashMap, time::Instant};
 
 use log::{debug, warn};
 use parking_lot::Mutex;
 
-use crate::contract::{FaultClass, HealingContract, HealingStrategy};
-use crate::deficiency::DeficiencyDetector;
-use crate::fingerprint::FaultFingerprint;
-use crate::ranker::StrategyRanker;
-use crate::recovery_graph::RecoveryGraph;
-use crate::supervisor::SupervisorTree;
+use crate::{
+    contract::{FaultClass, HealingContract, HealingStrategy},
+    deficiency::DeficiencyDetector,
+    fingerprint::FaultFingerprint,
+    ranker::StrategyRanker,
+    recovery_graph::RecoveryGraph,
+    supervisor::SupervisorTree,
+};
 
 /// An executed recovery strategy's result.
 #[derive(Debug, Clone)]
@@ -158,7 +165,9 @@ impl HealingEngine {
     /// throw, per the contract's `PropagateToParent` semantics).
     pub fn handle_fault(&self, site_id: u64, fault: FaultClass) -> HealingResult {
         let mut sites = self.sites.lock();
-        let site = if let Some(site) = sites.get_mut(&site_id) { site.get_mut() } else {
+        let site = if let Some(site) = sites.get_mut(&site_id) {
+            site.get_mut()
+        } else {
             warn!("no healing contract registered for site {site_id:#x}; escalating");
             return HealingResult::Escalated(fault);
         };
@@ -179,7 +188,12 @@ impl HealingEngine {
                     .filter(|s| s.to_string() != selected)
                     .cloned()
                     .collect();
-                if let Some(sel) = site.contract.strategies().iter().find(|s| s.to_string() == selected) {
+                if let Some(sel) = site
+                    .contract
+                    .strategies()
+                    .iter()
+                    .find(|s| s.to_string() == selected)
+                {
                     ordered.insert(0, sel.clone());
                 }
                 ordered
@@ -204,7 +218,8 @@ impl HealingEngine {
                         .is_none_or(|pred| pred(&value));
                     if passes {
                         let outcome_strategy = strategy.to_string();
-                        site.fingerprint.record_recovery(&outcome_strategy, true, latency);
+                        site.fingerprint
+                            .record_recovery(&outcome_strategy, true, latency);
                         site.ranker.record_outcome(&outcome_strategy, true);
                         site.last_result = Some(value.clone());
                         self.note_outcome(site_id, &outcome_strategy, true);
@@ -213,14 +228,16 @@ impl HealingEngine {
                     } else {
                         // Postcondition failed: try the next strategy.
                         let outcome_strategy = strategy.to_string();
-                        site.fingerprint.record_recovery(&outcome_strategy, false, latency);
+                        site.fingerprint
+                            .record_recovery(&outcome_strategy, false, latency);
                         site.ranker.record_outcome(&outcome_strategy, false);
                         self.note_outcome(site_id, &outcome_strategy, false);
                     }
                 }
                 (None, latency) => {
                     let outcome_strategy = strategy.to_string();
-                    site.fingerprint.record_recovery(&outcome_strategy, false, latency);
+                    site.fingerprint
+                        .record_recovery(&outcome_strategy, false, latency);
                     site.ranker.record_outcome(&outcome_strategy, false);
                     self.note_outcome(site_id, &outcome_strategy, false);
                 }
@@ -233,7 +250,11 @@ impl HealingEngine {
 
     /// Tries one strategy, returning `(Some(value), latency)` on success or
     /// `(None, latency)` if the strategy couldn't produce a value.
-    fn try_strategy(&self, site: &SiteState, strategy: &HealingStrategy) -> (Option<Vec<u8>>, std::time::Duration) {
+    fn try_strategy(
+        &self,
+        site: &SiteState,
+        strategy: &HealingStrategy,
+    ) -> (Option<Vec<u8>>, std::time::Duration) {
         let started = Instant::now();
         match strategy {
             HealingStrategy::ReturnDefault => {
@@ -341,13 +362,17 @@ impl HealingEngine {
     /// The success rate of the dominant strategy at `site_id` (observability).
     pub fn site_success_rate(&self, site_id: u64) -> Option<f64> {
         let sites = self.sites.lock();
-        sites.get(&site_id).map(|s| s.lock().fingerprint.success_rate())
+        sites
+            .get(&site_id)
+            .map(|s| s.lock().fingerprint.success_rate())
     }
 
     /// The estimated MTTR at `site_id` (observability).
     pub fn site_mttr(&self, site_id: u64) -> Option<std::time::Duration> {
         let sites = self.sites.lock();
-        sites.get(&site_id).map(|s| s.lock().fingerprint.mttr_estimate())
+        sites
+            .get(&site_id)
+            .map(|s| s.lock().fingerprint.mttr_estimate())
     }
 
     /// Whether a site is currently being supervised.
@@ -424,7 +449,10 @@ mod tests {
     fn unknown_site_escalates() {
         let engine = HealingEngine::new_with_options(false);
         let result = engine.handle_fault(999, FaultClass::Timeout);
-        assert!(matches!(result, HealingResult::Escalated(FaultClass::Timeout)));
+        assert!(matches!(
+            result,
+            HealingResult::Escalated(FaultClass::Timeout)
+        ));
     }
 
     #[test]

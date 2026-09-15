@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     path::{Path, PathBuf},
     thread::sleep,
@@ -150,8 +149,8 @@ impl std::fmt::Debug for CompileAndRunTestDriver {
 }
 
 impl CompileAndRunTestDriver {
-    /// Constructs a `CompileAndRunTestDriver` from a single Codira source file and
-    /// a `config_fn` that allows modification of a [`RuntimeBuilder`].
+    /// Constructs a `CompileAndRunTestDriver` from a single Codira source file
+    /// and a `config_fn` that allows modification of a [`RuntimeBuilder`].
     pub fn from_fixture(
         fixture: &str,
         config_fn: impl FnOnce(RuntimeBuilder) -> RuntimeBuilder,
@@ -167,8 +166,8 @@ impl CompileAndRunTestDriver {
         Ok(Self { driver, runtime })
     }
 
-    /// Constructs a `CompileAndRunTestDriver` from a single Codira source file and
-    /// a `config_fn` that allows modification of a [`RuntimeBuilder`].
+    /// Constructs a `CompileAndRunTestDriver` from a single Codira source file
+    /// and a `config_fn` that allows modification of a [`RuntimeBuilder`].
     pub fn new(
         text: &str,
         config_fn: impl FnOnce(RuntimeBuilder) -> RuntimeBuilder,
@@ -207,4 +206,3 @@ impl CompileAndRunTestDriver {
         }
     }
 }
-

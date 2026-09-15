@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 #![allow(unused_macros)]
 
 macro_rules! assert_invoke_eq {
@@ -22,4 +21,3 @@ macro_rules! assert_invoke_eq {
         assert_invoke_eq!($ExpectedType, $ExpectedResult, $Driver, $Name, )
     }
 }
-

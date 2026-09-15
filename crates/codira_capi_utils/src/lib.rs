@@ -4,7 +4,6 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-//!
 use std::{
     ffi::{CStr, CString},
     os::raw::c_char,
@@ -85,4 +84,3 @@ macro_rules! assert_getter3 {
         )+
     };
 }
-

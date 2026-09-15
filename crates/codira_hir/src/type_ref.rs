@@ -10,8 +10,8 @@
 
 use std::ops::Index;
 
-use la_arena::{Arena, ArenaMap, Idx};
 use codira_syntax::{ast, AstPtr};
+use la_arena::{Arena, ArenaMap, Idx};
 use rustc_hash::FxHashMap;
 
 use crate::{name, Path};
@@ -27,7 +27,7 @@ pub enum TypeRef {
     /// `Type?` -- an optional, i.e. a type that may additionally be `nil`.
     Optional(LocalTypeRefId),
     /// `Type { x | predicate }` -- a refinement type (see
-    /// spec/self_healing_programming_language.md section 3.1). The predicate
+    /// `spec/self_healing_programming_language.md` section 3.1). The predicate
     /// itself is parsed but not yet checked by inference; like `Optional`,
     /// this lowers transparently to its base type for now.
     Refinement(LocalTypeRefId),
@@ -162,4 +162,3 @@ impl TypeRefMapBuilder {
         (self.map, self.source_map)
     }
 }
-
