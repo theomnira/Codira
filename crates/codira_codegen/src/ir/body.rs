@@ -145,11 +145,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // treat a method's receiver specially.
         let self_param = self.body.self_param().copied();
 
-        for (i, (pat, _ty)) in self_param
+        // Collected up front so the loop body is free to take `&mut self`
+        // (the destructuring case below does).
+        let param_pats: Vec<PatId> = self_param
             .iter()
             .chain(self.body.params().iter())
-            .enumerate()
-        {
+            .map(|(pat, _ty)| *pat)
+            .collect();
+
+        for (i, pat) in param_pats.iter().enumerate() {
             let body = self.body.clone(); // Avoid borrow issues
 
             match &body[*pat] {
@@ -169,6 +173,17 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 Pat::Wild => {
                     // Wildcard patterns cannot be referenced from code. So
                     // nothing to do.
+                }
+                // `func f((a, b): (i32, i32))` -- the parameter arrives as
+                // one aggregate and is destructured into its bindings,
+                // exactly as a `let (a, b) = ..` would be. The tuple itself
+                // never needs an `alloca`; only the named bindings do.
+                Pat::Tuple(_) => {
+                    let param = self
+                        .fn_value
+                        .get_nth_param(i as u32)
+                        .expect("every parameter pattern has a matching LLVM parameter");
+                    self.bind_pattern_to_value(*pat, param);
                 }
                 Pat::Path(_) => unreachable!(
                     "Path patterns are not supported as parameters, are we missing a diagnostic?"
@@ -847,11 +862,73 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 }
             }
             Pat::Wild => {}
+            // `let (a, b) = pair` -- bind each element to its sub-pattern.
+            //
+            // Irrefutable, so there is no test and no branch: the arity is
+            // fixed by the type and inference has already checked it. Each
+            // element is `extractvalue`d out of the aggregate, which is why
+            // this needs no `alloca` for the tuple itself -- only for the
+            // bindings, and only for the ones that are actually named.
+            Pat::Tuple(args) => {
+                let args = args.clone();
+                let Some(value) = initializer else {
+                    // No initializer means nothing to destructure; the
+                    // bindings stay unallocated, exactly as `Pat::Bind`
+                    // leaves them.
+                    return true;
+                };
+                let aggregate = value.into_struct_value();
+                for (idx, arg) in args.iter().enumerate() {
+                    let element = self
+                        .builder
+                        .build_extract_value(aggregate, idx as u32, &format!("tuple.{idx}"))
+                        .expect("tuple element index checked by inference");
+                    self.bind_pattern_to_value(*arg, element);
+                }
+            }
             Pat::Missing | Pat::Path(_) | Pat::Literal(_) | Pat::TupleStruct { .. } => {
                 unreachable!()
             }
         }
         true
+    }
+
+    /// Binds `pat` to an already-computed `value`.
+    ///
+    /// Split out of `gen_let_statement` so a tuple pattern's sub-patterns go
+    /// through the same allocate-and-store as a top-level binding, and so
+    /// nesting (`let ((a, b), c) = ..`) falls out by recursion rather than
+    /// needing its own case.
+    fn bind_pattern_to_value(&mut self, pat: PatId, value: BasicValueEnum<'ink>) {
+        let body = self.body.clone();
+        match &body[pat] {
+            Pat::Bind { name } => {
+                let builder = self.new_alloca_builder();
+                let ptr = builder
+                    .build_alloca(value.get_type(), &name.to_string())
+                    .expect("failed to build alloca for destructured binding");
+                self.builder
+                    .build_store(ptr, value)
+                    .expect("failed to build store for destructured binding");
+                self.pat_to_local.insert(pat, ptr);
+                self.pat_to_name.insert(pat, name.to_string());
+            }
+            Pat::Wild => {}
+            Pat::Tuple(args) => {
+                let args = args.clone();
+                let aggregate = value.into_struct_value();
+                for (idx, arg) in args.iter().enumerate() {
+                    let element = self
+                        .builder
+                        .build_extract_value(aggregate, idx as u32, &format!("tuple.{idx}"))
+                        .expect("tuple element index checked by inference");
+                    self.bind_pattern_to_value(*arg, element);
+                }
+            }
+            Pat::Missing | Pat::Path(_) | Pat::Literal(_) | Pat::TupleStruct { .. } => {
+                unreachable!("refutable patterns cannot appear in an irrefutable position")
+            }
+        }
     }
 
     /// Generates IR for looking up a certain path expression.

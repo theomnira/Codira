@@ -28,11 +28,11 @@ impl ExprValidator<'_> {
         // Add all parameter patterns to the set of initialized patterns (they must have
         // been initialized)
         if let Some((pat, _)) = self.body.self_param {
-            initialized_patterns.insert(pat);
+            self.mark_initialized(&mut initialized_patterns, pat);
         }
 
         for (pat, _) in self.body.params.iter() {
-            initialized_patterns.insert(*pat);
+            self.mark_initialized(&mut initialized_patterns, *pat);
         }
 
         self.validate_expr_access(
@@ -41,6 +41,20 @@ impl ExprValidator<'_> {
             self.body.body_expr,
             ExprKind::Normal,
         );
+    }
+
+    /// Marks `pat` and every binding beneath it as initialized.
+    ///
+    /// The whole subtree matters, not just the root: a tuple pattern binds
+    /// nothing under its own `PatId`, so `let (x, y) = p` followed by `x + y`
+    /// reported both `x` and `y` as possibly-uninitialized when only the
+    /// enclosing `(x, y)` had been recorded. Recursion also covers nesting
+    /// (`let ((a, b), c) = ..`), which a single `walk_child_pats` pass would
+    /// miss one level down.
+    fn mark_initialized(&self, initialized_patterns: &mut HashSet<PatId>, pat: PatId) {
+        initialized_patterns.insert(pat);
+        let body = self.body.clone();
+        body[pat].walk_child_pats(|child| self.mark_initialized(initialized_patterns, child));
     }
 
     /// Validates that the specified expr does not access unitialized bindings
@@ -141,7 +155,7 @@ impl ExprValidator<'_> {
                                     *initializer,
                                     ExprKind::Normal,
                                 );
-                                initialized_patterns.insert(*pat);
+                                self.mark_initialized(initialized_patterns, *pat);
                             }
                         }
                         Statement::Expr(expr) => {

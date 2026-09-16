@@ -267,6 +267,8 @@ Grammar(
         "LITERAL_PAT",
         "PATH_PAT",
         "TUPLE_STRUCT_PAT",
+        "TUPLE_PAT",
+        "PAREN_PAT",
 
         "ARG_LIST",
 
@@ -650,6 +652,16 @@ Grammar(
             options: ["Path"],
             collections: [("args", "Pat")],
         ),
+        // `(a, b)` -- destructures a tuple. Unlike `TupleStructPat` there is
+        // no path, and unlike every other pattern here it is irrefutable, so
+        // it is legal wherever a binding is (`let`, a parameter).
+        "TuplePat": (
+            collections: [("args", "Pat")],
+        ),
+        // `(a)` -- grouping only, the pattern analogue of `ParenType` and
+        // `ParenExpr`. Lowers transparently to the inner pattern, which is
+        // what keeps `(a,)` (a genuine 1-tuple) distinguishable from it.
+        "ParenPat": (options: ["Pat"]),
         "Pat": (
             enum: [
                 "BindPat",
@@ -657,6 +669,8 @@ Grammar(
                 "LiteralPat",
                 "PathPat",
                 "TupleStructPat",
+                "TuplePat",
+                "ParenPat",
             ],
         ),
 

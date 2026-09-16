@@ -1350,3 +1350,51 @@ fn static_member_access() {
     }"#,
     );
 }
+
+/// Tuple patterns destructure with `extractvalue` and no branch: the arity is
+/// fixed by the type and inference has already checked it, so there is no
+/// test to emit. Nesting falls out by recursion, and `_` binds nothing.
+#[test]
+fn tuple_pattern() {
+    test_snapshot_unoptimized(
+        "tuple_pattern",
+        r#"
+    public func sum_pair(p: (i64, i64)) -> i64 {
+        let (x, y) = p;
+        x + y
+    }
+
+    public func destructured_param((a, b): (i64, i64)) -> i64 {
+        a + b
+    }
+
+    public func nested(v: ((i64, i64), i64)) -> i64 {
+        let ((p, q), r) = v;
+        p + q + r
+    }
+
+    public func discards(p: (i64, i64)) -> i64 {
+        let (_, keep) = p;
+        keep
+    }"#,
+    );
+}
+
+/// The payoff for tuple returns: naming both results of a multi-value
+/// function at once. Optimised, so the whole thing folds to a constant --
+/// destructuring costs nothing.
+#[test]
+fn tuple_pattern_is_zero_overhead() {
+    test_snapshot(
+        "tuple_pattern_is_zero_overhead",
+        r#"
+    func divmod(a: i64, b: i64) -> (i64, i64) {
+        (a / b, a % b)
+    }
+
+    public func main() -> i64 {
+        let (q, r) = divmod(47, 5);
+        q * 100 + r
+    }"#,
+    );
+}

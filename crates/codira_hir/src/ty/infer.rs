@@ -275,9 +275,47 @@ impl InferenceResultBuilder<'_> {
 
     /// Record the type of the specified pattern and all sub-patterns.
     fn infer_pat(&mut self, pat: PatId, ty: Ty) {
-        #[allow(clippy::single_match)]
         match &self.body[pat] {
             Pat::Bind { name: _name } => {
+                self.set_pat_type(pat, ty);
+            }
+            // `let (x, y): (A, B)` -- each sub-pattern takes the type of the
+            // element it destructures, so the binding types come out right
+            // without the sub-patterns having to be annotated.
+            //
+            // An arity mismatch is reported once, against the tuple pattern
+            // itself, and the sub-patterns are then left un-typed rather than
+            // being paired up against whatever happens to line up: a
+            // plausible-looking wrong type on `y` would send the error
+            // cascading into every later use of it.
+            Pat::Tuple(args) => {
+                let args = args.clone();
+                if let TyKind::Tuple(arity, substs) = ty.interned() {
+                    if *arity == args.len() {
+                        let substs = substs.clone();
+                        self.set_pat_type(pat, ty);
+                        for (&arg, elem_ty) in args.iter().zip(substs.iter()) {
+                            self.infer_pat(arg, elem_ty.clone());
+                        }
+                        return;
+                    }
+
+                    self.diagnostics
+                        .push(InferenceDiagnostic::InvalidTupleDestructure {
+                            id: pat,
+                            found: ty.clone(),
+                            arity: args.len(),
+                            expected_arity: Some(*arity),
+                        });
+                } else if !ty.is_unknown() {
+                    self.diagnostics
+                        .push(InferenceDiagnostic::InvalidTupleDestructure {
+                            id: pat,
+                            found: ty.clone(),
+                            arity: args.len(),
+                            expected_arity: None,
+                        });
+                }
                 self.set_pat_type(pat, ty);
             }
             _ => {}
@@ -1456,15 +1494,16 @@ mod diagnostics {
         diagnostics::{
             AccessUnknownField, BreakOutsideLoop, BreakWithValueOutsideLoop, CannotApplyBinaryOp,
             CannotApplyUnaryOp, CyclicType, DiagnosticSink, ExpectedFunction, FieldCountMismatch,
-            IncompatibleBranch, InvalidCast, InvalidLhs, LiteralOutOfRange, MethodNotFound,
-            MethodNotInScope, MismatchedStructLit, MismatchedType, MissingElseBranch,
-            MissingFields, NoFields, NoSuchField, ParameterCountMismatch, PrivateAccess,
-            ReturnMissingExpression, UnresolvedType, UnresolvedValue,
+            IncompatibleBranch, InvalidCast, InvalidLhs, InvalidTupleDestructure,
+            LiteralOutOfRange, MethodNotFound, MethodNotInScope, MismatchedStructLit,
+            MismatchedType, MissingElseBranch, MissingFields, NoFields, NoSuchField,
+            ParameterCountMismatch, PrivateAccess, ReturnMissingExpression, UnresolvedType,
+            UnresolvedValue,
         },
         ids::FunctionId,
         ty::{cast::InvalidCastReason, infer::ExprOrPatId},
         type_ref::LocalTypeRefId,
-        ExprId, Function, HirDatabase, IntTy, Name, Ty,
+        ExprId, Function, HirDatabase, IntTy, Name, PatId, Ty,
     };
 
     #[derive(Debug, PartialEq, Eq, Clone)]
@@ -1553,6 +1592,12 @@ mod diagnostics {
             id: ExprId,
             expected: StructKind,
             found: StructKind,
+        },
+        InvalidTupleDestructure {
+            id: PatId,
+            found: Ty,
+            arity: usize,
+            expected_arity: Option<usize>,
         },
         NoFields {
             id: ExprId,
@@ -1874,6 +1919,25 @@ mod diagnostics {
                         expr,
                         expected: *expected,
                         found: *found,
+                    });
+                }
+                InferenceDiagnostic::InvalidTupleDestructure {
+                    id,
+                    found,
+                    arity,
+                    expected_arity,
+                } => {
+                    let pat = body
+                        .pat_syntax(*id)
+                        .expect("a tuple pattern always has a syntax node")
+                        .value
+                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    sink.push(InvalidTupleDestructure {
+                        file,
+                        pat,
+                        found: found.clone(),
+                        arity: *arity,
+                        expected_arity: *expected_arity,
                     });
                 }
                 InferenceDiagnostic::NoFields { id, found } => {

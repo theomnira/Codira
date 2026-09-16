@@ -15,8 +15,8 @@ ok    std/builtin/error.code
 FAIL  std/builtin/int.code  (13 errors)
 ok    std/builtin/range.code
 FAIL  std/builtin/simd.code  (148 errors)
-FAIL  std/builtin/slice.code  (109 errors)
-FAIL  std/builtin/sort.code  (376 errors)
+FAIL  std/builtin/slice.code  (94 errors)
+FAIL  std/builtin/sort.code  (334 errors)
 ok    std/builtin/swap.code
 ok    std/builtin/traits.code
 ok    std/builtin/tuple.code
@@ -42,7 +42,7 @@ ok    std/gpu/globals.code
 ok    std/gpu/host_info.code
 ok    std/gpu/id.code
 FAIL  std/gpu/intrinsics.code  (22 errors)
-FAIL  std/gpu/profiler.code  (12 errors)
+FAIL  std/gpu/profiler.code  (13 errors)
 FAIL  std/gpu/warp.code  (11 errors)
 ok    std/hashlib/hash.code
 FAIL  std/hashlib/hasher.code  (45 errors)
@@ -53,7 +53,7 @@ ok    std/math/polynomial.code
 FAIL  std/memory/alloc.code  (24 errors)
 FAIL  std/memory/arc_pointer.code  (339 errors)
 ok    std/memory/memory.code
-FAIL  std/memory/owned_pointer.code  (228 errors)
+FAIL  std/memory/owned_pointer.code  (218 errors)
 FAIL  std/memory/pointer.code  (32 errors)
 FAIL  std/memory/unsafe_pointer.code  (9 errors)
 ok    std/os/env.code
@@ -61,11 +61,11 @@ ok    std/os/os.code
 FAIL  std/os/path.code  (26 errors)
 ok    std/os/process.code
 ok    std/pathlib/path.code
-FAIL  std/random/random.code  (28 errors)
+FAIL  std/random/random.code  (4 errors)
 ok    std/sys/arg.code
 ok    std/sys/info.code
 FAIL  std/sys/intrinsics.code  (129 errors)
 FAIL  std/sys/terminate.code  (80 errors)
 FAIL  std/testing/suite.code  (29 errors)
-FAIL  std/testing/testing.code  (40 errors)
-FAIL  std/time/time.code  (30 errors)
+FAIL  std/testing/testing.code  (31 errors)
+FAIL  std/time/time.code  (31 errors)

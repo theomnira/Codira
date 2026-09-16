@@ -2157,6 +2157,34 @@ impl ParenExpr {
     }
 }
 
+// ParenPat
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParenPat {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ParenPat {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, PAREN_PAT)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ParenPat { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ParenPat {
+    pub fn pat(&self) -> Option<Pat> {
+        super::child_opt(self)
+    }
+}
+
 // ParenType
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -2196,7 +2224,13 @@ impl AstNode for Pat {
     fn can_cast(kind: SyntaxKind) -> bool {
         matches!(
             kind,
-            BIND_PAT | PLACEHOLDER_PAT | LITERAL_PAT | PATH_PAT | TUPLE_STRUCT_PAT
+            BIND_PAT
+                | PLACEHOLDER_PAT
+                | LITERAL_PAT
+                | PATH_PAT
+                | TUPLE_STRUCT_PAT
+                | TUPLE_PAT
+                | PAREN_PAT
         )
     }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -2217,6 +2251,8 @@ pub enum PatKind {
     LiteralPat(LiteralPat),
     PathPat(PathPat),
     TupleStructPat(TupleStructPat),
+    TuplePat(TuplePat),
+    ParenPat(ParenPat),
 }
 impl From<BindPat> for Pat {
     fn from(n: BindPat) -> Pat {
@@ -2243,6 +2279,16 @@ impl From<TupleStructPat> for Pat {
         Pat { syntax: n.syntax }
     }
 }
+impl From<TuplePat> for Pat {
+    fn from(n: TuplePat) -> Pat {
+        Pat { syntax: n.syntax }
+    }
+}
+impl From<ParenPat> for Pat {
+    fn from(n: ParenPat) -> Pat {
+        Pat { syntax: n.syntax }
+    }
+}
 
 impl Pat {
     pub fn kind(&self) -> PatKind {
@@ -2256,6 +2302,8 @@ impl Pat {
             TUPLE_STRUCT_PAT => {
                 PatKind::TupleStructPat(TupleStructPat::cast(self.syntax.clone()).unwrap())
             }
+            TUPLE_PAT => PatKind::TuplePat(TuplePat::cast(self.syntax.clone()).unwrap()),
+            PAREN_PAT => PatKind::ParenPat(ParenPat::cast(self.syntax.clone()).unwrap()),
             _ => unreachable!(),
         }
     }
@@ -3242,6 +3290,34 @@ impl AstNode for TupleFieldDefList {
 }
 impl TupleFieldDefList {
     pub fn fields(&self) -> impl Iterator<Item = TupleFieldDef> {
+        super::children(self)
+    }
+}
+
+// TuplePat
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TuplePat {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for TuplePat {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, TUPLE_PAT)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(TuplePat { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl TuplePat {
+    pub fn args(&self) -> impl Iterator<Item = Pat> {
         super::children(self)
     }
 }

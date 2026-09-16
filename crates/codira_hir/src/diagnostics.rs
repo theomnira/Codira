@@ -1147,3 +1147,42 @@ impl Diagnostic for CyclicConstDefinition {
         self
     }
 }
+
+/// A tuple pattern that cannot destructure the type it is matched against:
+/// either the arity differs, or the type is not a tuple at all.
+///
+/// Both cases are one diagnostic because they are one mistake from the
+/// author's point of view -- "this `(a, b)` does not fit what is on the
+/// right" -- and splitting them would only make the wording vaguer in each
+/// half. `expected` carries the type being destructured, so the message can
+/// name it rather than just complaining about counts.
+#[derive(Debug)]
+pub struct InvalidTupleDestructure {
+    pub file: FileId,
+    pub pat: SyntaxNodePtr,
+    pub found: Ty,
+    /// How many elements the pattern binds.
+    pub arity: usize,
+    /// The destructured type's arity, or `None` when it is not a tuple.
+    pub expected_arity: Option<usize>,
+}
+
+impl Diagnostic for InvalidTupleDestructure {
+    fn message(&self) -> String {
+        match self.expected_arity {
+            Some(expected) => format!(
+                "cannot destructure a {expected}-element tuple with a {}-element tuple pattern",
+                self.arity
+            ),
+            None => "cannot destructure a value that is not a tuple".to_string(),
+        }
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.pat.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}

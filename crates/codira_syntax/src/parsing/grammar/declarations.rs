@@ -396,6 +396,16 @@ fn opt_rename(p: &mut Parser<'_>) {
 fn const_def(p: &mut Parser<'_>, m: Marker) {
     assert!(p.at(T![let]) || p.at(T![var]));
     p.bump_any();
+    // `let mut NAME` is accepted here for the same reason
+    // `expressions::let_stmt` accepts it inside a block: it is the
+    // Rust-style spelling of `var`. Without this the contextual `mut` is
+    // consumed as the binding's *name*, and the real name then shows up
+    // where the `:` was expected -- so `let mut g: T = ..` failed with "a
+    // module-level binding must declare its type" despite declaring one,
+    // which is how `std/random/random.code` was blocked.
+    if p.at_contextual_kw("mut") {
+        p.bump_remap(T![mut]);
+    }
     name(p);
     if p.at(T![:]) {
         types::ascription(p);

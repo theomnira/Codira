@@ -2060,3 +2060,59 @@ fn probe_method_call_arity() {
     }",
     ));
 }
+
+/// A tuple pattern types each binding from the element it destructures, so
+/// `let (q, r) = divmod(..)` gives both bindings the right type without
+/// either being annotated.
+#[test]
+fn infer_tuple_pattern() {
+    insta::assert_snapshot!(infer(
+        r"
+    func divmod(a: i64, b: i64) -> (i64, i64) {
+        (a / b, a % b)
+    }
+
+    func main() -> i64 {
+        let (q, r) = divmod(47, 5);
+        q + r
+    }",
+    ));
+}
+
+/// Destructuring nests, and `_` discards without binding.
+#[test]
+fn infer_tuple_pattern_nested() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> u8 {
+        let ((a, b), c) = ((1, 2), 3.0);
+        let (_, keep) = (99, b);
+        a + keep
+    }",
+    ));
+}
+
+/// An arity mismatch is reported once, against the pattern, rather than
+/// silently pairing the sub-patterns against whatever lines up.
+#[test]
+fn infer_tuple_pattern_arity_mismatch() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> i32 {
+        let (a, b, c) = (1, 2);
+        a
+    }",
+    ));
+}
+
+/// Destructuring something that is not a tuple at all is a distinct error.
+#[test]
+fn infer_tuple_pattern_not_a_tuple() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> i32 {
+        let (a, b) = 5;
+        a
+    }",
+    ));
+}

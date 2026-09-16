@@ -1302,3 +1302,53 @@ fn explicit_semicolon_still_terminates() {
         .expect("a LET_STMT");
     assert_eq!(let_stmt.initializer().unwrap().syntax().text(), "f()");
 }
+
+/// A tuple pattern destructures a tuple, and follows the same comma rule as
+/// the tuple type and tuple expression: `(a)` is grouping, `(a,)` is a
+/// 1-tuple.
+#[test]
+fn tuple_pat_destructures() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let (x, y) = p
+    let ((a, b), c) = q
+    let (_, keep) = r
+    let (single) = s
+    let (one,) = t
+    x
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let kinds: Vec<_> = parse
+        .syntax_node()
+        .descendants()
+        .filter_map(ast::LetStmt::cast)
+        .map(|it| it.pat().unwrap().syntax().kind())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            SyntaxKind::TUPLE_PAT,
+            SyntaxKind::TUPLE_PAT,
+            SyntaxKind::TUPLE_PAT,
+            // `(single)` is grouping, so it is a PAREN_PAT -- HIR lowers it
+            // straight through to the inner `BIND_PAT`.
+            SyntaxKind::PAREN_PAT,
+            // `(one,)` is a genuine 1-tuple; the trailing comma is what
+            // makes the two distinguishable at all.
+            SyntaxKind::TUPLE_PAT,
+        ]
+    );
+}
+
+/// A tuple pattern is irrefutable, so it is legal in a parameter position
+/// where a literal or tuple-struct pattern would not be.
+#[test]
+fn tuple_pat_in_parameter() {
+    let parse = SourceFile::parse("func f(p: (i32, i32)) -> i32 { p.0 }");
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let parse = SourceFile::parse("func f((a, b): (i32, i32)) -> i32 { a + b }");
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+}

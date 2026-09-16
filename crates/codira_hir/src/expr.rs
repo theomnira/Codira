@@ -498,11 +498,18 @@ pub enum Pat {
         path: Option<Path>,
         args: Vec<PatId>,
     }, // E.g. `Shape.Circle(radius)`
+    /// `(a, b)` -- destructures a tuple.
+    ///
+    /// Unlike every other non-`Bind` pattern here this one is *irrefutable*:
+    /// a tuple's arity is fixed by its type, so the match cannot fail. That
+    /// is what makes it legal in a `let` and in a parameter, where
+    /// `TupleStruct` and `Literal` are not.
+    Tuple(Vec<PatId>),
 }
 
 impl Pat {
     pub fn walk_child_pats(&self, mut f: impl FnMut(PatId)) {
-        if let Pat::TupleStruct { args, .. } = self {
+        if let Pat::TupleStruct { args, .. } | Pat::Tuple(args) = self {
             for &arg in args {
                 f(arg);
             }
@@ -1063,6 +1070,15 @@ impl<'a> ExprCollector<'a> {
                 let path = ts.path().and_then(Path::from_ast);
                 let args = ts.args().map(|arg| self.collect_pat(arg)).collect();
                 Pat::TupleStruct { path, args }
+            }
+            ast::PatKind::TuplePat(tp) => {
+                let args = tp.args().map(|arg| self.collect_pat(arg)).collect();
+                Pat::Tuple(args)
+            }
+            // `(a)` is grouping and nothing else: return the inner pattern's
+            // own `PatId` so no later stage has to know parentheses existed.
+            ast::PatKind::ParenPat(pp) => {
+                return self.collect_pat_opt(pp.pat());
             }
         };
         let ptr = AstPtr::new(&pat);
