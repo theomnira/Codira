@@ -1186,3 +1186,126 @@ impl Diagnostic for InvalidTupleDestructure {
         self
     }
 }
+
+/// An `@heal(...)` contract whose `on:` list names something that is not a
+/// fault class.
+///
+/// This is an error rather than a silent fallback to a user-defined class
+/// on purpose: a typo that becomes `Custom("Timeut")` produces a contract
+/// that compiles, ships, and then never fires. `Custom("name")` remains
+/// available for genuinely user-defined classes, spelled explicitly.
+#[derive(Debug)]
+pub struct HealContractUnknownFaultClass {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+    pub written: String,
+    pub suggestion: Option<&'static str>,
+}
+
+impl Diagnostic for HealContractUnknownFaultClass {
+    fn message(&self) -> String {
+        match self.suggestion {
+            Some(suggestion) => format!(
+                "unknown fault class `{}` -- did you mean `{suggestion}`?",
+                self.written
+            ),
+            None => format!(
+                "unknown fault class `{}`. Write `Custom(\"{}\")` for a user-defined class",
+                self.written, self.written
+            ),
+        }
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// An `@heal(...)` contract whose `strategies:` list names something that is
+/// not a recovery strategy.
+#[derive(Debug)]
+pub struct HealContractUnknownStrategy {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+    pub written: String,
+    pub suggestion: Option<&'static str>,
+}
+
+impl Diagnostic for HealContractUnknownStrategy {
+    fn message(&self) -> String {
+        match self.suggestion {
+            Some(suggestion) => format!(
+                "unknown recovery strategy `{}` -- did you mean `{suggestion}`?",
+                self.written
+            ),
+            None => format!("unknown recovery strategy `{}`", self.written),
+        }
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// An `@heal(...)` contract with no usable recovery strategy.
+///
+/// `codira_healing::contract::HealingContract::new` asserts a non-empty
+/// strategy list, so this would be a runtime panic in the engine. More to
+/// the point, a contract with nothing to try is indistinguishable from no
+/// contract at all while looking like protection.
+#[derive(Debug)]
+pub struct HealContractEmptyStrategies {
+    pub file: FileId,
+    pub attr: SyntaxNodePtr,
+}
+
+impl Diagnostic for HealContractEmptyStrategies {
+    fn message(&self) -> String {
+        "`@heal` needs at least one usable recovery strategy, e.g. \
+         `strategies: [ReturnDefault]`"
+            .to_string()
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.attr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// A recovery strategy this function cannot support.
+///
+/// `spec/HERACLES_Codira_Implementation.md` section 2.2 requires strategy
+/// feasibility to be checked statically; this is that check failing, with
+/// the specific unmet obligation as the reason.
+#[derive(Debug)]
+pub struct HealContractInfeasibleStrategy {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+    pub strategy: &'static str,
+    pub reason: String,
+}
+
+impl Diagnostic for HealContractInfeasibleStrategy {
+    fn message(&self) -> String {
+        format!("`{}` is not usable here: {}", self.strategy, self.reason)
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}

@@ -719,7 +719,11 @@ fn satisfiable_refinement_type_produces_no_diagnostic() {
 fn unsatisfiable_healing_postcondition_is_a_real_diagnostic() {
     insta::assert_snapshot!(infer(
         r#"
-    @heal(on: [Timeout], postcondition: result > 0 && result < 0)
+    @heal(
+        on: [Timeout],
+        strategies: [ReturnDefault(0)],
+        postcondition: result > 0 && result < 0
+    )
     func risky() -> i32 {
         1
     }
@@ -733,7 +737,7 @@ fn unsatisfiable_healing_postcondition_is_a_real_diagnostic() {
 fn satisfiable_healing_postcondition_produces_no_diagnostic() {
     insta::assert_snapshot!(infer(
         r#"
-    @heal(on: [Timeout], postcondition: result >= 0)
+    @heal(on: [Timeout], strategies: [ReturnDefault(0)], postcondition: result >= 0)
     func risky() -> i32 {
         1
     }
@@ -2114,5 +2118,154 @@ fn infer_tuple_pattern_not_a_tuple() {
         let (a, b) = 5;
         a
     }",
+    ));
+}
+
+// ===========================================================================
+// `@heal(...)` healing contracts
+// ===========================================================================
+//
+// `spec/HERACLES_Codira_Implementation.md` section 2.2 requires strategy
+// feasibility to be checked statically. Before `crate::heal_contract` none
+// of it was: `on:` and `strategies:` were never read, so a contract naming a
+// misspelled fault class or an impossible strategy compiled clean and then
+// silently healed nothing. Each test below pins one of those silent
+// failures to a diagnostic.
+
+/// A well-formed contract produces no diagnostics at all.
+#[test]
+fn heal_contract_well_formed() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(
+        on: [ArithmeticFault, Timeout],
+        strategies: [ReturnDefault, PropagateToParent],
+        postcondition: result >= 0
+    )
+    func safe_div(a: i64, b: i64) -> i64 {
+        a / b
+    }
+
+    supervisor app {
+        restart_policy: 3,
+    }",
+    ));
+}
+
+/// A misspelled fault class is an error with a nearest-match suggestion, not
+/// a silent fallback to a user-defined class -- which would compile and then
+/// never fire.
+#[test]
+fn heal_contract_misspelled_fault_class() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeut], strategies: [ReturnDefault])
+    func risky() -> i64 { 0 }",
+    ));
+}
+
+/// `Custom(\"name\")` is the explicit escape hatch for a genuinely
+/// user-defined class, and is accepted without complaint.
+#[test]
+fn heal_contract_custom_fault_class() {
+    insta::assert_snapshot!(infer(
+        r#"
+    @heal(on: [Custom("DiskFull")], strategies: [DegradeGracefully])
+    func risky() -> i64 { 0 }"#,
+    ));
+}
+
+/// A misspelled strategy is reported, and leaves the contract with nothing
+/// to try -- which is itself reported, because a contract that cannot do
+/// anything looks like protection and is not.
+#[test]
+fn heal_contract_misspelled_strategy() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [ReturnDefualt])
+    func risky() -> i64 { 0 }",
+    ));
+}
+
+/// `RetryWithBackoff` re-runs the function's effects, so it needs an
+/// explicit idempotence declaration -- and the declared bound has to cover
+/// the number of attempts.
+#[test]
+fn heal_contract_retry_needs_idempotence() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [RetryWithBackoff(3)])
+    func no_declaration() -> i64 { 0 }
+
+    @idempotent(2)
+    @heal(on: [Timeout], strategies: [RetryWithBackoff(5)])
+    func bound_too_low() -> i64 { 0 }
+
+    @idempotent(5)
+    @heal(on: [Timeout], strategies: [RetryWithBackoff(5)])
+    func bound_sufficient() -> i64 { 0 }",
+    ));
+}
+
+/// `ReturnCached` needs `@memoizable`; `IsolateAndRestart` needs
+/// `@snapshot`. Both are the spec's own feasibility requirements.
+#[test]
+fn heal_contract_capability_requirements() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [ReturnCached])
+    func not_memoizable() -> i64 { 0 }
+
+    @memoizable
+    @heal(on: [Timeout], strategies: [ReturnCached])
+    func memoizable() -> i64 { 0 }
+
+    @heal(on: [Timeout], strategies: [IsolateAndRestart])
+    func no_snapshot() -> i64 { 0 }
+
+    @snapshot
+    @heal(on: [Timeout], strategies: [IsolateAndRestart])
+    func snapshotted() -> i64 { 0 }",
+    ));
+}
+
+/// `PropagateToParent` needs somewhere to propagate to.
+#[test]
+fn heal_contract_propagate_needs_supervisor() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [PropagateToParent])
+    func orphan() -> i64 { 0 }",
+    ));
+}
+
+/// A repeated strategy is never useful -- the engine tries each in order, so
+/// the second attempt does exactly what the first did.
+#[test]
+fn heal_contract_duplicate_strategy() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [ReturnDefault, ReturnDefault])
+    func risky() -> i64 { 0 }",
+    ));
+}
+
+/// `SubstituteAlternate` must name a function that can actually stand in:
+/// same signature, and not the guarded function itself.
+#[test]
+fn heal_contract_alternate_must_be_substitutable() {
+    insta::assert_snapshot!(infer(
+        r"
+    func wrong_shape(x: i64, y: i64) -> i64 { x + y }
+    func right_shape() -> i64 { 1 }
+
+    @heal(on: [Timeout], strategies: [SubstituteAlternate(wrong_shape)])
+    func mismatched() -> i64 { 0 }
+
+    @heal(on: [Timeout], strategies: [SubstituteAlternate(itself)])
+    func itself() -> i64 { 0 }
+
+    @heal(on: [Timeout], strategies: [SubstituteAlternate(right_shape)])
+    func ok() -> i64 { 0 }",
     ));
 }

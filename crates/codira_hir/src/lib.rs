@@ -75,6 +75,7 @@ mod utils;
 
 mod has_module;
 mod heal_check;
+pub mod heal_contract;
 mod item_scope;
 pub mod method_resolution;
 #[cfg(test)]
