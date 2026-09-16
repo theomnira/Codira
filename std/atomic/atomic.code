@@ -38,7 +38,7 @@ public func memory_order_name(order: MemoryOrder) -> String {
 // read-modify-write operations. T must be an integer type that fits in
 // a machine word (u8, u16, u32, u64, i8, i16, i32, i64, usize, isize, bool).
 // ---------------------------------------------------------------------------
-public struct Atomic<T> {
+public struct Atomic[T] {
     _value: T,
 }
 
@@ -46,7 +46,7 @@ public struct Atomic<T> {
 // atomic_new
 // Creates a new Atomic with the given initial value.
 // ---------------------------------------------------------------------------
-public func atomic_new<T>(initial: T) -> Atomic<T> {
+public func atomic_new[T](initial: T) -> Atomic[T] {
     return Atomic { _value: initial };
 }
 
@@ -55,30 +55,30 @@ public func atomic_new<T>(initial: T) -> Atomic<T> {
 // ===========================================================================
 
 // load – atomically reads the current value.
-public func atomic_load_u64(self: Atomic<u64>, order: MemoryOrder) -> u64 {
+public func atomic_load_u64(self: Atomic[u64], order: MemoryOrder) -> u64 {
     return _intrinsic_atomic_load_u64(self._value, order._value);
 }
 
 // store – atomically writes a new value.
-public func atomic_store_u64(self: mut Atomic<u64>, value: u64, order: MemoryOrder) {
+public func atomic_store_u64(self: mut Atomic[u64], value: u64, order: MemoryOrder) {
     _intrinsic_atomic_store_u64(self._value, value, order._value);
 }
 
 // compare_exchange – atomically compares and conditionally swaps.
 // If current value equals `expected`, stores `desired` and returns true.
 // Otherwise stores the current value into `expected` and returns false.
-public struct CasResult<T> {
+public struct CasResult[T] {
     success: bool,
     old_value: T,
 }
 
 public func atomic_compare_exchange_u64(
-    self: mut Atomic<u64>,
+    self: mut Atomic[u64],
     expected: u64,
     desired: u64,
     success_order: MemoryOrder,
     failure_order: MemoryOrder,
-) -> CasResult<u64> {
+) -> CasResult[u64] {
     let old: u64 = _intrinsic_atomic_cmpxchg_u64(
         self._value, expected, desired,
         success_order._value, failure_order._value,
@@ -87,32 +87,32 @@ public func atomic_compare_exchange_u64(
 }
 
 // fetch_add – atomically adds `delta` to the value and returns the old value.
-public func atomic_fetch_add_u64(self: mut Atomic<u64>, delta: u64, order: MemoryOrder) -> u64 {
+public func atomic_fetch_add_u64(self: mut Atomic[u64], delta: u64, order: MemoryOrder) -> u64 {
     return _intrinsic_atomic_fetch_add_u64(self._value, delta, order._value);
 }
 
 // fetch_sub – atomically subtracts `delta` and returns the old value.
-public func atomic_fetch_sub_u64(self: mut Atomic<u64>, delta: u64, order: MemoryOrder) -> u64 {
+public func atomic_fetch_sub_u64(self: mut Atomic[u64], delta: u64, order: MemoryOrder) -> u64 {
     return _intrinsic_atomic_fetch_sub_u64(self._value, delta, order._value);
 }
 
 // fetch_and – atomically performs bitwise AND and returns the old value.
-public func atomic_fetch_and_u64(self: mut Atomic<u64>, mask: u64, order: MemoryOrder) -> u64 {
+public func atomic_fetch_and_u64(self: mut Atomic[u64], mask: u64, order: MemoryOrder) -> u64 {
     return _intrinsic_atomic_fetch_and_u64(self._value, mask, order._value);
 }
 
 // fetch_or – atomically performs bitwise OR and returns the old value.
-public func atomic_fetch_or_u64(self: mut Atomic<u64>, mask: u64, order: MemoryOrder) -> u64 {
+public func atomic_fetch_or_u64(self: mut Atomic[u64], mask: u64, order: MemoryOrder) -> u64 {
     return _intrinsic_atomic_fetch_or_u64(self._value, mask, order._value);
 }
 
 // fetch_xor – atomically performs bitwise XOR and returns the old value.
-public func atomic_fetch_xor_u64(self: mut Atomic<u64>, mask: u64, order: MemoryOrder) -> u64 {
+public func atomic_fetch_xor_u64(self: mut Atomic[u64], mask: u64, order: MemoryOrder) -> u64 {
     return _intrinsic_atomic_fetch_xor_u64(self._value, mask, order._value);
 }
 
 // exchange – atomically replaces the value and returns the old value.
-public func atomic_exchange_u64(self: mut Atomic<u64>, value: u64, order: MemoryOrder) -> u64 {
+public func atomic_exchange_u64(self: mut Atomic[u64], value: u64, order: MemoryOrder) -> u64 {
     return _intrinsic_atomic_exchange_u64(self._value, value, order._value);
 }
 
@@ -120,29 +120,29 @@ public func atomic_exchange_u64(self: mut Atomic<u64>, value: u64, order: Memory
 // Atomic i64
 // ===========================================================================
 
-public func atomic_load_i64(self: Atomic<i64>, order: MemoryOrder) -> i64 {
+public func atomic_load_i64(self: Atomic[i64], order: MemoryOrder) -> i64 {
     return _intrinsic_atomic_load_i64(self._value, order._value);
 }
 
-public func atomic_store_i64(self: mut Atomic<i64>, value: i64, order: MemoryOrder) {
+public func atomic_store_i64(self: mut Atomic[i64], value: i64, order: MemoryOrder) {
     _intrinsic_atomic_store_i64(self._value, value, order._value);
 }
 
-public func atomic_fetch_add_i64(self: mut Atomic<i64>, delta: i64, order: MemoryOrder) -> i64 {
+public func atomic_fetch_add_i64(self: mut Atomic[i64], delta: i64, order: MemoryOrder) -> i64 {
     return _intrinsic_atomic_fetch_add_i64(self._value, delta, order._value);
 }
 
-public func atomic_fetch_sub_i64(self: mut Atomic<i64>, delta: i64, order: MemoryOrder) -> i64 {
+public func atomic_fetch_sub_i64(self: mut Atomic[i64], delta: i64, order: MemoryOrder) -> i64 {
     return _intrinsic_atomic_fetch_sub_i64(self._value, delta, order._value);
 }
 
 public func atomic_compare_exchange_i64(
-    self: mut Atomic<i64>,
+    self: mut Atomic[i64],
     expected: i64,
     desired: i64,
     success_order: MemoryOrder,
     failure_order: MemoryOrder,
-) -> CasResult<i64> {
+) -> CasResult[i64] {
     let old: i64 = _intrinsic_atomic_cmpxchg_i64(
         self._value, expected, desired,
         success_order._value, failure_order._value,
@@ -154,19 +154,19 @@ public func atomic_compare_exchange_i64(
 // Atomic u32
 // ===========================================================================
 
-public func atomic_load_u32(self: Atomic<u32>, order: MemoryOrder) -> u32 {
+public func atomic_load_u32(self: Atomic[u32], order: MemoryOrder) -> u32 {
     return _intrinsic_atomic_load_u32(self._value, order._value);
 }
 
-public func atomic_store_u32(self: mut Atomic<u32>, value: u32, order: MemoryOrder) {
+public func atomic_store_u32(self: mut Atomic[u32], value: u32, order: MemoryOrder) {
     _intrinsic_atomic_store_u32(self._value, value, order._value);
 }
 
-public func atomic_fetch_add_u32(self: mut Atomic<u32>, delta: u32, order: MemoryOrder) -> u32 {
+public func atomic_fetch_add_u32(self: mut Atomic[u32], delta: u32, order: MemoryOrder) -> u32 {
     return _intrinsic_atomic_fetch_add_u32(self._value, delta, order._value);
 }
 
-public func atomic_fetch_sub_u32(self: mut Atomic<u32>, delta: u32, order: MemoryOrder) -> u32 {
+public func atomic_fetch_sub_u32(self: mut Atomic[u32], delta: u32, order: MemoryOrder) -> u32 {
     return _intrinsic_atomic_fetch_sub_u32(self._value, delta, order._value);
 }
 
@@ -174,15 +174,15 @@ public func atomic_fetch_sub_u32(self: mut Atomic<u32>, delta: u32, order: Memor
 // Atomic bool
 // ===========================================================================
 
-public func atomic_load_bool(self: Atomic<bool>, order: MemoryOrder) -> bool {
+public func atomic_load_bool(self: Atomic[bool], order: MemoryOrder) -> bool {
     return _intrinsic_atomic_load_bool(self._value, order._value);
 }
 
-public func atomic_store_bool(self: mut Atomic<bool>, value: bool, order: MemoryOrder) {
+public func atomic_store_bool(self: mut Atomic[bool], value: bool, order: MemoryOrder) {
     _intrinsic_atomic_store_bool(self._value, value, order._value);
 }
 
-public func atomic_exchange_bool(self: mut Atomic<bool>, value: bool, order: MemoryOrder) -> bool {
+public func atomic_exchange_bool(self: mut Atomic[bool], value: bool, order: MemoryOrder) -> bool {
     return _intrinsic_atomic_exchange_bool(self._value, value, order._value);
 }
 

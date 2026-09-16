@@ -441,7 +441,7 @@ public func mul_overflow[T](a: T, b: T) -> (T, bool) {
 // =============================================================================
 
 // Trap — unconditionally caimport an abnormal program termination.
-public func trap() -> ! {
+public func trap() -> Never {
     __intrinsic_llvm_call_void["llvm.trap"]();
 }
 
@@ -458,7 +458,7 @@ public func assume(condition: bool) -> void {
 
 // Unreachable — hint that this point in the code is never reached.
 // UB if it IS reached at runtime.
-public func unreachable() -> ! {
+public func unreachable() -> Never {
     __intrinsic_unreachable();
 }
 

@@ -30,17 +30,17 @@ import std.builtin.types;
 //
 //   exit(0);    // success
 //   exit(1);    // generic failure
-public func exit(code: i32) -> ! {
+public func exit(code: i32) -> Never {
     __intrinsic_exit(code);
 }
 
 // Exit with code 0 (success).
-public func exit_success() -> ! {
+public func exit_success() -> Never {
     __intrinsic_exit(0);
 }
 
 // Exit with code 1 (generic failure).
-public func exit_failure() -> ! {
+public func exit_failure() -> Never {
     __intrinsic_exit(1);
 }
 
@@ -62,14 +62,14 @@ public func exit_failure() -> ! {
 // This function never returns.
 //
 //   abort();
-public func abort() -> ! {
+public func abort() -> Never {
     __intrinsic_abort();
 }
 
 // Abort with a diagnostic message printed to stderr before termination.
 //
 //   abort_with_message("invariant violated: count must be positive");
-public func abort_with_message(message: String) -> ! {
+public func abort_with_message(message: String) -> Never {
     __intrinsic_write_stderr("ABORT: ");
     __intrinsic_write_stderr(message);
     __intrinsic_write_stderr("\n");
@@ -85,7 +85,7 @@ public func abort_with_message(message: String) -> ! {
 // then aborts.
 //
 //   panic("unexpected None value");
-public func panic(message: String) -> ! {
+public func panic(message: String) -> Never {
     __panic(message);
 }
 
@@ -93,7 +93,7 @@ public func panic(message: String) -> ! {
 // `context` typically carries function/module name for easier debugging.
 //
 //   panic_with_context("HashMap.get", "key not found");
-public func panic_with_context(context: String, message: String) -> ! {
+public func panic_with_context(context: String, message: String) -> Never {
     __panic(context + ": " + message);
 }
 
@@ -186,12 +186,12 @@ public func assert_le[T: Comparable + Stringable](a: T, b: T) -> void {
 //       1 => ...,
 //       _ => unreachable("value must be 0 or 1"),
 //   }
-public func unreachable(message: String) -> ! {
+public func unreachable(message: String) -> Never {
     __panic("unreachable: " + message);
 }
 
 // Mark as unreachable with no message.
-public func unreachable() -> ! {
+public func unreachable() -> Never {
     __panic("entered unreachable code");
 }
 
@@ -204,11 +204,11 @@ public func unreachable() -> ! {
 //   func frobnicate() -> i32 {
 //       todo("implement frobnication algorithm");
 //   }
-public func todo(message: String) -> ! {
+public func todo(message: String) -> Never {
     __panic("not yet implemented: " + message);
 }
 
 // Placeholder with no message.
-public func todo() -> ! {
+public func todo() -> Never {
     __panic("not yet implemented");
 }

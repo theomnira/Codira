@@ -9,7 +9,7 @@
 // The underlying memory is a contiguous array of u8 values terminated by 0x00.
 // ---------------------------------------------------------------------------
 public class CString {
-    _data: Array<u8>,   // includes the trailing null byte
+    _data: Array[u8],   // includes the trailing null byte
     _len: usize,        // length excluding the null terminator
 }
 
@@ -19,8 +19,8 @@ public class CString {
 // terminator is appended.
 // ---------------------------------------------------------------------------
 public func cstring_from_string(s: String) -> CString {
-    let bytes: Array<u8> = s.as_bytes();
-    let mut data: Array<u8> = Array::with_capacity(bytes.len() + 1);
+    let bytes: Array[u8] = s.as_bytes();
+    let mut data: Array[u8] = Array.with_capacity(bytes.len() + 1);
     let mut i: usize = 0;
     while i < bytes.len() {
         data.push(bytes[i]);
@@ -36,7 +36,7 @@ public func cstring_from_string(s: String) -> CString {
 // if one is not already present. Any interior null bytes are preserved
 // but the logical length is measured up to the first null.
 // ---------------------------------------------------------------------------
-public func cstring_from_bytes(bytes: Array<u8>) -> CString {
+public func cstring_from_bytes(bytes: Array[u8]) -> CString {
     // Find the first null byte to determine logical length.
     let mut logical_len: usize = bytes.len();
     let mut i: usize = 0;
@@ -48,7 +48,7 @@ public func cstring_from_bytes(bytes: Array<u8>) -> CString {
         i = i + 1;
     }
 
-    let mut data: Array<u8> = Array::with_capacity(logical_len + 1);
+    let mut data: Array[u8] = Array.with_capacity(logical_len + 1);
     i = 0;
     while i < logical_len {
         data.push(bytes[i]);
@@ -64,12 +64,12 @@ public func cstring_from_bytes(bytes: Array<u8>) -> CString {
 // terminator is found. Unsafe: the pointer must be valid and the data
 // must be null-terminated.
 // ---------------------------------------------------------------------------
-public func cstring_from_ptr(ptr: RawPointer<u8>) -> CString {
+public func cstring_from_ptr(ptr: RawPointer[u8]) -> CString {
     let mut len: usize = 0;
     while ptr.offset(len).read() != 0 {
         len = len + 1;
     }
-    let mut data: Array<u8> = Array::with_capacity(len + 1);
+    let mut data: Array[u8] = Array.with_capacity(len + 1);
     let mut i: usize = 0;
     while i < len {
         data.push(ptr.offset(i).read());
@@ -85,13 +85,13 @@ public func cstring_from_ptr(ptr: RawPointer<u8>) -> CString {
 // the null terminator).
 // ---------------------------------------------------------------------------
 public func cstring_to_string(self: CString) -> String {
-    let mut bytes: Array<u8> = Array::with_capacity(self._len);
+    let mut bytes: Array[u8] = Array.with_capacity(self._len);
     let mut i: usize = 0;
     while i < self._len {
         bytes.push(self._data[i]);
         i = i + 1;
     }
-    return String::from_bytes(bytes);
+    return String.from_bytes(bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +99,7 @@ public func cstring_to_string(self: CString) -> String {
 // Returns a raw pointer to the underlying null-terminated data.
 // The pointer is valid for the lifetime of this CString.
 // ---------------------------------------------------------------------------
-public func cstring_as_ptr(self: CString) -> RawPointer<u8> {
+public func cstring_as_ptr(self: CString) -> RawPointer[u8] {
     return self._data.as_ptr();
 }
 
@@ -154,7 +154,7 @@ public func cstring_equals(a: CString, b: CString) -> bool {
 // ---------------------------------------------------------------------------
 public func cstring_concat(a: CString, b: CString) -> CString {
     let new_len: usize = a._len + b._len;
-    let mut data: Array<u8> = Array::with_capacity(new_len + 1);
+    let mut data: Array[u8] = Array.with_capacity(new_len + 1);
     let mut i: usize = 0;
     while i < a._len {
         data.push(a._data[i]);
@@ -175,7 +175,7 @@ public func cstring_concat(a: CString, b: CString) -> CString {
 // sentinel / default value.
 // ---------------------------------------------------------------------------
 public func null_cstring() -> CString {
-    let mut data: Array<u8> = Array::with_capacity(1);
+    let mut data: Array[u8] = Array.with_capacity(1);
     data.push(0);
     return CString { _data: data, _len: 0 };
 }

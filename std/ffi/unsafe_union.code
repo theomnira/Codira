@@ -12,7 +12,7 @@
 // types. The size is the maximum of all constituent type sizes.
 // ---------------------------------------------------------------------------
 public struct UnsafeUnion {
-    _storage: Array<u8>,   // raw bytes (sized to the largest variant)
+    _storage: Array[u8],   // raw bytes (sized to the largest variant)
     _size: usize,          // total capacity in bytes
 }
 
@@ -22,7 +22,7 @@ public struct UnsafeUnion {
 // `size` should be the maximum size of all types the union will hold.
 // ---------------------------------------------------------------------------
 public func unsafe_union_new(size: usize) -> UnsafeUnion {
-    let mut storage: Array<u8> = Array::with_capacity(size);
+    let mut storage: Array[u8] = Array.with_capacity(size);
     let mut i: usize = 0;
     while i < size {
         storage.push(0);
@@ -123,26 +123,26 @@ public func unsafe_union_load_i64(self: UnsafeUnion) -> i64 {
 // store_f32 / load_f32
 // ---------------------------------------------------------------------------
 public func unsafe_union_store_f32(self: mut UnsafeUnion, value: f32) {
-    let bits: u32 = bitcast<u32>(value);
+    let bits: u32 = bitcast[u32](value);
     unsafe_union_store_u32(self, bits);
 }
 
 public func unsafe_union_load_f32(self: UnsafeUnion) -> f32 {
     let bits: u32 = unsafe_union_load_u32(self);
-    return bitcast<f32>(bits);
+    return bitcast[f32](bits);
 }
 
 // ---------------------------------------------------------------------------
 // store_f64 / load_f64
 // ---------------------------------------------------------------------------
 public func unsafe_union_store_f64(self: mut UnsafeUnion, value: f64) {
-    let bits: u64 = bitcast<u64>(value);
+    let bits: u64 = bitcast[u64](value);
     unsafe_union_store_u64(self, bits);
 }
 
 public func unsafe_union_load_f64(self: UnsafeUnion) -> f64 {
     let bits: u64 = unsafe_union_load_u64(self);
-    return bitcast<f64>(bits);
+    return bitcast[f64](bits);
 }
 
 // ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ public func unsafe_union_load_bool(self: UnsafeUnion) -> bool {
 // store_bytes / load_bytes
 // Store/load a raw byte array into/from the union storage.
 // ---------------------------------------------------------------------------
-public func unsafe_union_store_bytes(self: mut UnsafeUnion, data: Array<u8>) {
+public func unsafe_union_store_bytes(self: mut UnsafeUnion, data: Array[u8]) {
     let copy_len: usize = if data.len() < self._size { data.len() } else { self._size };
     let mut i: usize = 0;
     while i < copy_len {
@@ -173,9 +173,9 @@ public func unsafe_union_store_bytes(self: mut UnsafeUnion, data: Array<u8>) {
     }
 }
 
-public func unsafe_union_load_bytes(self: UnsafeUnion, count: usize) -> Array<u8> {
+public func unsafe_union_load_bytes(self: UnsafeUnion, count: usize) -> Array[u8] {
     let read_len: usize = if count < self._size { count } else { self._size };
-    let mut result: Array<u8> = Array::with_capacity(read_len);
+    let mut result: Array[u8] = Array.with_capacity(read_len);
     let mut i: usize = 0;
     while i < read_len {
         result.push(self._storage[i]);
@@ -208,6 +208,6 @@ public func unsafe_union_size(self: UnsafeUnion) -> usize {
 // as_ptr
 // Returns a raw pointer to the underlying storage.
 // ---------------------------------------------------------------------------
-public func unsafe_union_as_ptr(self: UnsafeUnion) -> RawPointer<u8> {
+public func unsafe_union_as_ptr(self: UnsafeUnion) -> RawPointer[u8] {
     return self._storage.as_ptr();
 }

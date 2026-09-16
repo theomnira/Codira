@@ -107,10 +107,10 @@ public func path_suffix(self: Path) -> String {
 // Returns all extensions as an array.
 // Example: "archive.tar.gz" -> [".tar", ".gz"]
 // ---------------------------------------------------------------------------
-public func path_suffixes(self: Path) -> Array<String> {
+public func path_suffixes(self: Path) -> Array[String] {
     let n: String = path_name(self);
-    let parts: Array<String> = n.split(".");
-    let mut result: Array<String> = Array::new();
+    let parts: Array[String] = n.split(".");
+    let mut result: Array[String] = Array.new();
     // First part is the stem, skip it.
     let mut i: usize = 1;
     while i < parts.len() {
@@ -220,7 +220,7 @@ public func path_read_text(self: Path) -> String {
 // read_bytes
 // Reads the entire file as a byte array.
 // ---------------------------------------------------------------------------
-public func path_read_bytes(self: Path) -> Array<u8> {
+public func path_read_bytes(self: Path) -> Array[u8] {
     return _platform_read_bytes(self._raw);
 }
 
@@ -236,7 +236,7 @@ public func path_write_text(self: Path, content: String) -> bool {
 // write_bytes
 // Writes raw bytes to the file, creating or overwriting it.
 // ---------------------------------------------------------------------------
-public func path_write_bytes(self: Path, data: Array<u8>) -> bool {
+public func path_write_bytes(self: Path, data: Array[u8]) -> bool {
     return _platform_write_bytes(self._raw, data);
 }
 
@@ -286,9 +286,9 @@ public func path_rename(self: Path, target: String) -> Path {
 // Iterates over entries in this directory.
 // Returns an array of Path objects.
 // ---------------------------------------------------------------------------
-public func path_iterdir(self: Path) -> Array<Path> {
-    let names: Array<String> = _platform_listdir_names(self._raw);
-    let mut result: Array<Path> = Array::new();
+public func path_iterdir(self: Path) -> Array[Path] {
+    let names: Array[String] = _platform_listdir_names(self._raw);
+    let mut result: Array[Path] = Array.new();
     let mut i: usize = 0;
     while i < names.len() {
         result.push(path_join(self, names[i]));
@@ -328,12 +328,12 @@ extern func _platform_is_link(path: String) -> bool;
 extern func _platform_realpath(path: String) -> String;
 extern func _platform_stat(path: String) -> FileStat;
 extern func _platform_read_text(path: String) -> String;
-extern func _platform_read_bytes(path: String) -> Array<u8>;
+extern func _platform_read_bytes(path: String) -> Array[u8];
 extern func _platform_write_text(path: String, content: String) -> bool;
-extern func _platform_write_bytes(path: String, data: Array<u8>) -> bool;
+extern func _platform_write_bytes(path: String, data: Array[u8]) -> bool;
 extern func _platform_mkdir(path: String) -> bool;
 extern func _platform_makedirs(path: String, exist_ok: bool) -> bool;
 extern func _platform_rmdir(path: String) -> bool;
 extern func _platform_remove(path: String) -> bool;
 extern func _platform_rename(src: String, dst: String) -> bool;
-extern func _platform_listdir_names(path: String) -> Array<String>;
+extern func _platform_listdir_names(path: String) -> Array[String];

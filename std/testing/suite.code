@@ -29,7 +29,7 @@ public struct TestCase {
 // ---------------------------------------------------------------------------
 public struct SuiteResults {
     suite_name: String,
-    results: Array<TestResult>,
+    results: Array[TestResult],
     total: usize,
     passed: usize,
     failed: usize,
@@ -42,8 +42,8 @@ public func suite_results_all_passed(r: SuiteResults) -> bool {
 }
 
 // Returns the names of tests that failed.
-public func suite_results_failures(r: SuiteResults) -> Array<String> {
-    let mut names: Array<String> = Array::new();
+public func suite_results_failures(r: SuiteResults) -> Array[String] {
+    let mut names: Array[String] = Array.new();
     let mut i: usize = 0;
     while i < r.results.len() {
         if !r.results[i].passed {
@@ -82,7 +82,7 @@ public func suite_results_report(r: SuiteResults) -> String {
 // ---------------------------------------------------------------------------
 public class TestSuite {
     name: String,
-    tests: Array<TestCase>,
+    tests: Array[TestCase],
 }
 
 // ---------------------------------------------------------------------------
@@ -92,7 +92,7 @@ public class TestSuite {
 public func test_suite_new(name: String) -> TestSuite {
     return TestSuite {
         name: name,
-        tests: Array::new(),
+        tests: Array.new(),
     };
 }
 
@@ -111,7 +111,7 @@ public func test_suite_add_test(suite: mut TestSuite, name: String, f: func()) {
 // subsequent tests from running.
 // ---------------------------------------------------------------------------
 public func test_suite_run(suite: TestSuite) -> SuiteResults {
-    let mut results: Array<TestResult> = Array::new();
+    let mut results: Array[TestResult] = Array.new();
     let mut passed: usize = 0;
     let mut failed: usize = 0;
     let suite_start: u64 = _platform_perf_counter_ns();

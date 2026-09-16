@@ -14,7 +14,7 @@ let B64_PAD: u8 = 61; // '='
 // b64encode
 // Encodes a byte array into a Base64-encoded string.
 // ---------------------------------------------------------------------------
-public func b64encode(data: Array<u8>) -> String {
+public func b64encode(data: Array[u8]) -> String {
     let mut result: String = "";
     let len: usize = data.len();
     let mut i: usize = 0;
@@ -51,10 +51,10 @@ public func b64encode(data: Array<u8>) -> String {
 // Decodes a Base64-encoded string into a byte array.
 // Ignores whitespace. Returns an empty array on invalid input.
 // ---------------------------------------------------------------------------
-public func b64decode(encoded: String) -> Array<u8> {
+public func b64decode(encoded: String) -> Array[u8] {
     // Build reverse lookup.
-    let mut result: Array<u8> = Array::new();
-    let mut buf: Array<u8> = Array::new();
+    let mut result: Array[u8] = Array.new();
+    let mut buf: Array[u8] = Array.new();
 
     // Strip whitespace and collect valid base64 chars.
     let mut i: usize = 0;
@@ -74,7 +74,7 @@ public func b64decode(encoded: String) -> Array<u8> {
         let v3: i32 = if buf[i + 3] == B64_PAD { 0 } else { b64_char_value(buf[i + 3]) };
 
         if v0 < 0 || v1 < 0 {
-            return Array::new(); // invalid
+            return Array.new(); // invalid
         }
 
         let triple: u32 = ((v0 as u32) << 18) | ((v1 as u32) << 12) | ((v2 as u32) << 6) | (v3 as u32);
@@ -110,7 +110,7 @@ let HEX_ALPHABET: String = "0123456789ABCDEF";
 // b16encode
 // Encodes a byte array as a hexadecimal string (uppercase).
 // ---------------------------------------------------------------------------
-public func b16encode(data: Array<u8>) -> String {
+public func b16encode(data: Array[u8]) -> String {
     let mut result: String = "";
     let mut i: usize = 0;
     while i < data.len() {
@@ -128,8 +128,8 @@ public func b16encode(data: Array<u8>) -> String {
 // Decodes a hexadecimal string into a byte array.
 // Case-insensitive. Returns empty array on invalid input.
 // ---------------------------------------------------------------------------
-public func b16decode(encoded: String) -> Array<u8> {
-    let mut result: Array<u8> = Array::new();
+public func b16decode(encoded: String) -> Array[u8] {
+    let mut result: Array[u8] = Array.new();
     let len: usize = encoded.len();
     if len % 2 != 0 {
         return result; // invalid: odd length
@@ -139,7 +139,7 @@ public func b16decode(encoded: String) -> Array<u8> {
         let hi: i32 = hex_char_value(encoded.byte_at(i));
         let lo: i32 = hex_char_value(encoded.byte_at(i + 1));
         if hi < 0 || lo < 0 {
-            return Array::new(); // invalid character
+            return Array.new(); // invalid character
         }
         result.push(((hi << 4) | lo) as u8);
         i = i + 2;
@@ -165,7 +165,7 @@ let B32_PAD: u8 = 61; // '='
 // b32encode
 // Encodes a byte array into a Base32-encoded string (RFC 4648).
 // ---------------------------------------------------------------------------
-public func b32encode(data: Array<u8>) -> String {
+public func b32encode(data: Array[u8]) -> String {
     let mut result: String = "";
     let len: usize = data.len();
     let mut i: usize = 0;
@@ -214,8 +214,8 @@ public func b32encode(data: Array<u8>) -> String {
 // Decodes a Base32-encoded string into a byte array.
 // Case-insensitive for letters. Returns empty array on invalid input.
 // ---------------------------------------------------------------------------
-public func b32decode(encoded: String) -> Array<u8> {
-    let mut result: Array<u8> = Array::new();
+public func b32decode(encoded: String) -> Array[u8] {
+    let mut result: Array[u8] = Array.new();
     let mut buf: u64 = 0;
     let mut bits: u32 = 0;
 

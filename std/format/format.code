@@ -12,7 +12,7 @@
 // Example: format("Hello, {}! You are {} years old.", "Alice", 30)
 //          -> "Hello, Alice! You are 30 years old."
 // ---------------------------------------------------------------------------
-public func format(template: String, args: Array<String>) -> String {
+public func format(template: String, args: Array[String]) -> String {
     let mut result: String = "";
     let mut i: usize = 0;
     let mut arg_index: usize = 0;

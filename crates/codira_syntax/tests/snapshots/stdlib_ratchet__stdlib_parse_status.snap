@@ -2,11 +2,11 @@
 source: crates/codira_syntax/tests/stdlib_ratchet.rs
 expression: summary
 ---
-20 of 65 std files parse
+27 of 65 std files parse
 
 FAIL  std/ai/algorithm/functional.code  (768 errors)
-FAIL  std/atomic/atomic.code  (508 errors)
-FAIL  std/base64/base64.code  (71 errors)
+FAIL  std/atomic/atomic.code  (475 errors)
+ok    std/base64/base64.code
 ok    std/bit/bit.code
 ok    std/bit/mask.code
 ok    std/builtin/bool.code
@@ -34,18 +34,18 @@ FAIL  std/collections/set.code  (229 errors)
 FAIL  std/collections/span.code  (351 errors)
 FAIL  std/collections/string.code  (368 errors)
 ok    std/complex/complex.code
-FAIL  std/ffi/cstring.code  (119 errors)
-FAIL  std/ffi/unsafe_union.code  (297 errors)
-FAIL  std/format/format.code  (12 errors)
-FAIL  std/format/repr.code  (24 errors)
+FAIL  std/ffi/cstring.code  (62 errors)
+FAIL  std/ffi/unsafe_union.code  (284 errors)
+ok    std/format/format.code
+ok    std/format/repr.code
 ok    std/gpu/globals.code
 FAIL  std/gpu/host_info.code  (51 errors)
 ok    std/gpu/id.code
 FAIL  std/gpu/intrinsics.code  (126 errors)
 FAIL  std/gpu/profiler.code  (97 errors)
 FAIL  std/gpu/warp.code  (11 errors)
-FAIL  std/hashlib/hash.code  (36 errors)
-FAIL  std/hashlib/hasher.code  (87 errors)
+ok    std/hashlib/hash.code
+FAIL  std/hashlib/hasher.code  (60 errors)
 ok    std/math/constants.code
 ok    std/math/fast.code
 ok    std/math/math.code
@@ -56,16 +56,16 @@ ok    std/memory/memory.code
 FAIL  std/memory/owned_pointer.code  (353 errors)
 FAIL  std/memory/pointer.code  (448 errors)
 FAIL  std/memory/unsafe_pointer.code  (547 errors)
-FAIL  std/os/env.code  (15 errors)
-FAIL  std/os/os.code  (102 errors)
-FAIL  std/os/path.code  (32 errors)
-FAIL  std/os/process.code  (19 errors)
-FAIL  std/pathlib/path.code  (368 errors)
-FAIL  std/random/random.code  (101 errors)
+ok    std/os/env.code
+ok    std/os/os.code
+FAIL  std/os/path.code  (26 errors)
+ok    std/os/process.code
+FAIL  std/pathlib/path.code  (334 errors)
+FAIL  std/random/random.code  (28 errors)
 ok    std/sys/arg.code
 ok    std/sys/info.code
-FAIL  std/sys/intrinsics.code  (131 errors)
-FAIL  std/sys/terminate.code  (91 errors)
-FAIL  std/testing/suite.code  (61 errors)
-FAIL  std/testing/testing.code  (294 errors)
-FAIL  std/time/time.code  (44 errors)
+FAIL  std/sys/intrinsics.code  (129 errors)
+FAIL  std/sys/terminate.code  (80 errors)
+FAIL  std/testing/suite.code  (29 errors)
+FAIL  std/testing/testing.code  (40 errors)
+FAIL  std/time/time.code  (30 errors)
