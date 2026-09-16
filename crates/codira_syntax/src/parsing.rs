@@ -42,6 +42,25 @@ pub struct Token {
 
     /// Is the current token joined to the next one (`> >` vs `>>`).
     pub is_jointed_to_next: bool,
+
+    /// Does a line break separate this token from the previous one?
+    ///
+    /// The grammar is not whitespace-sensitive in general, but
+    /// `spec/LANGUAGE_SPEC.md` section 1 promises that `;` is "never
+    /// required at the end of a line-terminated statement". Honouring that
+    /// needs exactly one whitespace-derived fact: whether a postfix `(` or
+    /// `[` opens a call/index on the previous line's expression, or starts
+    /// a new statement. Without it,
+    ///
+    /// ```text
+    /// let x = f()
+    /// (y) + g(2)
+    /// ```
+    ///
+    /// parses as `f()(y) + g(2)` -- silently, with no syntax error -- which
+    /// is the worst possible outcome: the code means something other than
+    /// it reads.
+    pub has_newline_before: bool,
 }
 
 /// `TreeSink` abstracts details of a particular syntax tree implementation.

@@ -322,9 +322,26 @@ fn postfix_expr(
     mut allow_calls: bool,
 ) -> (CompletedMarker, BlockLike) {
     loop {
+        // A postfix `(` or `[` that begins a line starts a new statement
+        // rather than continuing this expression. Without this,
+        //
+        //     let x = f()
+        //     (y) + g(2)
+        //
+        // parses as `f()(y) + g(2)` with no syntax error at all -- the code
+        // silently means something other than it reads. LANGUAGE_SPEC
+        // section 1 promises `;` is never required at the end of a
+        // line-terminated statement, and this is the one place honouring
+        // that promise needs to know where the lines are.
+        //
+        // `.` is deliberately *not* included: a leading-dot continuation
+        // (`value\n    .method()`) is idiomatic method chaining and has no
+        // competing reading, since no statement can begin with `.`.
+        let continues_line = !p.at_start_of_line();
+
         lhs = match p.current() {
-            T!['('] if allow_calls => call_expr(p, lhs),
-            T!['['] if allow_calls => index_expr(p, lhs),
+            T!['('] if allow_calls && continues_line => call_expr(p, lhs),
+            T!['['] if allow_calls && continues_line => index_expr(p, lhs),
             T![.] => postfix_dot_expr(p, lhs),
             INDEX => field_expr(p, lhs),
             T![!] if !p.at(T![!=]) => force_unwrap_expr(p, lhs),

@@ -85,37 +85,56 @@ pub fn start(args: Args) -> anyhow::Result<ExitStatus> {
     // directly or under the fault-interception guard below.
     let invoke = || -> anyhow::Result<ExitStatus> {
         let return_type = &fn_definition.prototype.signature.return_type;
-        if return_type.equals::<bool>() {
-            let result: bool = runtime
-                .invoke(&args.entry, ())
-                .map_err(|e| anyhow!("{}", e))?;
 
-            println!("{result}");
-        } else if return_type.equals::<f64>() {
-            let result: f64 = runtime
-                .invoke(&args.entry, ())
-                .map_err(|e| anyhow!("{}", e))?;
+        /// Dispatches on the entry point's return type, invoking and
+        /// printing the first arm whose type matches.
+        ///
+        /// Every marshallable primitive is listed rather than just the
+        /// three that used to be here: an entry point returning `i32` --
+        /// the single most natural signature for `main` in a systems
+        /// language, and what `codira new` would lead anyone to write --
+        /// was rejected outright with "only native Codira return types are
+        /// supported", which read as a type-system limitation when it was
+        /// only a missing branch.
+        macro_rules! dispatch_on_return_type {
+            ($($ty:ty),+ $(,)?) => {
+                $(
+                    if return_type.equals::<$ty>() {
+                        let result: $ty = runtime
+                            .invoke(&args.entry, ())
+                            .map_err(|e| anyhow!("{}", e))?;
 
-            println!("{result}");
-        } else if return_type.equals::<i64>() {
-            let result: i64 = runtime
-                .invoke(&args.entry, ())
-                .map_err(|e| anyhow!("{}", e))?;
+                        println!("{result}");
+                        return Ok(ExitStatus::Success);
+                    }
+                )+
+            };
+        }
 
-            println!("{result}");
-        } else if return_type.equals::<()>() {
+        dispatch_on_return_type!(
+            bool, i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64,
+        );
+
+        if return_type.equals::<()>() {
             #[allow(clippy::unit_arg)]
             runtime
                 .invoke(&args.entry, ())
                 .map(|_: ()| ExitStatus::Success)
                 .map_err(|e| anyhow!("{}", e))?;
-        } else {
-            return Err(anyhow!(
-                "Only native Codira return types are supported for entry points. Found: {}",
-                return_type.name()
-            ));
-        };
-        Ok(ExitStatus::Success)
+            return Ok(ExitStatus::Success);
+        }
+
+        // A struct, array or other composite return type genuinely cannot
+        // be printed here -- there is no marshalling for it across the
+        // runtime boundary -- so this stays an error, but one that names
+        // what *is* accepted instead of implying nothing else exists.
+        Err(anyhow!(
+            "entry point '{}' returns `{}`, which cannot be marshalled across the runtime \
+             boundary. An entry point must return a primitive (bool, an integer or \
+             floating-point type) or nothing at all.",
+            args.entry,
+            return_type.name()
+        ))
     };
 
     if !args.heal {

@@ -43,29 +43,36 @@ pub(crate) fn gen_file_ir<'ink>(
     let mut functions = HashMap::new();
     let mut type_definitions = HashSet::new();
     let mut wrapper_functions = BTreeMap::new();
+    // `all_functions` rather than filtering `declarations`: methods declared
+    // in an `extend` block are associated items, not module-level ones, and
+    // they need prototypes exactly as much as free functions do.
+    for f in module_group
+        .iter()
+        .flat_map(|module| module.all_functions(code_gen.db))
+    {
+        if !f.is_extern(code_gen.db) {
+            let fun = function::gen_prototype(code_gen.db, hir_types, f, &llvm_module);
+            functions.insert(f, fun);
+
+            let fn_sig = f.ty(code_gen.db).callable_sig(code_gen.db).unwrap();
+            if f.visibility(code_gen.db).is_externally_visible()
+                && !fn_sig.marshallable(code_gen.db)
+            {
+                let wrapper_fun = function::gen_public_prototype(
+                    code_gen.db,
+                    &code_gen.hir_types,
+                    f,
+                    &llvm_module,
+                );
+                wrapper_functions.insert(f, wrapper_fun);
+            }
+        }
+    }
+
     for def in module_group
         .iter()
         .flat_map(|module| module.declarations(code_gen.db))
     {
-        if let ModuleDef::Function(f) = def {
-            if !f.is_extern(code_gen.db) {
-                let fun = function::gen_prototype(code_gen.db, hir_types, f, &llvm_module);
-                functions.insert(f, fun);
-
-                let fn_sig = f.ty(code_gen.db).callable_sig(code_gen.db).unwrap();
-                if f.visibility(code_gen.db).is_externally_visible()
-                    && !fn_sig.marshallable(code_gen.db)
-                {
-                    let wrapper_fun = function::gen_public_prototype(
-                        code_gen.db,
-                        &code_gen.hir_types,
-                        f,
-                        &llvm_module,
-                    );
-                    wrapper_functions.insert(f, wrapper_fun);
-                }
-            }
-        }
         if let ModuleDef::Struct(s) = def {
             type_definitions.insert(s.ty(code_gen.db));
         }

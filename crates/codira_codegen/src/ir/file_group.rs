@@ -51,40 +51,35 @@ pub(crate) fn gen_file_group_ir<'ink>(
 
     // Collect all intrinsic functions, wrapper function, and generate struct
     // declarations.
-    for def in module_group
+    // See `file::gen_file_ir`: `all_functions` covers `extend` block methods
+    // too, which `declarations` alone would miss.
+    for f in module_group
         .iter()
-        .flat_map(|module| module.declarations(code_gen.db))
+        .flat_map(|module| module.all_functions(code_gen.db))
     {
-        match def {
-            ModuleDef::Function(f) if !f.is_extern(code_gen.db) => {
-                intrinsics::collect_fn_body(
-                    code_gen.context,
-                    code_gen.target_machine.get_target_data(),
-                    code_gen.db,
-                    &mut intrinsics_map,
-                    &mut needs_alloc,
-                    &f.body(code_gen.db),
-                    &f.infer(code_gen.db),
-                );
-
-                let fn_sig = f.ty(code_gen.db).callable_sig(code_gen.db).unwrap();
-                if f.visibility(code_gen.db).is_externally_visible()
-                    && !fn_sig.marshallable(code_gen.db)
-                {
-                    intrinsics::collect_wrapper_body(
-                        code_gen.context,
-                        code_gen.target_machine.get_target_data(),
-                        &mut intrinsics_map,
-                        &mut needs_alloc,
-                    );
-                }
-            }
+        if f.is_extern(code_gen.db) {
             // TODO: Extern types for functions?
-            ModuleDef::Module(_)
-            | ModuleDef::Struct(_)
-            | ModuleDef::PrimitiveType(_)
-            | ModuleDef::TypeAlias(_)
-            | ModuleDef::Function(_) => (),
+            continue;
+        }
+
+        intrinsics::collect_fn_body(
+            code_gen.context,
+            code_gen.target_machine.get_target_data(),
+            code_gen.db,
+            &mut intrinsics_map,
+            &mut needs_alloc,
+            &f.body(code_gen.db),
+            &f.infer(code_gen.db),
+        );
+
+        let fn_sig = f.ty(code_gen.db).callable_sig(code_gen.db).unwrap();
+        if f.visibility(code_gen.db).is_externally_visible() && !fn_sig.marshallable(code_gen.db) {
+            intrinsics::collect_wrapper_body(
+                code_gen.context,
+                code_gen.target_machine.get_target_data(),
+                &mut intrinsics_map,
+                &mut needs_alloc,
+            );
         }
     }
 
@@ -98,17 +93,15 @@ pub(crate) fn gen_file_group_ir<'ink>(
         &code_gen.hir_types,
         module_group,
     );
-    for def in module_group
+    for f in module_group
         .iter()
-        .flat_map(|module| module.declarations(code_gen.db))
+        .flat_map(|module| module.all_functions(code_gen.db))
     {
-        if let ModuleDef::Function(f) = def {
-            // Find all functions that must be present in the dispatch table
-            if !f.is_extern(code_gen.db) {
-                let body = f.body(code_gen.db);
-                let infer = f.infer(code_gen.db);
-                dispatch_table_builder.collect_body(&body, &infer);
-            }
+        // Find all functions that must be present in the dispatch table
+        if !f.is_extern(code_gen.db) {
+            let body = f.body(code_gen.db);
+            let infer = f.infer(code_gen.db);
+            dispatch_table_builder.collect_body(&body, &infer);
         }
     }
 
@@ -143,11 +136,17 @@ pub(crate) fn gen_file_group_ir<'ink>(
             ModuleDef::Struct(s) => {
                 type_table_builder.collect_struct(s);
             }
-            ModuleDef::Function(f) => {
-                type_table_builder.collect_fn(f);
-            }
-            ModuleDef::PrimitiveType(_) | ModuleDef::TypeAlias(_) | ModuleDef::Module(_) => (),
+            ModuleDef::Function(_)
+            | ModuleDef::PrimitiveType(_)
+            | ModuleDef::TypeAlias(_)
+            | ModuleDef::Module(_) => (),
         }
+    }
+    for f in module_group
+        .iter()
+        .flat_map(|module| module.all_functions(code_gen.db))
+    {
+        type_table_builder.collect_fn(f);
     }
 
     let type_table = type_table_builder.build();

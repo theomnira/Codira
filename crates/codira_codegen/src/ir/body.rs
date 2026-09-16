@@ -136,7 +136,20 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         // Iterate over all parameters and their type and store them so we can reference
         // them later in code.
-        for (i, (pat, _ty)) in self.body.params().iter().enumerate() {
+        //
+        // The `self` receiver, when present, is LLVM parameter 0 (see
+        // `HirTypeCache::receiver_and_param_tys`), so the value parameters
+        // start one slot later. `self` is bound through exactly the same
+        // alloca-and-store path as any other parameter -- `Body` gives it an
+        // ordinary `Pat::Bind { name: self }` -- so nothing downstream has to
+        // treat a method's receiver specially.
+        let self_param = self.body.self_param().copied();
+
+        for (i, (pat, _ty)) in self_param
+            .iter()
+            .chain(self.body.params().iter())
+            .enumerate()
+        {
             let body = self.body.clone(); // Avoid borrow issues
 
             match &body[*pat] {
@@ -270,9 +283,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 self.gen_binary_op(expr, *lhs, *rhs, op.expect("missing op"))
             }
             Expr::UnaryOp { expr, op } => self.gen_unary_op(*expr, *op),
-            Expr::MethodCall { .. } => {
-                unimplemented!("Method calls are not yet implemented in the IR generator")
-            }
+            Expr::MethodCall {
+                receiver, ref args, ..
+            } => self.gen_method_call(expr, *receiver, args),
             Expr::Call {
                 ref callee,
                 ref args,
@@ -644,6 +657,57 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .collect();
 
         self.gen_struct_alloc(hir_struct, fields)
+    }
+
+    /// Generates IR for `receiver.method(args...)`.
+    ///
+    /// Inference has already done the hard part: `infer_method_call` resolves
+    /// the callee against the receiver's type and records the winner in
+    /// `InferenceResult::method_resolutions`. All that is left is to build the
+    /// argument list and hand it to the same `gen_call` a free-function call
+    /// uses -- so methods get dispatch table treatment, hot reloading and
+    /// value-struct boxing for free, rather than through a parallel code path
+    /// that could drift.
+    ///
+    /// This covers both spellings, because they are the same syntax:
+    /// `value.method(..)` passes the receiver as argument 0, while
+    /// `Type.assoc_fn(..)` (`LANGUAGE_SPEC` section 3's static member access)
+    /// passes no receiver at all. The two are told apart by asking the
+    /// *callee* whether it declares a `self` parameter, which is precisely
+    /// the thing that decides whether an argument has to be passed -- rather
+    /// than by re-deriving what the receiver expression was, which inference
+    /// has already settled.
+    fn gen_method_call(
+        &mut self,
+        tgt_expr: ExprId,
+        receiver: ExprId,
+        args: &[ExprId],
+    ) -> Option<BasicValueEnum<'ink>> {
+        let resolved = self
+            .infer
+            .method_resolution(tgt_expr)
+            .expect("inference resolved this method call, or it would not have type-checked");
+        let function = codira_hir::Function::from(resolved);
+
+        let mut call_args: Vec<BasicMetadataValueEnum<'ink>> = Vec::with_capacity(args.len() + 1);
+        if function.data(self.db).self_param().is_some() {
+            // A diverging receiver or argument makes the call itself
+            // unreachable; propagate that rather than emitting a call that
+            // can never run.
+            call_args.push(self.gen_expr(receiver)?.into());
+        }
+        for arg in args {
+            call_args.push(self.gen_expr(*arg)?.into());
+        }
+
+        self.gen_call(function, &call_args)
+            // Same convention as `Expr::Call`: a void method returns the unit
+            // struct so callers always get *something*, while a `never`
+            // method genuinely returns nothing.
+            .or_else(|| match self.infer[tgt_expr].interned() {
+                TyKind::Never => None,
+                _ => Some(self.context.const_struct(&[], false).into()),
+            })
     }
 
     /// Generates IR for a named tuple literal, e.g. `Foo(1.23, 4)`

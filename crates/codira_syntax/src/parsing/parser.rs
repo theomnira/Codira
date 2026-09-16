@@ -113,6 +113,17 @@ impl<'t> Parser<'t> {
         kinds.contains(self.current())
     }
 
+    /// Is the current token on a different line from the one before it?
+    ///
+    /// This is the grammar's only whitespace-derived signal, and it exists
+    /// to make `spec/LANGUAGE_SPEC.md` section 1's "`;` is never required at
+    /// the end of a line-terminated statement" true. A postfix `(` or `[`
+    /// that starts a line opens a new statement rather than continuing the
+    /// previous expression -- see `grammar::expressions::postfix_expr`.
+    pub(crate) fn at_start_of_line(&self) -> bool {
+        self.token_source.lookahead_nth(0).has_newline_before
+    }
+
     /// Checks if the current token is contextual keyword with text `t`.
     #[allow(dead_code)]
     pub(crate) fn at_contextual_kw(&self, kw: &str) -> bool {

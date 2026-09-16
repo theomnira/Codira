@@ -2040,3 +2040,23 @@ fn infer_tuple_nested() {
     }",
     ));
 }
+
+#[test]
+fn probe_method_call_arity() {
+    insta::assert_snapshot!(infer(
+        r"
+    struct Counter { value: i32 }
+
+    extend Counter {
+        func bumped(self, by: i32) -> Counter {
+            Counter { value: self.value + by }
+        }
+        func get(self) -> i32 { self.value }
+    }
+
+    func main() -> i32 {
+        let c = Counter { value: 10 };
+        c.bumped(5).get()
+    }",
+    ));
+}

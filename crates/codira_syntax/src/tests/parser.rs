@@ -1162,3 +1162,143 @@ fn tuple_expr() {
     )
     .debug_dump());
 }
+
+// ===========================================================================
+// Statement termination across line breaks
+// ===========================================================================
+//
+// LANGUAGE_SPEC section 1: "`;` ... is **never** required at the end of a
+// line-terminated statement." Honouring that needs the grammar to know one
+// whitespace-derived fact -- whether a postfix `(` or `[` begins a line --
+// because those are the only postfix operators that can also start a
+// statement. Everything else about the grammar stays whitespace-insensitive.
+//
+// The failure mode this prevents is the dangerous kind: before the rule
+// existed, the case below parsed *successfully* as `f()(x) + g(2)`, so the
+// code compiled and meant something other than it read.
+
+/// A `(` on a new line starts a statement; it does not call the previous
+/// line's result.
+#[test]
+fn newline_before_paren_ends_the_statement() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = f()
+    (x) + g(2)
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    // The `let` initializer must be exactly `f()` -- not `f()(x)`.
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(let_stmt.initializer().unwrap().syntax().text(), "f()");
+}
+
+/// The same rule for `[`: a new line starting with `[` is an array literal
+/// statement, not an index into the previous expression.
+#[test]
+fn newline_before_bracket_ends_the_statement() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = f()
+    [1, 2][0]
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(let_stmt.initializer().unwrap().syntax().text(), "f()");
+}
+
+/// On the *same* line, `(` and `[` still mean call and index -- the rule is
+/// about line breaks only, so nothing about ordinary expressions changes.
+#[test]
+fn same_line_paren_and_bracket_still_call_and_index() {
+    let call = only_initializer("f()(x)");
+    assert_eq!(call.syntax().kind(), SyntaxKind::CALL_EXPR);
+    assert_eq!(call.syntax().text(), "f()(x)");
+
+    let index = only_initializer("f()[0]");
+    assert_eq!(index.syntax().kind(), SyntaxKind::INDEX_EXPR);
+}
+
+/// A `(` continuing a genuinely unfinished line still opens an argument
+/// list: the rule keys on the line break before the `(`, not on where the
+/// callee started, so an argument list split across lines is unaffected.
+#[test]
+fn multiline_argument_list_is_unaffected() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = g(
+        1,
+        2
+    )
+    x
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(
+        let_stmt.initializer().unwrap().syntax().kind(),
+        SyntaxKind::CALL_EXPR
+    );
+}
+
+/// A leading-dot continuation is deliberately exempt: no statement can begin
+/// with `.`, so `value\n    .method()` has only one possible reading and
+/// stays idiomatic method chaining.
+#[test]
+fn newline_before_dot_still_chains() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = f()
+        .method()
+        .other()
+    x
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(
+        let_stmt.initializer().unwrap().syntax().kind(),
+        SyntaxKind::METHOD_CALL_EXPR
+    );
+}
+
+/// An explicit `;` is still accepted and means the same thing, so existing
+/// semicolon-terminated code is unaffected by the rule.
+#[test]
+fn explicit_semicolon_still_terminates() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = f();
+    (x) + g(2)
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(let_stmt.initializer().unwrap().syntax().text(), "f()");
+}

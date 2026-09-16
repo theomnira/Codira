@@ -1293,3 +1293,60 @@ fn tuple_is_zero_overhead() {
     }"#,
     );
 }
+
+/// Methods take their receiver as LLVM parameter 0, ahead of the value
+/// parameters; associated functions (no `self`) take none. Both go through
+/// the same `gen_call` a free function does, so they share its dispatch
+/// table and hot-reload behaviour rather than living on a parallel path.
+#[test]
+fn method_call() {
+    test_snapshot_unoptimized(
+        "method_call",
+        r#"
+    public struct Counter { value: i32 };
+
+    extend Counter {
+        func get(self) -> i32 {
+            self.value
+        }
+
+        func bumped(self, by: i32) -> Counter {
+            Counter { value: self.value + by }
+        }
+
+        func make(start: i32) -> Counter {
+            Counter { value: start }
+        }
+    }
+
+    public func chained(start: i32, by: i32) -> i32 {
+        Counter.make(start).bumped(by).get()
+    }"#,
+    );
+}
+
+/// `Type.assoc_fn(..)` is static member access (`LANGUAGE_SPEC` section 3),
+/// not a method call on a value. Inference recognises the type-path receiver
+/// and resolves without a `self`; codegen passes no receiver because the
+/// *callee* has no `self` parameter.
+#[test]
+fn static_member_access() {
+    test_snapshot(
+        "static_member_access",
+        r#"
+    struct Counter { value: i32 };
+
+    extend Counter {
+        func make(start: i32) -> Counter {
+            Counter { value: start }
+        }
+        func get(self) -> i32 {
+            self.value
+        }
+    }
+
+    public func main() -> i32 {
+        Counter.make(7).get()
+    }"#,
+    );
+}

@@ -73,6 +73,22 @@ pub struct FunctionData {
     /// Whether this function carries the `@strict` attribute, opting it
     /// into `expr::validator::move_check`'s use-after-consume checking.
     is_strict: bool,
+    /// The receiver's type, for a method declared with a `self` parameter.
+    ///
+    /// Deliberately kept *out* of `params`, which stays the list of ordinary
+    /// value parameters. Inference relies on that: `infer_method_call` passes
+    /// only the written-out arguments to `infer_call_arguments_and_return`,
+    /// which arity-checks them against `FnSig::params()`, so folding the
+    /// receiver in there would make every method call look off by one.
+    ///
+    /// Codegen consumes this separately via [`Function::self_param_ty`] and
+    /// materialises the receiver as LLVM parameter 0, ahead of the value
+    /// parameters.
+    ///
+    /// An un-ascribed `self` lowers to `Self`, which the function's own
+    /// resolver binds to the enclosing `extend`'s type. An explicit
+    /// ascription (`self: BitSet`) is honoured as written.
+    self_param: Option<LocalTypeRefId>,
 }
 
 impl FunctionData {
@@ -86,7 +102,18 @@ impl FunctionData {
 
         let mut params = Vec::new();
         let mut consuming_params = Vec::new();
+        let mut self_param = None;
         if let Some(param_list) = src.param_list() {
+            // The receiver is recorded on its own rather than pushed into
+            // `params` -- see `FunctionData::self_param`'s doc comment for
+            // why folding it in would break method-call arity checking.
+            if let Some(self_param_src) = param_list.self_param() {
+                self_param = Some(match self_param_src.ascribed_type().as_ref() {
+                    Some(type_ref) => type_ref_builder.alloc_from_node(type_ref),
+                    None => type_ref_builder.alloc_self(),
+                });
+            }
+
             for param in param_list.params() {
                 let type_ref = type_ref_builder.alloc_from_node_opt(param.ascribed_type().as_ref());
                 params.push(type_ref);
@@ -131,6 +158,7 @@ impl FunctionData {
             effects: func.effects.clone(),
             consuming_params,
             is_strict,
+            self_param,
         })
     }
 
@@ -140,6 +168,13 @@ impl FunctionData {
 
     pub fn params(&self) -> &[LocalTypeRefId] {
         &self.params
+    }
+
+    /// The receiver's type reference, or `None` for a free/associated
+    /// function. See the field's doc comment for why this is separate from
+    /// [`FunctionData::params`].
+    pub fn self_param(&self) -> Option<LocalTypeRefId> {
+        self.self_param
     }
 
     pub fn visibility(&self) -> &RawVisibility {
@@ -276,6 +311,21 @@ impl Function {
         let resolver = self.id.resolver(db);
         let data = self.data(db);
         Ty::from_hir(db, &resolver, &data.type_ref_map, data.ret_type).0
+    }
+
+    /// The resolved type of this function's `self` receiver, or `None` if it
+    /// has none.
+    ///
+    /// Resolution goes through the function's own resolver, which is what
+    /// binds a bare `self`'s `Self` type to the enclosing `extend` block's
+    /// type. Codegen uses this to prepend the receiver to the LLVM parameter
+    /// list; it is deliberately absent from [`Function::params`], which
+    /// reports only the value parameters inference arity-checks against.
+    pub fn self_param_ty(self, db: &dyn HirDatabase) -> Option<Ty> {
+        let data = self.data(db);
+        let self_param = data.self_param()?;
+        let resolver = self.id.resolver(db);
+        Some(Ty::from_hir(db, &resolver, &data.type_ref_map, self_param).0)
     }
 
     pub fn infer(self, db: &dyn HirDatabase) -> Arc<InferenceResult> {

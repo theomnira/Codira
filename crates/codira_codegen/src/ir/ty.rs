@@ -212,14 +212,31 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
         self.context.ptr_type(AddressSpace::default()).into()
     }
 
+    /// This function's LLVM parameter types in order: the `self` receiver
+    /// first, when it has one, then the ordinary value parameters.
+    ///
+    /// A method's receiver is passed as parameter 0 -- the obvious ABI
+    /// choice, and the one that lets `gen_call` stay positional for methods
+    /// and free functions alike. It is not part of `FnSig::params()` (see
+    /// `FunctionData::self_param`), so it has to be spliced in here rather
+    /// than falling out of the signature.
+    fn receiver_and_param_tys<'a>(
+        &self,
+        func: codira_hir::Function,
+        sig: &'a codira_hir::FnSig,
+    ) -> impl Iterator<Item = Ty> + use<'a> {
+        func.self_param_ty(self.db)
+            .into_iter()
+            .chain(sig.params().iter().cloned())
+    }
+
     /// Returns the type of the specified function definition
-    pub fn get_function_type(&self, ty: codira_hir::Function) -> FunctionType<'ink> {
-        let ty = self.db.callable_sig(ty.into());
-        let param_tys: Vec<_> = ty
-            .params()
-            .iter()
+    pub fn get_function_type(&self, func: codira_hir::Function) -> FunctionType<'ink> {
+        let ty = self.db.callable_sig(func.into());
+        let param_tys: Vec<_> = self
+            .receiver_and_param_tys(func, &ty)
             .map(|p| {
-                self.get_basic_type(p)
+                self.get_basic_type(&p)
                     .expect("could not convert function argument to basic type")
                     .into()
             })
@@ -238,13 +255,12 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
     /// Returns the type of a specified function definition that is callable
     /// from the outside of the Codira code. This function should be C ABI
     /// compatible.
-    pub fn get_public_function_type(&self, ty: codira_hir::Function) -> FunctionType<'ink> {
-        let ty = self.db.callable_sig(ty.into());
-        let param_tys: Vec<_> = ty
-            .params()
-            .iter()
+    pub fn get_public_function_type(&self, func: codira_hir::Function) -> FunctionType<'ink> {
+        let ty = self.db.callable_sig(func.into());
+        let param_tys: Vec<_> = self
+            .receiver_and_param_tys(func, &ty)
             .map(|p| {
-                self.get_public_basic_type(p)
+                self.get_public_basic_type(&p)
                     .expect("could not convert function argument to public basic type")
                     .into()
             })
