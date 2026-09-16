@@ -65,32 +65,34 @@ public let CACHE_WRITE_THROUGH: i32 = 32;
 public let CACHE_WORKGROUP: i32 = 64;
 
 // Returns the PTX mnemonic string for this cache operation.
-public func CacheOperation.mnemonic(self) -> StringLiteral {
-    if self._value == CACHE_ALWAYS {
-        return "ca";
+extend CacheOperation {
+    public func mnemonic(self) -> StringLiteral {
+        if self._value == CACHE_ALWAYS {
+            return "ca";
+        }
+        if self._value == CACHE_GLOBAL {
+            return "cg";
+        }
+        if self._value == CACHE_STREAMING {
+            return "cs";
+        }
+        if self._value == CACHE_LAST_USE {
+            return "lu";
+        }
+        if self._value == CACHE_VOLATILE {
+            return "cv";
+        }
+        if self._value == CACHE_WRITE_BACK {
+            return "wb";
+        }
+        if self._value == CACHE_WRITE_THROUGH {
+            return "wt";
+        }
+        if self._value == CACHE_WORKGROUP {
+            return "wg";
+        }
+        return "unknown cache operation";
     }
-    if self._value == CACHE_GLOBAL {
-        return "cg";
-    }
-    if self._value == CACHE_STREAMING {
-        return "cs";
-    }
-    if self._value == CACHE_LAST_USE {
-        return "lu";
-    }
-    if self._value == CACHE_VOLATILE {
-        return "cv";
-    }
-    if self._value == CACHE_WRITE_BACK {
-        return "wb";
-    }
-    if self._value == CACHE_WRITE_THROUGH {
-        return "wt";
-    }
-    if self._value == CACHE_WORKGROUP {
-        return "wg";
-    }
-    return "unknown cache operation";
 }
 
 // =============================================================================
@@ -289,23 +291,25 @@ public let SCOPE_GPU: i32 = 5;
 public let SCOPE_SYSTEM: i32 = 6;
 
 // Returns the mnemonic string representation of the memory scope.
-public func Scope.mnemonic(self) -> StringLiteral {
-    if self._value <= SCOPE_WARP {
-        return "";
+extend Scope {
+    public func mnemonic(self) -> StringLiteral {
+        if self._value <= SCOPE_WARP {
+            return "";
+        }
+        if self._value == SCOPE_BLOCK {
+            return "cta";
+        }
+        if self._value == SCOPE_CLUSTER {
+            return "cluster";
+        }
+        if self._value == SCOPE_GPU {
+            return "gpu";
+        }
+        if self._value == SCOPE_SYSTEM {
+            return "sys";
+        }
+        return "<<invalid scope>>";
     }
-    if self._value == SCOPE_BLOCK {
-        return "cta";
-    }
-    if self._value == SCOPE_CLUSTER {
-        return "cluster";
-    }
-    if self._value == SCOPE_GPU {
-        return "gpu";
-    }
-    if self._value == SCOPE_SYSTEM {
-        return "sys";
-    }
-    return "<<invalid scope>>";
 }
 
 // Enforces ordering of memory operations across threads.
@@ -346,66 +350,74 @@ public struct AMDBufferResource {
 
 // Construct an AMD buffer resource descriptor from a base address and the
 // number of records.  Stride is assumed to be zero.
-public func AMDBufferResource.new(address: u64, num_records: u32, elem_size: u32) -> AMDBufferResource {
-    if !info.is_amd_gpu() {
-        __panic("AMDBufferResource is only applicable on AMDGPU hardware.");
-    }
-    let r: AMDBufferResource;
-    r.desc = SIMD[u32, 4].zero();
-    r.desc[0] = (address & 0xFFFF_FFFF) as u32;
-    r.desc[1] = (address >> 32) as u32;
-    r.desc[2] = elem_size * num_records;
-    if info._is_amd_rdna3() | info._is_amd_rdna4() {
-        r.desc[3] = 0x31004000;
-    } else {
-        if info._is_amd_rdna1() | info._is_amd_rdna2() {
-            r.desc[3] = 0x31014000;
-        } else {
-            // CDNA / GCN.
-            r.desc[3] = 0x00020000;
+extend AMDBufferResource {
+    public func new(address: u64, num_records: u32, elem_size: u32) -> AMDBufferResource {
+        if !info.is_amd_gpu() {
+            __panic("AMDBufferResource is only applicable on AMDGPU hardware.");
         }
+        let r: AMDBufferResource;
+        r.desc = SIMD[u32, 4].zero();
+        r.desc[0] = (address & 0xFFFF_FFFF) as u32;
+        r.desc[1] = (address >> 32) as u32;
+        r.desc[2] = elem_size * num_records;
+        if info._is_amd_rdna3() | info._is_amd_rdna4() {
+            r.desc[3] = 0x31004000;
+        } else {
+            if info._is_amd_rdna1() | info._is_amd_rdna2() {
+                r.desc[3] = 0x31014000;
+            } else {
+                // CDNA / GCN.
+                r.desc[3] = 0x00020000;
+            }
+        }
+        return r;
     }
-    return r;
 }
 
 // Gets the base pointer address from the buffer resource descriptor.
-public func AMDBufferResource.get_base_ptr(self) -> u64 {
-    let lo = self.desc[0];
-    let hi = self.desc[1];
-    return ((hi as u64) << 32) | (lo as u64);
+extend AMDBufferResource {
+    public func get_base_ptr(self) -> u64 {
+        let lo = self.desc[0];
+        let hi = self.desc[1];
+        return ((hi as u64) << 32) | (lo as u64);
+    }
 }
 
 // Loads data from the buffer using the AMD buffer load intrinsic.
-public func AMDBufferResource.load[T](
-    self,
-    vector_offset: i32,
-    scalar_offset: i32,
-) -> T {
-    if !info.is_amd_gpu() {
-        __panic("buffer_load is only applicable on AMDGPU hardware.");
+extend AMDBufferResource {
+    public func load[T](
+        self,
+        vector_offset: i32,
+        scalar_offset: i32,
+    ) -> T {
+        if !info.is_amd_gpu() {
+            __panic("buffer_load is only applicable on AMDGPU hardware.");
+        }
+        let vec_bytes = vector_offset * (__intrinsic_sizeof[T]() as i32);
+        let scalar_bytes = scalar_offset * (__intrinsic_sizeof[T]() as i32);
+        return intrinsics.llvm_intrinsic["llvm.amdgcn.raw.buffer.load"][T](
+            self.desc, vec_bytes, scalar_bytes, 0
+        );
     }
-    let vec_bytes = vector_offset * (__intrinsic_sizeof[T]() as i32);
-    let scalar_bytes = scalar_offset * (__intrinsic_sizeof[T]() as i32);
-    return intrinsics.llvm_intrinsic["llvm.amdgcn.raw.buffer.load"][T](
-        self.desc, vec_bytes, scalar_bytes, 0
-    );
 }
 
 // Stores a register value to global memory with cache-operation control.
-public func AMDBufferResource.store[T](
-    self,
-    vector_offset: i32,
-    scalar_offset: i32,
-    val: T,
-) -> void {
-    if !info.is_amd_gpu() {
-        __panic("buffer_store is only applicable on AMDGPU hardware.");
+extend AMDBufferResource {
+    public func store[T](
+        self,
+        vector_offset: i32,
+        scalar_offset: i32,
+        val: T,
+    ) -> void {
+        if !info.is_amd_gpu() {
+            __panic("buffer_store is only applicable on AMDGPU hardware.");
+        }
+        let vec_bytes = vector_offset * (__intrinsic_sizeof[T]() as i32);
+        let scalar_bytes = scalar_offset * (__intrinsic_sizeof[T]() as i32);
+        intrinsics.llvm_intrinsic_void["llvm.amdgcn.raw.buffer.store"](
+            val, self.desc, vec_bytes, scalar_bytes, 0
+        );
     }
-    let vec_bytes = vector_offset * (__intrinsic_sizeof[T]() as i32);
-    let scalar_bytes = scalar_offset * (__intrinsic_sizeof[T]() as i32);
-    intrinsics.llvm_intrinsic_void["llvm.amdgcn.raw.buffer.store"](
-        val, self.desc, vec_bytes, scalar_bytes, 0
-    );
 }
 
 // =============================================================================

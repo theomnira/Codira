@@ -54,58 +54,72 @@ public struct Layout {
 
 // Create a layout from explicit size and alignment.
 // Panics if `align` is not a power of two.
-public func Layout.new(size: usize, align: usize) -> Layout {
-    if align == 0 | (align & (align - 1)) != 0 {
-        __panic("Layout.new: alignment must be a non-zero power of two");
+extend Layout {
+    public func new(size: usize, align: usize) -> Layout {
+        if align == 0 | (align & (align - 1)) != 0 {
+            __panic("Layout.new: alignment must be a non-zero power of two");
+        }
+        return Layout { size: size, align: align };
     }
-    return Layout { size: size, align: align };
 }
 
 // Create a layout for a single value of type T.
-public func Layout.of[T]() -> Layout {
-    return Layout {
-        size: __intrinsic_sizeof[T](),
-        align: __intrinsic_alignof[T](),
-    };
+extend Layout {
+    public func of[T]() -> Layout {
+        return Layout {
+            size: __intrinsic_sizeof[T](),
+            align: __intrinsic_alignof[T](),
+        };
+    }
 }
 
 // Create a layout for an array of `count` values of type T.
 // Handles inter-element padding.
-public func Layout.array[T](count: usize) -> Layout {
-    let elem_size = __intrinsic_sizeof[T]();
-    let elem_align = __intrinsic_alignof[T]();
-    // Stride = size rounded up to alignment.
-    let stride = (elem_size + elem_align - 1) & (0 - elem_align);
-    return Layout {
-        size: stride * count,
-        align: elem_align,
-    };
+extend Layout {
+    public func array[T](count: usize) -> Layout {
+        let elem_size = __intrinsic_sizeof[T]();
+        let elem_align = __intrinsic_alignof[T]();
+        // Stride = size rounded up to alignment.
+        let stride = (elem_size + elem_align - 1) & (0 - elem_align);
+        return Layout {
+            size: stride * count,
+            align: elem_align,
+        };
+    }
 }
 
 // Pad layout size up to its alignment.
-public func Layout.pad_to_align(self) -> Layout {
-    let padded = (self.size + self.align - 1) & (0 - self.align);
-    return Layout { size: padded, align: self.align };
+extend Layout {
+    public func pad_to_align(self) -> Layout {
+        let padded = (self.size + self.align - 1) & (0 - self.align);
+        return Layout { size: padded, align: self.align };
+    }
 }
 
 // Extend this layout with another, returning (combined_layout, offset_of_second).
-public func Layout.extend(self, other: Layout) -> (Layout, usize) {
-    let offset = (self.size + other.align - 1) & (0 - other.align);
-    let new_align = self.align;
-    if other.align > new_align {
-        new_align = other.align;
+extend Layout {
+    public func extend(self, other: Layout) -> (Layout, usize) {
+        let offset = (self.size + other.align - 1) & (0 - other.align);
+        let new_align = self.align;
+        if other.align > new_align {
+            new_align = other.align;
+        }
+        let new_size = offset + other.size;
+        return (Layout { size: new_size, align: new_align }, offset);
     }
-    let new_size = offset + other.size;
-    return (Layout { size: new_size, align: new_align }, offset);
 }
 
-public func Layout.to_string(self) -> String {
-    return "Layout { size: " + __intrinsic_to_string(self.size)
-        + ", align: " + __intrinsic_to_string(self.align) + " }";
+extend Layout {
+    public func to_string(self) -> String {
+        return "Layout { size: " + __intrinsic_to_string(self.size)
+            + ", align: " + __intrinsic_to_string(self.align) + " }";
+    }
 }
 
-public func Layout.eq(self, other: Layout) -> bool {
-    return self.size == other.size & self.align == other.align;
+extend Layout {
+    public func eq(self, other: Layout) -> bool {
+        return self.size == other.size & self.align == other.align;
+    }
 }
 
 // =============================================================================
@@ -115,57 +129,67 @@ public func Layout.eq(self, other: Layout) -> bool {
 // The default system allocator.  Delegates to platform APIs.
 public struct DefaultAllocator {}
 
-public func DefaultAllocator.new() -> DefaultAllocator {
-    return DefaultAllocator {};
+extend DefaultAllocator {
+    public func new() -> DefaultAllocator {
+        return DefaultAllocator {};
+    }
 }
 
 // Allocate `size` bytes aligned to `align`.
-public func DefaultAllocator.allocate(self, size: usize, align: usize) -> usize {
-    if size == 0 {
-        return 0;
+extend DefaultAllocator {
+    public func allocate(self, size: usize, align: usize) -> usize {
+        if size == 0 {
+            return 0;
+        }
+        let addr = __intrinsic_alloc(size, align);
+        if addr == 0 {
+            __panic("DefaultAllocator.allocate: out of memory");
+        }
+        return addr;
     }
-    let addr = __intrinsic_alloc(size, align);
-    if addr == 0 {
-        __panic("DefaultAllocator.allocate: out of memory");
-    }
-    return addr;
 }
 
 // Free a block.
-public func DefaultAllocator.deallocate(self, addr: usize, size: usize, align: usize) -> void {
-    if addr == 0 {
-        return;
+extend DefaultAllocator {
+    public func deallocate(self, addr: usize, size: usize, align: usize) -> void {
+        if addr == 0 {
+            return;
+        }
+        __intrinsic_dealloc(addr, size, align);
     }
-    __intrinsic_dealloc(addr, size, align);
 }
 
 // Resize a block.
-public func DefaultAllocator.reallocate(
-    self,
-    addr: usize,
-    old_size: usize,
-    new_size: usize,
-    align: usize,
-) -> usize {
-    if addr == 0 {
-        return self.allocate(new_size, align);
+extend DefaultAllocator {
+    public func reallocate(
+        self,
+        addr: usize,
+        old_size: usize,
+        new_size: usize,
+        align: usize,
+    ) -> usize {
+        if addr == 0 {
+            return self.allocate(new_size, align);
+        }
+        if new_size == 0 {
+            self.deallocate(addr, old_size, align);
+            return 0;
+        }
+        let new_addr = __intrinsic_realloc(addr, old_size, new_size, align);
+        if new_addr == 0 {
+            __panic("DefaultAllocator.reallocate: out of memory");
+        }
+        return new_addr;
     }
-    if new_size == 0 {
-        self.deallocate(addr, old_size, align);
-        return 0;
-    }
-    let new_addr = __intrinsic_realloc(addr, old_size, new_size, align);
-    if new_addr == 0 {
-        __panic("DefaultAllocator.reallocate: out of memory");
-    }
-    return new_addr;
 }
 
 // Allocate zeroed memory.
-public func DefaultAllocator.allocate_zeroed(self, size: usize, align: usize) -> usize {
-    let addr = self.allocate(size, align);
-    __intrinsic_memset(addr, 0, size);
-    return addr;
+extend DefaultAllocator {
+    public func allocate_zeroed(self, size: usize, align: usize) -> usize {
+        let addr = self.allocate(size, align);
+        __intrinsic_memset(addr, 0, size);
+        return addr;
+    }
 }
 
 // =============================================================================

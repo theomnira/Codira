@@ -108,10 +108,31 @@ fn param(p: &mut Parser<'_>, optional_types: bool) {
     m.complete(p, PARAM);
 }
 
+/// Parses the receiver, if this parameter list opens with one.
+///
+/// Three spellings, all producing the same `SELF_PARAM`:
+///
+/// * `self` -- the ordinary receiver.
+/// * `var self` -- a mutable receiver (`spec/LANGUAGE_SPEC.md` section 3's
+///   `func scale(var self)`).
+/// * `mut self` -- the Rust-style spelling of `var self`, accepted for the same
+///   reason `let mut x` is accepted as `var x` (see `expressions::let_stmt`):
+///   it is what idiomatic pre-redesign code writes, and mutability carries no
+///   semantics HIR tracks today under the shared mutability model of section 8.
+///
+/// `mut` is a *contextual* keyword, so it arrives as an `IDENT` and has to
+/// be promoted with `bump_remap`; `p.eat(T![mut])` never matches.
 fn opt_self_param(p: &mut Parser<'_>) {
-    if p.at(T![self]) || (p.at(T![var]) && p.nth(1) == T![self]) {
+    let at_var_self = p.at(T![var]) && p.nth(1) == T![self];
+    let at_mut_self = p.at_contextual_kw("mut") && p.nth(1) == T![self];
+
+    if p.at(T![self]) || at_var_self || at_mut_self {
         let m = p.start();
-        p.eat(T![var]);
+        if at_mut_self {
+            p.bump_remap(T![mut]);
+        } else {
+            p.eat(T![var]);
+        }
         self_as_name(p);
         m.complete(p, SELF_PARAM);
 

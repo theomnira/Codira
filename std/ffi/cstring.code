@@ -84,11 +84,11 @@ public func cstring_from_ptr(ptr: RawPointer[u8]) -> CString {
 // Converts the CString to a Codira String (copies the data, excludes
 // the null terminator).
 // ---------------------------------------------------------------------------
-public func cstring_to_string(self: CString) -> String {
-    let mut bytes: Array[u8] = Array.with_capacity(self._len);
+public func cstring_to_string(this: CString) -> String {
+    let mut bytes: Array[u8] = Array.with_capacity(this._len);
     let mut i: usize = 0;
-    while i < self._len {
-        bytes.push(self._data[i]);
+    while i < this._len {
+        bytes.push(this._data[i]);
         i = i + 1;
     }
     return String.from_bytes(bytes);
@@ -99,35 +99,35 @@ public func cstring_to_string(self: CString) -> String {
 // Returns a raw pointer to the underlying null-terminated data.
 // The pointer is valid for the lifetime of this CString.
 // ---------------------------------------------------------------------------
-public func cstring_as_ptr(self: CString) -> RawPointer[u8] {
-    return self._data.as_ptr();
+public func cstring_as_ptr(this: CString) -> RawPointer[u8] {
+    return this._data.as_ptr();
 }
 
 // ---------------------------------------------------------------------------
 // len
 // Returns the length of the string in bytes, excluding the null terminator.
 // ---------------------------------------------------------------------------
-public func cstring_len(self: CString) -> usize {
-    return self._len;
+public func cstring_len(this: CString) -> usize {
+    return this._len;
 }
 
 // ---------------------------------------------------------------------------
 // is_empty
 // Returns true if the string has zero length (just a null terminator).
 // ---------------------------------------------------------------------------
-public func cstring_is_empty(self: CString) -> bool {
-    return self._len == 0;
+public func cstring_is_empty(this: CString) -> bool {
+    return this._len == 0;
 }
 
 // ---------------------------------------------------------------------------
 // byte_at
 // Returns the byte at `index`. Panics if index >= len.
 // ---------------------------------------------------------------------------
-public func cstring_byte_at(self: CString, index: usize) -> u8 {
-    if index >= self._len {
+public func cstring_byte_at(this: CString, index: usize) -> u8 {
+    if index >= this._len {
         panic("CString.byte_at: index out of bounds");
     }
-    return self._data[index];
+    return this._data[index];
 }
 
 // ---------------------------------------------------------------------------

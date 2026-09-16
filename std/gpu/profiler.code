@@ -35,47 +35,61 @@ public struct ProfileBlock {
 
 // Initialize a new ProfileBlock with the given name, recording the current
 // performance counter as the start time.
-public func ProfileBlock.new(name: String) -> ProfileBlock {
-    return ProfileBlock { _name: name, _start_time: time.perf_counter_ns() };
+extend ProfileBlock {
+    public func new(name: String) -> ProfileBlock {
+        return ProfileBlock { _name: name, _start_time: time.perf_counter_ns() };
+    }
 }
 
 // Initialize a ProfileBlock from an explicit start timestamp (nanoseconds
 // from `std.time.perf_counter_ns`).
-public func ProfileBlock.from_start(name: String, start_time: u64) -> ProfileBlock {
-    return ProfileBlock { _name: name, _start_time: start_time };
+extend ProfileBlock {
+    public func from_start(name: String, start_time: u64) -> ProfileBlock {
+        return ProfileBlock { _name: name, _start_time: start_time };
+    }
 }
 
 // Returns the name of this profiling block.
-public func ProfileBlock.name(self) -> String {
-    return self._name;
+extend ProfileBlock {
+    public func name(self) -> String {
+        return self._name;
+    }
 }
 
 // Returns the start timestamp of this profiling block in nanoseconds.
-public func ProfileBlock.start_time(self) -> u64 {
-    return self._start_time;
+extend ProfileBlock {
+    public func start_time(self) -> u64 {
+        return self._start_time;
+    }
 }
 
 // Returns the elapsed time since the block was started, in nanoseconds.
-public func ProfileBlock.elapsed_ns(self) -> u64 {
-    let now = time.perf_counter_ns();
-    if now >= self._start_time {
-        return now - self._start_time;
+extend ProfileBlock {
+    public func elapsed_ns(self) -> u64 {
+        let now = time.perf_counter_ns();
+        if now >= self._start_time {
+            return now - self._start_time;
+        }
+        return 0;
     }
-    return 0;
 }
 
 // Records the end time and prints a formatted timing line to stderr:
 //
 //   @ <name> <elapsed> ns
-public func ProfileBlock.finish(self) -> void {
-    let elapsed = self.elapsed_ns();
-    let msg = "@ " + self._name + " " + (elapsed as i64).to_string() + " ns\n";
-    __intrinsic_write_stderr(msg);
+extend ProfileBlock {
+    public func finish(self) -> void {
+        let elapsed = self.elapsed_ns();
+        let msg = "@ " + self._name + " " + (elapsed as i64).to_string() + " ns\n";
+        __intrinsic_write_stderr(msg);
+    }
 }
 
 // Convenience: print the elapsed time of `self` without consuming it.
-public func ProfileBlock.report(self) -> void {
-    self.finish();
+extend ProfileBlock {
+    public func report(self) -> void {
+        self.finish();
+    }
 }
 
 // =============================================================================

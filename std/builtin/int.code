@@ -29,33 +29,45 @@ public struct Int {
 // =============================================================================
 
 // Create an Int from a raw isize literal.
-public func Int.new(v: isize) -> Int {
-    return Int { _value: v };
+extend Int {
+    public func new(v: isize) -> Int {
+        return Int { _value: v };
+    }
 }
 
 // Create an Int with value zero.
-public func Int.zero() -> Int {
-    return Int { _value: 0 };
+extend Int {
+    public func zero() -> Int {
+        return Int { _value: 0 };
+    }
 }
 
 // Create an Int with value one.
-public func Int.one() -> Int {
-    return Int { _value: 1 };
+extend Int {
+    public func one() -> Int {
+        return Int { _value: 1 };
+    }
 }
 
 // Create from a 32-bit integer (widening, always safe).
-public func Int.from_i32(v: i32) -> Int {
-    return Int { _value: v as isize };
+extend Int {
+    public func from_i32(v: i32) -> Int {
+        return Int { _value: v as isize };
+    }
 }
 
 // Create from a 64-bit integer (may truncate on 32-bit platforms).
-public func Int.from_i64(v: i64) -> Int {
-    return Int { _value: v as isize };
+extend Int {
+    public func from_i64(v: i64) -> Int {
+        return Int { _value: v as isize };
+    }
 }
 
 // Create from an unsigned 64-bit integer.
-public func Int.from_u64(v: u64) -> Int {
-    return Int { _value: v as isize };
+extend Int {
+    public func from_u64(v: u64) -> Int {
+        return Int { _value: v as isize };
+    }
 }
 
 // =============================================================================
@@ -63,101 +75,125 @@ public func Int.from_u64(v: u64) -> Int {
 // =============================================================================
 
 // Addition.
-public func Int.add(self, other: Int) -> Int {
-    return Int { _value: self._value + other._value };
+extend Int {
+    public func add(self, other: Int) -> Int {
+        return Int { _value: self._value + other._value };
+    }
 }
 
 // Subtraction.
-public func Int.sub(self, other: Int) -> Int {
-    return Int { _value: self._value - other._value };
+extend Int {
+    public func sub(self, other: Int) -> Int {
+        return Int { _value: self._value - other._value };
+    }
 }
 
 // Multiplication.
-public func Int.mul(self, other: Int) -> Int {
-    return Int { _value: self._value * other._value };
+extend Int {
+    public func mul(self, other: Int) -> Int {
+        return Int { _value: self._value * other._value };
+    }
 }
 
 // Integer (truncating) division.
 // Panics if `other` is zero.
-public func Int.div(self, other: Int) -> Int {
-    if other._value == 0 {
-        __panic("Int.div: division by zero");
+extend Int {
+    public func div(self, other: Int) -> Int {
+        if other._value == 0 {
+            __panic("Int.div: division by zero");
+        }
+        return Int { _value: self._value / other._value };
     }
-    return Int { _value: self._value / other._value };
 }
 
 // Remainder (modulo).
 // Panics if `other` is zero.
-public func Int.mod(self, other: Int) -> Int {
-    if other._value == 0 {
-        __panic("Int.mod: division by zero");
+extend Int {
+    public func mod(self, other: Int) -> Int {
+        if other._value == 0 {
+            __panic("Int.mod: division by zero");
+        }
+        return Int { _value: self._value % other._value };
     }
-    return Int { _value: self._value % other._value };
 }
 
 // Euclidean modulo — always returns a non-negative result.
-public func Int.rem_euclid(self, other: Int) -> Int {
-    let r = self._value % other._value;
-    if r < 0 {
-        if other._value > 0 {
-            return Int { _value: r + other._value };
+extend Int {
+    public func rem_euclid(self, other: Int) -> Int {
+        let r = self._value % other._value;
+        if r < 0 {
+            if other._value > 0 {
+                return Int { _value: r + other._value };
+            }
+            return Int { _value: r - other._value };
         }
-        return Int { _value: r - other._value };
+        return Int { _value: r };
     }
-    return Int { _value: r };
 }
 
 // Negate.
-public func Int.neg(self) -> Int {
-    return Int { _value: 0 - self._value };
+extend Int {
+    public func neg(self) -> Int {
+        return Int { _value: 0 - self._value };
+    }
 }
 
 // Absolute value.
-public func Int.abs(self) -> Int {
-    if self._value < 0 {
-        return Int { _value: 0 - self._value };
+extend Int {
+    public func abs(self) -> Int {
+        if self._value < 0 {
+            return Int { _value: 0 - self._value };
+        }
+        return Int { _value: self._value };
     }
-    return Int { _value: self._value };
 }
 
 // Integer exponentiation (repeated squaring).
 // `exp` must be non-negative.
-public func Int.pow(self, exp: Int) -> Int {
-    if exp._value < 0 {
-        __panic("Int.pow: negative exponent");
-    }
-    let base: isize = self._value;
-    let e: isize = exp._value;
-    let result: isize = 1;
-    let b: isize = base;
-
-    // Fast exponentiation by squaring
-    let remaining: isize = e;
-    // Iterative squaring loop
-    while remaining > 0 {
-        if remaining % 2 == 1 {
-            result = result * b;
+extend Int {
+    public func pow(self, exp: Int) -> Int {
+        if exp._value < 0 {
+            __panic("Int.pow: negative exponent");
         }
-        b = b * b;
-        remaining = remaining / 2;
+        let base: isize = self._value;
+        let e: isize = exp._value;
+        let result: isize = 1;
+        let b: isize = base;
+
+        // Fast exponentiation by squaring
+        let remaining: isize = e;
+        // Iterative squaring loop
+        while remaining > 0 {
+            if remaining % 2 == 1 {
+                result = result * b;
+            }
+            b = b * b;
+            remaining = remaining / 2;
+        }
+        return Int { _value: result };
     }
-    return Int { _value: result };
 }
 
 // Checked addition — returns the result and an overflow flag.
-public func Int.add_checked(self, other: Int) -> (Int, bool) {
-    let result = __intrinsic_add_overflow(self._value, other._value);
-    return (Int { _value: result.value }, result.overflow);
+extend Int {
+    public func add_checked(self, other: Int) -> (Int, bool) {
+        let result = __intrinsic_add_overflow(self._value, other._value);
+        return (Int { _value: result.value }, result.overflow);
+    }
 }
 
 // Wrapping addition — silently wraps on overflow.
-public func Int.add_wrapping(self, other: Int) -> Int {
-    return Int { _value: __intrinsic_add_wrap(self._value, other._value) };
+extend Int {
+    public func add_wrapping(self, other: Int) -> Int {
+        return Int { _value: __intrinsic_add_wrap(self._value, other._value) };
+    }
 }
 
 // Saturating addition — clamps at min/max on overflow.
-public func Int.add_saturating(self, other: Int) -> Int {
-    return Int { _value: __intrinsic_add_sat(self._value, other._value) };
+extend Int {
+    public func add_saturating(self, other: Int) -> Int {
+        return Int { _value: __intrinsic_add_sat(self._value, other._value) };
+    }
 }
 
 // =============================================================================
@@ -165,71 +201,91 @@ public func Int.add_saturating(self, other: Int) -> Int {
 // =============================================================================
 
 // Equality.
-public func Int.eq(self, other: Int) -> bool {
-    return self._value == other._value;
+extend Int {
+    public func eq(self, other: Int) -> bool {
+        return self._value == other._value;
+    }
 }
 
 // Inequality.
-public func Int.ne(self, other: Int) -> bool {
-    return self._value != other._value;
+extend Int {
+    public func ne(self, other: Int) -> bool {
+        return self._value != other._value;
+    }
 }
 
 // Less than.
-public func Int.lt(self, other: Int) -> bool {
-    return self._value < other._value;
+extend Int {
+    public func lt(self, other: Int) -> bool {
+        return self._value < other._value;
+    }
 }
 
 // Less than or equal.
-public func Int.le(self, other: Int) -> bool {
-    return self._value <= other._value;
+extend Int {
+    public func le(self, other: Int) -> bool {
+        return self._value <= other._value;
+    }
 }
 
 // Greater than.
-public func Int.gt(self, other: Int) -> bool {
-    return self._value > other._value;
+extend Int {
+    public func gt(self, other: Int) -> bool {
+        return self._value > other._value;
+    }
 }
 
 // Greater than or equal.
-public func Int.ge(self, other: Int) -> bool {
-    return self._value >= other._value;
+extend Int {
+    public func ge(self, other: Int) -> bool {
+        return self._value >= other._value;
+    }
 }
 
 // Three-way comparison: -1, 0, or 1.
-public func Int.cmp(self, other: Int) -> i32 {
-    if self._value < other._value {
-        return -1;
+extend Int {
+    public func cmp(self, other: Int) -> i32 {
+        if self._value < other._value {
+            return -1;
+        }
+        if self._value == other._value {
+            return 0;
+        }
+        return 1;
     }
-    if self._value == other._value {
-        return 0;
-    }
-    return 1;
 }
 
 // Return the minimum of self and other.
-public func Int.min(self, other: Int) -> Int {
-    if self._value <= other._value {
-        return self;
+extend Int {
+    public func min(self, other: Int) -> Int {
+        if self._value <= other._value {
+            return self;
+        }
+        return other;
     }
-    return other;
 }
 
 // Return the maximum of self and other.
-public func Int.max(self, other: Int) -> Int {
-    if self._value >= other._value {
-        return self;
+extend Int {
+    public func max(self, other: Int) -> Int {
+        if self._value >= other._value {
+            return self;
+        }
+        return other;
     }
-    return other;
 }
 
 // Clamp self into [low, high].
-public func Int.clamp(self, low: Int, high: Int) -> Int {
-    if self._value < low._value {
-        return low;
+extend Int {
+    public func clamp(self, low: Int, high: Int) -> Int {
+        if self._value < low._value {
+            return low;
+        }
+        if self._value > high._value {
+            return high;
+        }
+        return self;
     }
-    if self._value > high._value {
-        return high;
-    }
-    return self;
 }
 
 // =============================================================================
@@ -237,58 +293,80 @@ public func Int.clamp(self, low: Int, high: Int) -> Int {
 // =============================================================================
 
 // Bitwise AND.
-public func Int.band(self, other: Int) -> Int {
-    return Int { _value: self._value & other._value };
+extend Int {
+    public func band(self, other: Int) -> Int {
+        return Int { _value: self._value & other._value };
+    }
 }
 
 // Bitwise OR.
-public func Int.bor(self, other: Int) -> Int {
-    return Int { _value: self._value | other._value };
+extend Int {
+    public func bor(self, other: Int) -> Int {
+        return Int { _value: self._value | other._value };
+    }
 }
 
 // Bitwise XOR.
-public func Int.bxor(self, other: Int) -> Int {
-    return Int { _value: self._value ^ other._value };
+extend Int {
+    public func bxor(self, other: Int) -> Int {
+        return Int { _value: self._value ^ other._value };
+    }
 }
 
 // Bitwise NOT (one's complement).
-public func Int.bnot(self) -> Int {
-    return Int { _value: ~self._value };
+extend Int {
+    public func bnot(self) -> Int {
+        return Int { _value: ~self._value };
+    }
 }
 
 // Left shift by `bits` positions.
-public func Int.shl(self, bits: Int) -> Int {
-    return Int { _value: self._value << bits._value };
+extend Int {
+    public func shl(self, bits: Int) -> Int {
+        return Int { _value: self._value << bits._value };
+    }
 }
 
 // Arithmetic right shift by `bits` positions (sign-extending).
-public func Int.shr(self, bits: Int) -> Int {
-    return Int { _value: self._value >> bits._value };
+extend Int {
+    public func shr(self, bits: Int) -> Int {
+        return Int { _value: self._value >> bits._value };
+    }
 }
 
 // Count the number of set bits (population count).
-public func Int.popcount(self) -> Int {
-    return Int { _value: __intrinsic_ctpop(self._value) };
+extend Int {
+    public func popcount(self) -> Int {
+        return Int { _value: __intrinsic_ctpop(self._value) };
+    }
 }
 
 // Count leading zeros.
-public func Int.leading_zeros(self) -> Int {
-    return Int { _value: __intrinsic_ctlz(self._value) };
+extend Int {
+    public func leading_zeros(self) -> Int {
+        return Int { _value: __intrinsic_ctlz(self._value) };
+    }
 }
 
 // Count trailing zeros.
-public func Int.trailing_zeros(self) -> Int {
-    return Int { _value: __intrinsic_cttz(self._value) };
+extend Int {
+    public func trailing_zeros(self) -> Int {
+        return Int { _value: __intrinsic_cttz(self._value) };
+    }
 }
 
 // Reverse all bits.
-public func Int.reverse_bits(self) -> Int {
-    return Int { _value: __intrinsic_bitreverse(self._value) };
+extend Int {
+    public func reverse_bits(self) -> Int {
+        return Int { _value: __intrinsic_bitreverse(self._value) };
+    }
 }
 
 // Byte-swap (endianness conversion).
-public func Int.byte_swap(self) -> Int {
-    return Int { _value: __intrinsic_bswap(self._value) };
+extend Int {
+    public func byte_swap(self) -> Int {
+        return Int { _value: __intrinsic_bswap(self._value) };
+    }
 }
 
 // =============================================================================
@@ -296,38 +374,52 @@ public func Int.byte_swap(self) -> Int {
 // =============================================================================
 
 // Convert to f64.
-public func Int.to_f64(self) -> f64 {
-    return self._value as f64;
+extend Int {
+    public func to_f64(self) -> f64 {
+        return self._value as f64;
+    }
 }
 
 // Convert to f32 (may lose precision for large values).
-public func Int.to_f32(self) -> f32 {
-    return self._value as f32;
+extend Int {
+    public func to_f32(self) -> f32 {
+        return self._value as f32;
+    }
 }
 
 // Convert to i32 (may truncate on 64-bit platforms).
-public func Int.to_i32(self) -> i32 {
-    return self._value as i32;
+extend Int {
+    public func to_i32(self) -> i32 {
+        return self._value as i32;
+    }
 }
 
 // Convert to i64.
-public func Int.to_i64(self) -> i64 {
-    return self._value as i64;
+extend Int {
+    public func to_i64(self) -> i64 {
+        return self._value as i64;
+    }
 }
 
 // Convert to u64.
-public func Int.to_u64(self) -> u64 {
-    return self._value as u64;
+extend Int {
+    public func to_u64(self) -> u64 {
+        return self._value as u64;
+    }
 }
 
 // Convert to usize.
-public func Int.to_usize(self) -> usize {
-    return self._value as usize;
+extend Int {
+    public func to_usize(self) -> usize {
+        return self._value as usize;
+    }
 }
 
 // Return the raw isize value.
-public func Int.raw(self) -> isize {
-    return self._value;
+extend Int {
+    public func raw(self) -> isize {
+        return self._value;
+    }
 }
 
 // =============================================================================
@@ -335,28 +427,38 @@ public func Int.raw(self) -> isize {
 // =============================================================================
 
 // Human-readable decimal string.
-public func Int.to_string(self) -> String {
-    return __intrinsic_isize_to_string(self._value);
+extend Int {
+    public func to_string(self) -> String {
+        return __intrinsic_isize_to_string(self._value);
+    }
 }
 
 // Debug representation.
-public func Int.repr(self) -> String {
-    return "Int(" + __intrinsic_isize_to_string(self._value) + ")";
+extend Int {
+    public func repr(self) -> String {
+        return "Int(" + __intrinsic_isize_to_string(self._value) + ")";
+    }
 }
 
 // Hash into a Hasher.
-public func Int.hash(self, hasher: &Hasher) -> void {
-    hasher.write_isize(self._value);
+extend Int {
+    public func hash(self, hasher: &Hasher) -> void {
+        hasher.write_isize(self._value);
+    }
 }
 
 // Trivial copy.
-public func Int.copy(self) -> Int {
-    return Int { _value: self._value };
+extend Int {
+    public func copy(self) -> Int {
+        return Int { _value: self._value };
+    }
 }
 
 // Default value is zero.
-public func Int.default() -> Int {
-    return Int { _value: 0 };
+extend Int {
+    public func default() -> Int {
+        return Int { _value: 0 };
+    }
 }
 
 // =============================================================================
@@ -365,24 +467,28 @@ public func Int.default() -> Int {
 
 // Parse a decimal string into an Int.
 // Returns the parsed value or an error string.
-public func Int.from_string(s: String) -> Result[Int, String] {
-    let parsed = __intrinsic_parse_isize(s);
-    if parsed.is_ok {
-        return Result.ok(Int { _value: parsed.value });
+extend Int {
+    public func from_string(s: String) -> Result[Int, String] {
+        let parsed = __intrinsic_parse_isize(s);
+        if parsed.is_ok {
+            return Result.ok(Int { _value: parsed.value });
+        }
+        return Result.err("Int.from_string: invalid integer literal");
     }
-    return Result.err("Int.from_string: invalid integer literal");
 }
 
 // Parse with an explicit radix (2..=36).
-public func Int.from_string_radix(s: String, radix: i32) -> Result[Int, String] {
-    if radix < 2 | radix > 36 {
-        return Result.err("Int.from_string_radix: radix must be 2..36");
+extend Int {
+    public func from_string_radix(s: String, radix: i32) -> Result[Int, String] {
+        if radix < 2 | radix > 36 {
+            return Result.err("Int.from_string_radix: radix must be 2..36");
+        }
+        let parsed = __intrinsic_parse_isize_radix(s, radix);
+        if parsed.is_ok {
+            return Result.ok(Int { _value: parsed.value });
+        }
+        return Result.err("Int.from_string_radix: invalid integer literal");
     }
-    let parsed = __intrinsic_parse_isize_radix(s, radix);
-    if parsed.is_ok {
-        return Result.ok(Int { _value: parsed.value });
-    }
-    return Result.err("Int.from_string_radix: invalid integer literal");
 }
 
 // =============================================================================

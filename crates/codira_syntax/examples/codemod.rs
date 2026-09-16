@@ -16,6 +16,10 @@
 //     actually look like a type list.
 //   * `Array::new()` must become `Array.new()`, but `std::array` inside a doc
 //     comment is prose about C++ and must be left alone.
+//   * `func DType.is_unsigned(self)` is a method of `DType` written the
+//     pre-redesign way and must move into an `extend DType { .. }` block, which
+//     means finding where the whole declaration ends -- brace matching, not a
+//     line count.
 //
 // So the pass runs over the real token stream from `codira_syntax::tokenize`,
 // skipping COMMENT and STRING tokens entirely. That is also why this lives
@@ -23,10 +27,9 @@
 //
 // # What it does not do
 //
-// It does not rewrite `func Type.method(...)` into an `extend` block (that
-// is S7, and it needs to *group* declarations, not rewrite them in place),
-// and it does not invent syntax for constructs the language genuinely lacks
-// (function types, closures -- S10/S11). Those are reported, not rewritten.
+// It does not invent syntax for constructs the language genuinely lacks
+// (function types, closures, variadics -- S9/S10/S11). Those are left alone
+// and show up in the `stdlib_gaps` report instead.
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -229,10 +232,290 @@ fn is_type_list_token(kind: SyntaxKind) -> bool {
 // The lexer's `SyntaxKind`s used above, named locally so the scanning code
 // reads as grammar rather than as a wall of imports.
 use codira_syntax::SyntaxKind::{
-    COLON as T_COLON, COMMA as T_COMMA, DOT as T_DOT, EXCLAMATION as T_EXCL, GT as T_GT,
-    INT_NUMBER as T_INT_NUMBER, LT as T_LT, L_BRACKET as T_L_BRACKET, MINUS as T_MINUS,
-    QUESTION as T_QUESTION, R_BRACKET as T_R_BRACKET,
+    COLON as T_COLON, COMMA as T_COMMA, DOT as T_DOT, EXCLAMATION as T_EXCL, FUNC_KW as T_FUNC_KW,
+    GT as T_GT, INT_NUMBER as T_INT_NUMBER, LT as T_LT, L_BRACKET as T_L_BRACKET,
+    L_CURLY as T_L_CURLY, L_PAREN as T_L_PAREN, MINUS as T_MINUS, QUESTION as T_QUESTION,
+    R_BRACKET as T_R_BRACKET, R_CURLY as T_R_CURLY, SEMI as T_SEMI,
 };
+
+/// Rewrites `func T.m(..)` -- a method of `T` written the pre-redesign way
+/// -- into an `extend T { .. }` block, which
+/// `spec/LANGUAGE_SPEC.md` section 12 states is the only way methods are
+/// declared:
+///
+/// ```text
+/// public func DType.is_unsigned(self) -> bool { .. }
+/// ```
+///
+/// becomes, in place:
+///
+/// ```text
+/// extend DType {
+///     public func is_unsigned(self) -> bool { .. }
+/// }
+/// ```
+///
+/// This spelling is safe to convert because it is *already* a method
+/// everywhere that matters: its body and its callers use `receiver.m(..)`,
+/// so promoting the declaration changes no call site.
+///
+/// The other pre-redesign spelling, `func m(self: T, ..)`, is deliberately
+/// **not** converted -- see [`rewrite_ascribed_self_params`].
+///
+/// Each declaration is wrapped in its *own* `extend`, rather than the
+/// several for one type being gathered into a single block. That keeps the
+/// rewrite local -- no declaration moves, so nothing can be reordered past a
+/// comment or a `const` it depended on -- and costs nothing semantically:
+/// `InherentImpls` collects a type's methods across every impl that names
+/// it, exactly as Rust and Swift do.
+///
+/// Returns the number of declarations rewritten.
+fn rewrite_qualified_methods(text: &str, toks: &[Spanned], edits: &mut Vec<Edit>) -> usize {
+    let mut rewritten = 0;
+
+    for i in 0..toks.len() {
+        if toks[i].kind != T_FUNC_KW {
+            continue;
+        }
+
+        // Where the declaration starts: before any `public`/`internal`, so
+        // the visibility keyword ends up inside the `extend` block with its
+        // function rather than stranded outside it.
+        let decl_start = preceding_visibility(text, toks, i).unwrap_or(toks[i].start);
+
+        let after_func = skip_ws(toks, i + 1);
+        let Some((owner, name_start)) = method_owner(text, toks, after_func) else {
+            continue;
+        };
+
+        let Some(decl_end) = declaration_end(toks, after_func) else {
+            continue;
+        };
+
+        let _ = name_start;
+
+        // Preserve the declaration's own indentation on the `extend` line so
+        // the rewritten source still reads as the surrounding file does, and
+        // indent the declaration one level inside the new block. The
+        // declaration is rewritten as a whole rather than bracketed in place
+        // so the body lines move with it -- a method that is textually
+        // outdented from the `extend` that now owns it reads as a bug.
+        let indent: String = text[..decl_start]
+            .chars()
+            .rev()
+            .take_while(|c| *c == ' ' || *c == '\t')
+            .collect();
+
+        // Drop the `T.` qualifier, or the `: T` ascription on `self`, then
+        // re-indent every line of what is left.
+        let mut decl = String::with_capacity(decl_end - decl_start);
+        decl.push_str(&text[decl_start..owner.span.0]);
+        decl.push_str(&text[owner.span.1..decl_end]);
+
+        let body: String = decl
+            .lines()
+            .map(|line| {
+                if line.trim().is_empty() {
+                    line.to_string()
+                } else {
+                    format!("    {line}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        edits.push(Edit {
+            start: decl_start,
+            end: decl_end,
+            text: format!("extend {owner} {{\n{indent}{body}\n{indent}}}"),
+            rule: "qualified-method",
+        });
+
+        rewritten += 1;
+    }
+
+    rewritten
+}
+
+/// The type a pre-redesign method declaration belongs to, plus the byte span
+/// that has to be deleted to turn the declaration into a plain function.
+struct MethodOwner {
+    name: String,
+    /// The `T.` qualifier, or the `: T` ascription -- whichever spelling was
+    /// used, this is the text that must go.
+    span: (usize, usize),
+}
+
+impl std::fmt::Display for MethodOwner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.name)
+    }
+}
+
+/// Recognises a `func T.m(..)` / `func T[A, B].m(..)` qualifier, if
+/// `toks[at]` (the token just past `func`) begins one.
+///
+/// Returns the owning type and the span of the `T.` qualifier, which has to
+/// be deleted to leave a plain function declaration behind.
+fn method_owner(text: &str, toks: &[Spanned], at: usize) -> Option<(MethodOwner, usize)> {
+    if at >= toks.len() || toks[at].kind != IDENT {
+        return None;
+    }
+
+    // Skip a `[A, B]` generic argument list on the qualifier, so
+    // `func SIMD[T, N].splat(..)` is recognised as a method of `SIMD[T, N]`.
+    let mut j = at + 1;
+    if j < toks.len() && toks[j].kind == T_L_BRACKET {
+        let mut depth = 1usize;
+        j += 1;
+        while j < toks.len() && depth > 0 {
+            match toks[j].kind {
+                T_L_BRACKET => depth += 1,
+                T_R_BRACKET => depth -= 1,
+                _ => {}
+            }
+            j += 1;
+        }
+    }
+
+    if j >= toks.len() || toks[j].kind != T_DOT {
+        return None;
+    }
+
+    let owner = text[toks[at].start..toks[j].start].trim().to_string();
+    let name_start = skip_ws(toks, j + 1);
+    Some((
+        MethodOwner {
+            name: owner,
+            span: (toks[at].start, toks[j].end),
+        },
+        name_start,
+    ))
+}
+
+/// Renames the receiver of a top-level `func m(self: T, ..)` from `self` to
+/// `this`, throughout that declaration.
+///
+/// This spelling has no production in the current grammar: `self` with an
+/// explicit type ascription is only legal in method-receiver position, and
+/// these functions are not methods -- they are free functions that happen to
+/// name their first parameter `self`, and they are *called* that way:
+/// `std/collections/bitset.code` has `get(self, i)` and `count(self)`, not
+/// `self.get(i)`.
+///
+/// So the meaning-preserving fix is to rename the parameter, not to promote
+/// the function into an `extend` block. Promoting it would make every one of
+/// those call sites wrong while leaving the file parsing cleanly -- a green
+/// ratchet hiding a broken stdlib, which is worse than the parse error it
+/// replaced. `std/collections/optional.code` already took exactly this route
+/// by hand during its own migration (its functions take `opt`, not `self`).
+///
+/// Promoting these to real methods is a genuine improvement now that methods
+/// work end to end, but it is a call-site rewrite and belongs in its own
+/// pass, not smuggled into a syntax migration.
+fn rewrite_ascribed_self_params(text: &str, toks: &[Spanned], edits: &mut Vec<Edit>) -> usize {
+    let mut renamed = 0;
+
+    for i in 0..toks.len() {
+        if toks[i].kind != T_FUNC_KW {
+            continue;
+        }
+
+        let after_func = skip_ws(toks, i + 1);
+        // A qualified method (`func T.m`) is handled by the other rule.
+        if method_owner(text, toks, after_func).is_some() {
+            continue;
+        }
+
+        let l_paren = skip_ws(toks, after_func + 1);
+        if l_paren >= toks.len() || toks[l_paren].kind != T_L_PAREN {
+            continue;
+        }
+        let self_tok = skip_ws(toks, l_paren + 1);
+        if self_tok >= toks.len() || &text[toks[self_tok].start..toks[self_tok].end] != "self" {
+            continue;
+        }
+        let colon = skip_ws(toks, self_tok + 1);
+        if colon >= toks.len() || toks[colon].kind != T_COLON {
+            continue;
+        }
+
+        let Some(decl_end) = declaration_end(toks, after_func) else {
+            continue;
+        };
+
+        // Rename every `self` in the declaration, parameter and body alike,
+        // so `get(self, i)` inside one of these bodies keeps referring to the
+        // same binding.
+        for tok in toks {
+            if tok.start < toks[self_tok].start || tok.end > decl_end {
+                continue;
+            }
+            // Matched on text, not on kind: `self` lexes as its own keyword
+            // token, not as an IDENT, so a kind check finds nothing at all.
+            if &text[tok.start..tok.end] == "self" && !is_opaque(tok.kind) {
+                edits.push(Edit {
+                    start: tok.start,
+                    end: tok.end,
+                    text: "this".to_string(),
+                    rule: "ascribed-self-param",
+                });
+                renamed += 1;
+            }
+        }
+    }
+
+    renamed
+}
+
+/// The byte offset just past the end of the declaration starting at `at`.
+///
+/// A declaration ends either at the `;` of a body-less `extern` signature or
+/// at the `}` closing its body, found by brace matching -- which is why this
+/// works on tokens rather than on lines.
+fn declaration_end(toks: &[Spanned], at: usize) -> Option<usize> {
+    let mut i = at;
+    while i < toks.len() {
+        match toks[i].kind {
+            T_SEMI => return Some(toks[i].end),
+            T_L_CURLY => {
+                let mut depth = 1usize;
+                i += 1;
+                while i < toks.len() {
+                    match toks[i].kind {
+                        T_L_CURLY => depth += 1,
+                        T_R_CURLY => {
+                            depth -= 1;
+                            if depth == 0 {
+                                return Some(toks[i].end);
+                            }
+                        }
+                        _ => {}
+                    }
+                    i += 1;
+                }
+                return None;
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// The start offset of a `public`/`internal` keyword immediately preceding
+/// the `func` at `func_idx`, if there is one.
+fn preceding_visibility(text: &str, toks: &[Spanned], func_idx: usize) -> Option<usize> {
+    let mut j = func_idx;
+    while j > 0 {
+        j -= 1;
+        if toks[j].kind == WHITESPACE {
+            continue;
+        }
+        let word = &text[toks[j].start..toks[j].end];
+        return (word == "public" || word == "internal").then_some(toks[j].start);
+    }
+    None
+}
 
 /// Applies `edits` to `text`, rightmost first so earlier offsets stay valid.
 fn apply(text: &str, mut edits: Vec<Edit>) -> String {
@@ -281,6 +564,20 @@ fn main() {
     let root = repo_root();
     if paths.is_empty() {
         collect_code_files(&root.join("std"), &mut paths);
+    } else {
+        // A directory argument means "every `.code` file under here", which
+        // is what anyone passing one expects and what makes it possible to
+        // rehearse the whole pass against a copy of `std/` before touching
+        // the real tree.
+        let mut expanded = Vec::new();
+        for path in paths {
+            if path.is_dir() {
+                collect_code_files(&path, &mut expanded);
+            } else {
+                expanded.push(path);
+            }
+        }
+        paths = expanded;
     }
 
     let mut total = 0usize;
@@ -303,6 +600,8 @@ fn main() {
         rewrite_angle_generics(&code, &mut edits);
         rewrite_colon_colon(&code, &mut edits);
         rewrite_never_return(&code, &mut edits);
+        rewrite_qualified_methods(&text, &code, &mut edits);
+        rewrite_ascribed_self_params(&text, &code, &mut edits);
 
         if edits.is_empty() {
             continue;

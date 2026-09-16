@@ -55,90 +55,94 @@ public struct GPUInfo {
 }
 
 // Construct a GPUInfo from an architecture family plus overrides.
-public func GPUInfo.from_family(
-    family: AcceleratorArchitectureFamily,
-    name: String,
-    api: String,
-    arch_name: String,
-    compute: f64,
-    version: String,
-    sm_count: usize,
-) -> GPUInfo {
-    let info: GPUInfo;
-    info.name = name;
-    info.api = api;
-    info.arch_name = arch_name;
-    info.compute = compute;
-    info.version = version;
-    info.sm_count = sm_count;
-    info.warp_size = family.warp_size;
-    info.threads_per_multiprocessor = family.threads_per_multiprocessor;
-    info.shared_memory_per_multiprocessor = family.shared_memory_per_multiprocessor;
-    info.max_registers_per_block = family.max_registers_per_block;
-    info.max_thread_block_size = family.max_thread_block_size;
-    return info;
+extend GPUInfo {
+    public func from_family(
+        family: AcceleratorArchitectureFamily,
+        name: String,
+        api: String,
+        arch_name: String,
+        compute: f64,
+        version: String,
+        sm_count: usize,
+    ) -> GPUInfo {
+        let info: GPUInfo;
+        info.name = name;
+        info.api = api;
+        info.arch_name = arch_name;
+        info.compute = compute;
+        info.version = version;
+        info.sm_count = sm_count;
+        info.warp_size = family.warp_size;
+        info.threads_per_multiprocessor = family.threads_per_multiprocessor;
+        info.shared_memory_per_multiprocessor = family.shared_memory_per_multiprocessor;
+        info.max_registers_per_block = family.max_registers_per_block;
+        info.max_thread_block_size = family.max_thread_block_size;
+        return info;
+    }
 }
 
 // Look up GPU information by architecture name (e.g. "sm_80", "gfx942").
-public func GPUInfo.from_name(name: String) -> GPUInfo {
-    if name == "sm_80" {
-        return A100;
+extend GPUInfo {
+    public func from_name(name: String) -> GPUInfo {
+        if name == "sm_80" {
+            return A100;
+        }
+        if name == "sm_86" {
+            return A10;
+        }
+        if name == "sm_87" {
+            return OrinNano;
+        }
+        if name == "sm_89" {
+            return L4;
+        }
+        if name == "sm_90a" {
+            return H100;
+        }
+        if name == "sm_100a" {
+            return B100;
+        }
+        if name == "sm_103a" {
+            return B300;
+        }
+        if name == "sm_120a" {
+            return RTX5090;
+        }
+        if name == "sm_110" {
+            return JetsonThor;
+        }
+        if name == "sm_61" {
+            return GTX1080Ti;
+        }
+        if name == "sm_75" {
+            return RTX2060;
+        }
+        if name == "gfx90a" {
+            return MI250X;
+        }
+        if name == "gfx942" {
+            return MI300X;
+        }
+        if name == "gfx950" {
+            return MI355X;
+        }
+        if name == "apple-m1" {
+            return MetalM1;
+        }
+        if name == "apple-m2" {
+            return MetalM2;
+        }
+        if name == "apple-m3" {
+            return MetalM3;
+        }
+        if name == "apple-m4" {
+            return MetalM4;
+        }
+        if name == "apple-m5" {
+            return MetalM5;
+        }
+        return NoGPU;
     }
-    if name == "sm_86" {
-        return A10;
-    }
-    if name == "sm_87" {
-        return OrinNano;
-    }
-    if name == "sm_89" {
-        return L4;
-    }
-    if name == "sm_90a" {
-        return H100;
-    }
-    if name == "sm_100a" {
-        return B100;
-    }
-    if name == "sm_103a" {
-        return B300;
-    }
-    if name == "sm_120a" {
-        return RTX5090;
-    }
-    if name == "sm_110" {
-        return JetsonThor;
-    }
-    if name == "sm_61" {
-        return GTX1080Ti;
-    }
-    if name == "sm_75" {
-        return RTX2060;
-    }
-    if name == "gfx90a" {
-        return MI250X;
-    }
-    if name == "gfx942" {
-        return MI300X;
-    }
-    if name == "gfx950" {
-        return MI355X;
-    }
-    if name == "apple-m1" {
-        return MetalM1;
-    }
-    if name == "apple-m2" {
-        return MetalM2;
-    }
-    if name == "apple-m3" {
-        return MetalM3;
-    }
-    if name == "apple-m4" {
-        return MetalM4;
-    }
-    if name == "apple-m5" {
-        return MetalM5;
-    }
-    return NoGPU;
 }
 
 // =============================================================================
