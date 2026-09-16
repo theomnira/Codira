@@ -229,6 +229,24 @@ impl Ty {
             TyKind::Float(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Int(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Array(ty) => Some(format!("[{}]", ty.display(db))),
+            // A tuple is a structural type: two tuples are the same type
+            // exactly when their element types match, so the name is built
+            // from the elements rather than from a declaration site. `()`
+            // yields `"()"`, which is a perfectly good unique name for the
+            // unit type.
+            //
+            // Elements are recursed through `guid_string` (not `display`) so
+            // that a tuple of structs hashes over those structs' *field
+            // layouts*. That is what makes a tuple's GUID change when a
+            // struct inside it changes shape -- the same property hot
+            // reloading relies on for named structs.
+            TyKind::Tuple(_, substs) => {
+                let elements = substs
+                    .iter()
+                    .map(|ty| ty.guid_string(db))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(format!("({})", elements.join(", ")))
+            }
             _ => None,
         }
     }

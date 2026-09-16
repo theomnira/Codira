@@ -195,7 +195,7 @@ impl ExprValidator<'_> {
                 self.validate_expr_access(sink, initialized_patterns, *base, ExprKind::Normal);
                 self.validate_expr_access(sink, initialized_patterns, *index, ExprKind::Normal);
             }
-            Expr::Array(exprs) => {
+            Expr::Array(exprs) | Expr::Tuple(exprs) => {
                 for expr in exprs {
                     self.validate_expr_access(sink, initialized_patterns, *expr, ExprKind::Normal);
                 }

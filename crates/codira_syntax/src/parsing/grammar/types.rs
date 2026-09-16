@@ -6,11 +6,11 @@
 //! - Part of the Codira compiler and runtime toolchain.
 use super::{
     expressions, generics, name_ref, paths, CompletedMarker, Parser, TokenSet, ARRAY_TYPE,
-    NEVER_TYPE, OPTIONAL_TYPE, PATH_TYPE, REFINEMENT_TYPE,
+    NEVER_TYPE, OPTIONAL_TYPE, PAREN_TYPE, PATH_TYPE, REFINEMENT_TYPE, TUPLE_TYPE,
 };
 
 pub(super) const TYPE_FIRST: TokenSet =
-    paths::PATH_FIRST.union(TokenSet::new(&[T![never], T!['[']]));
+    paths::PATH_FIRST.union(TokenSet::new(&[T![never], T!['['], T!['(']]));
 
 pub(super) const TYPE_RECOVERY_SET: TokenSet =
     TokenSet::new(&[T!['('], T![,], T![public], T![internal]]);
@@ -59,6 +59,7 @@ pub(super) fn cast_type(p: &mut Parser<'_>) {
 fn type_inner(p: &mut Parser<'_>, allow_refinement: bool) {
     let mut inner = match p.current() {
         T!['['] => array_type(p),
+        T!['('] => paren_or_tuple_type(p),
         T![never] => never_type(p),
         _ if paths::is_path_start(p) => path_type(p),
         _ => {
@@ -110,6 +111,53 @@ fn never_type(p: &mut Parser<'_>) -> CompletedMarker {
     let m = p.start();
     p.bump(T![never]);
     m.complete(p, NEVER_TYPE)
+}
+
+/// Parses `(` ... `)` in type position, producing either a grouped type or a
+/// [`TUPLE_TYPE`].
+///
+/// The three cases follow Rust's rule, which is the only one that keeps
+/// grouping and 1-tuples distinguishable:
+///
+/// * `()` -- the unit type, a 0-tuple.
+/// * `(A)` -- grouping, a [`PAREN_TYPE`]. This is the exact type-position
+///   analogue of the existing `PAREN_EXPR`, and HIR lowers it transparently to
+///   `A`, so `(i32)` and `i32` mean the same thing to every later stage while
+///   the parentheses stay present in the lossless tree.
+/// * `(A, B)` / `(A,)` -- a tuple type. The trailing comma is what makes a
+///   1-tuple expressible at all.
+///
+/// HIR already models this as `TypeRef::Tuple` (and `TypeRefMapBuilder::unit`
+/// is literally `Tuple(vec![])`), and codegen already lowers `TyKind::Tuple`
+/// to an anonymous LLVM struct via `get_tuple_type`, so this parser rule is
+/// the only piece that was missing.
+fn paren_or_tuple_type(p: &mut Parser<'_>) -> CompletedMarker {
+    assert!(p.at(T!['(']));
+    let m = p.start();
+    p.bump(T!['(']);
+
+    // Tracks whether we have seen a comma: that, not the element count, is
+    // what separates `(A)` (grouping) from `(A,)` (a 1-tuple).
+    let mut saw_comma = false;
+    let mut element_count = 0usize;
+
+    while !p.at(T![')']) && !p.at(crate::SyntaxKind::EOF) {
+        type_(p);
+        element_count += 1;
+        if p.at(T![,]) {
+            p.bump(T![,]);
+            saw_comma = true;
+        } else {
+            break;
+        }
+    }
+    p.expect(T![')']);
+
+    if element_count == 1 && !saw_comma {
+        m.complete(p, PAREN_TYPE)
+    } else {
+        m.complete(p, TUPLE_TYPE)
+    }
 }
 
 fn array_type(p: &mut Parser<'_>) -> CompletedMarker {

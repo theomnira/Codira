@@ -12,7 +12,7 @@ use super::{
     HANDLER_ARM_LIST, HANDLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER, LET_STMT,
     LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, PARAM, PARAM_LIST, PAREN_EXPR,
     PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT,
-    RETURN_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, WHILE_EXPR,
+    RETURN_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, TUPLE_EXPR, WHILE_EXPR,
 };
 use crate::{parsing::grammar::paths::PATH_FIRST, SyntaxKind::METHOD_CALL_EXPR};
 
@@ -653,13 +653,43 @@ pub(super) fn literal(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     Some(m.complete(p, LITERAL))
 }
 
+/// Parses `(` ... `)` in expression position, producing either a
+/// [`PAREN_EXPR`] (grouping) or a [`TUPLE_EXPR`].
+///
+/// The split mirrors [`types::paren_or_tuple_type`] exactly, so the two
+/// positions agree on what a comma means:
+///
+/// * `()` -- the unit value, a 0-tuple.
+/// * `(a)` -- grouping, a `PAREN_EXPR`.
+/// * `(a, b)` / `(a,)` -- a `TUPLE_EXPR`; the trailing comma is the only way to
+///   write a 1-tuple.
 fn paren_expr(p: &mut Parser<'_>) -> CompletedMarker {
     assert!(p.at(T!['(']));
     let m = p.start();
     p.bump(T!['(']);
-    expr(p);
+
+    // As in type position, it is the presence of a comma -- not the element
+    // count -- that distinguishes `(a)` from `(a,)`.
+    let mut saw_comma = false;
+    let mut element_count = 0usize;
+
+    while !p.at(T![')']) && !p.at(EOF) {
+        expr(p);
+        element_count += 1;
+        if p.at(T![,]) {
+            p.bump(T![,]);
+            saw_comma = true;
+        } else {
+            break;
+        }
+    }
     p.expect(T![')']);
-    m.complete(p, PAREN_EXPR)
+
+    if element_count == 1 && !saw_comma {
+        m.complete(p, PAREN_EXPR)
+    } else {
+        m.complete(p, TUPLE_EXPR)
+    }
 }
 
 fn if_expr(p: &mut Parser<'_>) -> CompletedMarker {

@@ -33,6 +33,7 @@ pub struct HirTypeCache<'db, 'ink> {
     target_data: TargetData,
     types: RefCell<HashMap<codira_hir::TyKind, StructType<'ink>>>,
     array_ty_to_type_id: RefCell<HashMap<codira_hir::TyKind, Arc<TypeId>>>,
+    tuple_ty_to_type_id: RefCell<HashMap<codira_hir::TyKind, Arc<TypeId>>>,
     struct_to_type_id: RefCell<HashMap<codira_hir::Struct, Arc<TypeId>>>,
 }
 
@@ -46,6 +47,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             types: RefCell::new(HashMap::default()),
             struct_to_type_id: RefCell::default(),
             array_ty_to_type_id: RefCell::default(),
+            tuple_ty_to_type_id: RefCell::default(),
         }
     }
 
@@ -388,6 +390,34 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
                 assert!(previous_entry.is_none(), "array cyclic reference?");
 
                 array_type_id
+            }
+            // A tuple's identity is structural, so -- unlike an array, which
+            // gets a dedicated `TypeIdData::Array` wrapper around its element
+            // -- it is `Concrete`, hashed from the same `(A, B)` name
+            // `guid_string` produces. That keeps the ABI stable without
+            // adding a tuple case to every consumer of `TypeIdData`: a tuple
+            // is, to the runtime, just an anonymous value struct.
+            TyKind::Tuple(..) => {
+                {
+                    let read_only = self.tuple_ty_to_type_id.borrow();
+                    if let Some(id) = read_only.get(ty.interned()) {
+                        return id.clone();
+                    }
+                }
+
+                let name = ty
+                    .guid_string(self.db)
+                    .expect("a tuple of representable types has a guid string");
+                let tuple_type_id = Arc::new(TypeId {
+                    data: TypeIdData::Concrete(Guid::from_str(&name)),
+                    name,
+                });
+
+                self.tuple_ty_to_type_id
+                    .borrow_mut()
+                    .insert(ty.interned().clone(), tuple_type_id.clone());
+
+                tuple_type_id
             }
             _ => unimplemented!("{} unhandled", ty.display(self.db)),
         }

@@ -343,6 +343,14 @@ pub enum Expr {
         name: Name,
     },
     Array(Vec<ExprId>),
+    /// `(a, b)` -- a tuple literal. `()` is the 0-element case (the unit
+    /// value), and `(a,)` the 1-element case; a parenthesised expression
+    /// with no comma is grouping and never reaches HIR as a `Tuple`.
+    ///
+    /// This mirrors `TypeRef::Tuple` on the type side and infers to
+    /// `TyKind::Tuple`, which codegen already lowers to an anonymous LLVM
+    /// struct through `get_tuple_type`.
+    Tuple(Vec<ExprId>),
     /// An explicit conversion, `expr as Type`. `type_ref` is the written-out
     /// target type, recorded the same way `let x: T` and `RecordLit` record
     /// theirs; it is resolved to a `Ty` during inference, which is also where
@@ -467,7 +475,7 @@ impl Expr {
                 f(*base);
                 f(*index);
             }
-            Expr::Array(exprs) => {
+            Expr::Array(exprs) | Expr::Tuple(exprs) => {
                 for expr in exprs {
                     f(*expr);
                 }
@@ -940,6 +948,10 @@ impl<'a> ExprCollector<'a> {
             ast::ExprKind::ArrayExpr(e) => {
                 let exprs = e.exprs().map(|expr| self.collect_expr(expr)).collect();
                 self.alloc_expr(Expr::Array(exprs), syntax_ptr)
+            }
+            ast::ExprKind::TupleExpr(e) => {
+                let exprs = e.exprs().map(|expr| self.collect_expr(expr)).collect();
+                self.alloc_expr(Expr::Tuple(exprs), syntax_ptr)
             }
             ast::ExprKind::IndexExpr(e) => {
                 let base = self.collect_expr_opt(e.base());

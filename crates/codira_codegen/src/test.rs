@@ -1238,3 +1238,58 @@ fn cast_identity_emits_nothing() {
     public func same(a: i32) -> i32 { a as i32 }"#,
     );
 }
+
+/// Tuples lower to anonymous LLVM structs built with `insertvalue`, with no
+/// allocation and no runtime call -- the property that makes them usable as
+/// the stdlib's multiple-return mechanism (`frexp(x) -> (f64, i32)`).
+///
+/// Unoptimised so the aggregate construction is actually visible; the
+/// optimised form is covered by `tuple_is_zero_overhead` below.
+#[test]
+fn tuple_expr() {
+    test_snapshot_unoptimized(
+        "tuple_expr",
+        r#"
+    public func divmod(a: i32, b: i32) -> (i32, i32) {
+        (a / b, a % b)
+    }
+
+    public func first(t: (i32, f64)) -> i32 {
+        t.0
+    }
+
+    public func second(t: (i32, f64)) -> f64 {
+        t.1
+    }
+
+    public func nested(a: i32) -> i32 {
+        let t = ((a, a), a);
+        t.0.1
+    }
+
+    public func unit() -> () {
+        ()
+    }"#,
+    );
+}
+
+/// With optimisation on, a tuple used only to carry two values out of a
+/// function disappears entirely: the aggregate is scalarised and the whole
+/// body folds to a constant. This is the guarantee that matters -- returning
+/// a tuple costs nothing versus returning the values some other way, so
+/// stdlib signatures never have to trade clarity for speed.
+#[test]
+fn tuple_is_zero_overhead() {
+    test_snapshot(
+        "tuple_is_zero_overhead",
+        r#"
+    func divmod(a: i32, b: i32) -> (i32, i32) {
+        (a / b, a % b)
+    }
+
+    public func main() -> i32 {
+        let qr = divmod(17, 5);
+        qr.0 * 100 + qr.1
+    }"#,
+    );
+}

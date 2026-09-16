@@ -9,7 +9,7 @@ use std::{collections::HashMap, sync::Arc};
 use codira_abi as abi;
 use codira_hir::{
     ArithOp, BinaryOp, Body, CmpOp, Expr, ExprId, HirDatabase, HirDisplay, InferenceResult,
-    Literal, LogicOp, Name, Ordering, Pat, PatId, Path, ResolveBitness, Resolver, Statement,
+    Literal, LogicOp, Name, Ordering, Pat, PatId, Path, ResolveBitness, Resolver, Statement, Ty,
     TyKind, UnaryOp, ValueNs,
 };
 use inkwell::{
@@ -319,6 +319,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 name,
             } => self.gen_field(expr, *receiver_expr, name),
             Expr::Array(exprs) => self.gen_array(expr, exprs).map(Into::into),
+            Expr::Tuple(exprs) => self.gen_tuple(expr, exprs),
             Expr::Index { base, index } => self.gen_index(expr, *base, *index),
             Expr::Cast { expr: operand, .. } => self.gen_cast(expr, *operand),
             Expr::Missing => {
@@ -655,6 +656,41 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .collect();
 
         self.gen_struct_alloc(hir_struct, args)
+    }
+
+    /// Generates IR for a tuple literal, e.g. `(1.23, 4)`.
+    ///
+    /// A tuple is an unnamed value-kind aggregate: it lowers to the anonymous
+    /// LLVM struct `get_tuple_type` already produces for `TyKind::Tuple`, and
+    /// is built the same way `gen_struct_alloc` builds a value struct --
+    /// `undef` plus one `insertvalue` per element. Unlike `Expr::Array`, no
+    /// allocation and no runtime call is involved, so a tuple costs exactly
+    /// what the equivalent hand-written value struct costs and stays fully
+    /// visible to the Eidos optimiser rather than hiding behind an opaque
+    /// object pointer.
+    ///
+    /// `()` falls out of this naturally as the zero-element case, producing
+    /// the same empty struct as `gen_empty`.
+    fn gen_tuple(&mut self, tgt_expr: ExprId, exprs: &[ExprId]) -> Option<BasicValueEnum<'ink>> {
+        let tuple_ty = self.infer[tgt_expr].clone();
+        let TyKind::Tuple(_, substs) = tuple_ty.interned() else {
+            unreachable!("the type of a tuple literal expression must be a Tuple");
+        };
+
+        let struct_ty = self.hir_types.get_tuple_type(substs.as_ref());
+        let mut value: AggregateValueEnum<'_> = struct_ty.get_undef().into();
+        for (idx, expr) in exprs.iter().enumerate() {
+            // A diverging element (`(foo(), never_returns())`) means the rest
+            // of the tuple is unreachable; propagate that instead of building
+            // an aggregate that can never be observed.
+            let elem = self.gen_expr(*expr)?;
+            value = self
+                .builder
+                .build_insert_value(value, elem, idx as u32, "tuple_init")
+                .expect("failed to initialize tuple element");
+        }
+
+        Some(value.into_struct_value().into())
     }
 
     /// Generates IR for a unit struct literal, e.g `Foo`
@@ -1724,6 +1760,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         receiver_expr: ExprId,
         name: &Name,
     ) -> Option<BasicValueEnum<'ink>> {
+        // `Expr::Field` covers both `point.x` and `pair.0`. A tuple has no
+        // `Struct` behind it -- its layout comes straight from the type's
+        // element list -- so it is handled first, before the struct lookup
+        // that would otherwise fail.
+        if let TyKind::Tuple(_, substs) = self.infer[receiver_expr].clone().interned() {
+            return self.gen_tuple_field(receiver_expr, name, substs.as_ref());
+        }
+
         let hir_struct = self.infer[receiver_expr]
             .as_struct()
             .expect("expected a struct");
@@ -1777,12 +1821,79 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         }
     }
 
+    /// Generates IR for `tuple.N`. The caller has already established that
+    /// the receiver is a tuple and passes its element types along, so the
+    /// returned `Option` carries only the usual meaning: `None` means the
+    /// receiver diverges and the rest of the block is unreachable.
+    ///
+    /// Element extraction is `extractvalue` on the aggregate directly, with
+    /// no `alloca` and no GEP, so `pair.0` is free after optimisation --
+    /// tuples stay the zero-overhead multiple-return mechanism they need to
+    /// be for stdlib signatures like `frexp(x) -> (f64, i32)`.
+    fn gen_tuple_field(
+        &mut self,
+        receiver_expr: ExprId,
+        name: &Name,
+        element_tys: &[Ty],
+    ) -> Option<BasicValueEnum<'ink>> {
+        let idx = name
+            .as_tuple_index()
+            .expect("inference accepted a non-index field name on a tuple");
+
+        let tuple_ty = self.hir_types.get_tuple_type(element_tys);
+        let field_ir_name = &format!("tuple.{idx}");
+
+        if self.is_place_expr(receiver_expr) {
+            let receiver_ptr = self.gen_place_expr(receiver_expr)?;
+            let receiver_ptr = self.opt_deref_place(receiver_expr, receiver_ptr);
+            let field_ptr = self
+                .builder
+                .build_struct_gep(tuple_ty, receiver_ptr, idx as u32, field_ir_name)
+                .unwrap_or_else(|_| panic!("could not get pointer to tuple element {idx}"));
+            let field_ty = tuple_ty
+                .get_field_type_at_index(idx as u32)
+                .expect("tuple element index out of bounds");
+            Some(
+                self.builder
+                    .build_load(field_ty, field_ptr, field_ir_name)
+                    .expect("failed to build load for tuple element"),
+            )
+        } else {
+            let receiver_value = self.gen_expr(receiver_expr)?;
+            let receiver_value = self.opt_deref_value(receiver_expr, receiver_value);
+            Some(
+                self.builder
+                    .build_extract_value(
+                        receiver_value.into_struct_value(),
+                        idx as u32,
+                        field_ir_name,
+                    )
+                    .unwrap_or_else(|_| panic!("could not extract tuple element {idx}")),
+            )
+        }
+    }
+
     fn gen_place_field(
         &mut self,
         _expr: ExprId,
         receiver_expr: ExprId,
         name: &Name,
     ) -> Option<PointerValue<'ink>> {
+        // As in `gen_field`: a tuple receiver has no `Struct` to look up.
+        if let TyKind::Tuple(_, substs) = self.infer[receiver_expr].clone().interned() {
+            let idx = name
+                .as_tuple_index()
+                .expect("inference accepted a non-index field name on a tuple");
+            let tuple_ty = self.hir_types.get_tuple_type(substs.as_ref());
+            let receiver_ptr = self.gen_place_expr(receiver_expr)?;
+            let receiver_ptr = self.opt_deref_place(receiver_expr, receiver_ptr);
+            return Some(
+                self.builder
+                    .build_struct_gep(tuple_ty, receiver_ptr, idx as u32, &format!("tuple.{idx}"))
+                    .unwrap_or_else(|_| panic!("could not get pointer to tuple element {idx}")),
+            );
+        }
+
         let hir_struct = self.infer[receiver_expr]
             .as_struct()
             .expect("expected a struct");

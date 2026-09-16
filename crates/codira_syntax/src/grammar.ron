@@ -214,6 +214,8 @@ Grammar(
 
         "PATH_TYPE",
         "ARRAY_TYPE",
+        "TUPLE_TYPE",
+        "PAREN_TYPE",
         "NEVER_TYPE",
         "OPTIONAL_TYPE",
         "REFINEMENT_TYPE",
@@ -243,6 +245,7 @@ Grammar(
         "LOOP_EXPR",
         "BREAK_EXPR",
         "ARRAY_EXPR",
+        "TUPLE_EXPR",
         "CONDITION",
         "COMPTIME_EXPR",
         "MATCH_EXPR",
@@ -494,6 +497,14 @@ Grammar(
                 [ "exprs", "Expr" ]
             ]
         ),
+        // `(a, b, c)` -- a tuple literal, and `()` -- the unit value. A
+        // parenthesised expression with no comma stays a `ParenExpr`, so
+        // `(a)` and `(a,)` are deliberately different nodes.
+        "TupleExpr": (
+            collections: [
+                [ "exprs", "Expr" ]
+            ]
+        ),
         "ArgList": (
             collections: [
                 ["args", "Expr"]
@@ -548,6 +559,7 @@ Grammar(
                 "BreakExpr",
                 "BlockExpr",
                 "ArrayExpr",
+                "TupleExpr",
                 "IndexExpr",
                 "RecordLit",
                 "ComptimeExpr",
@@ -566,6 +578,17 @@ Grammar(
         "NameRef": (),
         "PathType": (options: ["Path", "GenericArgList"]),
         "ArrayType": (options: ["TypeRef"]),
+        // `(A, B)` -- a tuple type, and `()` -- the unit type. A
+        // parenthesised type with no comma is just that type (no node is
+        // introduced), so `(A)` is `A` while `(A,)` is a 1-tuple.
+        "TupleType": (
+            collections: [
+                [ "fields", "TypeRef" ]
+            ]
+        ),
+        // `(A)` -- grouping only, the exact type analogue of `ParenExpr`.
+        // Lowers transparently to its inner type.
+        "ParenType": (options: ["TypeRef"]),
         "NeverType": (),
         "OptionalType": (options: ["TypeRef"]),
         "RefinementType": (options: [["base", "TypeRef"], ["binder", "NameRef"], ["predicate", "Expr"]]),
@@ -573,6 +596,8 @@ Grammar(
             enum: [
                 "PathType",
                 "ArrayType",
+                "TupleType",
+                "ParenType",
                 "NeverType",
                 "OptionalType",
                 "RefinementType",

@@ -1,0 +1,6 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    func main() -> () {\n        ()\n    }\",)"
+---
+18..28 '{     () }': ()
+24..26 '()': ()

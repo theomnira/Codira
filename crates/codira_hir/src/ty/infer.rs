@@ -554,6 +554,36 @@ impl InferenceResultBuilder<'_> {
 
                 TyKind::Array(elem_ty).intern()
             }
+            // `(a, b)`. Unlike an array, each element has its own type, so the
+            // expectation is pushed down element-wise: `let t: (i32, f64) =
+            // (1, 2)` must see `f64` for the second element, not a fresh
+            // variable that later defaults to an integer.
+            //
+            // An expectation of the wrong arity is simply not propagated; the
+            // resulting type still describes what was written, and the
+            // mismatch is reported by the caller's own unification rather
+            // than being masked by a silently truncated zip here.
+            Expr::Tuple(exprs) => {
+                let expected_elems = match expected.ty.interned() {
+                    TyKind::Tuple(arity, subs) if *arity == exprs.len() => Some(subs.clone()),
+                    _ => None,
+                };
+
+                let elem_tys: Vec<Ty> = exprs
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, expr)| {
+                        let expectation = expected_elems
+                            .as_ref()
+                            .map_or_else(Expectation::none, |subs| {
+                                Expectation::has_type(subs[idx].clone())
+                            });
+                        self.infer_expr_coerce(*expr, &expectation)
+                    })
+                    .collect();
+
+                TyKind::Tuple(elem_tys.len(), elem_tys.into_iter().collect()).intern()
+            }
             Expr::Index { base, index } => {
                 let elem_ty = if expected.ty.is_unknown() {
                     self.type_variables.new_type_var()

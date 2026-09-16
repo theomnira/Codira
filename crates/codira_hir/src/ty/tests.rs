@@ -1981,3 +1981,62 @@ fn ellipsize(mut text: String, max_len: usize) -> String {
     text.replace_range(prefix_len..text.len() - suffix_len, ellipsis);
     text
 }
+
+/// A tuple literal's type is the element-wise product of its parts, and `t.N`
+/// projects out element `N`. Both sides already existed in the type system
+/// (`TyKind::Tuple`, `lookup_field`'s tuple arm); this pins down that the new
+/// `Expr::Tuple` inference arm feeds them correctly.
+#[test]
+fn infer_tuple() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> i32 {
+        let t = (1, 2.0);
+        let n = t.1;
+        t.0
+    }",
+    ));
+}
+
+/// The expectation is pushed down element-wise, not as a whole.
+///
+/// Both literals below are bare integers, so both would default to `i32` if
+/// the annotation were only checked against the finished tuple type. Getting
+/// `u8` for one and `u64` for the other is only possible if each element saw
+/// its own expected type while being inferred.
+#[test]
+fn infer_tuple_expected_type_propagates_per_element() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> u64 {
+        let t: (u8, u64) = (1, 2);
+        t.1
+    }",
+    ));
+}
+
+/// `()` is the unit type -- a zero-element tuple, the same type an omitted
+/// return type produces.
+#[test]
+fn infer_tuple_unit() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> () {
+        ()
+    }",
+    ));
+}
+
+/// Tuples nest, and projecting through two levels resolves to the innermost
+/// element's type rather than collapsing to the outer tuple.
+#[test]
+fn infer_tuple_nested() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> u8 {
+        let t = ((1, 2), 3.0);
+        let inner = t.0;
+        inner.1
+    }",
+    ));
+}
