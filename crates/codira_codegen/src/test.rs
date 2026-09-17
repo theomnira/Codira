@@ -942,6 +942,38 @@ fn intrinsic_bit_counting() {
 }
 
 #[test]
+fn intrinsic_is_not_a_dispatch_table_dependency() {
+    // An intrinsic is `IS_EXTERN`, and every other extern function is
+    // recorded in the dispatch table as a symbol the runtime must resolve at
+    // load time. An intrinsic has no symbol -- it is emitted inline -- so
+    // recording it makes the assembly unloadable: `codira start` and any
+    // `codira_runtime` host fail with "Missing dependencies for functions:
+    // [load_u32, store_u32, ..]" naming things that are not supposed to
+    // exist. That was a real failure of the interop suite, and it is
+    // invisible in the IR for the function itself, which is why it gets its
+    // own test rather than being left to the snapshots above.
+    //
+    // The group IR is where the dispatch table lives, so the check is that
+    // no intrinsic name appears anywhere in this snapshot.
+    test_snapshot_unoptimized(
+        "intrinsic_is_not_a_dispatch_table_dependency",
+        r#"
+    extern "codira-intrinsic" {
+        func load_u32(addr: usize) -> u32;
+        func store_u32(addr: usize, value: u32);
+    }
+    extern "C" {
+        func real_external_symbol(x: i64) -> i64;
+    }
+    public func copy_and_call(src: usize, dst: usize, n: i64) -> i64 {
+        store_u32(dst, load_u32(src));
+        real_external_symbol(n)
+    }
+    "#,
+    );
+}
+
+#[test]
 fn intrinsic_load_widths() {
     // Every width maps to its own LLVM type and alignment; a `load_u8` that
     // silently loaded 4 bytes would read past a caller's buffer.

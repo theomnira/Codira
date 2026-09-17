@@ -40,6 +40,7 @@ each caller:
 | Rust       | `cargo run -- <lib>`                                           | `libloading`, *and* hosting `codira_runtime` |
 | Python     | `python main.py <lib>`                                         | `ctypes` (standard library) |
 | TypeScript | `bun run main.ts <lib>`                                        | `bun:ffi` (built in) |
+| TypeScript | `bun run bench.ts <lib>`                                       | `bun:ffi`, batch kernels |
 
 On POSIX add `-ldl` to the C build. Deno's `Deno.dlopen` works the same way as
 `bun:ffi` if you prefer it; the signature declarations are identical in shape.
@@ -47,6 +48,76 @@ On POSIX add `-ldl` to the C build. Deno's `Deno.dlopen` works the same way as
 Each caller runs the same set of checks and exits non-zero on any mismatch, so
 they double as tests rather than as demonstrations that merely print
 something.
+
+## Let the compiler write the bindings
+
+`main.ts` declares its signatures by hand, which is what every FFI tutorial
+does and is also where the easy mistake lives. `codira bindgen --runtime bun`
+emits them from the signatures the compiler actually resolved:
+
+```
+codira bindgen --runtime bun -o bindings.ts
+```
+
+The difference is not only typos. A Codira `i64` bound as `FFIType.i64` arrives
+in JavaScript as a `BigInt`, and allocating one per call costs more than most
+calls do: 37.97 ns/call against 12.35 ns for `i64_fast` and 7.02 ns for `u32`,
+measured over 500,000 calls of the same function. `i64_fast` is not a
+precision trade -- it returns a `number` inside the safe-integer range and a
+`BigInt` outside it, so the full i64 range round-trips exactly. The generator
+picks it; a person writing the obvious thing picks `i64`.
+
+## Scalar calls have a floor, and it is not Codira's
+
+Entering a native function from Bun costs about 6.4 ns whatever the function
+does. `Math.clz32` costs 0.23 ns. So a Codira function called once per element
+loses to JavaScript by roughly 30x, and no amount of work on the Codira side
+changes that -- the boundary is the workload.
+
+Crossing it once per *buffer* is what makes the difference, and it needs
+Codira to read memory it did not allocate. `extern "codira-intrinsic"` blocks
+declare operations the compiler emits inline -- a load becomes an `inttoptr`
+and a `load`, with no call:
+
+```codira
+extern "codira-intrinsic" {
+    func load_u32(addr: usize) -> u32;
+    func store_u32(addr: usize, value: u32);
+    func ctlz_u32(value: u32) -> u32;
+}
+
+@export("C")
+public func codira_clz32_into(src: usize, dst: usize, count: usize) -> usize {
+    let mut i: usize = 0;
+    while i < count {
+        store_u32(dst + i * 4, ctlz_u32(load_u32(src + i * 4)));
+        i = i + 1;
+    }
+    return count;
+}
+```
+
+From TypeScript that is one call, with `ptr()` supplying the addresses:
+
+```ts
+symbols.codira_clz32_into(ptr(source), ptr(destination), source.length);
+```
+
+Measured over 500,000 elements by `bench.ts`:
+
+| | total | per element |
+|---|---|---|
+| TypeScript `Math.clz32`, loop in JS | 0.112 ms | 0.224 ns |
+| Codira, one call per element | 3.457 ms | 6.913 ns |
+| Codira, one call per buffer | 0.092 ms | 0.184 ns |
+
+`bench.ts` checks its own results -- every clz32 value against `Math.clz32`,
+the affine kernel against a JavaScript reference, and the pairwise sum against
+Kahan summation -- so a kernel that gets faster by getting wrong fails.
+
+There is no safety in these intrinsics by construction: `load_u32(addr)` reads
+whatever is at `addr`. That is the same contract C has, which is why they are
+spelled `extern`.
 
 ## What crosses the boundary
 

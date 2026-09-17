@@ -74,6 +74,10 @@ fi
 # --- TypeScript --------------------------------------------------------------
 if command -v bun >/dev/null 2>&1; then
     run "TypeScript" bun run "$here/typescript/main.ts" "$library"
+    # The benchmark is part of the suite rather than a separate thing to
+    # remember: it asserts its own results, so a batch kernel that regresses
+    # numerically fails here instead of quietly producing wrong numbers fast.
+    run "TypeScript (batch kernels)" bun run "$here/typescript/bench.ts" "$library"
 elif command -v deno >/dev/null 2>&1; then
     echo
     echo "TypeScript"
