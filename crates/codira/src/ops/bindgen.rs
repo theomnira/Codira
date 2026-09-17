@@ -1,6 +1,6 @@
 //! Copyright (c) 2026 Omnira CJSC
 //! Author: Tunjay Akbarli
-//! Date: August 6, 2026
+//! Date: September 17, 2026
 //!
 //! Functionality:
 //! - Generates FFI bindings for a Codira library from its `@export("C")`

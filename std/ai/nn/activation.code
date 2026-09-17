@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026, Omnira CJSC. All rights reserved.
 // Author: Tunjay Akbarli
-// Date: August 6, 2026.
+// Date: September 17, 2026.
 //
 // The pointwise nonlinearities, plus softmax, which is not pointwise and is
 // the one that needs care.

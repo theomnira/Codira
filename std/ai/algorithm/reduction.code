@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026, Omnira CJSC. All rights reserved.
 // Author: Tunjay Akbarli
-// Date: August 6, 2026.
+// Date: September 17, 2026.
 //
 // Reductions collapse a tensor to a scalar, or one axis of it to length 1.
 //

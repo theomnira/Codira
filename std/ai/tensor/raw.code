@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026, Omnira CJSC. All rights reserved.
 // Author: Tunjay Akbarli
-// Date: August 6, 2026.
+// Date: September 17, 2026.
 //
 // Tensor data does not belong to Codira. It arrives as an address: a
 // `TypedArray` from Bun, a NumPy array through `ctypes`, a `float*` from C.

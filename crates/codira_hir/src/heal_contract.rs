@@ -1,5 +1,6 @@
 //! Copyright (c) 2026 Omnira CJSC
 //! Author: Tunjay Akbarli
+//! Date: September 17, 2026
 //!
 //! Lowering and static validation of `@heal(...)` healing contracts.
 //!

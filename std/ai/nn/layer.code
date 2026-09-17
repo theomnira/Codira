@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026, Omnira CJSC. All rights reserved.
 // Author: Tunjay Akbarli
-// Date: August 6, 2026.
+// Date: September 17, 2026.
 //
 // Inference-time forward passes: dense layers, the normalizations, and the
 // attention score computation.

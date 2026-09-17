@@ -1,5 +1,6 @@
 //! Copyright (c) 2026 Omnira CJSC
 //! Author: Tunjay Akbarli
+//! Date: September 17, 2026
 //!
 //! Reports constructs the code generator cannot lower yet, as diagnostics,
 //! before it is asked to try.

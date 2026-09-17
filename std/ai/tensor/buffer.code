@@ -4,7 +4,7 @@
 //
 // Copyright (c) 2026, Omnira CJSC. All rights reserved.
 // Author: Tunjay Akbarli
-// Date: August 6, 2026.
+// Date: September 17, 2026.
 //
 // A `TensorF32` is an address and a `Shape`. It owns nothing, allocates
 // nothing, and frees nothing: the memory belongs to whoever passed the
