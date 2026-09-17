@@ -22,6 +22,7 @@ use crate::{
     Visibility,
 };
 
+pub(crate) mod codegen_support;
 mod effect_obligation;
 mod literal_out_of_range;
 mod move_check;
@@ -58,6 +59,7 @@ impl<'a> ExprValidator<'a> {
         self.validate_effect_obligations(sink);
         self.validate_healing_contract(sink);
         self.validate_move_checking(sink);
+        self.validate_codegen_support(sink);
     }
 
     pub fn validate_privacy(&self, sink: &mut DiagnosticSink<'_>) {

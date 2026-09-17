@@ -135,6 +135,45 @@ impl Struct {
         lower.add_diagnostics(db, self.file_id(db), data.type_ref_source_map(), sink);
         let validator = validator::StructValidator::new(self, db, self.file_id(db));
         validator.validate_privacy(sink);
+        self.validate_codegen_support(db, sink);
+    }
+
+    /// Reports a generic struct as unsupported by the code generator.
+    ///
+    /// The same gap `expr::validator::codegen_support` reports for generic
+    /// functions, on the other declaration that can carry parameters. A
+    /// generic struct reaches codegen through the type table -- its `TypeId`
+    /// is built from its fields' types -- and a field typed `T` has no GUID
+    /// to hash, so this crashed in `HirTypeCache::type_id` rather than in
+    /// any expression.
+    fn validate_codegen_support(self, db: &dyn HirDatabase, sink: &mut DiagnosticSink<'_>) {
+        use codira_syntax::{ast::AstNode, SyntaxNodePtr};
+
+        use crate::{
+            code_model::src::HasSource, diagnostics::UnsupportedByCodegen,
+            expr::validator::codegen_support::contains_type_parameter, HirDisplay,
+        };
+
+        let Some(ty) = self
+            .fields(db)
+            .into_iter()
+            .map(|field| field.ty(db))
+            .find(contains_type_parameter)
+        else {
+            return;
+        };
+
+        let src = self.source(db);
+        sink.push(UnsupportedByCodegen {
+            file: src.file_id,
+            node: SyntaxNodePtr::new(src.value.syntax()),
+            what: format!(
+                "a generic struct (`{}` is not instantiated)",
+                ty.display(db)
+            ),
+            because: "monomorphisation is not implemented yet, so the struct has no concrete                       layout to generate"
+                .to_string(),
+        });
     }
 }
 

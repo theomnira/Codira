@@ -1309,3 +1309,41 @@ impl Diagnostic for HealContractInfeasibleStrategy {
         self
     }
 }
+
+/// A construct the code generator cannot lower yet.
+///
+/// Reported by `expr::validator::codegen_support` *before* codegen runs, so
+/// the user gets a located diagnostic naming the gap instead of a `panic!`
+/// with a Rust backtrace. `spec/EIDOS_RFC_002.md` section 3.4 states the
+/// rule: a backend gap needs "a declining arm in codegen ... plus a
+/// `CannotCodegen` diagnostic -- *not* `unimplemented!()`".
+///
+/// The message deliberately distinguishes the construct from the reason: the
+/// construct is valid Codira, and only the backend is behind. Each of these
+/// is a gap expected to close, not a language rule.
+#[derive(Debug)]
+pub struct UnsupportedByCodegen {
+    pub file: FileId,
+    pub node: SyntaxNodePtr,
+    /// What was written, e.g. "a string literal".
+    pub what: String,
+    /// Why the backend cannot lower it.
+    pub because: String,
+}
+
+impl Diagnostic for UnsupportedByCodegen {
+    fn message(&self) -> String {
+        format!(
+            "{} is not supported by the code generator yet: {}",
+            self.what, self.because
+        )
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.node.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
