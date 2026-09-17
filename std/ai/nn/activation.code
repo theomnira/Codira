@@ -1,0 +1,351 @@
+// =============================================================================
+// std/ai/nn/activation.code — activation functions
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// The pointwise nonlinearities, plus softmax, which is not pointwise and is
+// the one that needs care.
+//
+// # Transcendentals are computed here, not called for
+//
+// `exp` and `tanh` are approximated in this file rather than declared
+// `extern "C"` against libm. Two reasons, and the second is the real one.
+//
+// The first is speed: a libm `expf` call is a function call per element, and
+// these kernels exist to avoid exactly that cost -- the whole design of
+// `std.ai` is that the loop stays on this side of any boundary.
+//
+// The second is that it would not work. A Codira function that calls an
+// `extern "C"` symbol resolves it through the runtime's dispatch table, which
+// is populated when the Codira runtime loads the library and *not* when the
+// library is `dlopen`ed directly by Bun, Python or C. Depending on libm here
+// would mean these kernels worked under `codira start` and failed for every
+// caller they are actually meant for. See the note in
+// `examples/interop/codira/src/mod.code`.
+//
+// The approximations below are accurate to about 1e-6 relative, which is well
+// inside f32's 1e-7 and far inside what any network is sensitive to.
+// =============================================================================
+
+import std.ai.algorithm.reduction;
+import std.ai.tensor.buffer;
+import std.ai.tensor.raw;
+import std.ai.tensor.shape;
+
+// =============================================================================
+// Scalar primitives
+// =============================================================================
+
+// e^x for f32.
+//
+// Range reduction to `x = k*ln2 + r` with `|r| <= ln2/2`, a degree-5
+// polynomial on `r`, then scaling by 2^k. Splitting it this way is what keeps
+// the polynomial short: approximating e^x directly over a useful range would
+// need far more terms for the same accuracy.
+//
+// Saturates rather than overflowing: above 88 an f32 exponential is +inf, and
+// below -88 it is zero, so those are returned directly instead of letting the
+// polynomial produce nonsense.
+public func exp_f32(x: f32) -> f32 {
+    if x > 88.0 {
+        return 3.4028235e38;
+    }
+    if x < -88.0 {
+        return 0.0;
+    }
+
+    let ln2: f32 = 0.6931472;
+    let inv_ln2: f32 = 1.4426950;
+
+    // Round to nearest by biasing before truncation; `as i32` truncates
+    // toward zero, which would round the wrong way for negative x.
+    let mut k: i32 = 0;
+    if x >= 0.0 {
+        k = (x * inv_ln2 + 0.5) as i32;
+    } else {
+        k = (x * inv_ln2 - 0.5) as i32;
+    }
+    let r = x - (k as f32) * ln2;
+
+    // e^r on |r| <= ln2/2, Horner form.
+    let mut p: f32 = 0.0013981;
+    p = p * r + 0.0083345;
+    p = p * r + 0.0416657;
+    p = p * r + 0.1666666;
+    p = p * r + 0.5000000;
+    p = p * r + 1.0000000;
+    p = p * r + 1.0000000;
+
+    return p * pow2_f32(k);
+}
+
+// 2^k for an integer k, by repeated squaring.
+//
+// Building the float's exponent field directly would be one instruction, but
+// that needs a bit-level reinterpret between i32 and f32 that this language
+// does not have -- `as` converts the value, not the bits. Repeated squaring
+// is log2(|k|) multiplications, which for the range that survives the
+// saturation check above is at most 8.
+public func pow2_f32(k: i32) -> f32 {
+    if k == 0 {
+        return 1.0;
+    }
+    let mut n = k;
+    let mut base: f32 = 2.0;
+    if n < 0 {
+        n = 0 - n;
+        base = 0.5;
+    }
+    let mut result: f32 = 1.0;
+    let mut i: i32 = 0;
+    while i < n {
+        result = result * base;
+        i = i + 1;
+    }
+    return result;
+}
+
+// The logistic sigmoid, 1 / (1 + e^-x).
+//
+// Branching on the sign keeps the exponent negative on both paths. Computing
+// `1/(1+exp(-x))` directly for very negative x would evaluate e^(large
+// positive), which saturates and loses the answer; this form evaluates
+// e^(large negative), which underflows to zero and gives the right limit.
+public func sigmoid_f32(x: f32) -> f32 {
+    if x >= 0.0 {
+        return 1.0 / (1.0 + exp_f32(0.0 - x));
+    }
+    let e = exp_f32(x);
+    return e / (1.0 + e);
+}
+
+// Hyperbolic tangent, as `2*sigmoid(2x) - 1`.
+public func tanh_f32(x: f32) -> f32 {
+    2.0 * sigmoid_f32(2.0 * x) - 1.0
+}
+
+// Square root by Newton's method.
+//
+// Three iterations from a crude seed is enough for f32: the method doubles
+// the correct digits each step, so 3 bits of seed becomes 24.
+public func sqrt_f32(x: f32) -> f32 {
+    if x <= 0.0 {
+        return 0.0;
+    }
+    let mut guess = x;
+    if guess > 1.0 {
+        guess = x / 2.0;
+    }
+    let mut i: usize = 0;
+    while i < 8 {
+        guess = 0.5 * (guess + x / guess);
+        i = i + 1;
+    }
+    return guess;
+}
+
+// =============================================================================
+// Pointwise activations
+// =============================================================================
+
+// `dst[i] = max(0, src[i])`
+public func relu(src: TensorF32, dst: TensorF32) {
+    let n = activation_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let v = src.get(i);
+        if v > 0.0 {
+            dst.set(i, v);
+        } else {
+            dst.set(i, 0.0);
+        }
+        i = i + 1;
+    }
+}
+
+// `dst[i] = src[i] > 0 ? src[i] : slope * src[i]`
+public func leaky_relu(src: TensorF32, dst: TensorF32, slope: f32) {
+    let n = activation_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let v = src.get(i);
+        if v > 0.0 {
+            dst.set(i, v);
+        } else {
+            dst.set(i, slope * v);
+        }
+        i = i + 1;
+    }
+}
+
+// `dst[i] = min(max(src[i], 0), 6)`, the bounded ReLU used in mobile networks.
+public func relu6(src: TensorF32, dst: TensorF32) {
+    let n = activation_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let mut v = src.get(i);
+        if v < 0.0 { v = 0.0; }
+        if v > 6.0 { v = 6.0; }
+        dst.set(i, v);
+        i = i + 1;
+    }
+}
+
+// `dst[i] = sigmoid(src[i])`
+public func sigmoid(src: TensorF32, dst: TensorF32) {
+    let n = activation_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, sigmoid_f32(src.get(i)));
+        i = i + 1;
+    }
+}
+
+// `dst[i] = tanh(src[i])`
+public func tanh(src: TensorF32, dst: TensorF32) {
+    let n = activation_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, tanh_f32(src.get(i)));
+        i = i + 1;
+    }
+}
+
+// `dst[i] = src[i] * sigmoid(src[i])`, SiLU / swish.
+public func silu(src: TensorF32, dst: TensorF32) {
+    let n = activation_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let v = src.get(i);
+        dst.set(i, v * sigmoid_f32(v));
+        i = i + 1;
+    }
+}
+
+// GELU, in the tanh approximation.
+//
+// `0.5x(1 + tanh(sqrt(2/pi)(x + 0.044715x^3)))`. This is the form the
+// transformer papers specify, and it differs from the exact erf-based GELU by
+// under 1e-3 -- which is the version trained weights were fitted against, so
+// matching it matters more than being closer to the true integral.
+public func gelu(src: TensorF32, dst: TensorF32) {
+    let n = activation_extent(src, dst);
+    let sqrt_2_over_pi: f32 = 0.7978846;
+    let mut i: usize = 0;
+    while i < n {
+        let v = src.get(i);
+        let inner = sqrt_2_over_pi * (v + 0.044715 * v * v * v);
+        dst.set(i, 0.5 * v * (1.0 + tanh_f32(inner)));
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Softmax
+// =============================================================================
+
+// Softmax over the whole tensor, in place-safe form.
+//
+// The subtraction of the maximum is not an optimization, it is what makes
+// this work at all. `exp(x)` for x above 88 is infinity in f32, so a logit of
+// 100 -- entirely ordinary in an untrained or a sharply-peaked network --
+// would produce inf/inf and a tensor of NaNs. Subtracting the maximum first
+// leaves the largest exponent at exactly 1.0 and every other below it, which
+// is mathematically identical because the shift cancels in the ratio.
+public func softmax(src: TensorF32, dst: TensorF32) {
+    let n = activation_extent(src, dst);
+    if n == 0 {
+        return;
+    }
+
+    let mut peak = src.get(0);
+    let mut i: usize = 1;
+    while i < n {
+        let v = src.get(i);
+        if v > peak {
+            peak = v;
+        }
+        i = i + 1;
+    }
+
+    let mut total: f32 = 0.0;
+    i = 0;
+    while i < n {
+        let e = exp_f32(src.get(i) - peak);
+        dst.set(i, e);
+        total = total + e;
+        i = i + 1;
+    }
+
+    if total == 0.0 {
+        return;
+    }
+    i = 0;
+    while i < n {
+        dst.set(i, dst.get(i) / total);
+        i = i + 1;
+    }
+}
+
+// Softmax applied independently to each row of the matrix view.
+//
+// The form a batch of examples needs: normalizing across the whole tensor
+// would make every row's probabilities depend on every other row's.
+public func softmax_rows(src: TensorF32, dst: TensorF32) {
+    let rows = src.shape.dim(0);
+    let cols = src.shape.dim(1);
+    if cols == 0 {
+        return;
+    }
+    let total_elements = activation_extent(src, dst);
+
+    let mut r: usize = 0;
+    while r < rows {
+        let base = r * cols;
+        if base + cols > total_elements {
+            return;
+        }
+
+        let mut peak = src.get(base);
+        let mut c: usize = 1;
+        while c < cols {
+            let v = src.get(base + c);
+            if v > peak {
+                peak = v;
+            }
+            c = c + 1;
+        }
+
+        let mut total: f32 = 0.0;
+        c = 0;
+        while c < cols {
+            let e = exp_f32(src.get(base + c) - peak);
+            dst.set(base + c, e);
+            total = total + e;
+            c = c + 1;
+        }
+
+        if total > 0.0 {
+            c = 0;
+            while c < cols {
+                dst.set(base + c, dst.get(base + c) / total);
+                c = c + 1;
+            }
+        }
+
+        r = r + 1;
+    }
+}
+
+// The number of elements an activation may touch, shortest of the two.
+public func activation_extent(src: TensorF32, dst: TensorF32) -> usize {
+    let mut n = src.count();
+    let dst_n = dst.count();
+    if dst_n < n {
+        n = dst_n;
+    }
+    return n;
+}

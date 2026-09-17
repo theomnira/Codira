@@ -1,0 +1,265 @@
+// =============================================================================
+// std/ai/quantize.code — 8-bit quantization
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// Converting f32 tensors to 8-bit and back, which is how a model four times
+// too large for memory gets run anyway.
+//
+// Two schemes, and the choice between them is not a detail:
+//
+//   - *Symmetric* maps `[-absmax, absmax]` onto `[-127, 127]` with zero
+//     landing exactly on 0. One number per tensor, and a quantized dot
+//     product is a plain integer dot product times a scale.
+//
+//   - *Asymmetric* maps `[min, max]` onto `[-128, 127]` with an explicit zero
+//     point. It uses the full range even when the data is one-sided -- post-
+//     ReLU activations are all non-negative, and symmetric quantization
+//     throws away half its codes on values that cannot occur.
+//
+// Weights are usually symmetric and roughly centred, so they take the first.
+// Activations after a ReLU take the second. Using the wrong one costs a bit
+// of precision, which at 8 bits is a quarter of what is there.
+// =============================================================================
+
+import std.ai.algorithm.reduction;
+import std.ai.tensor.buffer;
+import std.ai.tensor.raw;
+import std.ai.tensor.shape;
+
+// The quantized range for the symmetric scheme.
+//
+// 127 and not 128: symmetric quantization needs `-x` to be representable
+// whenever `x` is, and i8 holds -128 but not +128. Giving up the one extra
+// code keeps the mapping an odd, zero-centred range.
+public let SYMMETRIC_MAX: f32 = 127.0;
+
+// The quantization parameters recovered from a tensor.
+//
+// `zero_point` is 0 for the symmetric scheme, which is what makes it the
+// cheap one -- dequantizing is a multiply with no subtraction.
+public struct QuantParams {
+    scale: f32,
+    zero_point: i32,
+}
+
+// =============================================================================
+// Choosing parameters
+// =============================================================================
+
+// Symmetric parameters for `src`: scale from the largest magnitude present.
+//
+// A tensor of all zeros yields a scale of 1.0 rather than 0.0, so that
+// dequantizing is the identity instead of a division by zero.
+public func symmetric_params(src: TensorF32) -> QuantParams {
+    let n = src.count();
+    let mut peak: f32 = 0.0;
+    let mut i: usize = 0;
+    while i < n {
+        let mut v = src.get(i);
+        if v < 0.0 {
+            v = 0.0 - v;
+        }
+        if v > peak {
+            peak = v;
+        }
+        i = i + 1;
+    }
+    if peak == 0.0 {
+        return QuantParams { scale: 1.0, zero_point: 0 };
+    }
+    return QuantParams { scale: peak / SYMMETRIC_MAX, zero_point: 0 };
+}
+
+// Asymmetric parameters for `src`, covering `[min, max]` across `[-128, 127]`.
+//
+// The zero point is rounded to an integer and clamped into the i8 range,
+// because it *is* a quantized value -- the code that a real zero maps to. If
+// it were left fractional, zero would not round-trip, and a padded or masked
+// region would come back as a small nonzero drift.
+public func asymmetric_params(src: TensorF32) -> QuantParams {
+    let n = src.count();
+    if n == 0 {
+        return QuantParams { scale: 1.0, zero_point: 0 };
+    }
+
+    let mut low = src.get(0);
+    let mut high = src.get(0);
+    let mut i: usize = 1;
+    while i < n {
+        let v = src.get(i);
+        if v < low { low = v; }
+        if v > high { high = v; }
+        i = i + 1;
+    }
+
+    // The representable range must include zero, or zero cannot round-trip.
+    if low > 0.0 { low = 0.0; }
+    if high < 0.0 { high = 0.0; }
+
+    let span = high - low;
+    if span == 0.0 {
+        return QuantParams { scale: 1.0, zero_point: 0 };
+    }
+
+    let scale = span / 255.0;
+    let mut zero = -128.0 - low / scale;
+    if zero < -128.0 { zero = -128.0; }
+    if zero > 127.0 { zero = 127.0; }
+
+    return QuantParams { scale: scale, zero_point: round_to_i32(zero) };
+}
+
+// Round half away from zero, which `as i32` alone does not do -- it
+// truncates, so 2.7 would become 2 and -2.7 would become -2.
+public func round_to_i32(x: f32) -> i32 {
+    if x >= 0.0 {
+        return (x + 0.5) as i32;
+    }
+    return (x - 0.5) as i32;
+}
+
+// Clamp to what an i8 can hold. Every quantized value goes through this:
+// without it, a value just outside the calibrated range wraps to the opposite
+// sign, turning the largest activation in a tensor into the smallest.
+public func clamp_i8(v: i32) -> i8 {
+    if v < -128 {
+        return -128;
+    }
+    if v > 127 {
+        return 127;
+    }
+    return v as i8;
+}
+
+// =============================================================================
+// Quantize
+// =============================================================================
+
+// `dst[i] = clamp(round(src[i] / scale) + zero_point)`
+public func quantize(src: TensorF32, dst: TensorI8, params: QuantParams) {
+    let mut n = src.count();
+    let dst_n = dst.count();
+    if dst_n < n {
+        n = dst_n;
+    }
+    if params.scale == 0.0 {
+        return;
+    }
+
+    let mut i: usize = 0;
+    while i < n {
+        let scaled = round_to_i32(src.get(i) / params.scale) + params.zero_point;
+        dst.set(i, clamp_i8(scaled));
+        i = i + 1;
+    }
+}
+
+// Quantize with symmetric parameters chosen from the data, returning them.
+//
+// The parameters come back because dequantizing needs them: they are not
+// recoverable from the quantized tensor, and losing them makes the data
+// meaningless.
+public func quantize_symmetric(src: TensorF32, dst: TensorI8) -> QuantParams {
+    let params = symmetric_params(src);
+    quantize(src, dst, params);
+    return params;
+}
+
+// Quantize with asymmetric parameters chosen from the data, returning them.
+public func quantize_asymmetric(src: TensorF32, dst: TensorI8) -> QuantParams {
+    let params = asymmetric_params(src);
+    quantize(src, dst, params);
+    return params;
+}
+
+// =============================================================================
+// Dequantize
+// =============================================================================
+
+// `dst[i] = (src[i] - zero_point) * scale`
+public func dequantize(src: TensorI8, dst: TensorF32, params: QuantParams) {
+    let mut n = src.count();
+    let dst_n = dst.count();
+    if dst_n < n {
+        n = dst_n;
+    }
+    let mut i: usize = 0;
+    while i < n {
+        let centred = (src.get(i) as i32) - params.zero_point;
+        dst.set(i, (centred as f32) * params.scale);
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Quantized arithmetic
+// =============================================================================
+
+// The dot product of two symmetrically-quantized vectors, in f32.
+//
+// The accumulation happens in i32 and the scales are applied once at the end,
+// which is the entire point of quantizing: the inner loop is integer
+// multiply-accumulate with no float work at all.
+//
+// i32 cannot overflow here for any realistic length -- the largest term is
+// 127*127 = 16129, so it would take over 133,000 elements of worst-case
+// magnitude to reach i32's limit, and a vector that long is not what this is
+// for.
+public func quantized_dot(
+    a: TensorI8,
+    b: TensorI8,
+    a_params: QuantParams,
+    b_params: QuantParams,
+) -> f32 {
+    let mut n = a.count();
+    let b_n = b.count();
+    if b_n < n {
+        n = b_n;
+    }
+
+    let mut total: i32 = 0;
+    let mut i: usize = 0;
+    while i < n {
+        let x = (a.get(i) as i32) - a_params.zero_point;
+        let y = (b.get(i) as i32) - b_params.zero_point;
+        total = total + x * y;
+        i = i + 1;
+    }
+
+    return (total as f32) * a_params.scale * b_params.scale;
+}
+
+// =============================================================================
+// Error measurement
+// =============================================================================
+
+// The largest absolute difference between `original` and its round trip.
+//
+// The number to look at when deciding whether a scheme is good enough for a
+// given tensor: quantization error is bounded by half a step, so this should
+// come out near `scale / 2`, and a value much larger than that means the
+// calibration range was wrong.
+public func quantization_error(original: TensorF32, restored: TensorF32) -> f32 {
+    let mut n = original.count();
+    let r_n = restored.count();
+    if r_n < n {
+        n = r_n;
+    }
+    let mut worst: f32 = 0.0;
+    let mut i: usize = 0;
+    while i < n {
+        let mut diff = original.get(i) - restored.get(i);
+        if diff < 0.0 {
+            diff = 0.0 - diff;
+        }
+        if diff > worst {
+            worst = diff;
+        }
+        i = i + 1;
+    }
+    return worst;
+}

@@ -1,0 +1,313 @@
+// =============================================================================
+// std/ai/algorithm/reduction.code — folds over tensor data
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// Reductions collapse a tensor to a scalar, or one axis of it to length 1.
+//
+// # Summation is pairwise, not sequential
+//
+// `sum` does not simply run an accumulator down the array. Adding n floats in
+// order accumulates rounding error that grows with n, because each partial sum
+// gets larger while the addends stay the same size, so the low bits of each
+// addend fall off the end. Summing in a balanced tree instead keeps the
+// operands comparable in magnitude and holds the error to O(log n).
+//
+// This matters at the sizes these kernels are for. Summing a million f32
+// values near 1.0 sequentially loses the last few digits entirely; the
+// pairwise form does not. It costs nothing extra -- the same number of
+// additions, in a different order.
+// =============================================================================
+
+import std.ai.tensor.buffer;
+import std.ai.tensor.raw;
+import std.ai.tensor.shape;
+
+// Below this length, summation runs straight through.
+//
+// The tree only pays for itself once the partial sums have grown enough to
+// start shedding bits, and recursing to single elements would spend more on
+// call overhead than it saves in accuracy.
+public let PAIRWISE_THRESHOLD: usize = 128;
+
+// =============================================================================
+// Sums
+// =============================================================================
+
+// The sum of `count` f32 values starting at flat offset `start`.
+//
+// Split in half until the halves are short enough to add in order. The
+// recursion depth is log2(count), so a billion elements is 30 frames.
+public func sum_range(t: TensorF32, start: usize, count: usize) -> f32 {
+    if count == 0 {
+        return 0.0;
+    }
+    if count <= PAIRWISE_THRESHOLD {
+        let mut total: f32 = 0.0;
+        let mut i: usize = 0;
+        while i < count {
+            total = total + t.get(start + i);
+            i = i + 1;
+        }
+        return total;
+    }
+    let half = count / 2;
+    return sum_range(t, start, half) + sum_range(t, start + half, count - half);
+}
+
+// The sum of every element.
+public func sum(t: TensorF32) -> f32 {
+    sum_range(t, 0, t.count())
+}
+
+// The arithmetic mean, or zero for an empty tensor.
+public func mean(t: TensorF32) -> f32 {
+    let n = t.count();
+    if n == 0 {
+        return 0.0;
+    }
+    return sum(t) / (n as f32);
+}
+
+// The sum of squares, which is the squared L2 norm.
+public func sum_of_squares_range(t: TensorF32, start: usize, count: usize) -> f32 {
+    if count == 0 {
+        return 0.0;
+    }
+    if count <= PAIRWISE_THRESHOLD {
+        let mut total: f32 = 0.0;
+        let mut i: usize = 0;
+        while i < count {
+            let v = t.get(start + i);
+            total = total + v * v;
+            i = i + 1;
+        }
+        return total;
+    }
+    let half = count / 2;
+    return sum_of_squares_range(t, start, half)
+        + sum_of_squares_range(t, start + half, count - half);
+}
+
+// The sum of squares of every element.
+public func sum_of_squares(t: TensorF32) -> f32 {
+    sum_of_squares_range(t, 0, t.count())
+}
+
+// The population variance, or zero for an empty tensor.
+//
+// `E[x^2] - E[x]^2` rather than a second pass over the deviations: one pass
+// is the point of having this at all, and at f32 the difference only shows up
+// when the mean dwarfs the spread.
+public func variance(t: TensorF32) -> f32 {
+    let n = t.count();
+    if n == 0 {
+        return 0.0;
+    }
+    let m = mean(t);
+    return sum_of_squares(t) / (n as f32) - m * m;
+}
+
+// =============================================================================
+// Extremes
+// =============================================================================
+
+// The largest element, or zero for an empty tensor.
+public func max_value(t: TensorF32) -> f32 {
+    let n = t.count();
+    if n == 0 {
+        return 0.0;
+    }
+    let mut best = t.get(0);
+    let mut i: usize = 1;
+    while i < n {
+        let v = t.get(i);
+        if v > best {
+            best = v;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+// The smallest element, or zero for an empty tensor.
+public func min_value(t: TensorF32) -> f32 {
+    let n = t.count();
+    if n == 0 {
+        return 0.0;
+    }
+    let mut best = t.get(0);
+    let mut i: usize = 1;
+    while i < n {
+        let v = t.get(i);
+        if v < best {
+            best = v;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+// The flat index of the largest element, or `count()` for an empty tensor.
+//
+// Ties go to the first occurrence, which is the convention every other
+// `argmax` uses and the one that makes the result reproducible.
+public func argmax(t: TensorF32) -> usize {
+    let n = t.count();
+    if n == 0 {
+        return 0;
+    }
+    let mut best = t.get(0);
+    let mut best_index: usize = 0;
+    let mut i: usize = 1;
+    while i < n {
+        let v = t.get(i);
+        if v > best {
+            best = v;
+            best_index = i;
+        }
+        i = i + 1;
+    }
+    return best_index;
+}
+
+// The flat index of the smallest element, ties going to the first.
+public func argmin(t: TensorF32) -> usize {
+    let n = t.count();
+    if n == 0 {
+        return 0;
+    }
+    let mut best = t.get(0);
+    let mut best_index: usize = 0;
+    let mut i: usize = 1;
+    while i < n {
+        let v = t.get(i);
+        if v < best {
+            best = v;
+            best_index = i;
+        }
+        i = i + 1;
+    }
+    return best_index;
+}
+
+// =============================================================================
+// Row-wise reductions
+// =============================================================================
+//
+// A matrix reduced along its last axis. These are the forms a batch of
+// examples needs: one result per row, not one result for the whole tensor.
+
+// `dst[r] = sum(src[r, :])` for every row of the matrix view.
+public func row_sums(src: TensorF32, dst: TensorF32) {
+    let rows = src.shape.dim(0);
+    let cols = src.shape.dim(1);
+    let mut r: usize = 0;
+    while r < rows && r < dst.count() {
+        dst.set(r, sum_range(src, r * cols, cols));
+        r = r + 1;
+    }
+}
+
+// `dst[r] = mean(src[r, :])` for every row of the matrix view.
+public func row_means(src: TensorF32, dst: TensorF32) {
+    let rows = src.shape.dim(0);
+    let cols = src.shape.dim(1);
+    if cols == 0 {
+        return;
+    }
+    let mut r: usize = 0;
+    while r < rows && r < dst.count() {
+        dst.set(r, sum_range(src, r * cols, cols) / (cols as f32));
+        r = r + 1;
+    }
+}
+
+// `dst[r] = max(src[r, :])` for every row of the matrix view.
+public func row_maxes(src: TensorF32, dst: TensorF32) {
+    let rows = src.shape.dim(0);
+    let cols = src.shape.dim(1);
+    let mut r: usize = 0;
+    while r < rows && r < dst.count() {
+        if cols == 0 {
+            dst.set(r, 0.0);
+        } else {
+            let base = r * cols;
+            let mut best = src.get(base);
+            let mut c: usize = 1;
+            while c < cols {
+                let v = src.get(base + c);
+                if v > best {
+                    best = v;
+                }
+                c = c + 1;
+            }
+            dst.set(r, best);
+        }
+        r = r + 1;
+    }
+}
+
+// `dst[r] = argmax(src[r, :])` for every row, as an f32 index.
+//
+// The index comes back as f32 because `dst` is an f32 tensor and the caller
+// is usually feeding it straight into the next kernel. Exact for every index
+// below 2^24, which is past the point where a single row this wide is
+// plausible.
+public func row_argmaxes(src: TensorF32, dst: TensorF32) {
+    let rows = src.shape.dim(0);
+    let cols = src.shape.dim(1);
+    let mut r: usize = 0;
+    while r < rows && r < dst.count() {
+        if cols == 0 {
+            dst.set(r, 0.0);
+        } else {
+            let base = r * cols;
+            let mut best = src.get(base);
+            let mut best_index: usize = 0;
+            let mut c: usize = 1;
+            while c < cols {
+                let v = src.get(base + c);
+                if v > best {
+                    best = v;
+                    best_index = c;
+                }
+                c = c + 1;
+            }
+            dst.set(r, best_index as f32);
+        }
+        r = r + 1;
+    }
+}
+
+// =============================================================================
+// Comparisons
+// =============================================================================
+
+// The number of elements where `a` and `b` differ by more than `tolerance`.
+//
+// The shape of assertion a test wants: zero means equal, and anything else
+// says how much disagreed.
+public func mismatch_count(a: TensorF32, b: TensorF32, tolerance: f32) -> usize {
+    let mut n = a.count();
+    let b_n = b.count();
+    if b_n < n {
+        n = b_n;
+    }
+    let mut bad: usize = 0;
+    let mut i: usize = 0;
+    while i < n {
+        let mut diff = a.get(i) - b.get(i);
+        if diff < 0.0 {
+            diff = 0.0 - diff;
+        }
+        if diff > tolerance {
+            bad = bad + 1;
+        }
+        i = i + 1;
+    }
+    return bad;
+}

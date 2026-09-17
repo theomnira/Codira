@@ -1,0 +1,257 @@
+// =============================================================================
+// std/ai/nn/layer.code — layer forward passes
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// Inference-time forward passes: dense layers, the normalizations, and the
+// attention score computation.
+//
+// Forward only. There is no autograd here and none planned in this module --
+// a backward pass needs a tape or a graph, which is a design decision for
+// `std.ai` as a whole rather than something to smuggle in underneath a
+// `linear()`. These are the kernels for running a model that was trained
+// somewhere else, which is what the FFI boundary this is reached through is
+// usually for.
+// =============================================================================
+
+import std.ai.algorithm.functional;
+import std.ai.algorithm.reduction;
+import std.ai.linalg.matmul;
+import std.ai.linalg.vector;
+import std.ai.nn.activation;
+import std.ai.tensor.buffer;
+import std.ai.tensor.raw;
+import std.ai.tensor.shape;
+
+// =============================================================================
+// Dense
+// =============================================================================
+
+// `y = x * W + b` for a batch of rows.
+//
+// `x` is (batch, in), `w` is (in, out), `b` is (out), `y` is (batch, out).
+// The bias is broadcast down the batch, which is the only broadcasting any
+// kernel in this module does -- general broadcasting needs stride machinery
+// that `Shape` deliberately does not carry.
+public func linear(x: TensorF32, w: TensorF32, b: TensorF32, y: TensorF32) {
+    matmul(x, w, y);
+
+    let batch = y.shape.dim(0);
+    let out = y.shape.dim(1);
+    if b.count() < out {
+        return;
+    }
+
+    let mut r: usize = 0;
+    while r < batch {
+        let base = r * out;
+        let mut c: usize = 0;
+        while c < out {
+            y.set(base + c, y.get(base + c) + b.get(c));
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+}
+
+// `y = x * W` with no bias term.
+public func linear_no_bias(x: TensorF32, w: TensorF32, y: TensorF32) {
+    matmul(x, w, y);
+}
+
+// A dense layer followed by ReLU, fused.
+//
+// Worth its own entry point rather than two calls: the activation runs over
+// `y` while it is still in cache from the matmul, instead of streaming the
+// whole tensor back in.
+public func linear_relu(x: TensorF32, w: TensorF32, b: TensorF32, y: TensorF32) {
+    linear(x, w, b, y);
+    relu(y, y);
+}
+
+// A dense layer followed by GELU, fused.
+public func linear_gelu(x: TensorF32, w: TensorF32, b: TensorF32, y: TensorF32) {
+    linear(x, w, b, y);
+    gelu(y, y);
+}
+
+// =============================================================================
+// Normalization
+// =============================================================================
+
+// Layer normalization over the last axis of the matrix view.
+//
+// For each row: subtract the mean, divide by the standard deviation, then
+// scale by `gamma` and shift by `beta`.
+//
+// `epsilon` is inside the square root, not added after it. That placement is
+// what keeps the gradient finite for a constant row -- outside, a zero
+// variance would give a zero denominator before the epsilon could help.
+public func layer_norm(
+    x: TensorF32,
+    gamma: TensorF32,
+    beta: TensorF32,
+    y: TensorF32,
+    epsilon: f32,
+) {
+    let rows = x.shape.dim(0);
+    let cols = x.shape.dim(1);
+    if cols == 0 || y.count() < rows * cols {
+        return;
+    }
+    let has_gamma = gamma.count() >= cols;
+    let has_beta = beta.count() >= cols;
+
+    let mut r: usize = 0;
+    while r < rows {
+        let base = r * cols;
+
+        let mut total: f32 = 0.0;
+        let mut c: usize = 0;
+        while c < cols {
+            total = total + x.get(base + c);
+            c = c + 1;
+        }
+        let avg = total / (cols as f32);
+
+        let mut spread: f32 = 0.0;
+        c = 0;
+        while c < cols {
+            let d = x.get(base + c) - avg;
+            spread = spread + d * d;
+            c = c + 1;
+        }
+        let inv_std = 1.0 / sqrt_f32(spread / (cols as f32) + epsilon);
+
+        c = 0;
+        while c < cols {
+            let mut v = (x.get(base + c) - avg) * inv_std;
+            if has_gamma {
+                v = v * gamma.get(c);
+            }
+            if has_beta {
+                v = v + beta.get(c);
+            }
+            y.set(base + c, v);
+            c = c + 1;
+        }
+
+        r = r + 1;
+    }
+}
+
+// Root-mean-square normalization over the last axis.
+//
+// Layer norm without the mean subtraction: scale each row by the reciprocal
+// of its RMS. Cheaper than `layer_norm` by one pass, and what the Llama-family
+// models use in place of it.
+public func rms_norm(x: TensorF32, gamma: TensorF32, y: TensorF32, epsilon: f32) {
+    let rows = x.shape.dim(0);
+    let cols = x.shape.dim(1);
+    if cols == 0 || y.count() < rows * cols {
+        return;
+    }
+    let has_gamma = gamma.count() >= cols;
+
+    let mut r: usize = 0;
+    while r < rows {
+        let base = r * cols;
+
+        let mut squares: f32 = 0.0;
+        let mut c: usize = 0;
+        while c < cols {
+            let v = x.get(base + c);
+            squares = squares + v * v;
+            c = c + 1;
+        }
+        let inv_rms = 1.0 / sqrt_f32(squares / (cols as f32) + epsilon);
+
+        c = 0;
+        while c < cols {
+            let mut v = x.get(base + c) * inv_rms;
+            if has_gamma {
+                v = v * gamma.get(c);
+            }
+            y.set(base + c, v);
+            c = c + 1;
+        }
+
+        r = r + 1;
+    }
+}
+
+// =============================================================================
+// Attention
+// =============================================================================
+
+// Scaled dot-product attention scores: `softmax(Q * K^T / sqrt(d))`.
+//
+// `q` is (rows, d), `k` is (cols, d), `scores` is (rows, cols). Only the
+// scores -- multiplying them back through `V` is `matmul`, and keeping that
+// separate is what lets a caller mask the scores in between, which every
+// causal model needs to do.
+//
+// The scale is `1/sqrt(d)` because the dot product of two d-dimensional
+// vectors of unit-variance components has variance d. Without it, the softmax
+// input grows with the head dimension until the distribution is a one-hot and
+// there is nothing left to learn from.
+public func attention_scores(q: TensorF32, k: TensorF32, scores: TensorF32) {
+    let rows = q.shape.dim(0);
+    let depth = q.shape.dim(1);
+    let cols = k.shape.dim(0);
+    if k.shape.dim(1) != depth || scores.count() < rows * cols {
+        return;
+    }
+    if depth == 0 {
+        return;
+    }
+    let scale = 1.0 / sqrt_f32(depth as f32);
+
+    let mut r: usize = 0;
+    while r < rows {
+        let q_base = r * depth;
+        let out_base = r * cols;
+        let mut c: usize = 0;
+        while c < cols {
+            let k_base = c * depth;
+            let mut total: f32 = 0.0;
+            let mut d: usize = 0;
+            while d < depth {
+                total = total + q.get(q_base + d) * k.get(k_base + d);
+                d = d + 1;
+            }
+            scores.set(out_base + c, total * scale);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+
+    softmax_rows(scores, scores);
+}
+
+// Apply a causal mask to attention scores, before the softmax.
+//
+// Sets every position where a query attends to a later key to a large
+// negative value, which softmax then maps to approximately zero. A large
+// finite number rather than negative infinity: an all-masked row would
+// otherwise produce inf - inf and a NaN, and the first row of a causal mask
+// is exactly that case when the diagonal is excluded.
+public func apply_causal_mask(scores: TensorF32) {
+    let rows = scores.shape.dim(0);
+    let cols = scores.shape.dim(1);
+    let masked: f32 = -1.0e30;
+
+    let mut r: usize = 0;
+    while r < rows {
+        let base = r * cols;
+        let mut c = r + 1;
+        while c < cols {
+            scores.set(base + c, masked);
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+}

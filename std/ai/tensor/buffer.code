@@ -1,0 +1,246 @@
+// =============================================================================
+// std/ai/tensor/buffer.code — a shape plus the memory it describes
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// A `TensorF32` is an address and a `Shape`. It owns nothing, allocates
+// nothing, and frees nothing: the memory belongs to whoever passed the
+// address in, and outliving it is the caller's problem in the same way it
+// would be in C.
+//
+// This is the type every kernel in `std.ai` takes. Carrying the shape next to
+// the pointer is what lets `matmul` check that the inner dimensions agree
+// instead of reading off the end of an array when they do not.
+// =============================================================================
+
+import std.ai.tensor.raw;
+import std.ai.tensor.shape;
+
+// A view of f32 data laid out row-major at `data`.
+public struct TensorF32 {
+    data: usize,
+    shape: Shape,
+}
+
+// A view of f64 data laid out row-major at `data`.
+public struct TensorF64 {
+    data: usize,
+    shape: Shape,
+}
+
+// A view of i8 data, which is what a quantized tensor holds.
+public struct TensorI8 {
+    data: usize,
+    shape: Shape,
+}
+
+// =============================================================================
+// Construction
+// =============================================================================
+
+// A tensor view over `count` f32 values at `data`.
+public func tensor_f32_1d(data: usize, count: usize) -> TensorF32 {
+    TensorF32 { data: data, shape: shape_1d(count) }
+}
+
+// A tensor view over a `rows` by `cols` f32 matrix at `data`.
+public func tensor_f32_2d(data: usize, rows: usize, cols: usize) -> TensorF32 {
+    TensorF32 { data: data, shape: shape_2d(rows, cols) }
+}
+
+// A tensor view over f32 data with an arbitrary shape.
+public func tensor_f32(data: usize, shape: Shape) -> TensorF32 {
+    TensorF32 { data: data, shape: shape }
+}
+
+// A tensor view over f64 data with an arbitrary shape.
+public func tensor_f64(data: usize, shape: Shape) -> TensorF64 {
+    TensorF64 { data: data, shape: shape }
+}
+
+// A tensor view over i8 data with an arbitrary shape.
+public func tensor_i8(data: usize, shape: Shape) -> TensorI8 {
+    TensorI8 { data: data, shape: shape }
+}
+
+// =============================================================================
+// f32 access
+// =============================================================================
+
+extend TensorF32 {
+    // Number of elements described by the shape.
+    public func count(self) -> usize {
+        self.shape.element_count()
+    }
+
+    // Byte length of the data this view covers.
+    public func byte_length(self) -> usize {
+        self.count() * SIZE_F32
+    }
+
+    // The element at flat offset `index`.
+    public func get(self, index: usize) -> f32 {
+        get_f32(self.data, index)
+    }
+
+    // Set the element at flat offset `index`.
+    public func set(self, index: usize, value: f32) {
+        set_f32(self.data, index, value);
+    }
+
+    // The element at row `row`, column `col` of the matrix view.
+    public func get_2d(self, row: usize, col: usize) -> f32 {
+        get_f32(self.data, row * self.shape.dim(1) + col)
+    }
+
+    // Set the element at row `row`, column `col` of the matrix view.
+    public func set_2d(self, row: usize, col: usize, value: f32) {
+        set_f32(self.data, row * self.shape.dim(1) + col, value);
+    }
+
+    // The element at `(i0, i1, i2, i3)`.
+    public func get_nd(self, i0: usize, i1: usize, i2: usize, i3: usize) -> f32 {
+        get_f32(self.data, self.shape.flat_index(i0, i1, i2, i3))
+    }
+
+    // Set the element at `(i0, i1, i2, i3)`.
+    public func set_nd(
+        self,
+        i0: usize,
+        i1: usize,
+        i2: usize,
+        i3: usize,
+        value: f32,
+    ) {
+        set_f32(self.data, self.shape.flat_index(i0, i1, i2, i3), value);
+    }
+
+    // A view of the same memory under a different shape.
+    //
+    // Falls back to the flattened shape when the element counts disagree,
+    // matching `Shape.reshape_2d`: the data has the length it has, and
+    // claiming otherwise would hand out a view that indexes past the buffer.
+    public func reshaped(self, shape: Shape) -> TensorF32 {
+        if !self.shape.is_compatible_with(shape) {
+            return TensorF32 { data: self.data, shape: self.shape.flattened() };
+        }
+        return TensorF32 { data: self.data, shape: shape };
+    }
+
+    // A view of row `row` of the matrix view, as a contiguous 1-D tensor.
+    public func row(self, row: usize) -> TensorF32 {
+        let cols = self.shape.dim(1);
+        TensorF32 {
+            data: self.data + row * cols * SIZE_F32,
+            shape: shape_1d(cols),
+        }
+    }
+
+    // A view of `len` elements starting at flat offset `start`.
+    //
+    // Clamped rather than checked: a slice that would run past the end is
+    // shortened to what is actually there, so the result is always a view a
+    // caller can iterate safely.
+    public func slice(self, start: usize, len: usize) -> TensorF32 {
+        let total = self.count();
+        if start >= total {
+            return TensorF32 { data: self.data, shape: shape_1d(0) };
+        }
+        let mut available = total - start;
+        if len < available {
+            available = len;
+        }
+        return TensorF32 {
+            data: self.data + start * SIZE_F32,
+            shape: shape_1d(available),
+        };
+    }
+
+    // Set every element to `value`.
+    public func fill(self, value: f32) {
+        fill_f32(self.data, self.count(), value);
+    }
+
+    // Copy every element of `self` into `dst`.
+    //
+    // Copies the smaller of the two lengths, so a mismatched pair truncates
+    // instead of writing past the end of `dst`.
+    public func copy_into(self, dst: TensorF32) {
+        let mut n = self.count();
+        let dst_n = dst.count();
+        if dst_n < n {
+            n = dst_n;
+        }
+        copy_f32(self.data, dst.data, n);
+    }
+}
+
+// =============================================================================
+// f64 access
+// =============================================================================
+
+extend TensorF64 {
+    // Number of elements described by the shape.
+    public func count(self) -> usize {
+        self.shape.element_count()
+    }
+
+    // Byte length of the data this view covers.
+    public func byte_length(self) -> usize {
+        self.count() * SIZE_F64
+    }
+
+    // The element at flat offset `index`.
+    public func get(self, index: usize) -> f64 {
+        get_f64(self.data, index)
+    }
+
+    // Set the element at flat offset `index`.
+    public func set(self, index: usize, value: f64) {
+        set_f64(self.data, index, value);
+    }
+
+    // The element at row `row`, column `col` of the matrix view.
+    public func get_2d(self, row: usize, col: usize) -> f64 {
+        get_f64(self.data, row * self.shape.dim(1) + col)
+    }
+
+    // Set the element at row `row`, column `col` of the matrix view.
+    public func set_2d(self, row: usize, col: usize, value: f64) {
+        set_f64(self.data, row * self.shape.dim(1) + col, value);
+    }
+
+    // Set every element to `value`.
+    public func fill(self, value: f64) {
+        fill_f64(self.data, self.count(), value);
+    }
+}
+
+// =============================================================================
+// i8 access
+// =============================================================================
+
+extend TensorI8 {
+    // Number of elements described by the shape.
+    public func count(self) -> usize {
+        self.shape.element_count()
+    }
+
+    // Byte length of the data this view covers.
+    public func byte_length(self) -> usize {
+        self.count() * SIZE_I8
+    }
+
+    // The element at flat offset `index`.
+    public func get(self, index: usize) -> i8 {
+        get_i8(self.data, index)
+    }
+
+    // Set the element at flat offset `index`.
+    public func set(self, index: usize, value: i8) {
+        set_i8(self.data, index, value);
+    }
+}

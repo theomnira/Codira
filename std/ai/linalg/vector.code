@@ -1,0 +1,218 @@
+// =============================================================================
+// std/ai/linalg/vector.code — BLAS level-1 operations
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// Vector-vector operations, following BLAS level-1 in substance if not in
+// spelling: dot, axpy, scale, norms, distances.
+//
+// The names are written out (`axpy` stays, `snrm2` does not) because the
+// BLAS abbreviations encode a type prefix these functions do not need -- the
+// tensor carries its own element type.
+// =============================================================================
+
+import std.ai.algorithm.reduction;
+import std.ai.nn.activation;
+import std.ai.tensor.buffer;
+import std.ai.tensor.raw;
+import std.ai.tensor.shape;
+
+// Below this length, the dot product runs straight through rather than
+// splitting. Same reasoning as `PAIRWISE_THRESHOLD` in the reductions.
+public let DOT_THRESHOLD: usize = 128;
+
+// =============================================================================
+// Inner products
+// =============================================================================
+
+// The dot product of `count` elements starting at `start` in each vector.
+//
+// Pairwise, for the same reason `sum` is: the products being accumulated are
+// all of similar magnitude, and a sequential accumulator grows past them and
+// starts discarding their low bits.
+public func dot_range(a: TensorF32, b: TensorF32, start: usize, count: usize) -> f32 {
+    if count == 0 {
+        return 0.0;
+    }
+    if count <= DOT_THRESHOLD {
+        let mut total: f32 = 0.0;
+        let mut i: usize = 0;
+        while i < count {
+            total = total + a.get(start + i) * b.get(start + i);
+            i = i + 1;
+        }
+        return total;
+    }
+    let half = count / 2;
+    return dot_range(a, b, start, half) + dot_range(a, b, start + half, count - half);
+}
+
+// The dot product over the shorter of the two vectors.
+public func dot(a: TensorF32, b: TensorF32) -> f32 {
+    let mut n = a.count();
+    let b_n = b.count();
+    if b_n < n {
+        n = b_n;
+    }
+    return dot_range(a, b, 0, n);
+}
+
+// =============================================================================
+// Scaling and accumulation
+// =============================================================================
+
+// `y[i] = alpha * x[i] + y[i]`, the BLAS `axpy`.
+//
+// The single most-called kernel in numerical code: a gradient step, a
+// residual update and a linear combination are all this.
+public func axpy(alpha: f32, x: TensorF32, y: TensorF32) {
+    let mut n = x.count();
+    let y_n = y.count();
+    if y_n < n {
+        n = y_n;
+    }
+    let mut i: usize = 0;
+    while i < n {
+        y.set(i, alpha * x.get(i) + y.get(i));
+        i = i + 1;
+    }
+}
+
+// `x[i] = alpha * x[i]`, in place.
+public func scale(alpha: f32, x: TensorF32) {
+    let n = x.count();
+    let mut i: usize = 0;
+    while i < n {
+        x.set(i, alpha * x.get(i));
+        i = i + 1;
+    }
+}
+
+// `y[i] = x[i]`, over the shorter of the two.
+public func copy(x: TensorF32, y: TensorF32) {
+    x.copy_into(y);
+}
+
+// Exchange the contents of two vectors, over the shorter of the two.
+public func swap(x: TensorF32, y: TensorF32) {
+    let mut n = x.count();
+    let y_n = y.count();
+    if y_n < n {
+        n = y_n;
+    }
+    let mut i: usize = 0;
+    while i < n {
+        let tmp = x.get(i);
+        x.set(i, y.get(i));
+        y.set(i, tmp);
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Norms
+// =============================================================================
+
+// The Euclidean (L2) norm.
+public func norm_l2(x: TensorF32) -> f32 {
+    sqrt_f32(sum_of_squares(x))
+}
+
+// The sum of absolute values (L1 norm), the BLAS `asum`.
+public func norm_l1(x: TensorF32) -> f32 {
+    let n = x.count();
+    let mut total: f32 = 0.0;
+    let mut i: usize = 0;
+    while i < n {
+        let v = x.get(i);
+        if v < 0.0 {
+            total = total - v;
+        } else {
+            total = total + v;
+        }
+        i = i + 1;
+    }
+    return total;
+}
+
+// The largest absolute value (L-infinity norm).
+public func norm_inf(x: TensorF32) -> f32 {
+    let n = x.count();
+    let mut best: f32 = 0.0;
+    let mut i: usize = 0;
+    while i < n {
+        let mut v = x.get(i);
+        if v < 0.0 {
+            v = 0.0 - v;
+        }
+        if v > best {
+            best = v;
+        }
+        i = i + 1;
+    }
+    return best;
+}
+
+// Scale `x` so its L2 norm is 1, leaving a zero vector unchanged.
+public func normalize(x: TensorF32) {
+    let n = norm_l2(x);
+    if n == 0.0 {
+        return;
+    }
+    scale(1.0 / n, x);
+}
+
+// =============================================================================
+// Distances and similarity
+// =============================================================================
+
+// The Euclidean distance between two vectors.
+public func distance_l2(a: TensorF32, b: TensorF32) -> f32 {
+    let mut n = a.count();
+    let b_n = b.count();
+    if b_n < n {
+        n = b_n;
+    }
+    let mut total: f32 = 0.0;
+    let mut i: usize = 0;
+    while i < n {
+        let d = a.get(i) - b.get(i);
+        total = total + d * d;
+        i = i + 1;
+    }
+    return sqrt_f32(total);
+}
+
+// The cosine of the angle between two vectors, zero if either is zero.
+//
+// The single most-used similarity in embedding search, which is the reason it
+// lives here rather than being left to callers to compose from `dot` and
+// `norm_l2`: written out, it reads each vector once instead of three times.
+public func cosine_similarity(a: TensorF32, b: TensorF32) -> f32 {
+    let mut n = a.count();
+    let b_n = b.count();
+    if b_n < n {
+        n = b_n;
+    }
+
+    let mut inner: f32 = 0.0;
+    let mut a_sq: f32 = 0.0;
+    let mut b_sq: f32 = 0.0;
+    let mut i: usize = 0;
+    while i < n {
+        let x = a.get(i);
+        let y = b.get(i);
+        inner = inner + x * y;
+        a_sq = a_sq + x * x;
+        b_sq = b_sq + y * y;
+        i = i + 1;
+    }
+
+    if a_sq == 0.0 || b_sq == 0.0 {
+        return 0.0;
+    }
+    return inner / (sqrt_f32(a_sq) * sqrt_f32(b_sq));
+}

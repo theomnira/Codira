@@ -1,9 +1,21 @@
 ---
 source: crates/codira_syntax/tests/stdlib_ratchet.rs
+assertion_line: 94
 expression: summary
+snapshot_kind: text
 ---
-64 of 64 std files parse
+74 of 74 std files parse
 
+ok    std/ai/algorithm/functional.code
+ok    std/ai/algorithm/reduction.code
+ok    std/ai/linalg/matmul.code
+ok    std/ai/linalg/vector.code
+ok    std/ai/nn/activation.code
+ok    std/ai/nn/layer.code
+ok    std/ai/quantize.code
+ok    std/ai/tensor/buffer.code
+ok    std/ai/tensor/raw.code
+ok    std/ai/tensor/shape.code
 ok    std/atomic/atomic.code
 ok    std/base64/base64.code
 ok    std/bit/bit.code

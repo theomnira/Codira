@@ -1,0 +1,178 @@
+// =============================================================================
+// std/ai/tensor/raw.code — raw memory access for tensor data
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// Tensor data does not belong to Codira. It arrives as an address: a
+// `TypedArray` from Bun, a NumPy array through `ctypes`, a `float*` from C.
+// `std.ai` reads and writes it in place rather than copying it in, which is
+// the entire reason these kernels are worth calling from another language.
+//
+// The operations below are what makes that possible. They are declared
+// `extern "codira-intrinsic"`, which means the compiler emits them where they
+// are called instead of resolving a symbol: a load becomes an `inttoptr` and a
+// `load`, and nothing else. That matters more than it sounds. Crossing into a
+// native function from Bun costs about 6.4 ns however trivial the body, so a
+// kernel called once per element loses to the JavaScript JIT by a wide margin
+// no matter how good its code is. Called once per *buffer*, with the loop on
+// this side, the same work runs at about 0.2 ns per element.
+//
+// # Safety
+//
+// There is none. `load_f32(addr)` reads four bytes at `addr`; nothing checks
+// that the address is mapped, aligned, or yours. Every function here takes the
+// same contract C takes, which is why they are spelled `extern`. The typed
+// views in `std.ai.tensor.buffer` exist so that ordinary code does not have to
+// touch these directly.
+// =============================================================================
+
+extern "codira-intrinsic" {
+    // Read one value of the named width at a byte address.
+    func load_u8(addr: usize) -> u8;
+    func load_u16(addr: usize) -> u16;
+    func load_u32(addr: usize) -> u32;
+    func load_u64(addr: usize) -> u64;
+    func load_i8(addr: usize) -> i8;
+    func load_i16(addr: usize) -> i16;
+    func load_i32(addr: usize) -> i32;
+    func load_i64(addr: usize) -> i64;
+    func load_f32(addr: usize) -> f32;
+    func load_f64(addr: usize) -> f64;
+
+    // Write one value of the named width at a byte address.
+    func store_u8(addr: usize, value: u8);
+    func store_u16(addr: usize, value: u16);
+    func store_u32(addr: usize, value: u32);
+    func store_u64(addr: usize, value: u64);
+    func store_i8(addr: usize, value: i8);
+    func store_i16(addr: usize, value: i16);
+    func store_i32(addr: usize, value: i32);
+    func store_i64(addr: usize, value: i64);
+    func store_f32(addr: usize, value: f32);
+    func store_f64(addr: usize, value: f64);
+
+    // Bit counting, each a single instruction on every target that has one.
+    // `ctlz(0)` is the full width rather than undefined.
+    func ctlz_u32(value: u32) -> u32;
+    func ctlz_u64(value: u64) -> u64;
+    func cttz_u32(value: u32) -> u32;
+    func cttz_u64(value: u64) -> u64;
+    func popcount_u32(value: u32) -> u32;
+    func popcount_u64(value: u64) -> u64;
+}
+
+// =============================================================================
+// Element sizes
+// =============================================================================
+
+// Bytes occupied by one value of each supported element type.
+public let SIZE_F32: usize = 4;
+public let SIZE_F64: usize = 8;
+public let SIZE_I8: usize = 1;
+public let SIZE_I32: usize = 4;
+public let SIZE_U8: usize = 1;
+
+// =============================================================================
+// Indexed access
+// =============================================================================
+//
+// Every kernel addresses elements by index, not by byte offset. Folding the
+// scale into these keeps `base + i * 4` out of the call sites, where getting
+// it wrong reads off the end of someone else's buffer.
+
+// Read the `index`-th f32 in the array starting at `base`.
+public func get_f32(base: usize, index: usize) -> f32 {
+    load_f32(base + index * SIZE_F32)
+}
+
+// Write the `index`-th f32 in the array starting at `base`.
+public func set_f32(base: usize, index: usize, value: f32) {
+    store_f32(base + index * SIZE_F32, value);
+}
+
+// Read the `index`-th f64 in the array starting at `base`.
+public func get_f64(base: usize, index: usize) -> f64 {
+    load_f64(base + index * SIZE_F64)
+}
+
+// Write the `index`-th f64 in the array starting at `base`.
+public func set_f64(base: usize, index: usize, value: f64) {
+    store_f64(base + index * SIZE_F64, value);
+}
+
+// Read the `index`-th i8 in the array starting at `base`.
+public func get_i8(base: usize, index: usize) -> i8 {
+    load_i8(base + index * SIZE_I8)
+}
+
+// Write the `index`-th i8 in the array starting at `base`.
+public func set_i8(base: usize, index: usize, value: i8) {
+    store_i8(base + index * SIZE_I8, value);
+}
+
+// Read the `index`-th i32 in the array starting at `base`.
+public func get_i32(base: usize, index: usize) -> i32 {
+    load_i32(base + index * SIZE_I32)
+}
+
+// Write the `index`-th i32 in the array starting at `base`.
+public func set_i32(base: usize, index: usize, value: i32) {
+    store_i32(base + index * SIZE_I32, value);
+}
+
+// Read the `index`-th u8 in the array starting at `base`.
+public func get_u8(base: usize, index: usize) -> u8 {
+    load_u8(base + index * SIZE_U8)
+}
+
+// Write the `index`-th u8 in the array starting at `base`.
+public func set_u8(base: usize, index: usize, value: u8) {
+    store_u8(base + index * SIZE_U8, value);
+}
+
+// =============================================================================
+// Bulk moves
+// =============================================================================
+
+// Copy `count` f32 values from `src` to `dst`.
+//
+// Forward order, so this is correct when the ranges are disjoint or when
+// `dst` is below `src`, and wrong for an overlapping shift upward -- the same
+// contract as C's `memcpy` rather than `memmove`.
+public func copy_f32(src: usize, dst: usize, count: usize) {
+    let mut i: usize = 0;
+    while i < count {
+        set_f32(dst, i, get_f32(src, i));
+        i = i + 1;
+    }
+}
+
+// Set `count` f32 values starting at `dst` to `value`.
+public func fill_f32(dst: usize, count: usize, value: f32) {
+    let mut i: usize = 0;
+    while i < count {
+        set_f32(dst, i, value);
+        i = i + 1;
+    }
+}
+
+// Copy `count` f64 values from `src` to `dst`.
+public func copy_f64(src: usize, dst: usize, count: usize) {
+    let mut i: usize = 0;
+    while i < count {
+        set_f64(dst, i, get_f64(src, i));
+        i = i + 1;
+    }
+}
+
+// Set `count` f64 values starting at `dst` to `value`.
+public func fill_f64(dst: usize, count: usize, value: f64) {
+    let mut i: usize = 0;
+    while i < count {
+        set_f64(dst, i, value);
+        i = i + 1;
+    }
+}

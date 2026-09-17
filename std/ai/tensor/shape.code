@@ -1,0 +1,210 @@
+// =============================================================================
+// std/ai/tensor/shape.code — N-dimensional shapes and index arithmetic
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// A `Shape` is the extent of a tensor in each dimension, plus the rank saying
+// how many of those extents are meaningful. Everything else in `std.ai`
+// addresses memory through it.
+//
+// Ranks are fixed at 4, which is the decision worth explaining. Codira has no
+// growable collection that survives codegen yet, so a shape has to be a value
+// type with inline fields. Four covers the shapes that matter for the kernels
+// here -- a vector is rank 1, a matrix rank 2, a batch of matrices rank 3, and
+// NCHW image data rank 4 -- and a rank-5 tensor can always be handled by
+// folding two dimensions together, because the layout is row-major and
+// contiguous either way.
+//
+// Layout is row-major throughout: the last dimension is contiguous in memory,
+// which matches C, NumPy's default, and every buffer that arrives from Bun as
+// a `TypedArray`.
+// =============================================================================
+
+// The maximum rank a `Shape` can describe.
+public let MAX_RANK: usize = 4;
+
+// The extent of a tensor in each dimension.
+//
+// Dimensions beyond `rank` are held at 1 rather than 0, so that `element_count`
+// is a plain product and needs no special case for the unused tail.
+public struct Shape {
+    rank: usize,
+    d0: usize,
+    d1: usize,
+    d2: usize,
+    d3: usize,
+}
+
+// =============================================================================
+// Construction
+// =============================================================================
+
+// A rank-1 shape: `n` elements in a single contiguous run.
+public func shape_1d(n: usize) -> Shape {
+    Shape { rank: 1, d0: n, d1: 1, d2: 1, d3: 1 }
+}
+
+// A rank-2 shape, `rows` by `cols`, with `cols` contiguous.
+public func shape_2d(rows: usize, cols: usize) -> Shape {
+    Shape { rank: 2, d0: rows, d1: cols, d2: 1, d3: 1 }
+}
+
+// A rank-3 shape, typically batch by rows by cols.
+public func shape_3d(batch: usize, rows: usize, cols: usize) -> Shape {
+    Shape { rank: 3, d0: batch, d1: rows, d2: cols, d3: 1 }
+}
+
+// A rank-4 shape, typically NCHW: batch, channels, height, width.
+public func shape_4d(n: usize, c: usize, h: usize, w: usize) -> Shape {
+    Shape { rank: 4, d0: n, d1: c, d2: h, d3: w }
+}
+
+// =============================================================================
+// Queries
+// =============================================================================
+
+extend Shape {
+    // The extent of dimension `axis`, or 1 for an axis beyond the rank.
+    //
+    // Out-of-range returns 1 rather than trapping because it is the identity
+    // for the products this feeds, which keeps `element_count` and
+    // `stride_of` free of rank tests.
+    public func dim(self, axis: usize) -> usize {
+        if axis == 0 { return self.d0; }
+        if axis == 1 { return self.d1; }
+        if axis == 2 { return self.d2; }
+        if axis == 3 { return self.d3; }
+        return 1;
+    }
+
+    // Total number of elements, i.e. the product of every extent.
+    public func element_count(self) -> usize {
+        self.d0 * self.d1 * self.d2 * self.d3
+    }
+
+    // The number of elements to step to advance `axis` by one.
+    //
+    // Row-major: the stride of an axis is the product of every extent to its
+    // right, so the last axis always has stride 1.
+    public func stride_of(self, axis: usize) -> usize {
+        let mut stride: usize = 1;
+        let mut i: usize = axis + 1;
+        while i < MAX_RANK {
+            stride = stride * self.dim(i);
+            i = i + 1;
+        }
+        return stride;
+    }
+
+    // True when two shapes describe the same extents at the same rank.
+    public func equals(self, other: Shape) -> bool {
+        self.rank == other.rank
+            && self.d0 == other.d0
+            && self.d1 == other.d1
+            && self.d2 == other.d2
+            && self.d3 == other.d3
+    }
+
+    // True when `self` and `other` hold the same number of elements, even if
+    // their extents differ. A reshape is valid exactly when this holds.
+    public func is_compatible_with(self, other: Shape) -> bool {
+        self.element_count() == other.element_count()
+    }
+}
+
+// =============================================================================
+// Index arithmetic
+// =============================================================================
+
+extend Shape {
+    // The flat offset of the element at `(i0, i1, i2, i3)`.
+    //
+    // No bounds check: this is the inner-loop address computation, and the
+    // callers in this module derive their indices from `element_count`
+    // already. `flat_index_checked` is the guarded form.
+    public func flat_index(self, i0: usize, i1: usize, i2: usize, i3: usize) -> usize {
+        ((i0 * self.d1 + i1) * self.d2 + i2) * self.d3 + i3
+    }
+
+    // The flat offset, or `element_count()` when any index is out of range.
+    //
+    // Returning a one-past-the-end offset rather than trapping gives the
+    // caller a value it can test against `element_count()`, which is the
+    // check it would have written anyway.
+    public func flat_index_checked(
+        self,
+        i0: usize,
+        i1: usize,
+        i2: usize,
+        i3: usize,
+    ) -> usize {
+        if i0 >= self.d0 || i1 >= self.d1 || i2 >= self.d2 || i3 >= self.d3 {
+            return self.element_count();
+        }
+        return self.flat_index(i0, i1, i2, i3);
+    }
+
+    // The index along `axis` of the element at flat offset `flat`.
+    //
+    // The inverse of `flat_index`, one axis at a time. Recovering all four
+    // costs four divisions this way against three for a combined walk; the
+    // per-axis form is what callers actually want, and this is not on an
+    // inner loop.
+    public func axis_index(self, flat: usize, axis: usize) -> usize {
+        let stride = self.stride_of(axis);
+        if stride == 0 {
+            return 0;
+        }
+        return (flat / stride) % self.dim(axis);
+    }
+}
+
+// =============================================================================
+// Derived shapes
+// =============================================================================
+
+extend Shape {
+    // The same elements seen as `rows` by `cols`.
+    //
+    // Returns a rank-1 shape of the original length when the element counts
+    // disagree, which is the shape the data actually has -- the alternative
+    // is claiming extents that would index out of the buffer.
+    public func reshape_2d(self, rows: usize, cols: usize) -> Shape {
+        if rows * cols != self.element_count() {
+            return shape_1d(self.element_count());
+        }
+        return shape_2d(rows, cols);
+    }
+
+    // The shape with every dimension flattened into one contiguous run.
+    public func flattened(self) -> Shape {
+        shape_1d(self.element_count())
+    }
+
+    // The shape of the result of reducing `axis` away.
+    //
+    // The reduced axis becomes 1 rather than being removed, so the result
+    // keeps the rank and broadcasts against the input -- the same convention
+    // as NumPy's `keepdims=True`.
+    public func reduced_along(self, axis: usize) -> Shape {
+        let mut out = self;
+        if axis == 0 { out.d0 = 1; }
+        if axis == 1 { out.d1 = 1; }
+        if axis == 2 { out.d2 = 1; }
+        if axis == 3 { out.d3 = 1; }
+        return out;
+    }
+
+    // The two-dimensional view every matrix kernel in `std.ai.linalg` uses:
+    // all leading axes folded into rows, the last axis kept as columns.
+    public func as_matrix(self) -> Shape {
+        let cols = self.dim(self.rank - 1);
+        if cols == 0 {
+            return shape_2d(0, 0);
+        }
+        return shape_2d(self.element_count() / cols, cols);
+    }
+}

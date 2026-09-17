@@ -1,0 +1,402 @@
+// =============================================================================
+// std/ai/algorithm/functional.code — elementwise and tiled traversal
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// Higher-order traversal over tensors: apply an operation to every element,
+// combine two tensors pointwise, walk a shape in cache-sized tiles.
+//
+// # What happened to the Mojo version
+//
+// This file replaces a machine-translated copy of Mojo's
+// `algorithm/functional.mojo`. That copy could not be repaired into Codira,
+// and the reason is worth recording rather than rediscovering: it was not
+// merely Mojo syntax. A prior mechanical pass had already broken it --
+// doc comments had been moved inside function bodies, closing braces sat in
+// the wrong places, one struct had lost its name entirely, and statements
+// like `for i in reversed(range(1, rank - subvolume_rank)):;` are neither
+// valid Mojo nor valid anything else. On top of that it imported
+// `max._plugin`, `max.gpu.host`, `max.runtime.tracing` and `std.utils.index`,
+// none of which exist in this standard library. 759 parse errors as it stood,
+// 618 after deleting every import line.
+//
+// So this is a rewrite against what Codira actually has, keeping the intent:
+// the names and the traversal strategies are the useful part, and those are
+// preserved. What is deliberately *not* preserved is the parametric-closure
+// machinery. Mojo's `elementwise[func, simd_width, target]` passes a function
+// as a compile-time parameter and specializes per call site; Codira has no
+// closures that survive lowering (`spec/LANGUAGE_SPEC.md` section 12), so
+// there is nothing to pass. Rather than declare an API that cannot be called,
+// the operations are spelled out concretely -- `map_scale`, `zip_add` -- and
+// the tiling helpers, which need no callback at all, are fully general.
+//
+// # Why the loops are written out
+//
+// Every kernel here is a `while` loop over a flat index. That is the point:
+// the whole value of calling these from another runtime is that the loop
+// happens on this side of the FFI boundary. See `std.ai.tensor.raw` for the
+// measurements -- once per buffer is about 0.2 ns per element, once per
+// element is about 6.4 ns.
+// =============================================================================
+
+import std.ai.tensor.buffer;
+import std.ai.tensor.raw;
+import std.ai.tensor.shape;
+
+// =============================================================================
+// Tiling
+// =============================================================================
+//
+// The traversal strategy, separated from the work. A tile is a contiguous
+// half-open range `[start, end)` of flat indices.
+
+// One contiguous span of a flat index space.
+public struct Tile {
+    start: usize,
+    end: usize,
+}
+
+extend Tile {
+    // Number of elements in the span.
+    public func length(self) -> usize {
+        if self.end <= self.start {
+            return 0;
+        }
+        return self.end - self.start;
+    }
+
+    // True when the span covers nothing.
+    public func is_empty(self) -> bool {
+        self.end <= self.start
+    }
+}
+
+// The number of tiles `count` elements split into at `tile_size` each.
+//
+// Rounds up, so the last tile is short rather than missing. A `tile_size` of
+// zero yields one tile covering everything, which is the answer that keeps a
+// caller that forgot to set it from silently processing nothing.
+public func tile_count(count: usize, tile_size: usize) -> usize {
+    if tile_size == 0 {
+        return 1;
+    }
+    return (count + tile_size - 1) / tile_size;
+}
+
+// The `index`-th tile of `count` elements split at `tile_size`.
+//
+// The final tile is clamped to `count`, so the union of every tile is exactly
+// `[0, count)` with no overlap.
+public func tile_at(count: usize, tile_size: usize, index: usize) -> Tile {
+    if tile_size == 0 {
+        return Tile { start: 0, end: count };
+    }
+    let start = index * tile_size;
+    if start >= count {
+        return Tile { start: count, end: count };
+    }
+    let mut end = start + tile_size;
+    if end > count {
+        end = count;
+    }
+    return Tile { start: start, end: end };
+}
+
+// The `index`-th of `parts` roughly equal chunks of `count` elements.
+//
+// This is the split to use when handing work to `parts` workers: the
+// remainder is spread one element at a time across the leading chunks rather
+// than piled onto the last one, so the largest chunk is never more than one
+// element bigger than the smallest.
+public func chunk_at(count: usize, parts: usize, index: usize) -> Tile {
+    if parts == 0 {
+        return Tile { start: 0, end: count };
+    }
+    let base = count / parts;
+    let remainder = count % parts;
+
+    let mut start = index * base;
+    if index < remainder {
+        start = start + index;
+    } else {
+        start = start + remainder;
+    }
+
+    let mut len = base;
+    if index < remainder {
+        len = len + 1;
+    }
+
+    if start >= count {
+        return Tile { start: count, end: count };
+    }
+    return Tile { start: start, end: start + len };
+}
+
+// =============================================================================
+// Elementwise, one tensor
+// =============================================================================
+
+// `dst[i] = src[i] * factor`
+public func map_scale(src: TensorF32, dst: TensorF32, factor: f32) {
+    let n = elementwise_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, src.get(i) * factor);
+        i = i + 1;
+    }
+}
+
+// `dst[i] = src[i] + bias`
+public func map_add_scalar(src: TensorF32, dst: TensorF32, bias: f32) {
+    let n = elementwise_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, src.get(i) + bias);
+        i = i + 1;
+    }
+}
+
+// `dst[i] = src[i] * factor + bias`, the fused form.
+//
+// Worth having separately: it is the shape of every scale-and-shift in a
+// network, and doing it in one pass reads the input once instead of twice.
+public func map_affine(src: TensorF32, dst: TensorF32, factor: f32, bias: f32) {
+    let n = elementwise_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, src.get(i) * factor + bias);
+        i = i + 1;
+    }
+}
+
+// `dst[i] = -src[i]`
+public func map_negate(src: TensorF32, dst: TensorF32) {
+    let n = elementwise_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, 0.0 - src.get(i));
+        i = i + 1;
+    }
+}
+
+// `dst[i] = |src[i]|`
+public func map_abs(src: TensorF32, dst: TensorF32) {
+    let n = elementwise_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let v = src.get(i);
+        if v < 0.0 {
+            dst.set(i, 0.0 - v);
+        } else {
+            dst.set(i, v);
+        }
+        i = i + 1;
+    }
+}
+
+// `dst[i] = src[i] * src[i]`
+public func map_square(src: TensorF32, dst: TensorF32) {
+    let n = elementwise_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let v = src.get(i);
+        dst.set(i, v * v);
+        i = i + 1;
+    }
+}
+
+// `dst[i] = min(max(src[i], lo), hi)`
+public func map_clamp(src: TensorF32, dst: TensorF32, lo: f32, hi: f32) {
+    let n = elementwise_extent(src, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let mut v = src.get(i);
+        if v < lo { v = lo; }
+        if v > hi { v = hi; }
+        dst.set(i, v);
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Elementwise, two tensors
+// =============================================================================
+
+// `dst[i] = a[i] + b[i]`
+public func zip_add(a: TensorF32, b: TensorF32, dst: TensorF32) {
+    let n = zip_extent(a, b, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, a.get(i) + b.get(i));
+        i = i + 1;
+    }
+}
+
+// `dst[i] = a[i] - b[i]`
+public func zip_sub(a: TensorF32, b: TensorF32, dst: TensorF32) {
+    let n = zip_extent(a, b, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, a.get(i) - b.get(i));
+        i = i + 1;
+    }
+}
+
+// `dst[i] = a[i] * b[i]`, the Hadamard product.
+public func zip_mul(a: TensorF32, b: TensorF32, dst: TensorF32) {
+    let n = zip_extent(a, b, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, a.get(i) * b.get(i));
+        i = i + 1;
+    }
+}
+
+// `dst[i] = a[i] / b[i]`, leaving `dst[i]` at zero where `b[i]` is zero.
+//
+// Returning zero rather than an infinity or a NaN is the choice that keeps a
+// single bad divisor from poisoning every downstream reduction, which is what
+// a NaN would do.
+public func zip_div(a: TensorF32, b: TensorF32, dst: TensorF32) {
+    let n = zip_extent(a, b, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let divisor = b.get(i);
+        if divisor == 0.0 {
+            dst.set(i, 0.0);
+        } else {
+            dst.set(i, a.get(i) / divisor);
+        }
+        i = i + 1;
+    }
+}
+
+// `dst[i] = max(a[i], b[i])`
+public func zip_max(a: TensorF32, b: TensorF32, dst: TensorF32) {
+    let n = zip_extent(a, b, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let x = a.get(i);
+        let y = b.get(i);
+        if x > y {
+            dst.set(i, x);
+        } else {
+            dst.set(i, y);
+        }
+        i = i + 1;
+    }
+}
+
+// `dst[i] = min(a[i], b[i])`
+public func zip_min(a: TensorF32, b: TensorF32, dst: TensorF32) {
+    let n = zip_extent(a, b, dst);
+    let mut i: usize = 0;
+    while i < n {
+        let x = a.get(i);
+        let y = b.get(i);
+        if x < y {
+            dst.set(i, x);
+        } else {
+            dst.set(i, y);
+        }
+        i = i + 1;
+    }
+}
+
+// `dst[i] = dst[i] + a[i] * factor`, the accumulating update.
+//
+// The one kernel here that reads `dst` as well as writing it, because
+// accumulation is how a gradient or a running sum is applied.
+public func zip_accumulate(a: TensorF32, dst: TensorF32, factor: f32) {
+    let n = elementwise_extent(a, dst);
+    let mut i: usize = 0;
+    while i < n {
+        dst.set(i, dst.get(i) + a.get(i) * factor);
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Ranged forms
+// =============================================================================
+//
+// The same work restricted to a tile. This is what a parallel driver calls
+// once per worker: `chunk_at` decides the split, and each worker runs the
+// range form over its own chunk with no coordination, because the chunks do
+// not overlap.
+
+// `dst[i] = src[i] * factor` for `i` in `tile`.
+public func map_scale_range(src: TensorF32, dst: TensorF32, tile: Tile, factor: f32) {
+    let limit = clamp_end(tile, elementwise_extent(src, dst));
+    let mut i = tile.start;
+    while i < limit {
+        dst.set(i, src.get(i) * factor);
+        i = i + 1;
+    }
+}
+
+// `dst[i] = a[i] + b[i]` for `i` in `tile`.
+public func zip_add_range(a: TensorF32, b: TensorF32, dst: TensorF32, tile: Tile) {
+    let limit = clamp_end(tile, zip_extent(a, b, dst));
+    let mut i = tile.start;
+    while i < limit {
+        dst.set(i, a.get(i) + b.get(i));
+        i = i + 1;
+    }
+}
+
+// `dst[i] = a[i] * b[i]` for `i` in `tile`.
+public func zip_mul_range(a: TensorF32, b: TensorF32, dst: TensorF32, tile: Tile) {
+    let limit = clamp_end(tile, zip_extent(a, b, dst));
+    let mut i = tile.start;
+    while i < limit {
+        dst.set(i, a.get(i) * b.get(i));
+        i = i + 1;
+    }
+}
+
+// =============================================================================
+// Extents
+// =============================================================================
+//
+// Every kernel above runs to the shortest of the tensors it touches. That is
+// a deliberate choice over trapping on a mismatch: these are called across an
+// FFI boundary where a wrong length is a caller-side bug that would otherwise
+// become a write past the end of someone's buffer. Truncating turns a memory
+// corruption into a short result.
+
+// The number of elements a one-in, one-out kernel may touch.
+public func elementwise_extent(src: TensorF32, dst: TensorF32) -> usize {
+    let mut n = src.count();
+    let dst_n = dst.count();
+    if dst_n < n {
+        n = dst_n;
+    }
+    return n;
+}
+
+// The number of elements a two-in, one-out kernel may touch.
+public func zip_extent(a: TensorF32, b: TensorF32, dst: TensorF32) -> usize {
+    let mut n = a.count();
+    let b_n = b.count();
+    if b_n < n {
+        n = b_n;
+    }
+    let dst_n = dst.count();
+    if dst_n < n {
+        n = dst_n;
+    }
+    return n;
+}
+
+// A tile's end, clamped to what the tensors actually hold.
+public func clamp_end(tile: Tile, extent: usize) -> usize {
+    if tile.end > extent {
+        return extent;
+    }
+    return tile.end;
+}

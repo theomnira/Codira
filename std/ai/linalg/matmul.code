@@ -1,0 +1,274 @@
+// =============================================================================
+// std/ai/linalg/matmul.code — matrix multiplication
+// =============================================================================
+//
+// Copyright (c) 2026, Omnira CJSC. All rights reserved.
+// Author: Tunjay Akbarli
+// Date: August 6, 2026.
+//
+// `C = alpha * A * B + beta * C`, and the pieces around it.
+//
+// # Why the loop order is i-k-j and not i-j-k
+//
+// The textbook triple loop puts the sum over `k` innermost, which makes the
+// inner loop walk a column of `B` -- one element every `n` in memory, so a
+// fresh cache line for every step. Hoisting `k` out and putting `j` innermost
+// walks a *row* of `B` instead, which is contiguous, and turns the body into
+// `c_row[j] += a_ik * b_row[j]` -- a shape that also vectorizes.
+//
+// The arithmetic is identical and so is the result up to float addition
+// order. The difference is whether each cache line gets used once or sixteen
+// times, which at any real size is most of the runtime.
+//
+// `matmul_tiled` goes further and blocks all three loops so the working set
+// stays resident; see its own comment.
+// =============================================================================
+
+import std.ai.algorithm.functional;
+import std.ai.tensor.buffer;
+import std.ai.tensor.raw;
+import std.ai.tensor.shape;
+
+// Block edge for the tiled kernel.
+//
+// 64 f32 is 256 bytes per row-block, so a 64x64 block of each of the three
+// matrices is 48 KB -- sized to sit in a 32-to-64 KB L1 with room for the
+// rest of the working set.
+public let BLOCK: usize = 64;
+
+// =============================================================================
+// Dimension agreement
+// =============================================================================
+
+// True when `A` (m by k), `B` (k by n) and `C` (m by n) agree.
+//
+// Checked rather than assumed: a mismatch here is a read past the end of a
+// caller's buffer, and these are called across an FFI boundary where the
+// caller's shapes are not something the compiler ever saw.
+public func matmul_dims_agree(a: TensorF32, b: TensorF32, c: TensorF32) -> bool {
+    let m = a.shape.dim(0);
+    let k = a.shape.dim(1);
+    if b.shape.dim(0) != k {
+        return false;
+    }
+    let n = b.shape.dim(1);
+    if c.shape.dim(0) != m || c.shape.dim(1) != n {
+        return false;
+    }
+    if a.count() < m * k || b.count() < k * n || c.count() < m * n {
+        return false;
+    }
+    return true;
+}
+
+// =============================================================================
+// The general form
+// =============================================================================
+
+// `C = alpha * A * B + beta * C`, the BLAS `gemm`.
+//
+// Returns without touching anything when the dimensions disagree, so a
+// caller that got its shapes wrong gets an unchanged `C` rather than
+// corrupted memory. `matmul_dims_agree` is the way to ask in advance.
+public func gemm(alpha: f32, a: TensorF32, b: TensorF32, beta: f32, c: TensorF32) {
+    if !matmul_dims_agree(a, b, c) {
+        return;
+    }
+
+    let m = a.shape.dim(0);
+    let k = a.shape.dim(1);
+    let n = b.shape.dim(1);
+
+    // Apply beta first so the accumulation below is a plain `+=`. Zero is
+    // special-cased because `0 * C` must clear C even where it holds inf or
+    // NaN, which the multiplication would propagate instead.
+    let mut i: usize = 0;
+    if beta == 0.0 {
+        while i < m * n {
+            c.set(i, 0.0);
+            i = i + 1;
+        }
+    } else {
+        if beta != 1.0 {
+            while i < m * n {
+                c.set(i, beta * c.get(i));
+                i = i + 1;
+            }
+        }
+    }
+
+    // i-k-j: the innermost loop walks a contiguous row of both B and C.
+    let mut row: usize = 0;
+    while row < m {
+        let c_base = row * n;
+        let a_base = row * k;
+        let mut depth: usize = 0;
+        while depth < k {
+            let scaled = alpha * a.get(a_base + depth);
+            if scaled != 0.0 {
+                let b_base = depth * n;
+                let mut col: usize = 0;
+                while col < n {
+                    c.set(c_base + col, c.get(c_base + col) + scaled * b.get(b_base + col));
+                    col = col + 1;
+                }
+            }
+            depth = depth + 1;
+        }
+        row = row + 1;
+    }
+}
+
+// `C = A * B`, the common case.
+public func matmul(a: TensorF32, b: TensorF32, c: TensorF32) {
+    gemm(1.0, a, b, 0.0, c);
+}
+
+// =============================================================================
+// Blocked
+// =============================================================================
+
+// `C = A * B`, blocked so the working set stays in cache.
+//
+// The plain kernel streams a full row of `B` (n floats) for every one of the
+// m*k steps. Once n is large enough that a row does not stay resident, every
+// pass re-reads it from memory. Blocking all three loops means each `BLOCK`
+// square of `B` is loaded once and reused `BLOCK` times while it is still
+// warm.
+//
+// The result differs from `matmul` only in float addition order, which is not
+// associative -- so the two can disagree in the last bits. That is expected,
+// and the reason `mismatch_count` takes a tolerance.
+public func matmul_tiled(a: TensorF32, b: TensorF32, c: TensorF32) {
+    if !matmul_dims_agree(a, b, c) {
+        return;
+    }
+
+    let m = a.shape.dim(0);
+    let k = a.shape.dim(1);
+    let n = b.shape.dim(1);
+
+    let mut i: usize = 0;
+    while i < m * n {
+        c.set(i, 0.0);
+        i = i + 1;
+    }
+
+    let mut row_block: usize = 0;
+    while row_block < m {
+        let row_end = block_end(row_block, m);
+
+        let mut depth_block: usize = 0;
+        while depth_block < k {
+            let depth_end = block_end(depth_block, k);
+
+            let mut col_block: usize = 0;
+            while col_block < n {
+                let col_end = block_end(col_block, n);
+
+                let mut row = row_block;
+                while row < row_end {
+                    let c_base = row * n;
+                    let a_base = row * k;
+                    let mut depth = depth_block;
+                    while depth < depth_end {
+                        let scaled = a.get(a_base + depth);
+                        if scaled != 0.0 {
+                            let b_base = depth * n;
+                            let mut col = col_block;
+                            while col < col_end {
+                                c.set(
+                                    c_base + col,
+                                    c.get(c_base + col) + scaled * b.get(b_base + col),
+                                );
+                                col = col + 1;
+                            }
+                        }
+                        depth = depth + 1;
+                    }
+                    row = row + 1;
+                }
+
+                col_block = col_block + BLOCK;
+            }
+            depth_block = depth_block + BLOCK;
+        }
+        row_block = row_block + BLOCK;
+    }
+}
+
+// The end of the block starting at `start`, clamped to `limit`.
+public func block_end(start: usize, limit: usize) -> usize {
+    let mut end = start + BLOCK;
+    if end > limit {
+        end = limit;
+    }
+    return end;
+}
+
+// =============================================================================
+// Transpose and related
+// =============================================================================
+
+// `dst = src^T` for the matrix view.
+public func transpose(src: TensorF32, dst: TensorF32) {
+    let rows = src.shape.dim(0);
+    let cols = src.shape.dim(1);
+    if dst.count() < rows * cols {
+        return;
+    }
+    let mut r: usize = 0;
+    while r < rows {
+        let mut c: usize = 0;
+        while c < cols {
+            dst.set(c * rows + r, src.get(r * cols + c));
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+}
+
+// `y = A * x` for a matrix `A` and vector `x`, the BLAS `gemv`.
+//
+// Not `matmul` with n=1: that would walk `B` with stride 1 over a single
+// column, which is the degenerate case the loop order was chosen to avoid.
+// Written directly, each row of `A` is read contiguously.
+public func matvec(a: TensorF32, x: TensorF32, y: TensorF32) {
+    let m = a.shape.dim(0);
+    let k = a.shape.dim(1);
+    if x.count() < k || y.count() < m {
+        return;
+    }
+    let mut row: usize = 0;
+    while row < m {
+        let base = row * k;
+        let mut total: f32 = 0.0;
+        let mut col: usize = 0;
+        while col < k {
+            total = total + a.get(base + col) * x.get(col);
+            col = col + 1;
+        }
+        y.set(row, total);
+        row = row + 1;
+    }
+}
+
+// The outer product `A = x * y^T`.
+public func outer(x: TensorF32, y: TensorF32, a: TensorF32) {
+    let m = x.count();
+    let n = y.count();
+    if a.count() < m * n {
+        return;
+    }
+    let mut r: usize = 0;
+    while r < m {
+        let scaled = x.get(r);
+        let base = r * n;
+        let mut c: usize = 0;
+        while c < n {
+            a.set(base + c, scaled * y.get(c));
+            c = c + 1;
+        }
+        r = r + 1;
+    }
+}
