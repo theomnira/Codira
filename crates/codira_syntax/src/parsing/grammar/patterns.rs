@@ -72,7 +72,12 @@ fn literal_pat(p: &mut Parser<'_>) -> CompletedMarker {
 /// one segment, or one immediately followed by `(...)`, refers to an enum
 /// variant (`Shape.Point`, `Shape.Circle(radius)`).
 fn path_like_pat(p: &mut Parser<'_>) -> CompletedMarker {
-    if p.at(IDENT) && p.nth(1) != T![.] && p.nth(1) != T!['('] {
+    // A name-able keyword binds exactly as an identifier does. Without this
+    // `let root: usize = start` became a *path* pattern rather than a
+    // binding, because `is_path_start` accepts `root` for its own
+    // package-path meaning and this check only looked for `IDENT`.
+    let starts_a_name = p.at(IDENT) || p.at_ts(super::KEYWORDS_USABLE_AS_NAMES);
+    if starts_a_name && p.nth(1) != T![.] && p.nth(1) != T!['('] {
         return bind_pat(p);
     }
 

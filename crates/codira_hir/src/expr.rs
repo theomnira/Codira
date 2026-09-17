@@ -1009,7 +1009,11 @@ impl<'a> ExprCollector<'a> {
             // `spawn <expr>` (see spec/LANGUAGE_SPEC.md section 14) is likewise
             // fully parsed but has no green-thread scheduler to lower to yet, so
             // it lowers the same way.
-            ast::ExprKind::MatchExpr(_)
+            // A closure literal (`func(a: T) -> R { .. }`) joins these: it
+            // parses, but there is no function-value representation, no
+            // capture analysis and no indirect-call op for it to lower to.
+            ast::ExprKind::ClosureExpr(_)
+            | ast::ExprKind::MatchExpr(_)
             | ast::ExprKind::PerformExpr(_)
             | ast::ExprKind::HandleExpr(_)
             | ast::ExprKind::SpawnExpr(_)

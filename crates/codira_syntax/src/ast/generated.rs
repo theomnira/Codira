@@ -415,6 +415,43 @@ impl ChildDef {
     }
 }
 
+// ClosureExpr
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClosureExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ClosureExpr {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, CLOSURE_EXPR)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ClosureExpr { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ast::ArgListOwner for ClosureExpr {}
+impl ClosureExpr {
+    pub fn param_list(&self) -> Option<ParamList> {
+        super::child_opt(self)
+    }
+
+    pub fn ret_type(&self) -> Option<RetType> {
+        super::child_opt(self)
+    }
+
+    pub fn body(&self) -> Option<BlockExpr> {
+        super::child_opt(self)
+    }
+}
+
 // ComptimeExpr
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -727,6 +764,7 @@ impl AstNode for Expr {
                 | BLOCK_EXPR
                 | ARRAY_EXPR
                 | TUPLE_EXPR
+                | CLOSURE_EXPR
                 | INDEX_EXPR
                 | RECORD_LIT
                 | COMPTIME_EXPR
@@ -770,6 +808,7 @@ pub enum ExprKind {
     BlockExpr(BlockExpr),
     ArrayExpr(ArrayExpr),
     TupleExpr(TupleExpr),
+    ClosureExpr(ClosureExpr),
     IndexExpr(IndexExpr),
     RecordLit(RecordLit),
     ComptimeExpr(ComptimeExpr),
@@ -867,6 +906,11 @@ impl From<TupleExpr> for Expr {
         Expr { syntax: n.syntax }
     }
 }
+impl From<ClosureExpr> for Expr {
+    fn from(n: ClosureExpr) -> Expr {
+        Expr { syntax: n.syntax }
+    }
+}
 impl From<IndexExpr> for Expr {
     fn from(n: IndexExpr) -> Expr {
         Expr { syntax: n.syntax }
@@ -945,6 +989,7 @@ impl Expr {
             BLOCK_EXPR => ExprKind::BlockExpr(BlockExpr::cast(self.syntax.clone()).unwrap()),
             ARRAY_EXPR => ExprKind::ArrayExpr(ArrayExpr::cast(self.syntax.clone()).unwrap()),
             TUPLE_EXPR => ExprKind::TupleExpr(TupleExpr::cast(self.syntax.clone()).unwrap()),
+            CLOSURE_EXPR => ExprKind::ClosureExpr(ClosureExpr::cast(self.syntax.clone()).unwrap()),
             INDEX_EXPR => ExprKind::IndexExpr(IndexExpr::cast(self.syntax.clone()).unwrap()),
             RECORD_LIT => ExprKind::RecordLit(RecordLit::cast(self.syntax.clone()).unwrap()),
             COMPTIME_EXPR => {
@@ -3491,6 +3536,7 @@ impl AstNode for TypeRef {
                 | PAREN_TYPE
                 | REFERENCE_TYPE
                 | FUNCTION_TYPE
+                | VARIADIC_TYPE
                 | NEVER_TYPE
                 | OPTIONAL_TYPE
                 | REFINEMENT_TYPE
@@ -3515,6 +3561,7 @@ pub enum TypeRefKind {
     ParenType(ParenType),
     ReferenceType(ReferenceType),
     FunctionType(FunctionType),
+    VariadicType(VariadicType),
     NeverType(NeverType),
     OptionalType(OptionalType),
     RefinementType(RefinementType),
@@ -3549,6 +3596,11 @@ impl From<FunctionType> for TypeRef {
         TypeRef { syntax: n.syntax }
     }
 }
+impl From<VariadicType> for TypeRef {
+    fn from(n: VariadicType) -> TypeRef {
+        TypeRef { syntax: n.syntax }
+    }
+}
 impl From<NeverType> for TypeRef {
     fn from(n: NeverType) -> TypeRef {
         TypeRef { syntax: n.syntax }
@@ -3577,6 +3629,9 @@ impl TypeRef {
             }
             FUNCTION_TYPE => {
                 TypeRefKind::FunctionType(FunctionType::cast(self.syntax.clone()).unwrap())
+            }
+            VARIADIC_TYPE => {
+                TypeRefKind::VariadicType(VariadicType::cast(self.syntax.clone()).unwrap())
             }
             NEVER_TYPE => TypeRefKind::NeverType(NeverType::cast(self.syntax.clone()).unwrap()),
             OPTIONAL_TYPE => {
@@ -3712,6 +3767,30 @@ impl UsesClause {
         super::children(self)
     }
 }
+
+// VariadicType
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VariadicType {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for VariadicType {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, VARIADIC_TYPE)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(VariadicType { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl VariadicType {}
 
 // Visibility
 

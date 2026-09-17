@@ -7,7 +7,7 @@
 use super::{
     expressions, generics, name_ref, paths, CompletedMarker, Parser, TokenSet, ARRAY_TYPE,
     FUNCTION_TYPE, NEVER_TYPE, OPTIONAL_TYPE, PAREN_TYPE, PATH_TYPE, REFERENCE_TYPE,
-    REFINEMENT_TYPE, RET_TYPE, TUPLE_TYPE,
+    REFINEMENT_TYPE, RET_TYPE, TUPLE_TYPE, VARIADIC_TYPE,
 };
 
 pub(super) const TYPE_FIRST: TokenSet = paths::PATH_FIRST.union(TokenSet::new(&[
@@ -16,6 +16,7 @@ pub(super) const TYPE_FIRST: TokenSet = paths::PATH_FIRST.union(TokenSet::new(&[
     T!['('],
     T![&],
     T![func],
+    T![...],
 ]));
 
 pub(super) const TYPE_RECOVERY_SET: TokenSet =
@@ -63,6 +64,16 @@ pub(super) fn cast_type(p: &mut Parser<'_>) {
 }
 
 fn type_inner(p: &mut Parser<'_>, allow_refinement: bool) {
+    // `...` is a *composite* token: the lexer emits three separate `.`s and
+    // only `Parser::at` glues them. `p.current()` reports `DOT`, so the
+    // match below can never see it -- this has to be checked first.
+    if p.at(T![...]) {
+        let m = p.start();
+        p.bump(T![...]);
+        m.complete(p, VARIADIC_TYPE);
+        return;
+    }
+
     let mut inner = match p.current() {
         T!['['] => array_type(p),
         T!['('] => paren_or_tuple_type(p),

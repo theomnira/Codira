@@ -218,6 +218,7 @@ Grammar(
         "PAREN_TYPE",
         "REFERENCE_TYPE",
         "FUNCTION_TYPE",
+        "VARIADIC_TYPE",
         "NEVER_TYPE",
         "OPTIONAL_TYPE",
         "REFINEMENT_TYPE",
@@ -248,6 +249,7 @@ Grammar(
         "BREAK_EXPR",
         "ARRAY_EXPR",
         "TUPLE_EXPR",
+        "CLOSURE_EXPR",
         "CONDITION",
         "COMPTIME_EXPR",
         "MATCH_EXPR",
@@ -509,6 +511,13 @@ Grammar(
                 [ "exprs", "Expr" ]
             ]
         ),
+        // `func(a: T, b: T) -> R { .. }` -- a closure literal. Parses only;
+        // see `expressions::closure_expr` for what that does and does not
+        // claim.
+        "ClosureExpr": (
+            traits: ["ArgListOwner"],
+            options: ["ParamList", ["ret_type", "RetType"], ["body", "BlockExpr"]],
+        ),
         "ArgList": (
             collections: [
                 ["args", "Expr"]
@@ -564,6 +573,7 @@ Grammar(
                 "BlockExpr",
                 "ArrayExpr",
                 "TupleExpr",
+                "ClosureExpr",
                 "IndexExpr",
                 "RecordLit",
                 "ComptimeExpr",
@@ -606,6 +616,10 @@ Grammar(
             collections: [("params", "TypeRef")],
             options: [["ret_type", "RetType"]],
         ),
+        // `...` -- a variadic parameter's type. Parse-level only: there is
+        // no argument-pack model, so this records that a parameter is
+        // variadic without claiming anything can be done with it.
+        "VariadicType": (),
         "NeverType": (),
         "OptionalType": (options: ["TypeRef"]),
         "RefinementType": (options: [["base", "TypeRef"], ["binder", "NameRef"], ["predicate", "Expr"]]),
@@ -617,6 +631,7 @@ Grammar(
                 "ParenType",
                 "ReferenceType",
                 "FunctionType",
+                "VariadicType",
                 "NeverType",
                 "OptionalType",
                 "RefinementType",

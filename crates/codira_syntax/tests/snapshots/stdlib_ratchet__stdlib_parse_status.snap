@@ -2,9 +2,8 @@
 source: crates/codira_syntax/tests/stdlib_ratchet.rs
 expression: summary
 ---
-60 of 65 std files parse
+64 of 64 std files parse
 
-FAIL  std/ai/algorithm/functional.code  (759 errors)
 ok    std/atomic/atomic.code
 ok    std/base64/base64.code
 ok    std/bit/bit.code
@@ -16,7 +15,7 @@ ok    std/builtin/int.code
 ok    std/builtin/range.code
 ok    std/builtin/simd.code
 ok    std/builtin/slice.code
-FAIL  std/builtin/sort.code  (94 errors)
+ok    std/builtin/sort.code
 ok    std/builtin/swap.code
 ok    std/builtin/traits.code
 ok    std/builtin/tuple.code
@@ -41,9 +40,9 @@ ok    std/format/repr.code
 ok    std/gpu/globals.code
 ok    std/gpu/host_info.code
 ok    std/gpu/id.code
-FAIL  std/gpu/intrinsics.code  (10 errors)
+ok    std/gpu/intrinsics.code
 ok    std/gpu/profiler.code
-FAIL  std/gpu/warp.code  (11 errors)
+ok    std/gpu/warp.code
 ok    std/hashlib/hash.code
 ok    std/hashlib/hasher.code
 ok    std/math/constants.code
@@ -64,7 +63,7 @@ ok    std/pathlib/path.code
 ok    std/random/random.code
 ok    std/sys/arg.code
 ok    std/sys/info.code
-FAIL  std/sys/intrinsics.code  (33 errors)
+ok    std/sys/intrinsics.code
 ok    std/sys/terminate.code
 ok    std/testing/suite.code
 ok    std/testing/testing.code

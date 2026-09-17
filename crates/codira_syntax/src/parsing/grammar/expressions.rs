@@ -5,14 +5,15 @@
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
 use super::{
-    error_block, expressions, generics, name_ref, name_ref_or_index, paths, patterns, types,
-    BlockLike, CompletedMarker, Marker, Parser, SyntaxKind, TokenSet, ARG_LIST, ARRAY_EXPR,
+    error_block, expressions, generics, name_ref, name_ref_or_index, params, paths, patterns,
+    types, BlockLike, CompletedMarker, Marker, Parser, SyntaxKind, TokenSet, ARG_LIST, ARRAY_EXPR,
     BIN_EXPR, BLOCK_EXPR, BREAK_EXPR, CALL_EXPR, CAST_EXPR, CHANNEL_RECV_EXPR, CHANNEL_SEND_EXPR,
-    COMPTIME_EXPR, CONDITION, EOF, ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER, HANDLER_ARM,
-    HANDLER_ARM_LIST, HANDLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER, LET_STMT,
-    LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, PARAM, PARAM_LIST, PAREN_EXPR,
-    PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT,
-    RETURN_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, TUPLE_EXPR, WHILE_EXPR,
+    CLOSURE_EXPR, COMPTIME_EXPR, CONDITION, EOF, ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER,
+    HANDLER_ARM, HANDLER_ARM_LIST, HANDLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER,
+    LET_STMT, LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, PARAM, PARAM_LIST,
+    PAREN_EXPR, PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_LIST,
+    RECORD_LIT, RETURN_EXPR, RET_TYPE, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, TUPLE_EXPR,
+    WHILE_EXPR,
 };
 use crate::{parsing::grammar::paths::PATH_FIRST, SyntaxKind::METHOD_CALL_EXPR};
 
@@ -42,6 +43,7 @@ const ATOM_EXPR_FIRST: TokenSet = LITERAL_FIRST.union(PATH_FIRST).union(TokenSet
     T![perform],
     T![handle],
     T![spawn],
+    T![func],
 ]));
 
 const LHS_FIRST: TokenSet = ATOM_EXPR_FIRST.union(TokenSet::new(&[T![!], T![-], T![~], T![<-]]));
@@ -505,6 +507,7 @@ fn atom_expr(p: &mut Parser<'_>, r: Restrictions) -> Option<(CompletedMarker, Bl
         T![perform] => perform_expr(p),
         T![handle] => handle_expr(p),
         T![spawn] => spawn_expr(p),
+        T![func] => closure_expr(p),
         _ => {
             p.error_recover("expected expression", EXPR_RECOVERY_SET);
             return None;
@@ -857,6 +860,44 @@ fn while_expr(p: &mut Parser<'_>) -> CompletedMarker {
     cond(p);
     block(p);
     m.complete(p, WHILE_EXPR)
+}
+
+/// Parses a closure literal: `func(a: T, b: T) -> R { .. }`.
+///
+/// Syntax only. `spec/EIDOS_RFC_002.md` section 3.1 prices closures (S11) at
+/// 4-6 weeks -- capture analysis, a function type, an indirect-call op, GC
+/// interaction -- and notes they block exactly one stdlib file. This is not
+/// that work: HIR lowers a closure to `Missing`, so a program that *uses*
+/// one gets a diagnostic rather than silently compiling.
+///
+/// What it buys is the one thing the ratchet needs: a file that merely
+/// *mentions* a closure stops failing to parse, so every other construct in
+/// it can be checked. `std/builtin/sort.code` passes a comparator on one
+/// line and is otherwise ordinary code.
+///
+/// The parameter list reuses `params::param_list`, so a closure's parameters
+/// are parsed by exactly the same production a function's are -- including
+/// the ownership keywords -- rather than by a second, subtly different one.
+fn closure_expr(p: &mut Parser<'_>) -> CompletedMarker {
+    assert!(p.at(T![func]));
+    let m = p.start();
+    p.bump(T![func]);
+
+    if p.at(T!['(']) {
+        params::param_list(p);
+    } else {
+        p.error("expected a parameter list");
+    }
+
+    if p.at(T![->]) {
+        let ret = p.start();
+        p.bump(T![->]);
+        types::return_type(p);
+        ret.complete(p, RET_TYPE);
+    }
+
+    block(p);
+    m.complete(p, CLOSURE_EXPR)
 }
 
 fn record_field_list(p: &mut Parser<'_>) {

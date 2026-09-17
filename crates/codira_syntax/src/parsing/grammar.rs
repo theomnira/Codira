@@ -20,20 +20,20 @@ use super::{
     SyntaxKind::{
         self, ARG_LIST, ARRAY_EXPR, ARRAY_TYPE, ATTRIBUTE, ATTRIBUTE_LIST, BIND_PAT, BIN_EXPR,
         BLOCK_EXPR, BREAK_EXPR, CALL_EXPR, CAST_EXPR, CHANNEL_RECV_EXPR, CHANNEL_SEND_EXPR,
-        COMPTIME_EXPR, CONDITION, CONST_DEF, EFFECT_DEF, EFFECT_OP, EFFECT_OP_LIST, ENUM_DEF,
-        ENUM_VARIANT, ENUM_VARIANT_LIST, EOF, ERROR, EXPR_STMT, EXTEND, EXTEND_ITEM_LIST, EXTERN,
-        EXTERN_BLOCK, EXTERN_ITEM_LIST, FIELD_EXPR, FLOAT_NUMBER, FUNCTION_DEF, FUNCTION_TYPE,
-        GENERIC_ARG_LIST, GENERIC_PARAM, GENERIC_PARAM_LIST, HANDLER_ARM, HANDLER_ARM_LIST,
-        HANDLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INHERITANCE_LIST, INT_NUMBER, LET_STMT,
-        LITERAL, LITERAL_PAT, LOOP_EXPR, MACRO_DEF, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, NAME,
-        NAME_REF, NEVER_TYPE, OPTIONAL_TYPE, PARAM, PARAM_LIST, PAREN_EXPR, PAREN_PAT, PAREN_TYPE,
-        PATH, PATH_EXPR, PATH_PAT, PATH_SEGMENT, PATH_TYPE, PERFORM_EXPR, PLACEHOLDER_PAT,
-        PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_DEF, RECORD_FIELD_DEF_LIST, RECORD_FIELD_LIST,
-        RECORD_LIT, REFERENCE_TYPE, REFINEMENT_TYPE, RENAME, RETURN_EXPR, RET_TYPE, SELF_PARAM,
-        SOURCE_FILE, SPAWN_EXPR, STRING, STRUCT_DEF, TRAIT_DEF, TRANSFER_EXPR, TRY_EXPR,
-        TUPLE_EXPR, TUPLE_FIELD_DEF, TUPLE_FIELD_DEF_LIST, TUPLE_PAT, TUPLE_STRUCT_PAT, TUPLE_TYPE,
-        TYPE_ALIAS_DEF, USE, USES_CLAUSE, USE_TREE, USE_TREE_LIST, VISIBILITY, WHERE_CLAUSE,
-        WHERE_PRED, WHILE_EXPR,
+        CLOSURE_EXPR, COMPTIME_EXPR, CONDITION, CONST_DEF, EFFECT_DEF, EFFECT_OP, EFFECT_OP_LIST,
+        ENUM_DEF, ENUM_VARIANT, ENUM_VARIANT_LIST, EOF, ERROR, EXPR_STMT, EXTEND, EXTEND_ITEM_LIST,
+        EXTERN, EXTERN_BLOCK, EXTERN_ITEM_LIST, FIELD_EXPR, FLOAT_NUMBER, FUNCTION_DEF,
+        FUNCTION_TYPE, GENERIC_ARG_LIST, GENERIC_PARAM, GENERIC_PARAM_LIST, HANDLER_ARM,
+        HANDLER_ARM_LIST, HANDLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INHERITANCE_LIST,
+        INT_NUMBER, LET_STMT, LITERAL, LITERAL_PAT, LOOP_EXPR, MACRO_DEF, MATCH_ARM,
+        MATCH_ARM_LIST, MATCH_EXPR, NAME, NAME_REF, NEVER_TYPE, OPTIONAL_TYPE, PARAM, PARAM_LIST,
+        PAREN_EXPR, PAREN_PAT, PAREN_TYPE, PATH, PATH_EXPR, PATH_PAT, PATH_SEGMENT, PATH_TYPE,
+        PERFORM_EXPR, PLACEHOLDER_PAT, PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_DEF,
+        RECORD_FIELD_DEF_LIST, RECORD_FIELD_LIST, RECORD_LIT, REFERENCE_TYPE, REFINEMENT_TYPE,
+        RENAME, RETURN_EXPR, RET_TYPE, SELF_PARAM, SOURCE_FILE, SPAWN_EXPR, STRING, STRUCT_DEF,
+        TRAIT_DEF, TRANSFER_EXPR, TRY_EXPR, TUPLE_EXPR, TUPLE_FIELD_DEF, TUPLE_FIELD_DEF_LIST,
+        TUPLE_PAT, TUPLE_STRUCT_PAT, TUPLE_TYPE, TYPE_ALIAS_DEF, USE, USES_CLAUSE, USE_TREE,
+        USE_TREE_LIST, VARIADIC_TYPE, VISIBILITY, WHERE_CLAUSE, WHERE_PRED, WHILE_EXPR,
     },
 };
 
@@ -81,6 +81,9 @@ pub(crate) fn root(p: &mut Parser<'_>) {
 /// * `extend` -- only meaningful at declaration position; by the time a
 ///   function's name is being read, `func` has already been committed to.
 /// * `type` -- likewise, only a declaration opener.
+/// * `supervisor` / `child` -- only meaningful in a `supervisor { .. }`
+///   declaration and its body. `child` in particular is an ordinary word that
+///   `std/builtin/sort.code` uses for a heap index.
 ///
 /// This exists because forbidding them outright is a papercut with no
 /// payoff: `std/os/path.code` wants a field called `root`,
@@ -93,8 +96,14 @@ pub(crate) fn root(p: &mut Parser<'_>) {
 /// Deliberately *not* included: `self`, which is a receiver and genuinely
 /// ambiguous in parameter position, and every keyword that can begin an
 /// expression or a type.
-pub(super) const KEYWORDS_USABLE_AS_NAMES: TokenSet =
-    TokenSet::new(&[T![root], T![init], T![extend], T![type]]);
+pub(super) const KEYWORDS_USABLE_AS_NAMES: TokenSet = TokenSet::new(&[
+    T![root],
+    T![init],
+    T![extend],
+    T![type],
+    T![supervisor],
+    T![child],
+]);
 
 /// The subset of [`KEYWORDS_USABLE_AS_NAMES`] that may also *start an
 /// expression*, i.e. be referred to as a value.
@@ -105,7 +114,7 @@ pub(super) const KEYWORDS_USABLE_AS_NAMES: TokenSet =
 /// still fine -- `pair.root` goes through `name_ref`, where no keyword
 /// meaning applies -- it simply cannot be read as a bare local.
 pub(super) const KEYWORDS_USABLE_AS_VALUE_NAMES: TokenSet =
-    TokenSet::new(&[T![init], T![extend], T![type]]);
+    TokenSet::new(&[T![init], T![extend], T![type], T![supervisor], T![child]]);
 
 fn name_recovery(p: &mut Parser<'_>, recovery: TokenSet) {
     if p.at(IDENT) {

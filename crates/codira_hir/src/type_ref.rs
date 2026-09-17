@@ -118,7 +118,7 @@ impl TypeRefMapBuilder {
     pub fn alloc_from_node(&mut self, node: &ast::TypeRef) -> LocalTypeRefId {
         use codira_syntax::ast::TypeRefKind::{
             ArrayType, FunctionType, NeverType, OptionalType, ParenType, PathType, ReferenceType,
-            RefinementType, TupleType,
+            RefinementType, TupleType, VariadicType,
         };
 
         let ptr = AstPtr::new(node);
@@ -150,13 +150,14 @@ impl TypeRefMapBuilder {
             ReferenceType(inner) => {
                 return self.alloc_from_node_opt(inner.type_ref().as_ref());
             }
-            // `func(A, B) -> R`. There are no function *values* yet
-            // (LANGUAGE_SPEC section 12 lists closures as unimplemented), so
-            // there is nothing for this to lower to. `Error` rather than a
-            // silent stand-in: a signature mentioning one is readable, and
-            // any *use* of it reports rather than quietly type-checking
-            // against a type that does not exist.
-            FunctionType(_) => TypeRef::Error,
+            // `func(A, B) -> R` and `...` both parse but have nothing to
+            // lower to: there are no function *values* yet (LANGUAGE_SPEC
+            // section 12 lists closures as unimplemented) and no
+            // argument-pack model. `Error` rather than a silent stand-in, so
+            // a signature mentioning one is readable while any *use* reports
+            // instead of quietly type-checking against a type that does not
+            // exist.
+            FunctionType(_) | VariadicType(_) => TypeRef::Error,
             OptionalType(inner) => {
                 TypeRef::Optional(self.alloc_from_node_opt(inner.type_ref().as_ref()))
             }

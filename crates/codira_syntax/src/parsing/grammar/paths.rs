@@ -21,6 +21,20 @@ pub(super) fn is_path_start(p: &Parser<'_>) -> bool {
     ) || super::KEYWORDS_USABLE_AS_VALUE_NAMES.contains(p.current())
 }
 
+/// Whether a leading `root` here is the *package-root* path keyword rather
+/// than an ordinary binding called `root`.
+///
+/// `root` only means "the current package" as the first segment of a path,
+/// so it is followed by `.`. A bare `root` with anything else after it --
+/// `root * 2 + 1`, as `std/builtin/sort.code` writes it -- can only be a
+/// value, and a package root is not a value.
+///
+/// One token of lookahead settles it, which is why `root` can be usable as a
+/// name without giving up the keyword.
+pub(super) fn root_is_package_keyword(p: &Parser<'_>) -> bool {
+    p.at(T![root]) && p.nth(1) == T![.]
+}
+
 pub(super) fn is_use_path_start(p: &Parser<'_>, top_level: bool) -> bool {
     if top_level {
         matches!(p.current(), IDENT | T![self] | T![super] | T![root])
@@ -85,6 +99,8 @@ fn path_segment(p: &mut Parser<'_>) {
         k if super::KEYWORDS_USABLE_AS_VALUE_NAMES.contains(k) => {
             name_ref(p);
         }
+        // A `root` that is not starting a package path is an ordinary name.
+        T![root] if !root_is_package_keyword(p) => name_ref(p),
         T![super] | T![root] | T![self] | T![resume] => p.bump_any(),
         _ => p.error_recover(
             "expected identifier",

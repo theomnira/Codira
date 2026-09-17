@@ -282,7 +282,7 @@ public func values[K, V](this: Dict[K, V]) -> List[V] {
 
 /// Returns a List of (key, value) tuples.
 public func items[K, V](this: Dict[K, V]) -> List[(K, V)] {
-    let out = list_with_capacity[(K, V)](this.len);
+    let out = list_with_capacity(this.len);
     let i: usize = 0;
     while i < this.num_buckets {
         let e = raw_load(this.buckets, i);
@@ -346,7 +346,7 @@ public func iter_next[K, V](it: DictIter[K, V]) -> (DictIter[K, V], Optional[(K,
         pos = pos + 1;
     }
     let done_it = DictIter[K, V] { dict: it.dict, pos: pos };
-    return (done_it, none[(K, V)]());
+    return (done_it, none());
 }
 
 // ── Cleanup ──────────────────────────────────────────────────────────────────

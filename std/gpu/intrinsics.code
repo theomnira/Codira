@@ -172,7 +172,7 @@ public func lop(lut: i32, a: i32, b: i32, c: i32) -> i32 {
 // mask to create a new 32-bit value.
 public func byte_permute(a: u32, b: u32, c: u32) -> u32 {
     let name = _byte_permute_inst();
-    return intrinsics.llvm_intrinsic[name][u32](a, b, c);
+    return intrinsics.llvm_intrinsic(a, b, c);
 }
 
 // Internal: the byte-permute intrinsic name for the active target.
@@ -194,7 +194,7 @@ public func _byte_permute_inst() -> StringLiteral {
 // unsigned integers.
 public func mulhi_u16(a: u16, b: u16) -> u32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.mulhi.us"][u32](a, b);
+        return intrinsics.llvm_intrinsic(a, b);
     }
     let au32 = a as u32;
     let bu32 = b as u32;
@@ -204,7 +204,7 @@ public func mulhi_u16(a: u16, b: u16) -> u32 {
 // Most significant 32 bits of the product of two 16-bit signed integers.
 public func mulhi_i16(a: i16, b: i16) -> i32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.mulhi.s"][i32](a, b);
+        return intrinsics.llvm_intrinsic(a, b);
     }
     let ai32 = a as i32;
     let bi32 = b as i32;
@@ -214,7 +214,7 @@ public func mulhi_i16(a: i16, b: i16) -> i32 {
 // Most significant 32 bits of the product of two 32-bit unsigned integers.
 public func mulhi_u32(a: u32, b: u32) -> u32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.mulhi.ui"][u32](a, b);
+        return intrinsics.llvm_intrinsic(a, b);
     }
     let au64 = a as u64;
     let bu64 = b as u64;
@@ -224,7 +224,7 @@ public func mulhi_u32(a: u32, b: u32) -> u32 {
 // Most significant 32 bits of the product of two 32-bit signed integers.
 public func mulhi_i32(a: i32, b: i32) -> i32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.mulhi.i"][i32](a, b);
+        return intrinsics.llvm_intrinsic(a, b);
     }
     let ai64 = a as i64;
     let bi64 = b as i64;
@@ -234,7 +234,7 @@ public func mulhi_i32(a: i32, b: i32) -> i32 {
 // Most significant 64 bits of the product of two 64-bit unsigned integers.
 public func mulhi_u64(a: u64, b: u64) -> u64 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.mulhi.ull"][u64](a, b);
+        return intrinsics.llvm_intrinsic(a, b);
     }
     // Fallback: use 128-bit arithmetic.
     let au128 = a as u128;
@@ -245,7 +245,7 @@ public func mulhi_u64(a: u64, b: u64) -> u64 {
 // Most significant 64 bits of the product of two 64-bit signed integers.
 public func mulhi_i64(a: i64, b: i64) -> i64 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.mulhi.ll"][i64](a, b);
+        return intrinsics.llvm_intrinsic(a, b);
     }
     let ai128 = a as i128;
     let bi128 = b as i128;
@@ -395,7 +395,7 @@ extend AMDBufferResource {
         }
         let vec_bytes = vector_offset * (__intrinsic_sizeof() as i32);
         let scalar_bytes = scalar_offset * (__intrinsic_sizeof() as i32);
-        return intrinsics.llvm_intrinsic["llvm.amdgcn.raw.buffer.load"][T](
+        return intrinsics.llvm_intrinsic(
             self.desc, vec_bytes, scalar_bytes, 0
         );
     }
@@ -432,7 +432,7 @@ public func ds_read_tr16_b64[T](shared_ptr: usize) -> SIMD[T, 4] {
     if !info._cdna_4_or_newer() {
         __panic("ds_read_tr16_b64 is only supported on CDNA4+");
     }
-    let raw = intrinsics.llvm_intrinsic["llvm.amdgcn.ds.read.tr16.b64"][SIMD[u32, 4]](shared_ptr);
+    let raw = intrinsics.llvm_intrinsic(shared_ptr);
     return raw.bitcast();
 }
 
@@ -446,7 +446,7 @@ public func ds_read_tr8_b64[T](shared_ptr: usize) -> SIMD[T, 8] {
     }
     // Read the raw 64-bit lanes as u32 pairs; the caller reinterprets via
     // SIMD.bitcast to obtain the target element type.
-    let raw = intrinsics.llvm_intrinsic["llvm.amdgcn.ds.read.tr8.b64"][SIMD[u32, 8]](shared_ptr);
+    let raw = intrinsics.llvm_intrinsic(shared_ptr);
     return raw.bitcast();
 }
 
@@ -472,6 +472,6 @@ public func permlane_swap(val1: u32, val2: u32, stride: i32) -> SIMD[u32, 2] {
             __panic("Unsupported stride");
         }
     }
-    let result = intrinsics.llvm_intrinsic[name][(i32, i32)](val1 as i32, val2 as i32, false, false);
+    let result = intrinsics.llvm_intrinsic(val1 as i32, val2 as i32, false, false);
     return SIMD.new(result.0 as u32, result.1 as u32);
 }

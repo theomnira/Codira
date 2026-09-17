@@ -1,4 +1,32 @@
 // ============================================================================
+// std/ai/algorithm/functional.mojo -- QUARANTINED, NOT PART OF THE STDLIB
+// ============================================================================
+//
+// This file is Mojo source, not Codira. It was mechanically renamed from
+// `.mojo` to `.code` at some point (its own next line still says so), but
+// nothing about its contents was converted: it uses Mojo's `from X import Y`,
+// `@always_inline;`, and `assert (cond), "message"`, and it imports
+// `max._plugin`, `max.gpu.host`, `max.runtime.tracing` and `std.utils.index`
+// -- none of which exist in this standard library.
+//
+// `spec/EIDOS_RFC_002.md` section 3.1 anticipated exactly this and prescribes
+// quarantine rather than a port: its own baseline is stated as "9 of 64 files
+// parsing (not 56 of 65 -- one file is Mojo-derived and should be
+// quarantined)". The extension is now `.mojo` so the stdlib parse ratchet
+// measures the 64 files that are actually Codira, instead of carrying a
+// permanent known failure that hides real regressions.
+//
+// Measured before quarantining, so the decision is on record rather than
+// assumed: 759 parse errors as-is, and 618 still remaining after every
+// `from X import Y` line is removed. The remainder is Mojo statement syntax
+// throughout, so this is a rewrite of a GPU elementwise/tiling library
+// against modules that do not exist here -- not a syntax migration.
+//
+// Porting it is real work that needs those modules to exist first. The file
+// is kept rather than deleted so that work has a starting point.
+// ============================================================================
+
+// ============================================================================
 // std/ai/algorithm/functional.code
 // ============================================================================
 // Copyright (c) 2026, Omnira CJSC. All rights reserved.

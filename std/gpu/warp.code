@@ -48,12 +48,11 @@ public let _FULL_MASK_U32: u32 = 0xFFFFFFFF;
 //   offset: The source lane ID to copy the value from.
 public func shuffle_idx_f32(val: f32, offset: u32) -> f32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.shfl.sync.idx.f32"]
-            [f32](_FULL_MASK_U32, val, offset, 31);
+        return intrinsics.llvm_intrinsic(_FULL_MASK_U32, val, offset, 31);
     }
     if info.is_apple_gpu() {
         // See host docs; AIR intrinsic takes a 16-bit offset.
-        return intrinsics.llvm_intrinsic["llvm.air.simd_shuffle"][f32](val, offset as u16);
+        return intrinsics.llvm_intrinsic(val, offset as u16);
     }
     info.unsupported_target_error("shuffle_idx_f32");
 }
@@ -61,8 +60,7 @@ public func shuffle_idx_f32(val: f32, offset: u32) -> f32 {
 // 32-bit integer variant.
 public func shuffle_idx_i32(val: i32, offset: u32) -> i32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.shfl.sync.idx.i32"]
-            [i32](_FULL_MASK_U32, val, offset, 31);
+        return intrinsics.llvm_intrinsic(_FULL_MASK_U32, val, offset, 31);
     }
     info.unsupported_target_error("shuffle_idx_i32");
 }
@@ -82,8 +80,7 @@ public func shuffle_idx_u32(val: u32, offset: u32) -> u32 {
 public func shuffle_up_f32(val: f32, offset: u32) -> f32 {
     if info.is_nvidia_gpu() {
         // shfl.sync.up uses a width-mask of 0.
-        return intrinsics.llvm_intrinsic["llvm.nvvm.shfl.sync.up.f32"]
-            [f32](_FULL_MASK_U32, val, offset, 0);
+        return intrinsics.llvm_intrinsic(_FULL_MASK_U32, val, offset, 0);
     }
     info.unsupported_target_error("shuffle_up_f32");
 }
@@ -95,8 +92,7 @@ public func shuffle_up_f32(val: f32, offset: u32) -> f32 {
 // Each thread receives the value from the thread `offset` lanes farther along.
 public func shuffle_down_f32(val: f32, offset: u32) -> f32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.shfl.sync.down.f32"]
-            [f32](_FULL_MASK_U32, val, offset, 31);
+        return intrinsics.llvm_intrinsic(_FULL_MASK_U32, val, offset, 31);
     }
     info.unsupported_target_error("shuffle_down_f32");
 }
@@ -108,8 +104,7 @@ public func shuffle_down_f32(val: f32, offset: u32) -> f32 {
 // Butterfly exchange: each thread's partner is lane XOR offset.
 public func shuffle_xor_f32(val: f32, offset: u32) -> f32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.shfl.sync.bfly.f32"]
-            [f32](_FULL_MASK_U32, val, offset, 31);
+        return intrinsics.llvm_intrinsic(_FULL_MASK_U32, val, offset, 31);
     }
     info.unsupported_target_error("shuffle_xor_f32");
 }
@@ -141,8 +136,7 @@ public func broadcast_usize(val: usize) -> usize {
 // is set to 1 if the corresponding thread voted True, and 0 otherwise.
 public func vote_u32(val: bool) -> u32 {
     if info.is_nvidia_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.nvvm.vote.ballot.sync"]
-            [u32](_FULL_MASK_U32, val);
+        return intrinsics.llvm_intrinsic(_FULL_MASK_U32, val);
     }
     info.unsupported_target_error("vote_u32");
 }
@@ -150,7 +144,7 @@ public func vote_u32(val: bool) -> u32 {
 // 64-bit ballot (AMD).
 public func vote_u64(val: bool) -> u64 {
     if info.is_amd_gpu() {
-        return intrinsics.llvm_intrinsic["llvm.amdgcn.ballot.i64"][u64](val);
+        return intrinsics.llvm_intrinsic(val);
     }
     return vote_u32(val) as u64;
 }
@@ -194,9 +188,15 @@ public func match_all_u32(val: u32) -> u32 {
 // =============================================================================
 
 // Reduces `val` across a full warp using the given binary combine and the
-// butterfly shuffle.  `combine(a, b)` must be associative.
+// butterfly shuffle.  `combine_xy(a, b)` must be associative.
+//
+// `combine_xy` was previously declared without a type, which is Mojo `def`
+// syntax rather than Codira: `func` is statically typed
+// (`spec/LANGUAGE_SPEC.md` section 3), so the parameter needs one. The type
+// is the one the doc comment already describes -- a binary combine over the
+// reduced element type.
 public func warp_reduce_val(
-    combine_xy,
+    combine_xy: func(f32, f32) -> f32,
     val: f32,
 ) -> f32 {
     let offset = globals.WARP_SIZE / 2;

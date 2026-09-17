@@ -215,9 +215,10 @@ fn rewrite_never_return(toks: &[Spanned], edits: &mut Vec<Edit>) {
 /// Tokens that may legitimately appear inside a generic argument list.
 ///
 /// Deliberately narrow: an identifier, a path dot, a comma, a nested
-/// bracket, or an integer (for const generics like `InlineArray<T, N>`
-/// written with a literal). Seeing anything else is the signal that the
-/// `<` was a comparison after all.
+/// bracket or paren (for a tuple type), a `?`, or a literal -- an integer
+/// for a const generic, a string for the Mojo-style parameterisation
+/// `std/sys/intrinsics.code` uses. Seeing anything else is the signal that
+/// the brackets were an index or a comparison after all.
 fn is_type_list_token(kind: SyntaxKind) -> bool {
     kind == IDENT
         || kind == WHITESPACE
@@ -225,8 +226,11 @@ fn is_type_list_token(kind: SyntaxKind) -> bool {
         || kind == T_DOT
         || kind == T_L_BRACKET
         || kind == T_R_BRACKET
+        || kind == T_L_PAREN
+        || kind == T_R_PAREN
         || kind == T_QUESTION
         || kind == T_INT_NUMBER
+        || kind == STRING
 }
 
 // The lexer's `SyntaxKind`s used above, named locally so the scanning code
@@ -235,7 +239,7 @@ use codira_syntax::SyntaxKind::{
     COLON as T_COLON, COMMA as T_COMMA, DOT as T_DOT, EXCLAMATION as T_EXCL, FUNC_KW as T_FUNC_KW,
     GT as T_GT, INT_NUMBER as T_INT_NUMBER, LT as T_LT, L_BRACKET as T_L_BRACKET,
     L_CURLY as T_L_CURLY, L_PAREN as T_L_PAREN, MINUS as T_MINUS, QUESTION as T_QUESTION,
-    R_BRACKET as T_R_BRACKET, R_CURLY as T_R_CURLY, SEMI as T_SEMI,
+    R_BRACKET as T_R_BRACKET, R_CURLY as T_R_CURLY, R_PAREN as T_R_PAREN, SEMI as T_SEMI,
 };
 
 /// Rewrites `func T.m(..)` -- a method of `T` written the pre-redesign way
@@ -449,23 +453,43 @@ fn rewrite_call_site_generic_args(text: &str, toks: &[Spanned], edits: &mut Vec<
 
         // Find the matching `]`, bailing on anything that is not a type
         // list -- the same contents check the angle-bracket rule uses.
-        let mut depth = 1usize;
-        let mut j = open + 1;
+        //
+        // Consecutive groups are all consumed:
+        // `llvm_intrinsic["name"][SIMD[u32, 4]](ptr)` -- Mojo-style
+        // parameterisation -- carries two, and stripping only the first
+        // would leave the second as an index on the call's result.
         let mut close = None;
-        while j < toks.len() {
-            match toks[j].kind {
-                T_L_BRACKET => depth += 1,
-                T_R_BRACKET => {
-                    depth -= 1;
-                    if depth == 0 {
-                        close = Some(j);
-                        break;
+        let mut group_open = open;
+        loop {
+            let mut depth = 1usize;
+            let mut j = group_open + 1;
+            let mut group_close = None;
+            while j < toks.len() {
+                match toks[j].kind {
+                    T_L_BRACKET => depth += 1,
+                    T_R_BRACKET => {
+                        depth -= 1;
+                        if depth == 0 {
+                            group_close = Some(j);
+                            break;
+                        }
                     }
+                    k if is_type_list_token(k) => {}
+                    _ => break,
                 }
-                k if is_type_list_token(k) => {}
-                _ => break,
+                j += 1;
             }
-            j += 1;
+            let Some(group_close) = group_close else {
+                break;
+            };
+            close = Some(group_close);
+
+            let next = skip_ws(toks, group_close + 1);
+            if next < toks.len() && toks[next].kind == T_L_BRACKET {
+                group_open = next;
+                continue;
+            }
+            break;
         }
         let Some(close) = close else { continue };
 

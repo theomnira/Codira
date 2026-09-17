@@ -423,17 +423,17 @@ public func cos(x: f64) -> f64 {
 
 // Signed addition with overflow detection.
 public func add_overflow[T](a: T, b: T) -> (T, bool) {
-    return __intrinsic_llvm_call[(T, bool), "llvm.sadd.with.overflow"](a, b);
+    return __intrinsic_llvm_call(a, b);
 }
 
 // Signed subtraction with overflow detection.
 public func sub_overflow[T](a: T, b: T) -> (T, bool) {
-    return __intrinsic_llvm_call[(T, bool), "llvm.ssub.with.overflow"](a, b);
+    return __intrinsic_llvm_call(a, b);
 }
 
 // Signed multiplication with overflow detection.
 public func mul_overflow[T](a: T, b: T) -> (T, bool) {
-    return __intrinsic_llvm_call[(T, bool), "llvm.smul.with.overflow"](a, b);
+    return __intrinsic_llvm_call(a, b);
 }
 
 // =============================================================================
