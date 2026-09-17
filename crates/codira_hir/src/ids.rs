@@ -216,3 +216,51 @@ impl From<StructId> for VariantId {
         VariantId::StructId(value)
     }
 }
+
+/// A declaration that may carry `[T, U]`-style generic parameters.
+///
+/// Generic parameters are scoped to their declaring item, so a type
+/// parameter's identity is (owner, index) rather than a bare name -- the `T`
+/// of `func map[T](..)` is a different type from the `T` of
+/// `struct Box[T]`, and confusing them would let one unify with the other.
+// Variants are named after the id type each wraps, as every other id enum
+// in this module is (`ItemDefinitionId::FunctionId`,
+// `ItemContainerId::ImplId`). Renaming them to `Function`/`Struct`/`Impl`
+// to satisfy the lint would make this the one enum here that reads
+// differently from its neighbours.
+#[allow(clippy::enum_variant_names)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GenericDefId {
+    FunctionId(FunctionId),
+    StructId(StructId),
+    /// An `extend Box[T] { .. }` block. Its parameters are the
+    /// binding occurrences among the extended type's generic arguments --
+    /// `T` in `extend Box[T]`, but not `i32` in `extend Box[i32]`.
+    ImplId(ImplId),
+}
+
+impl From<FunctionId> for GenericDefId {
+    fn from(id: FunctionId) -> Self {
+        GenericDefId::FunctionId(id)
+    }
+}
+
+impl From<StructId> for GenericDefId {
+    fn from(id: StructId) -> Self {
+        GenericDefId::StructId(id)
+    }
+}
+
+impl From<ImplId> for GenericDefId {
+    fn from(id: ImplId) -> Self {
+        GenericDefId::ImplId(id)
+    }
+}
+
+/// A single generic type parameter, identified by its owner and its position
+/// in that owner's parameter list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TypeParamId {
+    pub owner: GenericDefId,
+    pub index: u32,
+}

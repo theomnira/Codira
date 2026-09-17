@@ -15,12 +15,12 @@ class Counter[T] {
 
 /// Creates an empty counter.
 public func counter_new[T]() -> Counter[T] {
-    return Counter[T] { counts: dict_new[T, usize]() };
+    return Counter[T] { counts: dict_new() };
 }
 
 /// Creates a counter by counting every element in `items`.
 public func counter_from_list[T](items: List[T]) -> Counter[T] {
-    let c = counter_new[T]();
+    let c = counter_new();
     let i: usize = 0;
     while i < items.len {
         c = increment(c, get(items, i));
@@ -32,30 +32,30 @@ public func counter_from_list[T](items: List[T]) -> Counter[T] {
 // ── Core API ─────────────────────────────────────────────────────────────────
 
 /// Returns the count for `key` (0 if absent).
-public func count[T](self: Counter[T], key: T) -> usize {
-    return get_or_default(self.counts, key, 0 as usize);
+public func count[T](this: Counter[T], key: T) -> usize {
+    return get_or_default(this.counts, key, 0 as usize);
 }
 
 /// Increments the count for `key` by 1.
-public func increment[T](self: Counter[T], key: T) -> Counter[T] {
-    let current = count(self, key);
-    let out = self;
+public func increment[T](this: Counter[T], key: T) -> Counter[T] {
+    let current = count(this, key);
+    let out = this;
     out.counts = set(out.counts, key, current + 1);
     return out;
 }
 
 /// Increments the count for `key` by `n`.
-public func increment_by[T](self: Counter[T], key: T, n: usize) -> Counter[T] {
-    let current = count(self, key);
-    let out = self;
+public func increment_by[T](this: Counter[T], key: T, n: usize) -> Counter[T] {
+    let current = count(this, key);
+    let out = this;
     out.counts = set(out.counts, key, current + n);
     return out;
 }
 
 /// Decrements the count for `key` by 1, removing it if count reaches 0.
-public func decrement[T](self: Counter[T], key: T) -> Counter[T] {
-    let current = count(self, key);
-    let out = self;
+public func decrement[T](this: Counter[T], key: T) -> Counter[T] {
+    let current = count(this, key);
+    let out = this;
     if current <= 1 {
         let result = remove(out.counts, key);
         out.counts = result.0;
@@ -66,8 +66,8 @@ public func decrement[T](self: Counter[T], key: T) -> Counter[T] {
 }
 
 /// Sets the count for `key` to an explicit value. If `n` is 0, removes the key.
-public func set_count[T](self: Counter[T], key: T, n: usize) -> Counter[T] {
-    let out = self;
+public func set_count[T](this: Counter[T], key: T, n: usize) -> Counter[T] {
+    let out = this;
     if n == 0 {
         let result = remove(out.counts, key);
         out.counts = result.0;
@@ -80,9 +80,9 @@ public func set_count[T](self: Counter[T], key: T, n: usize) -> Counter[T] {
 // ── Queries ──────────────────────────────────────────────────────────────────
 
 /// Returns the total sum of all counts.
-public func total[T](self: Counter[T]) -> usize {
+public func total[T](this: Counter[T]) -> usize {
     let sum: usize = 0;
-    let vals = values(self.counts);
+    let vals = values(this.counts);
     let i: usize = 0;
     while i < vals.len {
         sum = sum + get(vals, i);
@@ -92,13 +92,13 @@ public func total[T](self: Counter[T]) -> usize {
 }
 
 /// Returns the number of unique elements (keys with count > 0).
-public func num_unique[T](self: Counter[T]) -> usize {
-    return len(self.counts);
+public func num_unique[T](this: Counter[T]) -> usize {
+    return len(this.counts);
 }
 
 /// Returns true if the counter contains `key` with count > 0.
-public func contains[T](self: Counter[T], key: T) -> bool {
-    return count(self, key) > 0;
+public func contains[T](this: Counter[T], key: T) -> bool {
+    return count(this, key) > 0;
 }
 
 // ── Most common ──────────────────────────────────────────────────────────────
@@ -110,9 +110,9 @@ struct CountEntry[T] {
 }
 
 /// Returns a list of (element, count) pairs, sorted by count descending.
-public func most_common[T](self: Counter[T]) -> List[CountEntry[T]] {
-    let pairs = items(self.counts);
-    let entries = list_with_capacity[CountEntry[T]](pairs.len);
+public func most_common[T](this: Counter[T]) -> List[CountEntry[T]] {
+    let pairs = items(this.counts);
+    let entries = list_with_capacity(pairs.len);
     let i: usize = 0;
     while i < pairs.len {
         let pair = get(pairs, i);
@@ -135,8 +135,8 @@ public func most_common[T](self: Counter[T]) -> List[CountEntry[T]] {
 }
 
 /// Returns the top `n` most common elements as (element, count) pairs.
-public func most_common_n[T](self: Counter[T], n: usize) -> List[CountEntry[T]] {
-    let all_entries = most_common(self);
+public func most_common_n[T](this: Counter[T], n: usize) -> List[CountEntry[T]] {
+    let all_entries = most_common(this);
     let limit = n;
     if limit > all_entries.len {
         limit = all_entries.len;
@@ -145,8 +145,8 @@ public func most_common_n[T](self: Counter[T], n: usize) -> List[CountEntry[T]] 
 }
 
 /// Returns the least common element. Panics if counter is empty.
-public func least_common[T](self: Counter[T]) -> CountEntry[T] {
-    let sorted = most_common(self);
+public func least_common[T](this: Counter[T]) -> CountEntry[T] {
+    let sorted = most_common(this);
     if sorted.len == 0 {
         panic("Counter.least_common: counter is empty");
     }
@@ -156,13 +156,13 @@ public func least_common[T](self: Counter[T]) -> CountEntry[T] {
 // ── Expansion ────────────────────────────────────────────────────────────────
 
 /// Returns a flat list where each element appears `count` times.
-public func elements[T](self: Counter[T]) -> List[T] {
-    let out = list_with_capacity[T](total(self));
-    let ks = keys(self.counts);
+public func elements[T](this: Counter[T]) -> List[T] {
+    let out = list_with_capacity(total(this));
+    let ks = keys(this.counts);
     let i: usize = 0;
     while i < ks.len {
         let key = get(ks, i);
-        let c = count(self, key);
+        let c = count(this, key);
         let j: usize = 0;
         while j < c {
             out = push(out, key);
@@ -176,8 +176,8 @@ public func elements[T](self: Counter[T]) -> List[T] {
 // ── Combining counters ───────────────────────────────────────────────────────
 
 /// Adds counts from `other` into `self`.
-public func update[T](self: Counter[T], other: Counter[T]) -> Counter[T] {
-    let out = self;
+public func update[T](this: Counter[T], other: Counter[T]) -> Counter[T] {
+    let out = this;
     let ks = keys(other.counts);
     let i: usize = 0;
     while i < ks.len {
@@ -191,8 +191,8 @@ public func update[T](self: Counter[T], other: Counter[T]) -> Counter[T] {
 
 /// Subtracts counts of `other` from `self`. Counts that drop to zero or
 /// below are removed.
-public func subtract[T](self: Counter[T], other: Counter[T]) -> Counter[T] {
-    let out = self;
+public func subtract[T](this: Counter[T], other: Counter[T]) -> Counter[T] {
+    let out = this;
     let ks = keys(other.counts);
     let i: usize = 0;
     while i < ks.len {
@@ -212,7 +212,7 @@ public func subtract[T](self: Counter[T], other: Counter[T]) -> Counter[T] {
 
 /// Returns a new counter with the element-wise maximum of counts.
 public func counter_max[T](a: Counter[T], b: Counter[T]) -> Counter[T] {
-    let out = counter_new[T]();
+    let out = counter_new();
     // All keys from a
     let ka = keys(a.counts);
     let i: usize = 0;
@@ -242,7 +242,7 @@ public func counter_max[T](a: Counter[T], b: Counter[T]) -> Counter[T] {
 
 /// Returns a new counter with the element-wise minimum of counts.
 public func counter_min[T](a: Counter[T], b: Counter[T]) -> Counter[T] {
-    let out = counter_new[T]();
+    let out = counter_new();
     let ka = keys(a.counts);
     let i: usize = 0;
     while i < ka.len {
@@ -264,12 +264,12 @@ public func counter_min[T](a: Counter[T], b: Counter[T]) -> Counter[T] {
 // ── Cleanup ──────────────────────────────────────────────────────────────────
 
 /// Removes all entries.
-public func clear[T](self: Counter[T]) -> Counter[T] {
-    let out = self;
+public func clear[T](this: Counter[T]) -> Counter[T] {
+    let out = this;
     out.counts = clear(out.counts);
     return out;
 }
 
-public func drop[T](self: Counter[T]) {
-    drop(self.counts);
+public func drop[T](this: Counter[T]) {
+    drop(this.counts);
 }

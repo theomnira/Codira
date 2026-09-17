@@ -22,6 +22,7 @@ use crate::{
     Visibility,
 };
 
+pub(crate) mod codegen_support;
 mod effect_obligation;
 mod literal_out_of_range;
 mod move_check;
@@ -58,6 +59,7 @@ impl<'a> ExprValidator<'a> {
         self.validate_effect_obligations(sink);
         self.validate_healing_contract(sink);
         self.validate_move_checking(sink);
+        self.validate_codegen_support(sink);
     }
 
     pub fn validate_privacy(&self, sink: &mut DiagnosticSink<'_>) {
@@ -95,8 +97,17 @@ impl<'a> ExprValidator<'a> {
             });
     }
 
-    /// Checks a `@heal(..., postcondition: <expr>)` healing contract's
-    /// postcondition for satisfiability -- see `crate::heal_check`.
+    /// Validates a `@heal(...)` healing contract.
+    ///
+    /// Two complementary checks, kept separate because they answer
+    /// different questions:
+    ///
+    /// * `crate::heal_check` asks whether the `postcondition:` is satisfiable
+    ///   by *any* return value -- a well-formedness property of the predicate
+    ///   itself.
+    /// * `crate::heal_contract` resolves and validates the contract's `on:` and
+    ///   `strategies:` lists, which spec section 2.2 requires to be checked
+    ///   statically and which were previously read by nothing at all.
     pub fn validate_healing_contract(&self, sink: &mut DiagnosticSink<'_>) {
         let src = self.func.source(self.db);
         if crate::heal_check::check_heal_postcondition(&src.value)
@@ -107,6 +118,8 @@ impl<'a> ExprValidator<'a> {
                 func: SyntaxNodePtr::new(src.value.syntax()),
             });
         }
+
+        crate::heal_contract::heal_contract_diagnostics(self.db, self.func, sink);
     }
 
     pub fn validate_extern(&self, sink: &mut DiagnosticSink<'_>) {

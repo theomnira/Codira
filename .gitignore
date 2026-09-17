@@ -54,3 +54,14 @@ cmake-build-*/
 *.snap
 /crates/codira_codegen/src/snapshots
 /.claude-flow
+/.claude-flow
+/.cache
+*.snap
+*.snap
+*.new
+/crates/codira_hir/src/ty/snapshots
+*.snap
+
+# Built artifacts from the interop example's C caller.
+examples/interop/c/main
+examples/interop/c/main.exe

@@ -30,35 +30,45 @@ public struct UnsafePointer[T] {
 // =============================================================================
 
 // Create a null UnsafePointer.
-public func UnsafePointer[T].null() -> UnsafePointer[T] {
-    return UnsafePointer[T] { _addr: 0 };
+extend UnsafePointer[T] {
+    public func null() -> UnsafePointer[T] {
+        return UnsafePointer[T] { _addr: 0 };
+    }
 }
 
 // Create from a raw address.
-public func UnsafePointer[T].from_address(addr: usize) -> UnsafePointer[T] {
-    return UnsafePointer[T] { _addr: addr };
+extend UnsafePointer[T] {
+    public func from_address(addr: usize) -> UnsafePointer[T] {
+        return UnsafePointer[T] { _addr: addr };
+    }
 }
 
 // Create from a safe Pointer[T].
-public func UnsafePointer[T].from_pointer(ptr: Pointer[T]) -> UnsafePointer[T] {
-    return UnsafePointer[T] { _addr: ptr.address() };
+extend UnsafePointer[T] {
+    public func from_pointer(ptr: Pointer[T]) -> UnsafePointer[T] {
+        return UnsafePointer[T] { _addr: ptr.address() };
+    }
 }
 
 // Allocate raw memory for `count` elements of type T.
 // Memory is uninitialized — reading before writing is undefined behavior.
-public func UnsafePointer[T].alloc(count: usize) -> UnsafePointer[T] {
-    let size = count * __intrinsic_sizeof[T]();
-    let align = __intrinsic_alignof[T]();
-    let addr = __intrinsic_alloc(size, align);
-    return UnsafePointer[T] { _addr: addr };
+extend UnsafePointer[T] {
+    public func alloc(count: usize) -> UnsafePointer[T] {
+        let size = count * __intrinsic_sizeof();
+        let align = __intrinsic_alignof();
+        let addr = __intrinsic_alloc(size, align);
+        return UnsafePointer[T] { _addr: addr };
+    }
 }
 
 // Allocate and zero-initialize memory for `count` elements.
-public func UnsafePointer[T].alloc_zeroed(count: usize) -> UnsafePointer[T] {
-    let size = count * __intrinsic_sizeof[T]();
-    let align = __intrinsic_alignof[T]();
-    let addr = __intrinsic_alloc_zeroed(size, align);
-    return UnsafePointer[T] { _addr: addr };
+extend UnsafePointer[T] {
+    public func alloc_zeroed(count: usize) -> UnsafePointer[T] {
+        let size = count * __intrinsic_sizeof();
+        let align = __intrinsic_alignof();
+        let addr = __intrinsic_alloc_zeroed(size, align);
+        return UnsafePointer[T] { _addr: addr };
+    }
 }
 
 // =============================================================================
@@ -66,13 +76,17 @@ public func UnsafePointer[T].alloc_zeroed(count: usize) -> UnsafePointer[T] {
 // =============================================================================
 
 // Return true if the pointer is null.
-public func UnsafePointer[T].is_null(self) -> bool {
-    return self._addr == 0;
+extend UnsafePointer[T] {
+    public func is_null(self) -> bool {
+        return self._addr == 0;
+    }
 }
 
 // Return the raw address.
-public func UnsafePointer[T].address(self) -> usize {
-    return self._addr;
+extend UnsafePointer[T] {
+    public func address(self) -> usize {
+        return self._addr;
+    }
 }
 
 // =============================================================================
@@ -81,36 +95,48 @@ public func UnsafePointer[T].address(self) -> usize {
 
 // Load the value at this pointer.
 // UB if the pointer is null, dangling, or misaligned.
-public func UnsafePointer[T].load(self) -> T {
-    return __intrinsic_load[T](self._addr);
+extend UnsafePointer[T] {
+    public func load(self) -> T {
+        return __intrinsic_load(self._addr);
+    }
 }
 
 // Store a value through this pointer.
 // UB if the pointer is null, dangling, or misaligned.
-public func UnsafePointer[T].store(self, value: T) -> void {
-    __intrinsic_store[T](self._addr, value);
+extend UnsafePointer[T] {
+    public func store(self, value: T) -> void {
+        __intrinsic_store(self._addr, value);
+    }
 }
 
 // Load from an element offset (self + index * sizeof(T)).
-public func UnsafePointer[T].load_element(self, index: usize) -> T {
-    let addr = self._addr + index * __intrinsic_sizeof[T]();
-    return __intrinsic_load[T](addr);
+extend UnsafePointer[T] {
+    public func load_element(self, index: usize) -> T {
+        let addr = self._addr + index * __intrinsic_sizeof();
+        return __intrinsic_load(addr);
+    }
 }
 
 // Store at an element offset.
-public func UnsafePointer[T].store_element(self, index: usize, value: T) -> void {
-    let addr = self._addr + index * __intrinsic_sizeof[T]();
-    __intrinsic_store[T](addr, value);
+extend UnsafePointer[T] {
+    public func store_element(self, index: usize, value: T) -> void {
+        let addr = self._addr + index * __intrinsic_sizeof();
+        __intrinsic_store(addr, value);
+    }
 }
 
 // Volatile load — prevents compiler reordering / elision.
-public func UnsafePointer[T].volatile_load(self) -> T {
-    return __intrinsic_volatile_load[T](self._addr);
+extend UnsafePointer[T] {
+    public func volatile_load(self) -> T {
+        return __intrinsic_volatile_load(self._addr);
+    }
 }
 
 // Volatile store.
-public func UnsafePointer[T].volatile_store(self, value: T) -> void {
-    __intrinsic_volatile_store[T](self._addr, value);
+extend UnsafePointer[T] {
+    public func volatile_store(self, value: T) -> void {
+        __intrinsic_volatile_store(self._addr, value);
+    }
 }
 
 // =============================================================================
@@ -118,29 +144,39 @@ public func UnsafePointer[T].volatile_store(self, value: T) -> void {
 // =============================================================================
 
 // Offset by `n` elements (positive or negative).
-public func UnsafePointer[T].offset(self, n: isize) -> UnsafePointer[T] {
-    let byte_off = n * (__intrinsic_sizeof[T]() as isize);
-    return UnsafePointer[T] { _addr: (self._addr as isize + byte_off) as usize };
+extend UnsafePointer[T] {
+    public func offset(self, n: isize) -> UnsafePointer[T] {
+        let byte_off = n * (__intrinsic_sizeof() as isize);
+        return UnsafePointer[T] { _addr: (self._addr as isize + byte_off) as usize };
+    }
 }
 
 // Advance by `n` elements.
-public func UnsafePointer[T].add(self, n: usize) -> UnsafePointer[T] {
-    return self.offset(n as isize);
+extend UnsafePointer[T] {
+    public func add(self, n: usize) -> UnsafePointer[T] {
+        return self.offset(n as isize);
+    }
 }
 
 // Move back by `n` elements.
-public func UnsafePointer[T].sub(self, n: usize) -> UnsafePointer[T] {
-    return self.offset(0 - (n as isize));
+extend UnsafePointer[T] {
+    public func sub(self, n: usize) -> UnsafePointer[T] {
+        return self.offset(0 - (n as isize));
+    }
 }
 
 // Offset by raw bytes (not elements).
-public func UnsafePointer[T].byte_offset(self, bytes: isize) -> UnsafePointer[T] {
-    return UnsafePointer[T] { _addr: (self._addr as isize + bytes) as usize };
+extend UnsafePointer[T] {
+    public func byte_offset(self, bytes: isize) -> UnsafePointer[T] {
+        return UnsafePointer[T] { _addr: (self._addr as isize + bytes) as usize };
+    }
 }
 
 // Distance in elements between two pointers.
-public func UnsafePointer[T].distance(self, other: UnsafePointer[T]) -> isize {
-    return ((self._addr as isize) - (other._addr as isize)) / (__intrinsic_sizeof[T]() as isize);
+extend UnsafePointer[T] {
+    public func distance(self, other: UnsafePointer[T]) -> isize {
+        return ((self._addr as isize) - (other._addr as isize)) / (__intrinsic_sizeof() as isize);
+    }
 }
 
 // =============================================================================
@@ -149,26 +185,34 @@ public func UnsafePointer[T].distance(self, other: UnsafePointer[T]) -> isize {
 
 // Initialize the memory at this pointer by moving `value` in.
 // Call this exactly once on uninitialized memory.
-public func UnsafePointer[T].init_pointee_move(self, value: T) -> void {
-    __intrinsic_store[T](self._addr, value);
+extend UnsafePointer[T] {
+    public func init_pointee_move(self, value: T) -> void {
+        __intrinsic_store(self._addr, value);
+    }
 }
 
 // Initialize by copying from `value`.
-public func UnsafePointer[T].init_pointee_copy(self, value: T) -> void {
-    __intrinsic_store[T](self._addr, value);
+extend UnsafePointer[T] {
+    public func init_pointee_copy(self, value: T) -> void {
+        __intrinsic_store(self._addr, value);
+    }
 }
 
 // Explicitly destroy the pointee (call its destructor if it has one).
 // After this call, the memory is considered uninitialized.
-public func UnsafePointer[T].destroy_pointee(self) -> void {
-    __intrinsic_destroy[T](self._addr);
+extend UnsafePointer[T] {
+    public func destroy_pointee(self) -> void {
+        __intrinsic_destroy(self._addr);
+    }
 }
 
 // Move the pointee out, leaving memory uninitialized.
-public func UnsafePointer[T].take_pointee(self) -> T {
-    let val = __intrinsic_load[T](self._addr);
-    __intrinsic_destroy[T](self._addr);
-    return val;
+extend UnsafePointer[T] {
+    public func take_pointee(self) -> T {
+        let val = __intrinsic_load(self._addr);
+        __intrinsic_destroy(self._addr);
+        return val;
+    }
 }
 
 // =============================================================================
@@ -176,21 +220,27 @@ public func UnsafePointer[T].take_pointee(self) -> T {
 // =============================================================================
 
 // Copy `count` elements from `src` to `self`.  Regions may overlap.
-public func UnsafePointer[T].move_from(self, src: UnsafePointer[T], count: usize) -> void {
-    let bytes = count * __intrinsic_sizeof[T]();
-    __intrinsic_memmove(self._addr, src._addr, bytes);
+extend UnsafePointer[T] {
+    public func move_from(self, src: UnsafePointer[T], count: usize) -> void {
+        let bytes = count * __intrinsic_sizeof();
+        __intrinsic_memmove(self._addr, src._addr, bytes);
+    }
 }
 
 // Copy `count` elements from `src` to `self`.  Regions must NOT overlap.
-public func UnsafePointer[T].copy_from(self, src: UnsafePointer[T], count: usize) -> void {
-    let bytes = count * __intrinsic_sizeof[T]();
-    __intrinsic_memcpy(self._addr, src._addr, bytes);
+extend UnsafePointer[T] {
+    public func copy_from(self, src: UnsafePointer[T], count: usize) -> void {
+        let bytes = count * __intrinsic_sizeof();
+        __intrinsic_memcpy(self._addr, src._addr, bytes);
+    }
 }
 
 // Set `count` elements to zero bytes.
-public func UnsafePointer[T].zero_memory(self, count: usize) -> void {
-    let bytes = count * __intrinsic_sizeof[T]();
-    __intrinsic_memset(self._addr, 0, bytes);
+extend UnsafePointer[T] {
+    public func zero_memory(self, count: usize) -> void {
+        let bytes = count * __intrinsic_sizeof();
+        __intrinsic_memset(self._addr, 0, bytes);
+    }
 }
 
 // =============================================================================
@@ -199,15 +249,19 @@ public func UnsafePointer[T].zero_memory(self, count: usize) -> void {
 
 // Free the memory.  `count` must match the original allocation size.
 // After this call, the pointer is dangling.
-public func UnsafePointer[T].free(self, count: usize) -> void {
-    let size = count * __intrinsic_sizeof[T]();
-    let align = __intrinsic_alignof[T]();
-    __intrinsic_dealloc(self._addr, size, align);
+extend UnsafePointer[T] {
+    public func free(self, count: usize) -> void {
+        let size = count * __intrinsic_sizeof();
+        let align = __intrinsic_alignof();
+        __intrinsic_dealloc(self._addr, size, align);
+    }
 }
 
 // Free a single element allocation.
-public func UnsafePointer[T].free_one(self) -> void {
-    self.free(1);
+extend UnsafePointer[T] {
+    public func free_one(self) -> void {
+        self.free(1);
+    }
 }
 
 // =============================================================================
@@ -215,42 +269,58 @@ public func UnsafePointer[T].free_one(self) -> void {
 // =============================================================================
 
 // Bitcast to a different UnsafePointer type.
-public func UnsafePointer[T].bitcast[U](self) -> UnsafePointer[U] {
-    return UnsafePointer[U] { _addr: self._addr };
+extend UnsafePointer[T] {
+    public func bitcast[U](self) -> UnsafePointer[U] {
+        return UnsafePointer[U] { _addr: self._addr };
+    }
 }
 
 // Convert to a safe Pointer[T].
-public func UnsafePointer[T].to_safe(self) -> Pointer[T] {
-    return Pointer[T].from_address(self._addr);
+extend UnsafePointer[T] {
+    public func to_safe(self) -> Pointer[T] {
+        return Pointer.from_address(self._addr);
+    }
 }
 
 // =============================================================================
 // Comparison / Traits
 // =============================================================================
 
-public func UnsafePointer[T].eq(self, other: UnsafePointer[T]) -> bool {
-    return self._addr == other._addr;
-}
-
-public func UnsafePointer[T].ne(self, other: UnsafePointer[T]) -> bool {
-    return self._addr != other._addr;
-}
-
-public func UnsafePointer[T].lt(self, other: UnsafePointer[T]) -> bool {
-    return self._addr < other._addr;
-}
-
-public func UnsafePointer[T].to_string(self) -> String {
-    if self._addr == 0 {
-        return "UnsafePointer(null)";
+extend UnsafePointer[T] {
+    public func eq(self, other: UnsafePointer[T]) -> bool {
+        return self._addr == other._addr;
     }
-    return "UnsafePointer(0x" + __intrinsic_to_hex(self._addr) + ")";
 }
 
-public func UnsafePointer[T].copy(self) -> UnsafePointer[T] {
-    return UnsafePointer[T] { _addr: self._addr };
+extend UnsafePointer[T] {
+    public func ne(self, other: UnsafePointer[T]) -> bool {
+        return self._addr != other._addr;
+    }
 }
 
-public func UnsafePointer[T].default() -> UnsafePointer[T] {
-    return UnsafePointer[T].null();
+extend UnsafePointer[T] {
+    public func lt(self, other: UnsafePointer[T]) -> bool {
+        return self._addr < other._addr;
+    }
+}
+
+extend UnsafePointer[T] {
+    public func to_string(self) -> String {
+        if self._addr == 0 {
+            return "UnsafePointer(null)";
+        }
+        return "UnsafePointer(0x" + __intrinsic_to_hex(self._addr) + ")";
+    }
+}
+
+extend UnsafePointer[T] {
+    public func copy(self) -> UnsafePointer[T] {
+        return UnsafePointer[T] { _addr: self._addr };
+    }
+}
+
+extend UnsafePointer[T] {
+    public func default() -> UnsafePointer[T] {
+        return UnsafePointer.null();
+    }
 }

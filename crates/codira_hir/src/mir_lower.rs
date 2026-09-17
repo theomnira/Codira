@@ -436,7 +436,10 @@ fn ty_to_mir_type(ty: &Ty, layout: &TargetDataLayout) -> Option<TypeId> {
         // The unit type is the empty tuple; every other tuple is an
         // aggregate this IR has no scalar type for.
         TyKind::Tuple(0, _) => Some(TypeId::UNIT),
-        TyKind::Tuple(..)
+        // A generic parameter joins these: it has no MIR type until the
+        // declaration is instantiated.
+        TyKind::TypeParam(..)
+        | TyKind::Tuple(..)
         | TyKind::Struct(_)
         | TyKind::Array(_)
         | TyKind::FnDef(..)

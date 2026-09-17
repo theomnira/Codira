@@ -61,7 +61,13 @@ impl Name {
         Name::new_text("[missing name]".into())
     }
 
-    pub(crate) fn as_tuple_index(&self) -> Option<usize> {
+    /// Returns the field index this name represents if it is a tuple field
+    /// (`t.0`), or `None` for an ordinary named field.
+    ///
+    /// Public because codegen needs the same distinction inference makes:
+    /// `Expr::Field` covers both `point.x` and `pair.0`, and only the index
+    /// tells the two apart once the receiver's type is known.
+    pub fn as_tuple_index(&self) -> Option<usize> {
         match self.0 {
             Repr::TupleField(idx) => Some(idx),
             Repr::Text(_) => None,

@@ -37,6 +37,26 @@ use crate::apple::get_apple_sdk_root;
 /// The binary name can be overridden with the `CODIRA_LLD_<FLAVOR>` env var
 /// (`CODIRA_LLD_COFF`, `CODIRA_LLD_ELF`, `CODIRA_LLD_MACHO`) when it isn't on
 /// `PATH` under its default name.
+///
+/// # Going in-process is slower -- measured, not assumed
+///
+/// The subprocess looks like the obvious thing to remove: `lld-link
+/// --version` alone costs ~55 ms on Windows, and `codira_lld` is sitting
+/// right there in this workspace with a working `lld::lldMain` wrapper.
+/// That experiment has been run, and it loses. Linking a one-function
+/// program through `codira_lld::link` measured 147/149/152 ms against
+/// 93/97/106 ms for spawning `lld-link` -- roughly 50 ms *worse*, on top of
+/// growing the compiler binary from 64.6 MB to 87.0 MB.
+///
+/// Process startup is not what changed (`codira --version` stayed at
+/// 38-42 ms either way). The cost is paging LLD in from a much larger
+/// image on the one call that touches it, where the separate `lld-link`
+/// executable is small and stays in the OS file cache across builds.
+///
+/// Anyone re-attempting this should beat those numbers first. Note that
+/// `codira_lld` will not link at all on MSVC without the `/MT` fix in its
+/// `build.rs` -- that is a real bug and worth keeping, but it is what makes
+/// the crate *buildable*, not what makes it faster.
 fn run_lld(flavor_env_suffix: &str, default_name: &str, args: &[String]) -> Result<(), String> {
     let program = env::var(format!("CODIRA_LLD_{flavor_env_suffix}"))
         .unwrap_or_else(|_| default_name.to_owned());
@@ -97,7 +117,24 @@ pub fn create_with_target(target: &spec::Target) -> Box<dyn Linker> {
 
 pub trait Linker {
     fn add_object(&mut self, path: &Path) -> Result<(), LinkerError>;
-    fn build_shared_object(&mut self, path: &Path) -> Result<(), LinkerError>;
+
+    /// Links the accumulated objects into a shared object at `path`.
+    ///
+    /// `exported_symbols` names the functions carrying `@export("C")`, which
+    /// must be reachable from outside the assembly under their own names
+    /// (`spec/LANGUAGE_SPEC.md` section 10).
+    ///
+    /// Only the COFF linker needs them: ELF and Mach-O export every symbol
+    /// with external linkage by default, so setting the linkage in codegen
+    /// is sufficient there, while COFF exports *nothing* from a DLL unless
+    /// it is named explicitly. That asymmetry is why this is a linker
+    /// argument rather than purely an IR attribute.
+    fn build_shared_object(
+        &mut self,
+        path: &Path,
+        exported_symbols: &[String],
+    ) -> Result<(), LinkerError>;
+
     fn finalize(&mut self) -> Result<(), LinkerError>;
 }
 
@@ -129,7 +166,11 @@ impl Linker for LdLinker {
         Ok(())
     }
 
-    fn build_shared_object(&mut self, path: &Path) -> Result<(), LinkerError> {
+    fn build_shared_object(
+        &mut self,
+        path: &Path,
+        _exported_symbols: &[String],
+    ) -> Result<(), LinkerError> {
         let path_str = path
             .to_str()
             .ok_or_else(|| LinkerError::PathError(path.to_owned()))?;
@@ -210,7 +251,11 @@ impl Linker for Ld64Linker {
         Ok(())
     }
 
-    fn build_shared_object(&mut self, path: &Path) -> Result<(), LinkerError> {
+    fn build_shared_object(
+        &mut self,
+        path: &Path,
+        _exported_symbols: &[String],
+    ) -> Result<(), LinkerError> {
         let path_str = path
             .to_str()
             .ok_or_else(|| LinkerError::PathError(path.to_owned()))?;
@@ -272,7 +317,11 @@ impl Linker for MsvcLinker {
         Ok(())
     }
 
-    fn build_shared_object(&mut self, path: &Path) -> Result<(), LinkerError> {
+    fn build_shared_object(
+        &mut self,
+        path: &Path,
+        exported_symbols: &[String],
+    ) -> Result<(), LinkerError> {
         let dll_path_str = path
             .to_str()
             .ok_or_else(|| LinkerError::PathError(path.to_owned()))?;
@@ -288,6 +337,12 @@ impl Linker for MsvcLinker {
             .push(format!("/EXPORT:{}", abi::GET_VERSION_FN_NAME));
         self.args
             .push(format!("/EXPORT:{}", abi::SET_ALLOCATOR_HANDLE_FN_NAME));
+        // COFF exports nothing from a DLL unless it is named, so every
+        // `@export("C")` function needs its own entry here -- external
+        // linkage alone is not enough on this platform.
+        for symbol in exported_symbols {
+            self.args.push(format!("/EXPORT:{symbol}"));
+        }
         self.args.push(format!("/IMPLIB:{dll_lib_path_str}"));
         self.args.push(format!("/OUT:{dll_path_str}"));
         Ok(())

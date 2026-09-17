@@ -1118,3 +1118,232 @@ impl Diagnostic for DuplicateSupervisorEntry {
         self
     }
 }
+
+/// A set of module-level bindings that depend on one another in a cycle,
+/// so none of them has a value.
+///
+/// Emitted once per participating binding: each is an equally valid place
+/// to break the cycle, and singling one out would be arbitrary.
+#[derive(Debug)]
+pub struct CyclicConstDefinition {
+    /// The cycle rendered as `A -> B -> C`, for the message.
+    pub cycle: String,
+    pub definition: InFile<SyntaxNodePtr>,
+}
+
+impl Diagnostic for CyclicConstDefinition {
+    fn message(&self) -> String {
+        format!(
+            "module-level bindings form a dependency cycle: {}",
+            self.cycle
+        )
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        self.definition.clone()
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// A tuple pattern that cannot destructure the type it is matched against:
+/// either the arity differs, or the type is not a tuple at all.
+///
+/// Both cases are one diagnostic because they are one mistake from the
+/// author's point of view -- "this `(a, b)` does not fit what is on the
+/// right" -- and splitting them would only make the wording vaguer in each
+/// half. `expected` carries the type being destructured, so the message can
+/// name it rather than just complaining about counts.
+#[derive(Debug)]
+pub struct InvalidTupleDestructure {
+    pub file: FileId,
+    pub pat: SyntaxNodePtr,
+    pub found: Ty,
+    /// How many elements the pattern binds.
+    pub arity: usize,
+    /// The destructured type's arity, or `None` when it is not a tuple.
+    pub expected_arity: Option<usize>,
+}
+
+impl Diagnostic for InvalidTupleDestructure {
+    fn message(&self) -> String {
+        match self.expected_arity {
+            Some(expected) => format!(
+                "cannot destructure a {expected}-element tuple with a {}-element tuple pattern",
+                self.arity
+            ),
+            None => "cannot destructure a value that is not a tuple".to_string(),
+        }
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.pat.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// An `@heal(...)` contract whose `on:` list names something that is not a
+/// fault class.
+///
+/// This is an error rather than a silent fallback to a user-defined class
+/// on purpose: a typo that becomes `Custom("Timeut")` produces a contract
+/// that compiles, ships, and then never fires. `Custom("name")` remains
+/// available for genuinely user-defined classes, spelled explicitly.
+#[derive(Debug)]
+pub struct HealContractUnknownFaultClass {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+    pub written: String,
+    pub suggestion: Option<&'static str>,
+}
+
+impl Diagnostic for HealContractUnknownFaultClass {
+    fn message(&self) -> String {
+        match self.suggestion {
+            Some(suggestion) => format!(
+                "unknown fault class `{}` -- did you mean `{suggestion}`?",
+                self.written
+            ),
+            None => format!(
+                "unknown fault class `{}`. Write `Custom(\"{}\")` for a user-defined class",
+                self.written, self.written
+            ),
+        }
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// An `@heal(...)` contract whose `strategies:` list names something that is
+/// not a recovery strategy.
+#[derive(Debug)]
+pub struct HealContractUnknownStrategy {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+    pub written: String,
+    pub suggestion: Option<&'static str>,
+}
+
+impl Diagnostic for HealContractUnknownStrategy {
+    fn message(&self) -> String {
+        match self.suggestion {
+            Some(suggestion) => format!(
+                "unknown recovery strategy `{}` -- did you mean `{suggestion}`?",
+                self.written
+            ),
+            None => format!("unknown recovery strategy `{}`", self.written),
+        }
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// An `@heal(...)` contract with no usable recovery strategy.
+///
+/// `codira_healing::contract::HealingContract::new` asserts a non-empty
+/// strategy list, so this would be a runtime panic in the engine. More to
+/// the point, a contract with nothing to try is indistinguishable from no
+/// contract at all while looking like protection.
+#[derive(Debug)]
+pub struct HealContractEmptyStrategies {
+    pub file: FileId,
+    pub attr: SyntaxNodePtr,
+}
+
+impl Diagnostic for HealContractEmptyStrategies {
+    fn message(&self) -> String {
+        "`@heal` needs at least one usable recovery strategy, e.g. \
+         `strategies: [ReturnDefault]`"
+            .to_string()
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.attr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// A recovery strategy this function cannot support.
+///
+/// `spec/HERACLES_Codira_Implementation.md` section 2.2 requires strategy
+/// feasibility to be checked statically; this is that check failing, with
+/// the specific unmet obligation as the reason.
+#[derive(Debug)]
+pub struct HealContractInfeasibleStrategy {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+    pub strategy: &'static str,
+    pub reason: String,
+}
+
+impl Diagnostic for HealContractInfeasibleStrategy {
+    fn message(&self) -> String {
+        format!("`{}` is not usable here: {}", self.strategy, self.reason)
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
+/// A construct the code generator cannot lower yet.
+///
+/// Reported by `expr::validator::codegen_support` *before* codegen runs, so
+/// the user gets a located diagnostic naming the gap instead of a `panic!`
+/// with a Rust backtrace. `spec/EIDOS_RFC_002.md` section 3.4 states the
+/// rule: a backend gap needs "a declining arm in codegen ... plus a
+/// `CannotCodegen` diagnostic -- *not* `unimplemented!()`".
+///
+/// The message deliberately distinguishes the construct from the reason: the
+/// construct is valid Codira, and only the backend is behind. Each of these
+/// is a gap expected to close, not a language rule.
+#[derive(Debug)]
+pub struct UnsupportedByCodegen {
+    pub file: FileId,
+    pub node: SyntaxNodePtr,
+    /// What was written, e.g. "a string literal".
+    pub what: String,
+    /// Why the backend cannot lower it.
+    pub because: String,
+}
+
+impl Diagnostic for UnsupportedByCodegen {
+    fn message(&self) -> String {
+        format!(
+            "{} is not supported by the code generator yet: {}",
+            self.what, self.because
+        )
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.node.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}

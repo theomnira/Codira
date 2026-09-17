@@ -1,0 +1,127 @@
+// =============================================================================
+// A Codira library exposing a stable C ABI.
+//
+// Every function marked `@export("C")` is emitted under its own unmangled
+// name and survives into the built assembly's export table, so any language
+// that can call a C function can call it: C and C++ by linking or `dlopen`,
+// Rust through `libloading`, Python through `ctypes`, TypeScript through
+// Bun's or Deno's built-in FFI. One mechanism, four languages, no per-language
+// bridge code.
+//
+// See `../README.md` for the callers, and for the one limitation worth
+// knowing about before you design an API around this.
+// =============================================================================
+
+// --- Scalars -----------------------------------------------------------------
+
+@export("C")
+public func codira_add(a: i64, b: i64) -> i64 {
+    a + b
+}
+
+@export("C")
+public func codira_scale(value: f64, factor: f64) -> f64 {
+    value * factor
+}
+
+// --- Same-module calls cross the boundary fine -------------------------------
+//
+// `square` is an ordinary private function. A call to it from an exported
+// function is compiled as a direct call, so the export is self-contained and
+// needs nothing initialised before it runs.
+
+func square(x: f64) -> f64 {
+    x * x
+}
+
+@export("C")
+public func codira_sum_of_squares(a: f64, b: f64) -> f64 {
+    square(a) + square(b)
+}
+
+// --- So do structs and methods -----------------------------------------------
+//
+// The struct never crosses the ABI boundary -- it is built and consumed
+// inside the exported function -- so the signature stays plain C scalars
+// while the implementation is ordinary Codira.
+
+struct Vec2 {
+    x: f64,
+    y: f64,
+}
+
+extend Vec2 {
+    func dot(self, other: Vec2) -> f64 {
+        self.x * other.x + self.y * other.y
+    }
+
+    func scaled(self, k: f64) -> Vec2 {
+        Vec2 { x: self.x * k, y: self.y * k }
+    }
+}
+
+@export("C")
+public func codira_length_squared(x: f64, y: f64) -> f64 {
+    let v = Vec2 { x: x, y: y }
+    v.dot(v)
+}
+
+@export("C")
+public func codira_scaled_length_squared(x: f64, y: f64, k: f64) -> f64 {
+    let v = Vec2 { x: x, y: y }.scaled(k)
+    v.dot(v)
+}
+
+// --- Tuples too --------------------------------------------------------------
+//
+// A tuple return is an anonymous LLVM struct, which is *not* a portable C
+// type, so it is not exported directly. Projecting the parts into separate
+// scalar entry points keeps the ABI plain C while the Codira side still
+// computes both results at once.
+
+func divmod(a: i64, b: i64) -> (i64, i64) {
+    (a / b, a % b)
+}
+
+@export("C")
+public func codira_div(a: i64, b: i64) -> i64 {
+    let (quotient, _remainder) = divmod(a, b)
+    quotient
+}
+
+@export("C")
+public func codira_mod(a: i64, b: i64) -> i64 {
+    let (_quotient, remainder) = divmod(a, b)
+    remainder
+}
+
+// --- Calling *out* to C ------------------------------------------------------
+//
+// `extern "C"` declares a symbol resolved from the host process at load time,
+// so the C runtime's own maths functions are callable from Codira.
+//
+// Note the asymmetry, and it matters: a function that calls an `extern` symbol
+// goes through the Codira runtime's dispatch table, because that is what
+// resolves the symbol. Such a function therefore works when the library is
+// loaded by the Codira runtime (`codira start`, or a Rust host using
+// `codira_runtime`), but *not* when it is `dlopen`ed directly by C, Python or
+// TypeScript -- the dispatch table has not been populated at that point.
+//
+// This is why the exported API above is deliberately self-contained.
+
+extern "C" {
+    func sqrt(x: f64) -> f64;
+}
+
+public func codira_hypot(a: f64, b: f64) -> f64 {
+    sqrt(codira_sum_of_squares(a, b))
+}
+
+// --- Entry point -------------------------------------------------------------
+//
+// `codira start interop.codiralib main` runs this, and exercises the
+// `extern "C"` path that the direct-FFI callers cannot.
+
+public func main() -> f64 {
+    codira_hypot(3.0, 4.0)
+}

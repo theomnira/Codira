@@ -209,6 +209,12 @@ fn classify(ty: &Ty) -> Class {
         | TyKind::Tuple(..)
         | TyKind::Array(_)
         | TyKind::FnDef(..)
+        // A generic parameter is not a numeric type *here*, whatever it is
+        // instantiated with later. `Other` rejects the cast, which is the
+        // right answer: `x as T` for an unconstrained `T` cannot be given a
+        // conversion until `T` is known, and silently permitting it would
+        // mean choosing one arbitrarily.
+        | TyKind::TypeParam(..)
         | TyKind::Never => Class::Other,
     }
 }

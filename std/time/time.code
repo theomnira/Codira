@@ -201,12 +201,12 @@ public func perf_counter_ns() -> u64 {
 // Measures the wall-clock time taken to execute `f` and returns the
 // elapsed Duration along with the function's return value.
 // ---------------------------------------------------------------------------
-public struct TimedResult<T> {
+public struct TimedResult[T] {
     value: T,
     elapsed: Duration,
 }
 
-public func time_function<T>(f: func() -> T) -> TimedResult<T> {
+public func time_function[T](f: func() -> T) -> TimedResult[T] {
     let start: Instant = instant_now();
     let result: T = f();
     let elapsed: Duration = instant_elapsed(start);

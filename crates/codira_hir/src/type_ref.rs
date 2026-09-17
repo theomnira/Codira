@@ -117,7 +117,8 @@ impl TypeRefMapBuilder {
     /// `TypeRef`.
     pub fn alloc_from_node(&mut self, node: &ast::TypeRef) -> LocalTypeRefId {
         use codira_syntax::ast::TypeRefKind::{
-            ArrayType, NeverType, OptionalType, PathType, RefinementType,
+            ArrayType, FunctionType, NeverType, OptionalType, ParenType, PathType, ReferenceType,
+            RefinementType, TupleType, VariadicType,
         };
 
         let ptr = AstPtr::new(node);
@@ -128,6 +129,35 @@ impl TypeRefMapBuilder {
                 .map_or(TypeRef::Error, TypeRef::Path),
             NeverType(_) => TypeRef::Never,
             ArrayType(inner) => TypeRef::Array(self.alloc_from_node_opt(inner.type_ref().as_ref())),
+            // `(A, B)`. `()` lowers to `Tuple(vec![])`, which is exactly what
+            // `TypeRefMapBuilder::unit` already produces, so the unit type
+            // written explicitly and the unit type inferred for a
+            // no-return-type function are the same `TypeRef`.
+            TupleType(inner) => {
+                TypeRef::Tuple(inner.fields().map(|f| self.alloc_from_node(&f)).collect())
+            }
+            // `(A)` is grouping and nothing else: lower straight through to
+            // `A` so no later stage has to know parentheses existed.
+            ParenType(inner) => {
+                return self.alloc_from_node_opt(inner.type_ref().as_ref());
+            }
+            // `&T` / `mut T` lower transparently to `T`, the same treatment
+            // the parameter ownership keywords get (`spec/LANGUAGE_SPEC.md`
+            // section 14): the spelling is recorded in the syntax tree, but
+            // there is no borrow model for the type system to enforce, so
+            // inventing a distinct `Ty` would mean claiming a check that
+            // does not happen.
+            ReferenceType(inner) => {
+                return self.alloc_from_node_opt(inner.type_ref().as_ref());
+            }
+            // `func(A, B) -> R` and `...` both parse but have nothing to
+            // lower to: there are no function *values* yet (LANGUAGE_SPEC
+            // section 12 lists closures as unimplemented) and no
+            // argument-pack model. `Error` rather than a silent stand-in, so
+            // a signature mentioning one is readable while any *use* reports
+            // instead of quietly type-checking against a type that does not
+            // exist.
+            FunctionType(_) | VariadicType(_) => TypeRef::Error,
             OptionalType(inner) => {
                 TypeRef::Optional(self.alloc_from_node_opt(inner.type_ref().as_ref()))
             }

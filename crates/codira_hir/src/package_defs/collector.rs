@@ -543,6 +543,14 @@ impl<'a> ModCollectorContext<'a, '_> {
                     self.collect_impl(id);
                     continue;
                 }
+                // Module-level bindings are lowered into the item tree and
+                // cycle-checked (see `item_tree::lower::detect_const_cycles`),
+                // but are not yet *name-resolvable*: that needs a `ConstId`
+                // interned location and a `ModuleDef::Const` variant, which
+                // is the next step for this milestone. Skipping here keeps
+                // the definition out of the module's resolution map rather
+                // than registering something half-formed.
+                ModItem::Const(_) => continue,
             };
 
             self.def_collector.package_defs.modules[self.module_id].add_definition(id);

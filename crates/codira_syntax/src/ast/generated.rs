@@ -415,6 +415,43 @@ impl ChildDef {
     }
 }
 
+// ClosureExpr
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ClosureExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ClosureExpr {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, CLOSURE_EXPR)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ClosureExpr { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ast::ArgListOwner for ClosureExpr {}
+impl ClosureExpr {
+    pub fn param_list(&self) -> Option<ParamList> {
+        super::child_opt(self)
+    }
+
+    pub fn ret_type(&self) -> Option<RetType> {
+        super::child_opt(self)
+    }
+
+    pub fn body(&self) -> Option<BlockExpr> {
+        super::child_opt(self)
+    }
+}
+
 // ComptimeExpr
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -471,6 +508,42 @@ impl Condition {
     }
 
     pub fn expr(&self) -> Option<Expr> {
+        super::child_opt(self)
+    }
+}
+
+// ConstDef
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ConstDef {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ConstDef {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, CONST_DEF)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ConstDef { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ast::NameOwner for ConstDef {}
+impl ast::VisibilityOwner for ConstDef {}
+impl ast::DocCommentsOwner for ConstDef {}
+impl ast::AttributeOwner for ConstDef {}
+impl ConstDef {
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        super::child_opt(self)
+    }
+
+    pub fn initializer(&self) -> Option<Expr> {
         super::child_opt(self)
     }
 }
@@ -690,6 +763,8 @@ impl AstNode for Expr {
                 | BREAK_EXPR
                 | BLOCK_EXPR
                 | ARRAY_EXPR
+                | TUPLE_EXPR
+                | CLOSURE_EXPR
                 | INDEX_EXPR
                 | RECORD_LIT
                 | COMPTIME_EXPR
@@ -732,6 +807,8 @@ pub enum ExprKind {
     BreakExpr(BreakExpr),
     BlockExpr(BlockExpr),
     ArrayExpr(ArrayExpr),
+    TupleExpr(TupleExpr),
+    ClosureExpr(ClosureExpr),
     IndexExpr(IndexExpr),
     RecordLit(RecordLit),
     ComptimeExpr(ComptimeExpr),
@@ -824,6 +901,16 @@ impl From<ArrayExpr> for Expr {
         Expr { syntax: n.syntax }
     }
 }
+impl From<TupleExpr> for Expr {
+    fn from(n: TupleExpr) -> Expr {
+        Expr { syntax: n.syntax }
+    }
+}
+impl From<ClosureExpr> for Expr {
+    fn from(n: ClosureExpr) -> Expr {
+        Expr { syntax: n.syntax }
+    }
+}
 impl From<IndexExpr> for Expr {
     fn from(n: IndexExpr) -> Expr {
         Expr { syntax: n.syntax }
@@ -901,6 +988,8 @@ impl Expr {
             BREAK_EXPR => ExprKind::BreakExpr(BreakExpr::cast(self.syntax.clone()).unwrap()),
             BLOCK_EXPR => ExprKind::BlockExpr(BlockExpr::cast(self.syntax.clone()).unwrap()),
             ARRAY_EXPR => ExprKind::ArrayExpr(ArrayExpr::cast(self.syntax.clone()).unwrap()),
+            TUPLE_EXPR => ExprKind::TupleExpr(TupleExpr::cast(self.syntax.clone()).unwrap()),
+            CLOSURE_EXPR => ExprKind::ClosureExpr(ClosureExpr::cast(self.syntax.clone()).unwrap()),
             INDEX_EXPR => ExprKind::IndexExpr(IndexExpr::cast(self.syntax.clone()).unwrap()),
             RECORD_LIT => ExprKind::RecordLit(RecordLit::cast(self.syntax.clone()).unwrap()),
             COMPTIME_EXPR => {
@@ -1243,6 +1332,38 @@ impl FunctionDef {
     }
 
     pub fn uses_clause(&self) -> Option<UsesClause> {
+        super::child_opt(self)
+    }
+}
+
+// FunctionType
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FunctionType {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for FunctionType {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, FUNCTION_TYPE)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(FunctionType { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl FunctionType {
+    pub fn params(&self) -> impl Iterator<Item = TypeRef> {
+        super::children(self)
+    }
+
+    pub fn ret_type(&self) -> Option<RetType> {
         super::child_opt(self)
     }
 }
@@ -1797,6 +1918,7 @@ impl AstNode for ModuleItem {
             USE | FUNCTION_DEF
                 | STRUCT_DEF
                 | TYPE_ALIAS_DEF
+                | CONST_DEF
                 | TRAIT_DEF
                 | ENUM_DEF
                 | EFFECT_DEF
@@ -1823,6 +1945,7 @@ pub enum ModuleItemKind {
     FunctionDef(FunctionDef),
     StructDef(StructDef),
     TypeAliasDef(TypeAliasDef),
+    ConstDef(ConstDef),
     TraitDef(TraitDef),
     EnumDef(EnumDef),
     EffectDef(EffectDef),
@@ -1848,6 +1971,11 @@ impl From<StructDef> for ModuleItem {
 }
 impl From<TypeAliasDef> for ModuleItem {
     fn from(n: TypeAliasDef) -> ModuleItem {
+        ModuleItem { syntax: n.syntax }
+    }
+}
+impl From<ConstDef> for ModuleItem {
+    fn from(n: ConstDef) -> ModuleItem {
         ModuleItem { syntax: n.syntax }
     }
 }
@@ -1898,6 +2026,7 @@ impl ModuleItem {
             TYPE_ALIAS_DEF => {
                 ModuleItemKind::TypeAliasDef(TypeAliasDef::cast(self.syntax.clone()).unwrap())
             }
+            CONST_DEF => ModuleItemKind::ConstDef(ConstDef::cast(self.syntax.clone()).unwrap()),
             TRAIT_DEF => ModuleItemKind::TraitDef(TraitDef::cast(self.syntax.clone()).unwrap()),
             ENUM_DEF => ModuleItemKind::EnumDef(EnumDef::cast(self.syntax.clone()).unwrap()),
             EFFECT_DEF => ModuleItemKind::EffectDef(EffectDef::cast(self.syntax.clone()).unwrap()),
@@ -2105,6 +2234,62 @@ impl ParenExpr {
     }
 }
 
+// ParenPat
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParenPat {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ParenPat {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, PAREN_PAT)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ParenPat { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ParenPat {
+    pub fn pat(&self) -> Option<Pat> {
+        super::child_opt(self)
+    }
+}
+
+// ParenType
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ParenType {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ParenType {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, PAREN_TYPE)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ParenType { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ParenType {
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        super::child_opt(self)
+    }
+}
+
 // Pat
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -2116,7 +2301,13 @@ impl AstNode for Pat {
     fn can_cast(kind: SyntaxKind) -> bool {
         matches!(
             kind,
-            BIND_PAT | PLACEHOLDER_PAT | LITERAL_PAT | PATH_PAT | TUPLE_STRUCT_PAT
+            BIND_PAT
+                | PLACEHOLDER_PAT
+                | LITERAL_PAT
+                | PATH_PAT
+                | TUPLE_STRUCT_PAT
+                | TUPLE_PAT
+                | PAREN_PAT
         )
     }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -2137,6 +2328,8 @@ pub enum PatKind {
     LiteralPat(LiteralPat),
     PathPat(PathPat),
     TupleStructPat(TupleStructPat),
+    TuplePat(TuplePat),
+    ParenPat(ParenPat),
 }
 impl From<BindPat> for Pat {
     fn from(n: BindPat) -> Pat {
@@ -2163,6 +2356,16 @@ impl From<TupleStructPat> for Pat {
         Pat { syntax: n.syntax }
     }
 }
+impl From<TuplePat> for Pat {
+    fn from(n: TuplePat) -> Pat {
+        Pat { syntax: n.syntax }
+    }
+}
+impl From<ParenPat> for Pat {
+    fn from(n: ParenPat) -> Pat {
+        Pat { syntax: n.syntax }
+    }
+}
 
 impl Pat {
     pub fn kind(&self) -> PatKind {
@@ -2176,6 +2379,8 @@ impl Pat {
             TUPLE_STRUCT_PAT => {
                 PatKind::TupleStructPat(TupleStructPat::cast(self.syntax.clone()).unwrap())
             }
+            TUPLE_PAT => PatKind::TuplePat(TuplePat::cast(self.syntax.clone()).unwrap()),
+            PAREN_PAT => PatKind::ParenPat(ParenPat::cast(self.syntax.clone()).unwrap()),
             _ => unreachable!(),
         }
     }
@@ -2560,6 +2765,34 @@ impl RecordLit {
     }
 
     pub fn record_field_list(&self) -> Option<RecordFieldList> {
+        super::child_opt(self)
+    }
+}
+
+// ReferenceType
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReferenceType {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ReferenceType {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, REFERENCE_TYPE)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ReferenceType { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ReferenceType {
+    pub fn type_ref(&self) -> Option<TypeRef> {
         super::child_opt(self)
     }
 }
@@ -3081,6 +3314,34 @@ impl TryExpr {
     }
 }
 
+// TupleExpr
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TupleExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for TupleExpr {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, TUPLE_EXPR)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(TupleExpr { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl TupleExpr {
+    pub fn exprs(&self) -> impl Iterator<Item = Expr> {
+        super::children(self)
+    }
+}
+
 // TupleFieldDef
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -3138,6 +3399,34 @@ impl TupleFieldDefList {
     }
 }
 
+// TuplePat
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TuplePat {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for TuplePat {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, TUPLE_PAT)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(TuplePat { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl TuplePat {
+    pub fn args(&self) -> impl Iterator<Item = Pat> {
+        super::children(self)
+    }
+}
+
 // TupleStructPat
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -3167,6 +3456,34 @@ impl TupleStructPat {
 
     pub fn path(&self) -> Option<Path> {
         super::child_opt(self)
+    }
+}
+
+// TupleType
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct TupleType {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for TupleType {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, TUPLE_TYPE)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(TupleType { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl TupleType {
+    pub fn fields(&self) -> impl Iterator<Item = TypeRef> {
+        super::children(self)
     }
 }
 
@@ -3213,7 +3530,16 @@ impl AstNode for TypeRef {
     fn can_cast(kind: SyntaxKind) -> bool {
         matches!(
             kind,
-            PATH_TYPE | ARRAY_TYPE | NEVER_TYPE | OPTIONAL_TYPE | REFINEMENT_TYPE
+            PATH_TYPE
+                | ARRAY_TYPE
+                | TUPLE_TYPE
+                | PAREN_TYPE
+                | REFERENCE_TYPE
+                | FUNCTION_TYPE
+                | VARIADIC_TYPE
+                | NEVER_TYPE
+                | OPTIONAL_TYPE
+                | REFINEMENT_TYPE
         )
     }
     fn cast(syntax: SyntaxNode) -> Option<Self> {
@@ -3231,6 +3557,11 @@ impl AstNode for TypeRef {
 pub enum TypeRefKind {
     PathType(PathType),
     ArrayType(ArrayType),
+    TupleType(TupleType),
+    ParenType(ParenType),
+    ReferenceType(ReferenceType),
+    FunctionType(FunctionType),
+    VariadicType(VariadicType),
     NeverType(NeverType),
     OptionalType(OptionalType),
     RefinementType(RefinementType),
@@ -3242,6 +3573,31 @@ impl From<PathType> for TypeRef {
 }
 impl From<ArrayType> for TypeRef {
     fn from(n: ArrayType) -> TypeRef {
+        TypeRef { syntax: n.syntax }
+    }
+}
+impl From<TupleType> for TypeRef {
+    fn from(n: TupleType) -> TypeRef {
+        TypeRef { syntax: n.syntax }
+    }
+}
+impl From<ParenType> for TypeRef {
+    fn from(n: ParenType) -> TypeRef {
+        TypeRef { syntax: n.syntax }
+    }
+}
+impl From<ReferenceType> for TypeRef {
+    fn from(n: ReferenceType) -> TypeRef {
+        TypeRef { syntax: n.syntax }
+    }
+}
+impl From<FunctionType> for TypeRef {
+    fn from(n: FunctionType) -> TypeRef {
+        TypeRef { syntax: n.syntax }
+    }
+}
+impl From<VariadicType> for TypeRef {
+    fn from(n: VariadicType) -> TypeRef {
         TypeRef { syntax: n.syntax }
     }
 }
@@ -3266,6 +3622,17 @@ impl TypeRef {
         match self.syntax.kind() {
             PATH_TYPE => TypeRefKind::PathType(PathType::cast(self.syntax.clone()).unwrap()),
             ARRAY_TYPE => TypeRefKind::ArrayType(ArrayType::cast(self.syntax.clone()).unwrap()),
+            TUPLE_TYPE => TypeRefKind::TupleType(TupleType::cast(self.syntax.clone()).unwrap()),
+            PAREN_TYPE => TypeRefKind::ParenType(ParenType::cast(self.syntax.clone()).unwrap()),
+            REFERENCE_TYPE => {
+                TypeRefKind::ReferenceType(ReferenceType::cast(self.syntax.clone()).unwrap())
+            }
+            FUNCTION_TYPE => {
+                TypeRefKind::FunctionType(FunctionType::cast(self.syntax.clone()).unwrap())
+            }
+            VARIADIC_TYPE => {
+                TypeRefKind::VariadicType(VariadicType::cast(self.syntax.clone()).unwrap())
+            }
             NEVER_TYPE => TypeRefKind::NeverType(NeverType::cast(self.syntax.clone()).unwrap()),
             OPTIONAL_TYPE => {
                 TypeRefKind::OptionalType(OptionalType::cast(self.syntax.clone()).unwrap())
@@ -3400,6 +3767,30 @@ impl UsesClause {
         super::children(self)
     }
 }
+
+// VariadicType
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VariadicType {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for VariadicType {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, VARIADIC_TYPE)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(VariadicType { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl VariadicType {}
 
 // Visibility
 

@@ -240,6 +240,14 @@ fn main() {
 
     if build.get_compiler().is_like_msvc() {
         build.flag("/std:c++17");
+        // Match LLVM's own CRT choice. Prebuilt LLVM/LLD for MSVC is built
+        // against the *static* CRT (`/MT`), and `cc` defaults to the dynamic
+        // one (`/MD`), so the wrapper and the libraries it calls into
+        // disagree -- producing `LNK2038: mismatch detected for
+        // 'RuntimeLibrary'` at the point anything actually links against
+        // this crate. That is why nothing did: the crate compiled fine on
+        // its own and only failed once used.
+        build.static_crt(true);
     } else {
         build.flag("-std=c++17");
     }

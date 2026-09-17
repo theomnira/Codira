@@ -8,8 +8,8 @@ use std::{fmt, fmt::Write};
 
 use crate::{
     item_tree::{
-        Fields, Function, GenericParamData, Impl, Import, ItemTree, LocalItemTreeId, ModItem,
-        Param, RawVisibilityId, Struct, TypeAlias,
+        Const, Fields, Function, GenericParamData, Impl, Import, ItemTree, LocalItemTreeId,
+        ModItem, Param, RawVisibilityId, Struct, TypeAlias,
     },
     path::ImportAlias,
     pretty::{print_path, print_type_ref},
@@ -74,6 +74,7 @@ impl Printer<'_> {
             ModItem::Function(it) => self.print_function(it),
             ModItem::Struct(it) => self.print_struct(it),
             ModItem::TypeAlias(it) => self.print_type_alias(it),
+            ModItem::Const(it) => self.print_const(it),
             ModItem::Import(it) => self.print_use(it),
             ModItem::Impl(it) => self.print_impl(it),
         }
@@ -104,6 +105,34 @@ impl Printer<'_> {
     }
 
     /// Prints a type alias to the buffer.
+    /// Prints a module-level binding. The initializer is not part of the
+    /// item tree (bodies lower separately), so it shows as `= <expr>`;
+    /// what *is* printed is the reference set, since that is the edge list
+    /// cycle detection consumes and is worth seeing in a snapshot.
+    fn print_const(&mut self, it: LocalItemTreeId<Const>) -> fmt::Result {
+        let Const {
+            name,
+            visibility,
+            types,
+            type_ref,
+            references,
+            ast_id: _,
+        } = &self.tree[it];
+        self.print_visibility(*visibility)?;
+        write!(self, "let {name}: ")?;
+        self.print_type_ref(*type_ref, types)?;
+        write!(self, " = <expr>")?;
+        if !references.is_empty() {
+            let names = references
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            write!(self, "  // refs: {names}")?;
+        }
+        writeln!(self, ";")
+    }
+
     fn print_type_alias(&mut self, it: LocalItemTreeId<TypeAlias>) -> fmt::Result {
         let TypeAlias {
             name,

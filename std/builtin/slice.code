@@ -33,18 +33,24 @@ public struct Slice[T] {
 // =============================================================================
 
 // Create a slice from a pointer and a length.
-public func Slice[T].new(ptr: Pointer[T], len: usize) -> Slice[T] {
-    return Slice[T] { _ptr: ptr, _len: len };
+extend Slice[T] {
+    public func new(ptr: Pointer[T], len: usize) -> Slice[T] {
+        return Slice[T] { _ptr: ptr, _len: len };
+    }
 }
 
 // Create an empty slice (null pointer, zero length).
-public func Slice[T].empty() -> Slice[T] {
-    return Slice[T] { _ptr: Pointer[T].null(), _len: 0 };
+extend Slice[T] {
+    public func empty() -> Slice[T] {
+        return Slice[T] { _ptr: Pointer.null(), _len: 0 };
+    }
 }
 
 // Create a slice of a single element.
-public func Slice[T].from_ref(ref: &T) -> Slice[T] {
-    return Slice[T] { _ptr: Pointer[T].from_ref(ref), _len: 1 };
+extend Slice[T] {
+    public func from_ref(ref: &T) -> Slice[T] {
+        return Slice[T] { _ptr: Pointer.from_ref(ref), _len: 1 };
+    }
 }
 
 // =============================================================================
@@ -52,48 +58,62 @@ public func Slice[T].from_ref(ref: &T) -> Slice[T] {
 // =============================================================================
 
 // Return the number of elements in the slice.
-public func Slice[T].len(self) -> usize {
-    return self._len;
+extend Slice[T] {
+    public func len(self) -> usize {
+        return self._len;
+    }
 }
 
 // True when the slice has zero elements.
-public func Slice[T].is_empty(self) -> bool {
-    return self._len == 0;
+extend Slice[T] {
+    public func is_empty(self) -> bool {
+        return self._len == 0;
+    }
 }
 
 // Return a pointer to the first element.
-public func Slice[T].data(self) -> Pointer[T] {
-    return self._ptr;
+extend Slice[T] {
+    public func data(self) -> Pointer[T] {
+        return self._ptr;
+    }
 }
 
 // Access element at `index`.  Panics if index >= len.
-public func Slice[T].get(self, index: usize) -> T {
-    if index >= self._len {
-        __panic("Slice.get: index out of bounds");
+extend Slice[T] {
+    public func get(self, index: usize) -> T {
+        if index >= self._len {
+            __panic("Slice.get: index out of bounds");
+        }
+        return self._ptr.offset(index as isize).read();
     }
-    return self._ptr.offset(index as isize).read();
 }
 
 // Access element at `index` without bounds checking.
 // Caller MUST guarantee index < len.
-public func Slice[T].get_unchecked(self, index: usize) -> T {
-    return self._ptr.offset(index as isize).read();
+extend Slice[T] {
+    public func get_unchecked(self, index: usize) -> T {
+        return self._ptr.offset(index as isize).read();
+    }
 }
 
 // Return the first element, or panic if the slice is empty.
-public func Slice[T].first(self) -> T {
-    if self._len == 0 {
-        __panic("Slice.first: empty slice");
+extend Slice[T] {
+    public func first(self) -> T {
+        if self._len == 0 {
+            __panic("Slice.first: empty slice");
+        }
+        return self._ptr.read();
     }
-    return self._ptr.read();
 }
 
 // Return the last element, or panic if the slice is empty.
-public func Slice[T].last(self) -> T {
-    if self._len == 0 {
-        __panic("Slice.last: empty slice");
+extend Slice[T] {
+    public func last(self) -> T {
+        if self._len == 0 {
+            __panic("Slice.last: empty slice");
+        }
+        return self._ptr.offset((self._len - 1) as isize).read();
     }
-    return self._ptr.offset((self._len - 1) as isize).read();
 }
 
 // =============================================================================
@@ -101,56 +121,68 @@ public func Slice[T].last(self) -> T {
 // =============================================================================
 
 // Return a sub-slice [start, end).  Panics on out-of-bounds.
-public func Slice[T].subslice(self, start: usize, end: usize) -> Slice[T] {
-    if start > end {
-        __panic("Slice.subslice: start > end");
+extend Slice[T] {
+    public func subslice(self, start: usize, end: usize) -> Slice[T] {
+        if start > end {
+            __panic("Slice.subslice: start > end");
+        }
+        if end > self._len {
+            __panic("Slice.subslice: end out of bounds");
+        }
+        return Slice[T] {
+            _ptr: self._ptr.offset(start as isize),
+            _len: end - start,
+        };
     }
-    if end > self._len {
-        __panic("Slice.subslice: end out of bounds");
-    }
-    return Slice[T] {
-        _ptr: self._ptr.offset(start as isize),
-        _len: end - start,
-    };
 }
 
 // Return a sub-slice from `start` to the end.
-public func Slice[T].subslice_from(self, start: usize) -> Slice[T] {
-    return self.subslice(start, self._len);
+extend Slice[T] {
+    public func subslice_from(self, start: usize) -> Slice[T] {
+        return self.subslice(start, self._len);
+    }
 }
 
 // Return a sub-slice from the beginning to `end` (exclusive).
-public func Slice[T].subslice_to(self, end: usize) -> Slice[T] {
-    return self.subslice(0, end);
+extend Slice[T] {
+    public func subslice_to(self, end: usize) -> Slice[T] {
+        return self.subslice(0, end);
+    }
 }
 
 // Split the slice at `mid`, returning (left, right) where
 // left = [0, mid) and right = [mid, len).
-public func Slice[T].split_at(self, mid: usize) -> (Slice[T], Slice[T]) {
-    if mid > self._len {
-        __panic("Slice.split_at: mid out of bounds");
+extend Slice[T] {
+    public func split_at(self, mid: usize) -> (Slice[T], Slice[T]) {
+        if mid > self._len {
+            __panic("Slice.split_at: mid out of bounds");
+        }
+        let left = self.subslice(0, mid);
+        let right = self.subslice(mid, self._len);
+        return (left, right);
     }
-    let left = self.subslice(0, mid);
-    let right = self.subslice(mid, self._len);
-    return (left, right);
 }
 
 // Return the first N elements and the remainder.
-public func Slice[T].take_first(self, n: usize) -> (Slice[T], Slice[T]) {
-    let count = n;
-    if count > self._len {
-        count = self._len;
+extend Slice[T] {
+    public func take_first(self, n: usize) -> (Slice[T], Slice[T]) {
+        let count = n;
+        if count > self._len {
+            count = self._len;
+        }
+        return self.split_at(count);
     }
-    return self.split_at(count);
 }
 
 // Return the last N elements and the prefix.
-public func Slice[T].take_last(self, n: usize) -> (Slice[T], Slice[T]) {
-    let count = n;
-    if count > self._len {
-        count = self._len;
+extend Slice[T] {
+    public func take_last(self, n: usize) -> (Slice[T], Slice[T]) {
+        let count = n;
+        if count > self._len {
+            count = self._len;
+        }
+        return self.split_at(self._len - count);
     }
-    return self.split_at(self._len - count);
 }
 
 // =============================================================================
@@ -158,57 +190,67 @@ public func Slice[T].take_last(self, n: usize) -> (Slice[T], Slice[T]) {
 // =============================================================================
 
 // Return the index of the first element equal to `value`, or -1 if not found.
-public func Slice[T].index_of(self, value: T) -> isize {
-    let i: usize = 0;
-    while i < self._len {
-        if self._ptr.offset(i as isize).read() == value {
-            return i as isize;
+extend Slice[T] {
+    public func index_of(self, value: T) -> isize {
+        let i: usize = 0;
+        while i < self._len {
+            if self._ptr.offset(i as isize).read() == value {
+                return i as isize;
+            }
+            i = i + 1;
         }
-        i = i + 1;
+        return -1;
     }
-    return -1;
 }
 
 // Return true if the slice contains `value`.
-public func Slice[T].contains(self, value: T) -> bool {
-    return self.index_of(value) >= 0;
+extend Slice[T] {
+    public func contains(self, value: T) -> bool {
+        return self.index_of(value) >= 0;
+    }
 }
 
 // Return true if every element satisfies `predicate`.
-public func Slice[T].all(self, predicate: func(T) -> bool) -> bool {
-    let i: usize = 0;
-    while i < self._len {
-        if !predicate(self._ptr.offset(i as isize).read()) {
-            return false;
+extend Slice[T] {
+    public func all(self, predicate: func(T) -> bool) -> bool {
+        let i: usize = 0;
+        while i < self._len {
+            if !predicate(self._ptr.offset(i as isize).read()) {
+                return false;
+            }
+            i = i + 1;
         }
-        i = i + 1;
+        return true;
     }
-    return true;
 }
 
 // Return true if any element satisfies `predicate`.
-public func Slice[T].any(self, predicate: func(T) -> bool) -> bool {
-    let i: usize = 0;
-    while i < self._len {
-        if predicate(self._ptr.offset(i as isize).read()) {
-            return true;
+extend Slice[T] {
+    public func any(self, predicate: func(T) -> bool) -> bool {
+        let i: usize = 0;
+        while i < self._len {
+            if predicate(self._ptr.offset(i as isize).read()) {
+                return true;
+            }
+            i = i + 1;
         }
-        i = i + 1;
+        return false;
     }
-    return false;
 }
 
 // Count elements that satisfy `predicate`.
-public func Slice[T].count(self, predicate: func(T) -> bool) -> usize {
-    let n: usize = 0;
-    let i: usize = 0;
-    while i < self._len {
-        if predicate(self._ptr.offset(i as isize).read()) {
-            n = n + 1;
+extend Slice[T] {
+    public func count(self, predicate: func(T) -> bool) -> usize {
+        let n: usize = 0;
+        let i: usize = 0;
+        while i < self._len {
+            if predicate(self._ptr.offset(i as isize).read()) {
+                n = n + 1;
+            }
+            i = i + 1;
         }
-        i = i + 1;
+        return n;
     }
-    return n;
 }
 
 // =============================================================================
@@ -217,39 +259,45 @@ public func Slice[T].count(self, predicate: func(T) -> bool) -> usize {
 
 // Copy elements from `src` into this (mutable) slice.
 // Panics if lengths differ.
-public func Slice[T].copy_from(self, src: Slice[T]) -> void {
-    if self._len != src._len {
-        __panic("Slice.copy_from: length mismatch");
-    }
-    let i: usize = 0;
-    while i < self._len {
-        self._ptr.offset(i as isize).write(src._ptr.offset(i as isize).read());
-        i = i + 1;
+extend Slice[T] {
+    public func copy_from(self, src: Slice[T]) -> void {
+        if self._len != src._len {
+            __panic("Slice.copy_from: length mismatch");
+        }
+        let i: usize = 0;
+        while i < self._len {
+            self._ptr.offset(i as isize).write(src._ptr.offset(i as isize).read());
+            i = i + 1;
+        }
     }
 }
 
 // Fill every element with `value`.
-public func Slice[T].fill(self, value: T) -> void {
-    let i: usize = 0;
-    while i < self._len {
-        self._ptr.offset(i as isize).write(value);
-        i = i + 1;
+extend Slice[T] {
+    public func fill(self, value: T) -> void {
+        let i: usize = 0;
+        while i < self._len {
+            self._ptr.offset(i as isize).write(value);
+            i = i + 1;
+        }
     }
 }
 
 // Reverse the slice in-place.
-public func Slice[T].reverse(self) -> void {
-    if self._len <= 1 {
-        return;
-    }
-    let lo: usize = 0;
-    let hi: usize = self._len - 1;
-    while lo < hi {
-        let tmp = self._ptr.offset(lo as isize).read();
-        self._ptr.offset(lo as isize).write(self._ptr.offset(hi as isize).read());
-        self._ptr.offset(hi as isize).write(tmp);
-        lo = lo + 1;
-        hi = hi - 1;
+extend Slice[T] {
+    public func reverse(self) -> void {
+        if self._len <= 1 {
+            return;
+        }
+        let lo: usize = 0;
+        let hi: usize = self._len - 1;
+        while lo < hi {
+            let tmp = self._ptr.offset(lo as isize).read();
+            self._ptr.offset(lo as isize).write(self._ptr.offset(hi as isize).read());
+            self._ptr.offset(hi as isize).write(tmp);
+            lo = lo + 1;
+            hi = hi - 1;
+        }
     }
 }
 
@@ -258,57 +306,65 @@ public func Slice[T].reverse(self) -> void {
 // =============================================================================
 
 // Element-wise equality.
-public func Slice[T].eq(self, other: Slice[T]) -> bool {
-    if self._len != other._len {
-        return false;
-    }
-    let i: usize = 0;
-    while i < self._len {
-        if self._ptr.offset(i as isize).read() != other._ptr.offset(i as isize).read() {
+extend Slice[T] {
+    public func eq(self, other: Slice[T]) -> bool {
+        if self._len != other._len {
             return false;
         }
-        i = i + 1;
+        let i: usize = 0;
+        while i < self._len {
+            if self._ptr.offset(i as isize).read() != other._ptr.offset(i as isize).read() {
+                return false;
+            }
+            i = i + 1;
+        }
+        return true;
     }
-    return true;
 }
 
 // Lexicographic comparison: -1, 0, or 1.
-public func Slice[T].cmp(self, other: Slice[T]) -> i32 {
-    let min_len = self._len;
-    if other._len < min_len {
-        min_len = other._len;
+extend Slice[T] {
+    public func cmp(self, other: Slice[T]) -> i32 {
+        let min_len = self._len;
+        if other._len < min_len {
+            min_len = other._len;
+        }
+        let i: usize = 0;
+        while i < min_len {
+            let a = self._ptr.offset(i as isize).read();
+            let b = other._ptr.offset(i as isize).read();
+            if a < b { return -1; }
+            if a > b { return 1; }
+            i = i + 1;
+        }
+        if self._len < other._len { return -1; }
+        if self._len > other._len { return 1; }
+        return 0;
     }
-    let i: usize = 0;
-    while i < min_len {
-        let a = self._ptr.offset(i as isize).read();
-        let b = other._ptr.offset(i as isize).read();
-        if a < b { return -1; }
-        if a > b { return 1; }
-        i = i + 1;
-    }
-    if self._len < other._len { return -1; }
-    if self._len > other._len { return 1; }
-    return 0;
 }
 
 // =============================================================================
 // Trait implementations
 // =============================================================================
 
-public func Slice[T].to_string(self) -> String {
-    let s = "[";
-    let i: usize = 0;
-    while i < self._len {
-        if i > 0 {
-            s = s + ", ";
+extend Slice[T] {
+    public func to_string(self) -> String {
+        let s = "[";
+        let i: usize = 0;
+        while i < self._len {
+            if i > 0 {
+                s = s + ", ";
+            }
+            s = s + __intrinsic_to_string(self._ptr.offset(i as isize).read());
+            i = i + 1;
         }
-        s = s + __intrinsic_to_string(self._ptr.offset(i as isize).read());
-        i = i + 1;
+        s = s + "]";
+        return s;
     }
-    s = s + "]";
-    return s;
 }
 
-public func Slice[T].copy(self) -> Slice[T] {
-    return Slice[T] { _ptr: self._ptr, _len: self._len };
+extend Slice[T] {
+    public func copy(self) -> Slice[T] {
+        return Slice[T] { _ptr: self._ptr, _len: self._len };
+    }
 }

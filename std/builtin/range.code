@@ -111,7 +111,7 @@ extend Range {
     // Collect the range into a dynamically-allocated array.
     func to_array(self) -> Array[i64] {
         let length = self.len()
-        let arr = Array[i64].with_capacity(__intrinsic_cast[usize](length))
+        let arr = Array.with_capacity(__intrinsic_cast(length))
         var i = self.start
         while i < self.end {
             arr.push(i)

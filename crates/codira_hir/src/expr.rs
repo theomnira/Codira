@@ -343,6 +343,14 @@ pub enum Expr {
         name: Name,
     },
     Array(Vec<ExprId>),
+    /// `(a, b)` -- a tuple literal. `()` is the 0-element case (the unit
+    /// value), and `(a,)` the 1-element case; a parenthesised expression
+    /// with no comma is grouping and never reaches HIR as a `Tuple`.
+    ///
+    /// This mirrors `TypeRef::Tuple` on the type side and infers to
+    /// `TyKind::Tuple`, which codegen already lowers to an anonymous LLVM
+    /// struct through `get_tuple_type`.
+    Tuple(Vec<ExprId>),
     /// An explicit conversion, `expr as Type`. `type_ref` is the written-out
     /// target type, recorded the same way `let x: T` and `RecordLit` record
     /// theirs; it is resolved to a `Ty` during inference, which is also where
@@ -467,7 +475,7 @@ impl Expr {
                 f(*base);
                 f(*index);
             }
-            Expr::Array(exprs) => {
+            Expr::Array(exprs) | Expr::Tuple(exprs) => {
                 for expr in exprs {
                     f(*expr);
                 }
@@ -490,11 +498,18 @@ pub enum Pat {
         path: Option<Path>,
         args: Vec<PatId>,
     }, // E.g. `Shape.Circle(radius)`
+    /// `(a, b)` -- destructures a tuple.
+    ///
+    /// Unlike every other non-`Bind` pattern here this one is *irrefutable*:
+    /// a tuple's arity is fixed by its type, so the match cannot fail. That
+    /// is what makes it legal in a `let` and in a parameter, where
+    /// `TupleStruct` and `Literal` are not.
+    Tuple(Vec<PatId>),
 }
 
 impl Pat {
     pub fn walk_child_pats(&self, mut f: impl FnMut(PatId)) {
-        if let Pat::TupleStruct { args, .. } = self {
+        if let Pat::TupleStruct { args, .. } | Pat::Tuple(args) = self {
             for &arg in args {
                 f(arg);
             }
@@ -941,6 +956,10 @@ impl<'a> ExprCollector<'a> {
                 let exprs = e.exprs().map(|expr| self.collect_expr(expr)).collect();
                 self.alloc_expr(Expr::Array(exprs), syntax_ptr)
             }
+            ast::ExprKind::TupleExpr(e) => {
+                let exprs = e.exprs().map(|expr| self.collect_expr(expr)).collect();
+                self.alloc_expr(Expr::Tuple(exprs), syntax_ptr)
+            }
             ast::ExprKind::IndexExpr(e) => {
                 let base = self.collect_expr_opt(e.base());
                 let index = self.collect_expr_opt(e.index());
@@ -990,7 +1009,11 @@ impl<'a> ExprCollector<'a> {
             // `spawn <expr>` (see spec/LANGUAGE_SPEC.md section 14) is likewise
             // fully parsed but has no green-thread scheduler to lower to yet, so
             // it lowers the same way.
-            ast::ExprKind::MatchExpr(_)
+            // A closure literal (`func(a: T) -> R { .. }`) joins these: it
+            // parses, but there is no function-value representation, no
+            // capture analysis and no indirect-call op for it to lower to.
+            ast::ExprKind::ClosureExpr(_)
+            | ast::ExprKind::MatchExpr(_)
             | ast::ExprKind::PerformExpr(_)
             | ast::ExprKind::HandleExpr(_)
             | ast::ExprKind::SpawnExpr(_)
@@ -1051,6 +1074,15 @@ impl<'a> ExprCollector<'a> {
                 let path = ts.path().and_then(Path::from_ast);
                 let args = ts.args().map(|arg| self.collect_pat(arg)).collect();
                 Pat::TupleStruct { path, args }
+            }
+            ast::PatKind::TuplePat(tp) => {
+                let args = tp.args().map(|arg| self.collect_pat(arg)).collect();
+                Pat::Tuple(args)
+            }
+            // `(a)` is grouping and nothing else: return the inner pattern's
+            // own `PatId` so no later stage has to know parentheses existed.
+            ast::PatKind::ParenPat(pp) => {
+                return self.collect_pat_opt(pp.pat());
             }
         };
         let ptr = AstPtr::new(&pat);

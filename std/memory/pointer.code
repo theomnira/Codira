@@ -32,28 +32,36 @@ public struct Pointer[T] {
 // =============================================================================
 
 // Create a null pointer.
-public func Pointer[T].null() -> Pointer[T] {
-    return Pointer[T] { _addr: 0 };
+extend Pointer[T] {
+    public func null() -> Pointer[T] {
+        return Pointer[T] { _addr: 0 };
+    }
 }
 
 // Create a pointer from a raw address.
 // The caller asserts that `addr` is properly aligned for T and points to
 // a valid, live object (or is null / zero).
-public func Pointer[T].from_address(addr: usize) -> Pointer[T] {
-    return Pointer[T] { _addr: addr };
+extend Pointer[T] {
+    public func from_address(addr: usize) -> Pointer[T] {
+        return Pointer[T] { _addr: addr };
+    }
 }
 
 // Take the address of a reference.
-public func Pointer[T].address_of(ref: &T) -> Pointer[T] {
-    return Pointer[T] { _addr: __intrinsic_ref_to_addr(ref) };
+extend Pointer[T] {
+    public func address_of(ref: &T) -> Pointer[T] {
+        return Pointer[T] { _addr: __intrinsic_ref_to_addr(ref) };
+    }
 }
 
 // Allocate a new value on the heap and return a pointer to it.
-public func Pointer[T].alloc(value: T) -> Pointer[T] {
-    let addr = __intrinsic_alloc(__intrinsic_sizeof[T](), __intrinsic_alignof[T]());
-    let p = Pointer[T] { _addr: addr };
-    p.write(value);
-    return p;
+extend Pointer[T] {
+    public func alloc(value: T) -> Pointer[T] {
+        let addr = __intrinsic_alloc(__intrinsic_sizeof(), __intrinsic_alignof());
+        let p = Pointer[T] { _addr: addr };
+        p.write(value);
+        return p;
+    }
 }
 
 // =============================================================================
@@ -61,18 +69,24 @@ public func Pointer[T].alloc(value: T) -> Pointer[T] {
 // =============================================================================
 
 // Return true if this pointer is null (address zero).
-public func Pointer[T].is_null(self) -> bool {
-    return self._addr == 0;
+extend Pointer[T] {
+    public func is_null(self) -> bool {
+        return self._addr == 0;
+    }
 }
 
 // Return true if this pointer is non-null.
-public func Pointer[T].is_valid(self) -> bool {
-    return self._addr != 0;
+extend Pointer[T] {
+    public func is_valid(self) -> bool {
+        return self._addr != 0;
+    }
 }
 
 // Return the raw address as a usize.
-public func Pointer[T].address(self) -> usize {
-    return self._addr;
+extend Pointer[T] {
+    public func address(self) -> usize {
+        return self._addr;
+    }
 }
 
 // =============================================================================
@@ -81,30 +95,38 @@ public func Pointer[T].address(self) -> usize {
 
 // Read the value at this pointer.
 // Panics if the pointer is null.
-public func Pointer[T].read(self) -> T {
-    if self._addr == 0 {
-        __panic("Pointer.read: null pointer dereference");
+extend Pointer[T] {
+    public func read(self) -> T {
+        if self._addr == 0 {
+            __panic("Pointer.read: null pointer dereference");
+        }
+        return __intrinsic_load(self._addr);
     }
-    return __intrinsic_load[T](self._addr);
 }
 
 // Write a value through this pointer.
 // Panics if the pointer is null.
-public func Pointer[T].write(self, value: T) -> void {
-    if self._addr == 0 {
-        __panic("Pointer.write: null pointer dereference");
+extend Pointer[T] {
+    public func write(self, value: T) -> void {
+        if self._addr == 0 {
+            __panic("Pointer.write: null pointer dereference");
+        }
+        __intrinsic_store(self._addr, value);
     }
-    __intrinsic_store[T](self._addr, value);
 }
 
 // Read without null check.  Caller MUST guarantee non-null.
-public func Pointer[T].read_unchecked(self) -> T {
-    return __intrinsic_load[T](self._addr);
+extend Pointer[T] {
+    public func read_unchecked(self) -> T {
+        return __intrinsic_load(self._addr);
+    }
 }
 
 // Write without null check.  Caller MUST guarantee non-null.
-public func Pointer[T].write_unchecked(self, value: T) -> void {
-    __intrinsic_store[T](self._addr, value);
+extend Pointer[T] {
+    public func write_unchecked(self, value: T) -> void {
+        __intrinsic_store(self._addr, value);
+    }
 }
 
 // =============================================================================
@@ -113,25 +135,33 @@ public func Pointer[T].write_unchecked(self, value: T) -> void {
 
 // Return a pointer offset by `n` elements (each of size sizeof(T)).
 // Positive n moves forward, negative n moves backward.
-public func Pointer[T].offset(self, n: isize) -> Pointer[T] {
-    let byte_offset = n * (__intrinsic_sizeof[T]() as isize);
-    return Pointer[T] { _addr: (self._addr as isize + byte_offset) as usize };
+extend Pointer[T] {
+    public func offset(self, n: isize) -> Pointer[T] {
+        let byte_offset = n * (__intrinsic_sizeof() as isize);
+        return Pointer[T] { _addr: (self._addr as isize + byte_offset) as usize };
+    }
 }
 
 // Return a pointer advanced by `n` elements (non-negative offset).
-public func Pointer[T].add(self, n: usize) -> Pointer[T] {
-    return self.offset(n as isize);
+extend Pointer[T] {
+    public func add(self, n: usize) -> Pointer[T] {
+        return self.offset(n as isize);
+    }
 }
 
 // Return a pointer moved back by `n` elements.
-public func Pointer[T].sub(self, n: usize) -> Pointer[T] {
-    return self.offset(0 - (n as isize));
+extend Pointer[T] {
+    public func sub(self, n: usize) -> Pointer[T] {
+        return self.offset(0 - (n as isize));
+    }
 }
 
 // Compute the element distance between two pointers: (self - other) / sizeof(T).
-public func Pointer[T].distance_to(self, other: Pointer[T]) -> isize {
-    let byte_diff = (self._addr as isize) - (other._addr as isize);
-    return byte_diff / (__intrinsic_sizeof[T]() as isize);
+extend Pointer[T] {
+    public func distance_to(self, other: Pointer[T]) -> isize {
+        let byte_diff = (self._addr as isize) - (other._addr as isize);
+        return byte_diff / (__intrinsic_sizeof() as isize);
+    }
 }
 
 // =============================================================================
@@ -140,13 +170,17 @@ public func Pointer[T].distance_to(self, other: Pointer[T]) -> isize {
 
 // Bitcast this pointer to a pointer of a different type.
 // No data conversion occurs — only the type tag changes.
-public func Pointer[T].bitcast[U](self) -> Pointer[U] {
-    return Pointer[U] { _addr: self._addr };
+extend Pointer[T] {
+    public func bitcast[U](self) -> Pointer[U] {
+        return Pointer[U] { _addr: self._addr };
+    }
 }
 
 // Convert to an UnsafePointer (drops safety guarantees).
-public func Pointer[T].to_unsafe(self) -> UnsafePointer[T] {
-    return UnsafePointer[T].from_address(self._addr);
+extend Pointer[T] {
+    public func to_unsafe(self) -> UnsafePointer[T] {
+        return UnsafePointer.from_address(self._addr);
+    }
 }
 
 // =============================================================================
@@ -154,56 +188,78 @@ public func Pointer[T].to_unsafe(self) -> UnsafePointer[T] {
 // =============================================================================
 
 // Two pointers are equal when they point to the same address.
-public func Pointer[T].eq(self, other: Pointer[T]) -> bool {
-    return self._addr == other._addr;
+extend Pointer[T] {
+    public func eq(self, other: Pointer[T]) -> bool {
+        return self._addr == other._addr;
+    }
 }
 
-public func Pointer[T].ne(self, other: Pointer[T]) -> bool {
-    return self._addr != other._addr;
+extend Pointer[T] {
+    public func ne(self, other: Pointer[T]) -> bool {
+        return self._addr != other._addr;
+    }
 }
 
-public func Pointer[T].lt(self, other: Pointer[T]) -> bool {
-    return self._addr < other._addr;
+extend Pointer[T] {
+    public func lt(self, other: Pointer[T]) -> bool {
+        return self._addr < other._addr;
+    }
 }
 
-public func Pointer[T].le(self, other: Pointer[T]) -> bool {
-    return self._addr <= other._addr;
+extend Pointer[T] {
+    public func le(self, other: Pointer[T]) -> bool {
+        return self._addr <= other._addr;
+    }
 }
 
-public func Pointer[T].gt(self, other: Pointer[T]) -> bool {
-    return self._addr > other._addr;
+extend Pointer[T] {
+    public func gt(self, other: Pointer[T]) -> bool {
+        return self._addr > other._addr;
+    }
 }
 
-public func Pointer[T].ge(self, other: Pointer[T]) -> bool {
-    return self._addr >= other._addr;
+extend Pointer[T] {
+    public func ge(self, other: Pointer[T]) -> bool {
+        return self._addr >= other._addr;
+    }
 }
 
 // =============================================================================
 // Trait implementations
 // =============================================================================
 
-public func Pointer[T].to_string(self) -> String {
-    if self._addr == 0 {
-        return "Pointer(null)";
+extend Pointer[T] {
+    public func to_string(self) -> String {
+        if self._addr == 0 {
+            return "Pointer(null)";
+        }
+        return "Pointer(0x" + __intrinsic_to_hex(self._addr) + ")";
     }
-    return "Pointer(0x" + __intrinsic_to_hex(self._addr) + ")";
 }
 
-public func Pointer[T].repr(self) -> String {
-    return "Pointer[" + __intrinsic_type_name[T]() + "](0x"
-        + __intrinsic_to_hex(self._addr) + ")";
+extend Pointer[T] {
+    public func repr(self) -> String {
+        return "Pointer[" + __intrinsic_type_name() + "](0x"
+            + __intrinsic_to_hex(self._addr) + ")";
+    }
 }
 
-public func Pointer[T].hash(self, hasher: &Hasher) -> void {
-    hasher.write_usize(self._addr);
+extend Pointer[T] {
+    public func hash(self, hasher: &Hasher) -> void {
+        hasher.write_usize(self._addr);
+    }
 }
 
-public func Pointer[T].copy(self) -> Pointer[T] {
-    return Pointer[T] { _addr: self._addr };
+extend Pointer[T] {
+    public func copy(self) -> Pointer[T] {
+        return Pointer[T] { _addr: self._addr };
+    }
 }
 
-public func Pointer[T].default() -> Pointer[T] {
-    return Pointer[T].null();
+extend Pointer[T] {
+    public func default() -> Pointer[T] {
+        return Pointer.null();
+    }
 }
 
 // =============================================================================
@@ -211,6 +267,8 @@ public func Pointer[T].default() -> Pointer[T] {
 // =============================================================================
 
 // Construct a Slice[T] from this pointer and a length.
-public func Pointer[T].as_slice(self, len: usize) -> Slice[T] {
-    return Slice[T].new(self, len);
+extend Pointer[T] {
+    public func as_slice(self, len: usize) -> Slice[T] {
+        return Slice.new(self, len);
+    }
 }

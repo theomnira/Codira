@@ -10,17 +10,21 @@
 use std::{collections::HashMap, convert::TryInto, marker::PhantomData, sync::Arc};
 
 use codira_hir_input::FileId;
-use codira_syntax::ast::{
-    self, ExternOwner, GenericParamsOwner, ModuleItemOwner, NameOwner, StructKind,
-    TypeAscriptionOwner,
+use codira_syntax::{
+    ast::{
+        self, ExternOwner, GenericParamsOwner, ModuleItemOwner, NameOwner, StructKind,
+        TypeAscriptionOwner,
+    },
+    AstNode,
 };
 use la_arena::{Idx, RawIdx};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{
-    diagnostics, AssociatedItem, Field, Fields, Function, FunctionFlags, GenericParamData, IdRange,
-    Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities, LocalItemTreeId, ModItem, Param,
-    ParamAstId, RawVisibilityId, Struct, TypeAlias,
+    diagnostics, AssociatedItem, Const, Field, Fields, Function, FunctionFlags, GenericParamData,
+    IdRange, Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities, LocalItemTreeId,
+    ModItem, Param, ParamAstId, RawVisibilityId, Struct, TypeAlias,
 };
 use crate::{
     item_tree::Import,
@@ -85,6 +89,7 @@ impl Context {
                 ModItem::Function(item) => Some(&self.data.functions[item.index].name),
                 ModItem::Struct(item) => Some(&self.data.structs[item.index].name),
                 ModItem::TypeAlias(item) => Some(&self.data.type_aliases[item.index].name),
+                ModItem::Const(item) => Some(&self.data.consts[item.index].name),
                 ModItem::Import(item) => {
                     let import = &self.data.imports[item.index];
                     if import.is_glob {
@@ -112,6 +117,12 @@ impl Context {
             }
         }
 
+        // Module-level bindings may refer to one another, so a cycle is
+        // possible and must be rejected *here* -- before any body is
+        // lowered, evaluated, or fed to the e-graph. See
+        // `detect_const_cycles`.
+        detect_const_cycles(&top_level, &self.data, &mut self.diagnostics);
+
         ItemTree {
             file_id: self.file,
             top_level,
@@ -126,6 +137,7 @@ impl Context {
             ast::ModuleItemKind::FunctionDef(ast) => self.lower_function(&ast).map(Into::into),
             ast::ModuleItemKind::StructDef(ast) => self.lower_struct(&ast).map(Into::into),
             ast::ModuleItemKind::TypeAliasDef(ast) => self.lower_type_alias(&ast).map(Into::into),
+            ast::ModuleItemKind::ConstDef(ast) => self.lower_const(&ast).map(Into::into),
             ast::ModuleItemKind::Use(ast) => Some(ModItems(
                 self.lower_use(&ast).into_iter().map(Into::into).collect(),
             )),
@@ -139,8 +151,8 @@ impl Context {
             | ast::ModuleItemKind::EnumDef(_)
             | ast::ModuleItemKind::EffectDef(_)
             | ast::ModuleItemKind::MacroDef(_)
-            | ast::ModuleItemKind::ExternBlock(_)
             | ast::ModuleItemKind::SupervisorDef(_) => None,
+            ast::ModuleItemKind::ExternBlock(ast) => Some(self.lower_extern_block(&ast)),
         }
     }
 
@@ -219,6 +231,21 @@ impl Context {
     }
 
     fn lower_function(&mut self, func: &ast::FunctionDef) -> Option<LocalItemTreeId<Function>> {
+        self.lower_function_inner(func, false)
+    }
+
+    /// Lowers a function, optionally forcing it to be treated as `extern`.
+    ///
+    /// `ast::ExternOwner::is_extern` looks for an `extern` token on the
+    /// declaration itself, which is right for a bare `extern func f(..);`
+    /// but finds nothing for a function *inside* an `extern "C" { .. }`
+    /// block -- there the keyword belongs to the block. Passing the fact in
+    /// keeps the one source of truth at the call site that knows it.
+    fn lower_function_inner(
+        &mut self,
+        func: &ast::FunctionDef,
+        force_extern: bool,
+    ) -> Option<LocalItemTreeId<Function>> {
         let name = func.name()?.as_name();
         let visibility = lower_visibility(func);
         let mut types = TypeRefMap::builder();
@@ -264,7 +291,7 @@ impl Context {
         let ast_id = self.source_ast_id_map.ast_id(func);
 
         let mut flags = FunctionFlags::default();
-        if func.is_extern() {
+        if force_extern || func.is_extern() {
             flags |= FunctionFlags::IS_EXTERN;
         }
         if func.body().is_some() {
@@ -287,6 +314,45 @@ impl Context {
         };
 
         Some(self.data.functions.alloc(res).into())
+    }
+
+    /// Lowers an `extern "C" { .. }` / `extern "C++" { .. }` block.
+    ///
+    /// Each signature inside becomes an ordinary module-level function item
+    /// marked `IS_EXTERN`, so it is name-resolvable and callable exactly
+    /// like any other function -- which is the whole point. Before this,
+    /// extern blocks parsed into a correct syntax tree and were then
+    /// dropped on the floor, so `extern "C" { func sqrt(x: f64) -> f64; }`
+    /// followed by `sqrt(16.0)` failed with "cannot find value `sqrt` in
+    /// this scope". `spec/LANGUAGE_SPEC.md` section 12 listed this under
+    /// "HIR-level scaffolding" rather than among the implemented features.
+    ///
+    /// The block introduces no scope of its own: C symbols are flat, and a
+    /// nested namespace would have to be invented rather than modelled.
+    /// Flattening into the enclosing module is also what makes the
+    /// downstream machinery work unchanged -- codegen already skips a body
+    /// for `is_extern` functions and emits an LLVM `declare`, and the
+    /// dispatch table already treats them as external symbols resolved at
+    /// link time.
+    ///
+    /// The ABI string (`"C"` vs `"C++"`) is deliberately not recorded here.
+    /// Both lower identically today, and `spec/LANGUAGE_SPEC.md` section 10
+    /// is explicit that C++ needs *linkage-name metadata* to be usable
+    /// across compilers -- storing the string without that metadata would
+    /// imply a distinction the backend does not yet make.
+    fn lower_extern_block(&mut self, block: &ast::ExternBlock) -> ModItems {
+        let items: SmallVec<[ModItem; 1]> = block
+            .extern_item_list()
+            .into_iter()
+            .flat_map(|list| list.extern_items())
+            .filter_map(|item| match item.kind() {
+                ast::ExternItemKind::FunctionDef(func) => self
+                    .lower_function_inner(&func, true)
+                    .map(Into::<ModItem>::into),
+            })
+            .collect();
+
+        ModItems(items)
     }
 
     /// Lowers a struct
@@ -383,6 +449,48 @@ impl Context {
         Some(self.data.type_aliases.alloc(res).into())
     }
 
+    /// Lowers `let NAME: T = expr;` at module level.
+    ///
+    /// The initializer expression is *not* stored: bodies lower on demand
+    /// (`Body::body_query`). What is captured instead is the set of
+    /// single-segment names the initializer mentions, which is the edge
+    /// set [`detect_const_cycles`] walks. Collecting it here -- straight
+    /// from the CST, before name resolution -- is what lets cycle
+    /// detection run without lowering a single body.
+    fn lower_const(&mut self, konst: &ast::ConstDef) -> Option<LocalItemTreeId<Const>> {
+        let name = konst.name()?.as_name();
+        let visibility = lower_visibility(konst);
+
+        let mut types = TypeRefMap::builder();
+        // The grammar requires the ascription, but a malformed source can
+        // still reach here; an error type keeps lowering total.
+        let type_ref = match konst.type_ref() {
+            Some(ty) => types.alloc_from_node(&ty),
+            None => types.error(),
+        };
+
+        let references = konst
+            .initializer()
+            .map(|init| collect_path_references(&init))
+            .unwrap_or_default();
+
+        let ast_id = self.source_ast_id_map.ast_id(konst);
+        let (types, _types_source_map) = types.finish();
+        Some(
+            self.data
+                .consts
+                .alloc(Const {
+                    name,
+                    visibility,
+                    types,
+                    type_ref,
+                    references,
+                    ast_id,
+                })
+                .into(),
+        )
+    }
+
     fn lower_impl(&mut self, impl_def: &ast::Extend) -> Option<LocalItemTreeId<Impl>> {
         let ast_id = self.source_ast_id_map.ast_id(impl_def);
         let mut types = TypeRefMap::builder();
@@ -450,4 +558,186 @@ fn lower_tuple_field(
 fn lower_visibility(item: &impl ast::VisibilityOwner) -> RawVisibilityId {
     let vis = RawVisibility::from_ast(item.visibility());
     ItemVisibilities::alloc(vis)
+}
+
+/// Collects every single-segment path name appearing in `expr`, in source
+/// order and deduplicated.
+///
+/// Walks the CST directly rather than HIR: cycle detection has to run
+/// before bodies are lowered, and a cycle among initializers would
+/// otherwise be discovered only by whatever tries to *evaluate* them.
+///
+/// This deliberately **over-approximates**. A name here may turn out to be
+/// a function, a local, or nothing at all; such a name simply is not a
+/// vertex in the dependency graph and contributes no edge. Missing a real
+/// edge would be unsound (a cycle would slip through); including a
+/// spurious one is merely conservative, and cannot create a false cycle
+/// because a non-binding name has no outgoing edges of its own.
+fn collect_path_references(expr: &ast::Expr) -> Box<[Name]> {
+    let mut names: Vec<Name> = Vec::new();
+    for node in expr.syntax().descendants() {
+        let Some(path) = ast::Path::cast(node) else {
+            continue;
+        };
+        // Only unqualified single-segment paths can name a binding in this
+        // module; a qualified path resolves elsewhere.
+        if path.qualifier().is_some() {
+            continue;
+        }
+        let Some(name) = path
+            .segment()
+            .and_then(|segment| segment.name_ref())
+            .map(|name_ref| name_ref.as_name())
+        else {
+            continue;
+        };
+        if !names.contains(&name) {
+            names.push(name);
+        }
+    }
+    names.into_boxed_slice()
+}
+// Tarjan state. `usize::MAX` stands in for "unvisited" so the arrays
+// can be flat and allocation-free after this point.
+const UNVISITED: usize = usize::MAX;
+
+/// Rejects cyclic module-level bindings, e.g. `let A: i32 = B;` together
+/// with `let B: i32 = A;`.
+///
+/// # Why this is a graph pass and not an SMT query
+///
+/// It is tempting to let the downstream machinery discover the cycle: feed
+/// every binding to the e-graph and let evaluation or the solver notice
+/// that no value exists. That does not work, and the failure mode is bad.
+/// An e-graph represents equalities, not recursion -- `A = B` and `B = A`
+/// simply merge into one e-class with no base case, and evaluation
+/// recurses until it exhausts fuel. An SMT encoding fares no better: the
+/// constraint system is satisfiable by *any* value (nothing pins it), so
+/// the solver either returns an arbitrary model or grinds. Neither
+/// produces a diagnostic a user can act on.
+///
+/// Cycles are a property of the dependency *graph*, so they are decided
+/// with a graph algorithm. Tarjan's strongly-connected-components runs in
+/// O(V + E), reports every cycle in one pass, and names the participating
+/// bindings -- which is exactly what the error message needs.
+///
+/// Implemented iteratively rather than recursively: the recursion depth of
+/// the natural formulation is the length of a dependency chain, which is
+/// attacker-controlled (a generated source file with ten thousand chained
+/// bindings would overflow the stack). An explicit stack makes the pass
+/// depth-independent.
+fn detect_const_cycles(
+    top_level: &[ModItem],
+    data: &ItemTreeData,
+    diagnostics: &mut Vec<diagnostics::ItemTreeDiagnostic>,
+) {
+    // Vertices are exactly the module-level bindings. Anything else a
+    // reference names is not a vertex and so contributes no edge.
+    let consts: Vec<LocalItemTreeId<Const>> = top_level
+        .iter()
+        .filter_map(|item| match item {
+            ModItem::Const(id) => Some(*id),
+            _ => None,
+        })
+        .collect();
+    if consts.len() < 2
+        && consts.first().is_none_or(|id| {
+            let konst = &data.consts[id.index];
+            !konst.references.contains(&konst.name)
+        })
+    {
+        // Fewer than two bindings and no self-reference: no cycle is
+        // possible, so skip building the index entirely.
+        return;
+    }
+
+    let index_of: FxHashMap<&Name, usize> = consts
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (&data.consts[id.index].name, i))
+        .collect();
+
+    let edges: Vec<Vec<usize>> = consts
+        .iter()
+        .map(|id| {
+            data.consts[id.index]
+                .references
+                .iter()
+                .filter_map(|name| index_of.get(name).copied())
+                .collect()
+        })
+        .collect();
+
+    let n = consts.len();
+    let mut index = vec![UNVISITED; n];
+    let mut lowlink = vec![0usize; n];
+    let mut on_stack = vec![false; n];
+    let mut scc_stack: Vec<usize> = Vec::with_capacity(n);
+    let mut next_index = 0usize;
+
+    // Explicit DFS stack: (vertex, position in its edge list).
+    let mut work: Vec<(usize, usize)> = Vec::with_capacity(n);
+
+    for root in 0..n {
+        if index[root] != UNVISITED {
+            continue;
+        }
+        work.push((root, 0));
+        index[root] = next_index;
+        lowlink[root] = next_index;
+        next_index += 1;
+        scc_stack.push(root);
+        on_stack[root] = true;
+
+        while let Some((v, edge_pos)) = work.pop() {
+            if edge_pos < edges[v].len() {
+                // Resume `v` after this child returns.
+                work.push((v, edge_pos + 1));
+                let w = edges[v][edge_pos];
+                if index[w] == UNVISITED {
+                    index[w] = next_index;
+                    lowlink[w] = next_index;
+                    next_index += 1;
+                    scc_stack.push(w);
+                    on_stack[w] = true;
+                    work.push((w, 0));
+                } else if on_stack[w] {
+                    lowlink[v] = lowlink[v].min(index[w]);
+                }
+                continue;
+            }
+
+            // `v` is exhausted: propagate its lowlink to the parent and,
+            // if it roots an SCC, pop that component.
+            if let Some(&(parent, _)) = work.last() {
+                lowlink[parent] = lowlink[parent].min(lowlink[v]);
+            }
+            if lowlink[v] == index[v] {
+                let start = scc_stack
+                    .iter()
+                    .rposition(|&x| x == v)
+                    .expect("the SCC root is on the stack");
+                let component: Vec<usize> = scc_stack.split_off(start);
+                for &member in &component {
+                    on_stack[member] = false;
+                }
+                // A component of one vertex is only a cycle if that vertex
+                // refers to itself (`let A: i32 = A;`).
+                let is_cycle = component.len() > 1 || edges[v].contains(&v);
+                if is_cycle {
+                    let names: Box<[Name]> = component
+                        .iter()
+                        .map(|&i| data.consts[consts[i].index].name.clone())
+                        .collect();
+                    diagnostics.push(diagnostics::ItemTreeDiagnostic::CyclicConstDefinition {
+                        items: component
+                            .iter()
+                            .map(|&i| ModItem::Const(consts[i]))
+                            .collect(),
+                        names,
+                    });
+                }
+            }
+        }
+    }
 }

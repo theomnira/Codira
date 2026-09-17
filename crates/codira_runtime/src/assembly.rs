@@ -249,6 +249,24 @@ impl Assembly {
             to_link = failed_to_link;
         }
 
+        // Anything still unresolved is not defined by another Codira assembly.
+        // It may still be an `extern "C"` symbol -- see `resolve_native_symbol`.
+        to_link.retain_mut(|(dispatch_ptr, fn_prototype)| {
+            match resolve_native_symbol(fn_prototype.name()) {
+                Some(address) => {
+                    // SAFETY: the dispatch slot holds a function pointer, and
+                    // the address came from the platform's own symbol table.
+                    // The *signature* is unchecked, and unavoidably so: a C
+                    // symbol carries no type information, so the `extern`
+                    // declaration is the contract -- exactly as it is in
+                    // every other language's C FFI.
+                    **dispatch_ptr = address;
+                    false
+                }
+                None => true,
+            }
+        });
+
         if to_link.is_empty() {
             Ok(())
         } else {
@@ -475,5 +493,83 @@ impl Assembly {
     /// process.
     pub fn into_library(self) -> TempLibrary {
         self.library
+    }
+}
+
+/// Looks up `name` in the host process's native symbol table, for
+/// `extern "C"` declarations.
+///
+/// Runtime linking otherwise resolves a dispatch-table entry only against
+/// other loaded Codira assemblies, so
+/// `extern "C" { func sqrt(x: f64) -> f64; }` compiled to a correct call and
+/// then failed at load with "Missing dependencies for functions:
+/// [\"sqrt\"]". This is the other half: a symbol no Codira assembly defines
+/// is looked for where C symbols actually live.
+///
+/// # Where it looks, and why that differs by platform
+///
+/// On Unix, `Library::this()` is an `RTLD_DEFAULT`-style handle: it searches
+/// the executable *and* everything linked into it, so libc symbols resolve
+/// directly.
+///
+/// On Windows, `GetProcAddress` against the executable's own module handle
+/// finds only what the executable exports -- not symbols in loaded DLLs. The
+/// C runtime therefore has to be named explicitly, which is what the
+/// `WINDOWS_C_RUNTIMES` list does. The list is ordered newest-first because
+/// `ucrtbase` is the current runtime and `msvcrt` the legacy one, and a
+/// program should bind to the modern one when both are present.
+///
+/// Returns `None` when the symbol is not found anywhere, leaving the
+/// caller's existing "missing dependencies" error to report it.
+fn resolve_native_symbol(name: &str) -> Option<*const c_void> {
+    #[cfg(windows)]
+    {
+        /// Modules searched for `extern "C"` symbols, in order.
+        const WINDOWS_C_RUNTIMES: &[&str] = &["ucrtbase.dll", "msvcrt.dll", "kernel32.dll"];
+
+        // The executable first: a symbol the host itself exports should win
+        // over a same-named one in a system library.
+        if let Ok(this) = libloading::os::windows::Library::this() {
+            // SAFETY: looking a symbol up cannot execute it; the pointer is
+            // only stored.
+            if let Ok(symbol) = unsafe { this.get::<*const c_void>(name.as_bytes()) } {
+                return Some(*symbol);
+            }
+        }
+
+        for module in WINDOWS_C_RUNTIMES {
+            // SAFETY: `LoadLibrary` on a C runtime the process is already
+            // using; any initialiser it has has therefore already run.
+            let Ok(library) = (unsafe { libloading::os::windows::Library::new(module) }) else {
+                continue;
+            };
+
+            // SAFETY: a lookup neither executes the symbol nor takes
+            // ownership of it.
+            let Ok(symbol) = (unsafe { library.get::<*const c_void>(name.as_bytes()) }) else {
+                // Not here: release this handle before trying the next
+                // module, so a miss does not retain a reference.
+                continue;
+            };
+            let address = *symbol;
+
+            // The handle is retained deliberately, and only on success: the
+            // resolved pointer goes into the dispatch table and is called
+            // for as long as the assembly is loaded, so unloading the module
+            // out from under it would dangle. These are system runtimes that
+            // stay mapped for the process's lifetime regardless.
+            let _retained = std::mem::ManuallyDrop::new(library);
+            return Some(address);
+        }
+
+        None
+    }
+
+    #[cfg(not(windows))]
+    {
+        let this = libloading::os::unix::Library::this();
+        // SAFETY: as above -- a lookup neither executes nor takes ownership.
+        let symbol = unsafe { this.get::<*const c_void>(name.as_bytes()) }.ok()?;
+        Some(unsafe { *symbol })
     }
 }

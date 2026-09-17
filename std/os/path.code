@@ -159,8 +159,8 @@ public func normpath(path: String) -> String {
         return ".";
     }
     let is_absolute: bool = path.starts_with("/");
-    let parts: Array<String> = path.split("/");
-    let mut stack: Array<String> = Array::new();
+    let parts: Array[String] = path.split("/");
+    let mut stack: Array[String] = Array.new();
     let mut i: usize = 0;
     while i < parts.len() {
         let part: String = parts[i];

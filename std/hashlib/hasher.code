@@ -11,7 +11,7 @@ public trait Hasher {
     func write_byte(mut self, byte: u8);
 
     // Feed a slice of bytes into the hasher state.
-    func write_bytes(mut self, data: Array<u8>);
+    func write_bytes(mut self, data: Array[u8]);
 
     // Feed an unsigned 64-bit integer into the hasher state.
     func write_u64(mut self, value: u64);
@@ -84,7 +84,7 @@ public func ahasher_write_byte(hasher: mut AHasher, byte: u8) {
 }
 
 // AHasher: write_bytes
-public func ahasher_write_bytes(hasher: mut AHasher, data: Array<u8>) {
+public func ahasher_write_bytes(hasher: mut AHasher, data: Array[u8]) {
     let mut i: usize = 0;
     // Process 8 bytes at a time for speed.
     while i + 8 <= data.len() {
@@ -177,7 +177,7 @@ public func fnv1a_write_byte(hasher: mut Fnv1aHasher, byte: u8) {
 }
 
 // Fnv1aHasher: write_bytes
-public func fnv1a_write_bytes(hasher: mut Fnv1aHasher, data: Array<u8>) {
+public func fnv1a_write_bytes(hasher: mut Fnv1aHasher, data: Array[u8]) {
     let mut i: usize = 0;
     while i < data.len() {
         hasher.state = hasher.state ^ (data[i] as u64);

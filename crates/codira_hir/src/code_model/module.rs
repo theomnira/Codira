@@ -160,6 +160,36 @@ impl Module {
         .collect()
     }
 
+    /// Every function defined in this module, including the ones declared
+    /// inside `extend` blocks.
+    ///
+    /// `declarations` only reports module-level items, so a method lives
+    /// exclusively under `impls(..).items(..)`. Any consumer that needs "all
+    /// the code in this module" -- codegen, which must emit a prototype and a
+    /// body for each -- has to walk both, and walking only the first is a
+    /// silent failure: the method type-checks, resolves, and then has no LLVM
+    /// function behind it at the call site. This exists so that walk is
+    /// written once instead of being repeated at every such site.
+    pub fn all_functions(self, db: &dyn HirDatabase) -> Vec<Function> {
+        let mut functions: Vec<Function> = self
+            .declarations(db)
+            .into_iter()
+            .filter_map(|def| match def {
+                ModuleDef::Function(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+
+        for item in self.impls(db) {
+            for associated_item in item.items(db) {
+                let AssocItem::Function(f) = associated_item;
+                functions.push(f);
+            }
+        }
+
+        functions
+    }
+
     pub fn impls(self, db: &dyn HirDatabase) -> Vec<Impl> {
         let package_defs = db.package_defs(self.id.package);
         package_defs.modules[self.id.local_id]

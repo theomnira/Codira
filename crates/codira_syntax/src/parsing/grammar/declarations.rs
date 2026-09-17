@@ -6,8 +6,9 @@
 //! - Part of the Codira compiler and runtime toolchain.
 use super::{
     adt, error_block, expressions, generics, name, name_recovery, opt_attribute_list,
-    opt_visibility, params, paths, traits, types, Marker, Parser, TokenSet, EOF, ERROR, EXTERN,
-    FUNCTION_DEF, IDENT, MACRO_DEF, RENAME, RET_TYPE, USE, USES_CLAUSE, USE_TREE, USE_TREE_LIST,
+    opt_visibility, params, paths, traits, types, Marker, Parser, TokenSet, CONST_DEF, EOF, ERROR,
+    EXTERN, FUNCTION_DEF, IDENT, MACRO_DEF, RENAME, RET_TYPE, USE, USES_CLAUSE, USE_TREE,
+    USE_TREE_LIST,
 };
 use crate::parsing::grammar::paths::is_use_path_start;
 
@@ -126,6 +127,16 @@ fn declarations_without_modifiers(p: &mut Parser<'_>, m: Marker) -> Result<(), M
         }
         T![type] => {
             adt::type_alias_def(p, m);
+        }
+        // Module-level bindings: `let NAME: T = expr;` (and `var`, which
+        // differs only in mutability -- a distinction HIR does not track
+        // today, see spec/LANGUAGE_SPEC.md section 8's shared mutability
+        // model). This is what the standard library actually writes for
+        // its constants; `const` is deliberately *not* a keyword, since
+        // introducing one would imply comptime-only evaluation semantics
+        // that should be decided rather than arrived at incidentally.
+        T![let] | T![var] => {
+            const_def(p, m);
         }
         T![trait] => {
             traits::trait_def(p, m);
@@ -374,4 +385,38 @@ fn opt_rename(p: &mut Parser<'_>) {
         }
         m.complete(p, RENAME);
     }
+}
+
+/// Parses a module-level binding: `let NAME: T = expr;`.
+///
+/// Deliberately requires both the type ascription and the initializer. A
+/// module-level binding has no enclosing scope to infer a type from and no
+/// later assignment to take a value from, so either omission is a hard
+/// error rather than something inference could recover.
+fn const_def(p: &mut Parser<'_>, m: Marker) {
+    assert!(p.at(T![let]) || p.at(T![var]));
+    p.bump_any();
+    // `let mut NAME` is accepted here for the same reason
+    // `expressions::let_stmt` accepts it inside a block: it is the
+    // Rust-style spelling of `var`. Without this the contextual `mut` is
+    // consumed as the binding's *name*, and the real name then shows up
+    // where the `:` was expected -- so `let mut g: T = ..` failed with "a
+    // module-level binding must declare its type" despite declaring one,
+    // which is how `std/random/random.code` was blocked.
+    if p.at_contextual_kw("mut") {
+        p.bump_remap(T![mut]);
+    }
+    name(p);
+    if p.at(T![:]) {
+        types::ascription(p);
+    } else {
+        p.error("a module-level binding must declare its type");
+    }
+    if p.eat(T![=]) {
+        expressions::expr(p);
+    } else {
+        p.error("a module-level binding must have an initializer");
+    }
+    p.eat(T![;]);
+    m.complete(p, CONST_DEF);
 }

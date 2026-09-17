@@ -41,7 +41,7 @@ public func combine_hash(seed: u64, value: u64) -> u64 {
 // Combines a sequence of hash values in order. The result depends on the
 // order in which the hashes are fed in.
 // ---------------------------------------------------------------------------
-public func combine_hash_ordered(hashes: Array<u64>) -> u64 {
+public func combine_hash_ordered(hashes: Array[u64]) -> u64 {
     let mut result: u64 = 0;
     let mut i: usize = 0;
     while i < hashes.len() {
@@ -56,7 +56,7 @@ public func combine_hash_ordered(hashes: Array<u64>) -> u64 {
 // Combines a sequence of hash values in an order-independent manner using
 // XOR. Suitable for sets and other unordered collections.
 // ---------------------------------------------------------------------------
-public func combine_hash_unordered(hashes: Array<u64>) -> u64 {
+public func combine_hash_unordered(hashes: Array[u64]) -> u64 {
     let mut result: u64 = 0;
     let mut i: usize = 0;
     while i < hashes.len() {
@@ -70,7 +70,7 @@ public func combine_hash_unordered(hashes: Array<u64>) -> u64 {
 // hash_bytes
 // Hashes a raw byte slice using FNV-1a.
 // ---------------------------------------------------------------------------
-public func hash_bytes(data: Array<u8>) -> u64 {
+public func hash_bytes(data: Array[u8]) -> u64 {
     let fnv_offset: u64 = 0xCBF29CE484222325;
     let fnv_prime: u64 = 0x00000100000001B3;
     let mut h: u64 = fnv_offset;
@@ -129,7 +129,7 @@ public func hash_f64(value: f64) -> u64 {
     if v == 0.0 {
         v = 0.0;
     }
-    let bits: u64 = bitcast<u64>(v);
+    let bits: u64 = bitcast(v);
     return hash_u64(bits);
 }
 

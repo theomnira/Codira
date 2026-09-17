@@ -39,160 +39,202 @@ public struct DType {
 // ---- Classification ---------------------------------------------------------
 
 // Returns True if this DType is an unsigned integer type, False otherwise.
-public func DType.is_unsigned(self) -> bool {
-    return self.is_uint() | self.is_uint_index();
+extend DType {
+    public func is_unsigned(self) -> bool {
+        return self.is_uint() | self.is_uint_index();
+    }
 }
 
 // Returns True if this DType is a signed (or floating point) type.
-public func DType.is_signed(self) -> bool {
-    return self.is_floating_point() | (self.is_integral() & ~self.is_unsigned());
+extend DType {
+    public func is_signed(self) -> bool {
+        return self.is_floating_point() | (self.is_integral() & ~self.is_unsigned());
+    }
 }
 
 // Returns True for a non-index (fixed-width) integer type.
-public func DType._is_non_index_integral(self) -> bool {
-    return self == DType.uint8 | self == DType.int8
-         | self == DType.uint16 | self == DType.int16
-         | self == DType.uint32 | self == DType.int32
-         | self == DType.uint64 | self == DType.int64
-         | self == DType.uint128 | self == DType.int128;
+extend DType {
+    public func _is_non_index_integral(self) -> bool {
+        return self == DType.uint8 | self == DType.int8
+             | self == DType.uint16 | self == DType.int16
+             | self == DType.uint32 | self == DType.int32
+             | self == DType.uint64 | self == DType.int64
+             | self == DType.uint128 | self == DType.int128;
+    }
 }
 
 // Returns True if this DType is an integer type (index-width or fixed width).
-public func DType.is_integral(self) -> bool {
-    return self.is_int_index() | self.is_uint_index()
-         | self._is_non_index_integral();
+extend DType {
+    public func is_integral(self) -> bool {
+        return self.is_int_index() | self.is_uint_index()
+             | self._is_non_index_integral();
+    }
 }
 
 // Returns True if this DType is IEEE/brain floating point, excluding the
 // exponent-only float4/float8 exponent formats.
-public func DType.is_floating_point(self) -> bool {
-    return self == DType.float16 | self == DType.bfloat16
-         | self == DType.float32 | self == DType.float64
-         | self.is_float8();
+extend DType {
+    public func is_floating_point(self) -> bool {
+        return self == DType.float16 | self == DType.bfloat16
+             | self == DType.float32 | self == DType.float64
+             | self.is_float8();
+    }
 }
 
 // Returns True if this DType is an 8-bit floating point type.
-public func DType.is_float8(self) -> bool {
-    return self == DType.float8_e8m0fnu | self == DType.float8_e3m4
-         | self == DType.float8_e4m3fn | self == DType.float8_e4m3fnuz
-         | self == DType.float8_e5m2 | self == DType.float8_e5m2fnuz;
+extend DType {
+    public func is_float8(self) -> bool {
+        return self == DType.float8_e8m0fnu | self == DType.float8_e3m4
+             | self == DType.float8_e4m3fn | self == DType.float8_e4m3fnuz
+             | self == DType.float8_e5m2 | self == DType.float8_e5m2fnuz;
+    }
 }
 
 // Returns True if this DType is half precision (bfloat16 or float16).
-public func DType.is_half_float(self) -> bool {
-    return self == DType.bfloat16 | self == DType.float16;
+extend DType {
+    public func is_half_float(self) -> bool {
+        return self == DType.bfloat16 | self == DType.float16;
+    }
 }
 
 // Returns True if this DType is numeric (integer or usable floating point).
-public func DType.is_numeric(self) -> bool {
-    return self.is_integral()
-         | (self.is_floating_point() & ~self._is_non_numeric_float());
+extend DType {
+    public func is_numeric(self) -> bool {
+        return self.is_integral()
+             | (self.is_floating_point() & ~self._is_non_numeric_float());
+    }
 }
 
 // Index-width signed integer form.
-public func DType.is_int_index(self) -> bool {
-    return self == DType.int;
+extend DType {
+    public func is_int_index(self) -> bool {
+        return self == DType.int;
+    }
 }
 
 // Index-width unsigned integer form.
-public func DType.is_uint_index(self) -> bool {
-    return self == DType.uint;
+extend DType {
+    public func is_uint_index(self) -> bool {
+        return self == DType.uint;
+    }
 }
 
 // Fixed-width unsigned integer form (excluding index-width).
-public func DType.is_uint(self) -> bool {
-    return self._is_non_index_integral() & (self._ui8 % 2 == 0);
+extend DType {
+    public func is_uint(self) -> bool {
+        return self._is_non_index_integral() & (self._ui8 % 2 == 0);
+    }
 }
 
 // Returns True for float4/float8 exponent-only formats with no usable mantissa.
-public func DType._is_non_numeric_float(self) -> bool {
-    return self == DType.float4_e2m1fn | self == DType.float8_e8m0fnu;
+extend DType {
+    public func _is_non_numeric_float(self) -> bool {
+        return self == DType.float4_e2m1fn | self == DType.float8_e8m0fnu;
+    }
 }
 
 // ---- Equality ------------------------------------------------------------------
 
 // Compare two DType values for equality.
-public func DType.eq(self, other: DType) -> bool {
-    return self._ui8 == other._ui8;
+extend DType {
+    public func eq(self, other: DType) -> bool {
+        return self._ui8 == other._ui8;
+    }
 }
 
 // Compare two DType values for inequality.
-public func DType.ne(self, other: DType) -> bool {
-    return self._ui8 != other._ui8;
+extend DType {
+    public func ne(self, other: DType) -> bool {
+        return self._ui8 != other._ui8;
+    }
 }
 
 // Return the raw u8 tag.  Compiler-facing.
-public func DType._as_ui8(self) -> u8 {
-    return self._ui8;
+extend DType {
+    public func _as_ui8(self) -> u8 {
+        return self._ui8;
+    }
 }
 
 // Return the raw u8 tag as the `!kgen.dtype` discriminant used by codegen.
-public func DType.get_value(self) -> u8 {
-    return self._ui8;
+extend DType {
+    public func get_value(self) -> u8 {
+        return self._ui8;
+    }
 }
 
 // ---- Floating point geometry ----------------------------------------------------
 
 // Return the number of exponent bits for a floating point DType.
-public func DType.exponent_width(self) -> usize {
-    if self == DType.float4_e2m1fn {
-        return 2;
+extend DType {
+    public func exponent_width(self) -> usize {
+        if self == DType.float4_e2m1fn {
+            return 2;
+        }
+        if self == DType.float8_e4m3fn | self == DType.float8_e4m3fnuz {
+            return 4;
+        }
+        if self.is_half_float() {
+            return 5;
+        }
+        if self == DType.float32 | self == DType.bfloat16 {
+            return 8;
+        }
+        if self == DType.float64 {
+            return 11;
+        }
+        return 0;
     }
-    if self == DType.float8_e4m3fn | self == DType.float8_e4m3fnuz {
-        return 4;
-    }
-    if self.is_half_float() {
-        return 5;
-    }
-    if self == DType.float32 | self == DType.bfloat16 {
-        return 8;
-    }
-    if self == DType.float64 {
-        return 11;
-    }
-    return 0;
 }
 
 // Return the number of mantissa bits for a floating point DType.
-public func DType.mantissa_width(self) -> int {
-    assert(self.is_floating_point(), "dtype must be floating point");
-    return self.bit_width() - self.exponent_width() - 1;
+extend DType {
+    public func mantissa_width(self) -> int {
+        assert(self.is_floating_point(), "dtype must be floating point");
+        return self.bit_width() - self.exponent_width() - 1;
+    }
 }
 
 // Return the maximum exponent for a floating point DType.
-public func DType.max_exponent(self) -> int {
-    if self == DType.float4_e2m1fn {
-        return 2;
+extend DType {
+    public func max_exponent(self) -> int {
+        if self == DType.float4_e2m1fn {
+            return 2;
+        }
+        if self == DType.float8_e4m3fn | self == DType.float8_e4m3fnuz {
+            return 8;
+        }
+        if self == DType.float8_e5m2 | self == DType.float8_e5m2fnuz
+           | self == DType.float16 {
+            return 16;
+        }
+        if self == DType.bfloat16 | self == DType.float32 {
+            return 128;
+        }
+        if self == DType.float64 {
+            return 1024;
+        }
+        return 0;
     }
-    if self == DType.float8_e4m3fn | self == DType.float8_e4m3fnuz {
-        return 8;
-    }
-    if self == DType.float8_e5m2 | self == DType.float8_e5m2fnuz
-       | self == DType.float16 {
-        return 16;
-    }
-    if self == DType.bfloat16 | self == DType.float32 {
-        return 128;
-    }
-    if self == DType.float64 {
-        return 1024;
-    }
-    return 0;
 }
 
 // Return the exponent bias for a floating point DType.
-public func DType.exponent_bias(self) -> int {
-    if self == DType.float8_e4m3fnuz | self == DType.float8_e5m2fnuz {
-        return self.max_exponent();
+extend DType {
+    public func exponent_bias(self) -> int {
+        if self == DType.float8_e4m3fnuz | self == DType.float8_e5m2fnuz {
+            return self.max_exponent();
+        }
+        return self.max_exponent() - 1;
     }
-    return self.max_exponent() - 1;
 }
 
 // ---- Bit width ------------------------------------------------------------------
 
 // Return the number of bits used to represent this type.
-public func DType.bit_width(self) -> usize {
-    return _tag_bit_width(self._ui8);
+extend DType {
+    public func bit_width(self) -> usize {
+        return _tag_bit_width(self._ui8);
+    }
 }
 
 // Helper: bit width (bits) for a given u8 tag.
@@ -220,20 +262,22 @@ func _tag_bit_width(tag: u8) -> usize {
 
 // Compiler intrinsic resolving a DType constant's bit width.  The compiler
 // replaces this with the concrete width; the fallback returns 64.
-func __intrinsic_dtype_bitwidth(self: DType) -> usize {
+func __intrinsic_dtype_bitwidth(this: DType) -> usize {
     return 64;
 }
 
 // ---- String conversion -----------------------------------------------------------
 
 // Return the canonical name of this DType (e.g. "float32").
-public func DType.to_string(self) -> String {
-    return _dtype_name(self);
+extend DType {
+    public func to_string(self) -> String {
+        return _dtype_name(self);
+    }
 }
 
 // Internal: map a DType to its canonical string name.
-func _dtype_name(self: DType) -> String {
-    let t = self._ui8;
+func _dtype_name(this: DType) -> String {
+    let t = this._ui8;
     if t == 0 {
         return "bool";
     }
@@ -310,82 +354,84 @@ func _dtype_name(self: DType) -> String {
 }
 
 // Parse a DType from a (prefixed or bare) string name, or None if unknown.
-public func DType._from_str(str: String) -> Optional[DType] {
-    // Whitespace/prefix-tolerant name lookup.
-    let name = str;
-    if name == "bool" {
-        return some(DType.bool);
+extend DType {
+    public func _from_str(str: String) -> Optional[DType] {
+        // Whitespace/prefix-tolerant name lookup.
+        let name = str;
+        if name == "bool" {
+            return some(DType.bool);
+        }
+        if name == "int" {
+            return some(DType.int);
+        }
+        if name == "uint" {
+            return some(DType.uint);
+        }
+        if name == "uint8" {
+            return some(DType.uint8);
+        }
+        if name == "int8" {
+            return some(DType.int8);
+        }
+        if name == "uint16" {
+            return some(DType.uint16);
+        }
+        if name == "int16" {
+            return some(DType.int16);
+        }
+        if name == "uint32" {
+            return some(DType.uint32);
+        }
+        if name == "int32" {
+            return some(DType.int32);
+        }
+        if name == "uint64" {
+            return some(DType.uint64);
+        }
+        if name == "int64" {
+            return some(DType.int64);
+        }
+        if name == "uint128" {
+            return some(DType.uint128);
+        }
+        if name == "int128" {
+            return some(DType.int128);
+        }
+        if name == "float4_e2m1fn" {
+            return some(DType.float4_e2m1fn);
+        }
+        if name == "float8_e8m0fnu" {
+            return some(DType.float8_e8m0fnu);
+        }
+        if name == "float8_e3m4" {
+            return some(DType.float8_e3m4);
+        }
+        if name == "float8_e4m3fn" {
+            return some(DType.float8_e4m3fn);
+        }
+        if name == "float8_e4m3fnuz" {
+            return some(DType.float8_e4m3fnuz);
+        }
+        if name == "float8_e5m2" {
+            return some(DType.float8_e5m2);
+        }
+        if name == "float8_e5m2fnuz" {
+            return some(DType.float8_e5m2fnuz);
+        }
+        if name == "bfloat16" {
+            return some(DType.bfloat16);
+        }
+        if name == "float16" {
+            return some(DType.float16);
+        }
+        if name == "float32" {
+            return some(DType.float32);
+        }
+        if name == "float64" {
+            return some(DType.float64);
+        }
+        return none();
     }
-    if name == "int" {
-        return some(DType.int);
-    }
-    if name == "uint" {
-        return some(DType.uint);
-    }
-    if name == "uint8" {
-        return some(DType.uint8);
-    }
-    if name == "int8" {
-        return some(DType.int8);
-    }
-    if name == "uint16" {
-        return some(DType.uint16);
-    }
-    if name == "int16" {
-        return some(DType.int16);
-    }
-    if name == "uint32" {
-        return some(DType.uint32);
-    }
-    if name == "int32" {
-        return some(DType.int32);
-    }
-    if name == "uint64" {
-        return some(DType.uint64);
-    }
-    if name == "int64" {
-        return some(DType.int64);
-    }
-    if name == "uint128" {
-        return some(DType.uint128);
-    }
-    if name == "int128" {
-        return some(DType.int128);
-    }
-    if name == "float4_e2m1fn" {
-        return some(DType.float4_e2m1fn);
-    }
-    if name == "float8_e8m0fnu" {
-        return some(DType.float8_e8m0fnu);
-    }
-    if name == "float8_e3m4" {
-        return some(DType.float8_e3m4);
-    }
-    if name == "float8_e4m3fn" {
-        return some(DType.float8_e4m3fn);
-    }
-    if name == "float8_e4m3fnuz" {
-        return some(DType.float8_e4m3fnuz);
-    }
-    if name == "float8_e5m2" {
-        return some(DType.float8_e5m2);
-    }
-    if name == "float8_e5m2fnuz" {
-        return some(DType.float8_e5m2fnuz);
-    }
-    if name == "bfloat16" {
-        return some(DType.bfloat16);
-    }
-    if name == "float16" {
-        return some(DType.float16);
-    }
-    if name == "float32" {
-        return some(DType.float32);
-    }
-    if name == "float64" {
-        return some(DType.float64);
-    }
-    return none[DType]();
 }
 
 // =============================================================================

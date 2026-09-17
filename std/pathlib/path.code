@@ -36,22 +36,22 @@ public func path_home() -> Path {
 // ---------------------------------------------------------------------------
 
 // Returns the raw path string.
-public func path_to_string(self: Path) -> String {
-    return self._raw;
+public func path_to_string(this: Path) -> String {
+    return this._raw;
 }
 
 // ---------------------------------------------------------------------------
 // join (operator /)
 // Joins this path with another component, returning a new Path.
 // ---------------------------------------------------------------------------
-public func path_join(self: Path, other: String) -> Path {
+public func path_join(this: Path, other: String) -> Path {
     if other.len() == 0 {
-        return self;
+        return this;
     }
     if other.starts_with("/") {
         return path_new(other);
     }
-    let base: String = self._raw;
+    let base: String = this._raw;
     if base.ends_with("/") {
         return path_new(base + other);
     }
@@ -59,28 +59,28 @@ public func path_join(self: Path, other: String) -> Path {
 }
 
 // Join with another Path.
-public func path_join_path(self: Path, other: Path) -> Path {
-    return path_join(self, other._raw);
+public func path_join_path(this: Path, other: Path) -> Path {
+    return path_join(this, other._raw);
 }
 
 // ---------------------------------------------------------------------------
 // name
 // Returns the final component of the path.
 // ---------------------------------------------------------------------------
-public func path_name(self: Path) -> String {
-    let idx: i64 = self._raw.rfind("/");
+public func path_name(this: Path) -> String {
+    let idx: i64 = this._raw.rfind("/");
     if idx < 0 {
-        return self._raw;
+        return this._raw;
     }
-    return self._raw.slice((idx + 1) as usize, self._raw.len());
+    return this._raw.slice((idx + 1) as usize, this._raw.len());
 }
 
 // ---------------------------------------------------------------------------
 // stem
 // Returns the final component without its last suffix (extension).
 // ---------------------------------------------------------------------------
-public func path_stem(self: Path) -> String {
-    let n: String = path_name(self);
+public func path_stem(this: Path) -> String {
+    let n: String = path_name(this);
     let idx: i64 = n.rfind(".");
     if idx <= 0 {
         return n;
@@ -93,8 +93,8 @@ public func path_stem(self: Path) -> String {
 // Returns the file extension of the final component, including the dot.
 // Returns an empty string if there is no extension.
 // ---------------------------------------------------------------------------
-public func path_suffix(self: Path) -> String {
-    let n: String = path_name(self);
+public func path_suffix(this: Path) -> String {
+    let n: String = path_name(this);
     let idx: i64 = n.rfind(".");
     if idx <= 0 {
         return "";
@@ -107,10 +107,10 @@ public func path_suffix(self: Path) -> String {
 // Returns all extensions as an array.
 // Example: "archive.tar.gz" -> [".tar", ".gz"]
 // ---------------------------------------------------------------------------
-public func path_suffixes(self: Path) -> Array<String> {
-    let n: String = path_name(self);
-    let parts: Array<String> = n.split(".");
-    let mut result: Array<String> = Array::new();
+public func path_suffixes(this: Path) -> Array[String] {
+    let n: String = path_name(this);
+    let parts: Array[String] = n.split(".");
+    let mut result: Array[String] = Array.new();
     // First part is the stem, skip it.
     let mut i: usize = 1;
     while i < parts.len() {
@@ -124,12 +124,12 @@ public func path_suffixes(self: Path) -> Array<String> {
 // parent
 // Returns the logical parent directory of this path.
 // ---------------------------------------------------------------------------
-public func path_parent(self: Path) -> Path {
-    let idx: i64 = self._raw.rfind("/");
+public func path_parent(this: Path) -> Path {
+    let idx: i64 = this._raw.rfind("/");
     if idx < 0 {
         return path_new(".");
     }
-    let dir: String = self._raw.slice(0, idx as usize);
+    let dir: String = this._raw.slice(0, idx as usize);
     if dir.len() == 0 {
         return path_new("/");
     }
@@ -140,44 +140,44 @@ public func path_parent(self: Path) -> Path {
 // exists
 // Returns true if this path exists on the filesystem.
 // ---------------------------------------------------------------------------
-public func path_exists(self: Path) -> bool {
-    return _platform_path_exists(self._raw);
+public func path_exists(this: Path) -> bool {
+    return _platform_path_exists(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // is_dir
 // Returns true if this path is an existing directory.
 // ---------------------------------------------------------------------------
-public func path_is_dir(self: Path) -> bool {
-    return _platform_is_dir(self._raw);
+public func path_is_dir(this: Path) -> bool {
+    return _platform_is_dir(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // is_file
 // Returns true if this path is an existing regular file.
 // ---------------------------------------------------------------------------
-public func path_is_file(self: Path) -> bool {
-    return _platform_is_file(self._raw);
+public func path_is_file(this: Path) -> bool {
+    return _platform_is_file(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // is_symlink
 // Returns true if this path is a symbolic link.
 // ---------------------------------------------------------------------------
-public func path_is_symlink(self: Path) -> bool {
-    return _platform_is_link(self._raw);
+public func path_is_symlink(this: Path) -> bool {
+    return _platform_is_link(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // absolute
 // Returns the absolute form of this path without resolving symlinks.
 // ---------------------------------------------------------------------------
-public func path_absolute(self: Path) -> Path {
-    if self._raw.starts_with("/") {
-        return self;
+public func path_absolute(this: Path) -> Path {
+    if this._raw.starts_with("/") {
+        return this;
     }
     let cwd: String = _platform_getcwd();
-    return path_new(cwd + "/" + self._raw);
+    return path_new(cwd + "/" + this._raw);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,8 +185,8 @@ public func path_absolute(self: Path) -> Path {
 // Returns the canonical absolute path, resolving all symlinks and
 // normalizing "." and ".." components.
 // ---------------------------------------------------------------------------
-public func path_resolve(self: Path) -> Path {
-    return path_new(_platform_realpath(self._raw));
+public func path_resolve(this: Path) -> Path {
+    return path_new(_platform_realpath(this._raw));
 }
 
 // ---------------------------------------------------------------------------
@@ -204,40 +204,40 @@ public struct FileStat {
     permissions: u32,
 }
 
-public func path_stat(self: Path) -> FileStat {
-    return _platform_stat(self._raw);
+public func path_stat(this: Path) -> FileStat {
+    return _platform_stat(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // read_text
 // Reads the entire file as a UTF-8 string.
 // ---------------------------------------------------------------------------
-public func path_read_text(self: Path) -> String {
-    return _platform_read_text(self._raw);
+public func path_read_text(this: Path) -> String {
+    return _platform_read_text(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // read_bytes
 // Reads the entire file as a byte array.
 // ---------------------------------------------------------------------------
-public func path_read_bytes(self: Path) -> Array<u8> {
-    return _platform_read_bytes(self._raw);
+public func path_read_bytes(this: Path) -> Array[u8] {
+    return _platform_read_bytes(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // write_text
 // Writes `content` to the file as UTF-8, creating or overwriting it.
 // ---------------------------------------------------------------------------
-public func path_write_text(self: Path, content: String) -> bool {
-    return _platform_write_text(self._raw, content);
+public func path_write_text(this: Path, content: String) -> bool {
+    return _platform_write_text(this._raw, content);
 }
 
 // ---------------------------------------------------------------------------
 // write_bytes
 // Writes raw bytes to the file, creating or overwriting it.
 // ---------------------------------------------------------------------------
-public func path_write_bytes(self: Path, data: Array<u8>) -> bool {
-    return _platform_write_bytes(self._raw, data);
+public func path_write_bytes(this: Path, data: Array[u8]) -> bool {
+    return _platform_write_bytes(this._raw, data);
 }
 
 // ---------------------------------------------------------------------------
@@ -246,38 +246,38 @@ public func path_write_bytes(self: Path, data: Array<u8>) -> bool {
 // directories as needed. If `exist_ok` is true, does not error when the
 // directory already exists.
 // ---------------------------------------------------------------------------
-public func path_mkdir(self: Path, parents: bool, exist_ok: bool) -> bool {
+public func path_mkdir(this: Path, parents: bool, exist_ok: bool) -> bool {
     if parents {
-        return _platform_makedirs(self._raw, exist_ok);
+        return _platform_makedirs(this._raw, exist_ok);
     }
-    if _platform_path_exists(self._raw) {
+    if _platform_path_exists(this._raw) {
         return exist_ok;
     }
-    return _platform_mkdir(self._raw);
+    return _platform_mkdir(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // rmdir
 // Removes this directory (must be empty).
 // ---------------------------------------------------------------------------
-public func path_rmdir(self: Path) -> bool {
-    return _platform_rmdir(self._raw);
+public func path_rmdir(this: Path) -> bool {
+    return _platform_rmdir(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // unlink
 // Removes this file.
 // ---------------------------------------------------------------------------
-public func path_unlink(self: Path) -> bool {
-    return _platform_remove(self._raw);
+public func path_unlink(this: Path) -> bool {
+    return _platform_remove(this._raw);
 }
 
 // ---------------------------------------------------------------------------
 // rename
 // Renames/moves this path to `target`, returning a new Path for target.
 // ---------------------------------------------------------------------------
-public func path_rename(self: Path, target: String) -> Path {
-    _platform_rename(self._raw, target);
+public func path_rename(this: Path, target: String) -> Path {
+    _platform_rename(this._raw, target);
     return path_new(target);
 }
 
@@ -286,12 +286,12 @@ public func path_rename(self: Path, target: String) -> Path {
 // Iterates over entries in this directory.
 // Returns an array of Path objects.
 // ---------------------------------------------------------------------------
-public func path_iterdir(self: Path) -> Array<Path> {
-    let names: Array<String> = _platform_listdir_names(self._raw);
-    let mut result: Array<Path> = Array::new();
+public func path_iterdir(this: Path) -> Array[Path] {
+    let names: Array[String] = _platform_listdir_names(this._raw);
+    let mut result: Array[Path] = Array.new();
     let mut i: usize = 0;
     while i < names.len() {
-        result.push(path_join(self, names[i]));
+        result.push(path_join(this, names[i]));
         i = i + 1;
     }
     return result;
@@ -301,9 +301,9 @@ public func path_iterdir(self: Path) -> Array<Path> {
 // with_suffix
 // Returns a new Path with the suffix changed.
 // ---------------------------------------------------------------------------
-public func path_with_suffix(self: Path, new_suffix: String) -> Path {
-    let s: String = path_stem(self);
-    let p: Path = path_parent(self);
+public func path_with_suffix(this: Path, new_suffix: String) -> Path {
+    let s: String = path_stem(this);
+    let p: Path = path_parent(this);
     return path_join(p, s + new_suffix);
 }
 
@@ -311,8 +311,8 @@ public func path_with_suffix(self: Path, new_suffix: String) -> Path {
 // with_name
 // Returns a new Path with the final component changed.
 // ---------------------------------------------------------------------------
-public func path_with_name(self: Path, new_name: String) -> Path {
-    let p: Path = path_parent(self);
+public func path_with_name(this: Path, new_name: String) -> Path {
+    let p: Path = path_parent(this);
     return path_join(p, new_name);
 }
 
@@ -328,12 +328,12 @@ extern func _platform_is_link(path: String) -> bool;
 extern func _platform_realpath(path: String) -> String;
 extern func _platform_stat(path: String) -> FileStat;
 extern func _platform_read_text(path: String) -> String;
-extern func _platform_read_bytes(path: String) -> Array<u8>;
+extern func _platform_read_bytes(path: String) -> Array[u8];
 extern func _platform_write_text(path: String, content: String) -> bool;
-extern func _platform_write_bytes(path: String, data: Array<u8>) -> bool;
+extern func _platform_write_bytes(path: String, data: Array[u8]) -> bool;
 extern func _platform_mkdir(path: String) -> bool;
 extern func _platform_makedirs(path: String, exist_ok: bool) -> bool;
 extern func _platform_rmdir(path: String) -> bool;
 extern func _platform_remove(path: String) -> bool;
 extern func _platform_rename(src: String, dst: String) -> bool;
-extern func _platform_listdir_names(path: String) -> Array<String>;
+extern func _platform_listdir_names(path: String) -> Array[String];

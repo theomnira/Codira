@@ -1,0 +1,11 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    func main() -> u64 {\n        let t: (u8, u64) = (1, 2);\n        t.1\n    }\",)"
+---
+19..61 '{     ... t.1 }': u64
+29..30 't': (u8, u64)
+44..50 '(1, 2)': (u8, u64)
+45..46 '1': u8
+48..49 '2': u64
+56..57 't': (u8, u64)
+56..59 't.1': u64

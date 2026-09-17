@@ -8,7 +8,7 @@
 // An exit code of 0 conventionally indicates success.
 // This function never returns.
 // ---------------------------------------------------------------------------
-public func exit(code: i32) -> ! {
+public func exit(code: i32) -> Never {
     _platform_exit(code);
 }
 
@@ -34,7 +34,7 @@ public func getppid() -> i64 {
 // Immediately terminates the process with an abnormal exit signal.
 // Unlike exit(), this does not perform cleanup.
 // ---------------------------------------------------------------------------
-public func abort() -> ! {
+public func abort() -> Never {
     _platform_abort();
 }
 
@@ -46,7 +46,7 @@ public struct ProcessInfo {
     pid: i64,
     ppid: i64,
     executable: String,
-    args: Array<String>,
+    args: Array[String],
 }
 
 // ---------------------------------------------------------------------------
@@ -67,7 +67,7 @@ public func current_process() -> ProcessInfo {
 // Returns the command-line arguments passed to the process.
 // The first element is typically the executable name/path.
 // ---------------------------------------------------------------------------
-public func args() -> Array<String> {
+public func args() -> Array[String] {
     return _platform_args();
 }
 
@@ -82,9 +82,9 @@ public func executable_path() -> String {
 // ---------------------------------------------------------------------------
 // Platform stubs (implemented by the runtime / compiler backend).
 // ---------------------------------------------------------------------------
-extern func _platform_exit(code: i32) -> !;
+extern func _platform_exit(code: i32) -> Never;
 extern func _platform_getpid() -> i64;
 extern func _platform_getppid() -> i64;
-extern func _platform_abort() -> !;
-extern func _platform_args() -> Array<String>;
+extern func _platform_abort() -> Never;
+extern func _platform_args() -> Array[String];
 extern func _platform_executable_path() -> String;

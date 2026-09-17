@@ -31,6 +31,17 @@ use std::{
 };
 
 use codira_project::{Package, LOCKFILE_NAME};
+
+/// How long to wait between attempts to take the output-directory lock.
+const LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(500);
+
+/// How many attempts before giving up and reporting the lock as stuck.
+///
+/// Bounded on purpose -- see `Driver::acquire_filesystem_output_lock`. The
+/// total (30 seconds) is long enough to outlast any realistic concurrent
+/// build's write phase, and short enough that a wedged directory reports
+/// itself instead of consuming a CI job's entire timeout.
+const LOCK_ACQUIRE_ATTEMPTS: u32 = 60;
 use walkdir::WalkDir;
 
 pub use self::{config::Config, display_color::DisplayColor};
@@ -54,6 +65,15 @@ pub struct Driver {
 
 impl Driver {
     /// Constructs a driver with a specific configuration.
+    /// The salsa database backing this driver.
+    ///
+    /// Exposed so tooling can run individual queries -- profilers, IDE
+    /// integrations, and anything that needs to ask the compiler a question
+    /// without driving a whole build.
+    pub fn db(&self) -> &CompilerDatabase {
+        &self.db
+    }
+
     pub fn with_config(config: Config, out_dir: PathBuf) -> Self {
         Self {
             db: CompilerDatabase::new(&config),
@@ -341,7 +361,7 @@ impl Driver {
     /// Writes all assemblies. If `force` is false, the binary will not be
     /// written if there are no changes since last time it was written.
     pub fn write_all_assemblies(&mut self, force: bool) -> Result<(), anyhow::Error> {
-        let _lock = self.acquire_filesystem_output_lock();
+        let _lock = self.acquire_filesystem_output_lock()?;
 
         // Create a copy of all current files
         for package in codira_hir::Package::all(&self.db) {
@@ -360,26 +380,59 @@ impl Driver {
     /// Acquires a filesystem lock on the output directory. This ensures that
     /// multiple instances cannot write to the same output directory and
     /// that the runtime does not start reading before we finished writing.
-    fn acquire_filesystem_output_lock(&self) -> lockfile::Lockfile {
-        loop {
-            match lockfile::Lockfile::create(self.out_dir.join(LOCKFILE_NAME)) {
-                Ok(lockfile) => break lockfile,
-                Err(_) => {
-                    // TODO(#313): Implement/abstract a better way to emit warnings/errors from the
-                    //  driver. Directly writing to stdout accesses global state. The driver is not
-                    //  aware of how to output logging information.
-                    // if self.display_color.should_enable() {
-                    //     eprintln!(
-                    //         "{} on acquiring lock on output directory",
-                    //         yansi_term::Color::Cyan.paint("Blocked")
-                    //     )
-                    // } else {
-                    //     eprintln!("Blocked on acquiring lock on output directory")
-                    // }
-                    std::thread::sleep(Duration::from_secs(1));
+    ///
+    /// # Why this gives up
+    ///
+    /// This used to be `loop { .. sleep(1s) }` with no bound and no message
+    /// -- the "Blocked on acquiring lock" print was commented out awaiting a
+    /// driver-level diagnostics channel (TODO #313). The result was the
+    /// worst failure mode a build tool has: interrupt one build (Ctrl-C, a
+    /// cancelled CI job, a crash) and `lockfile::Lockfile`'s `Drop` never
+    /// runs, so the lock file survives -- and from then on *every* build in
+    /// that directory hung forever, silently, with no way to discover why.
+    ///
+    /// The lock file carries no owner information, so a stale lock cannot be
+    /// told from a live one and reclaiming it automatically could stomp a
+    /// concurrent build. What it can do is fail loudly and say exactly what
+    /// to delete, which turns an unrecoverable silent hang into a
+    /// 30-second error with instructions.
+    ///
+    /// Writing directly to stderr is deliberate and matches what every build
+    /// tool does when it blocks (cargo prints "Blocking waiting for file
+    /// lock"): a user staring at a stalled build needs to be told *now*, not
+    /// through a diagnostics channel that is collected and reported at the
+    /// end of a run that may never finish.
+    fn acquire_filesystem_output_lock(&self) -> Result<lockfile::Lockfile, anyhow::Error> {
+        let path = self.out_dir.join(LOCKFILE_NAME);
+
+        for attempt in 0..LOCK_ACQUIRE_ATTEMPTS {
+            match lockfile::Lockfile::create(&path) {
+                Ok(lockfile) => return Ok(lockfile),
+                Err(_) if attempt == 0 => {
+                    // Announce on the first block only, so a build that is
+                    // genuinely waiting on a concurrent one does not spam.
+                    eprintln!(
+                        "Blocked on acquiring the lock on the output directory ({})",
+                        path.display()
+                    );
                 }
-            };
+                Err(_) => {}
+            }
+            std::thread::sleep(LOCK_RETRY_INTERVAL);
         }
+
+        let seconds =
+            u64::from(LOCK_ACQUIRE_ATTEMPTS) * LOCK_RETRY_INTERVAL.as_millis() as u64 / 1000;
+        Err(anyhow::anyhow!(
+            concat!(
+                "could not acquire the lock on the output directory after {seconds} seconds.\n",
+                "`{path}` exists, which means another `codira` build is writing there, ",
+                "or one was interrupted and left the lock behind.\n",
+                "If no other build is running, delete that file and try again."
+            ),
+            seconds = seconds,
+            path = path.display(),
+        ))
     }
 
     /// Generates an assembly for the target machine and specified module and

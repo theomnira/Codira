@@ -241,7 +241,24 @@ fn get_function_definition_array<'ink, 'a>(
                 // Otherwise, use the normal function
                 .or_else(|| module.get_function(&name))
                 .unwrap();
-            value.set_linkage(Linkage::Private);
+
+            // Codira functions are private in the assembly: the runtime reaches
+            // them through this table's function *pointers*, never by symbol
+            // name, and keeping them private is what lets the optimiser treat
+            // the whole module as closed.
+            //
+            // `@export("C")` is the exception, and the reason it exists
+            // (`spec/LANGUAGE_SPEC.md` section 10): such a function must stay
+            // externally visible under its own unmangled name so C, Rust,
+            // Python (`ctypes`) and Node (`ffi`) callers can find it. It is
+            // still listed here, so hot reloading and the Codira-side dispatch
+            // keep working exactly as before -- the only difference is that
+            // the symbol also survives into the assembly's export table.
+            if f.export_abi(db).as_deref() == Some("C") {
+                value.set_linkage(Linkage::DLLExport);
+            } else {
+                value.set_linkage(Linkage::Private);
+            }
 
             // Generate the signature from the function
             let prototype =

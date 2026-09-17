@@ -657,6 +657,7 @@ dependencies = [
  "codira_abi",
  "codira_compiler",
  "codira_compiler_daemon",
+ "codira_healing",
  "codira_language_server",
  "codira_project",
  "codira_runtime",
@@ -745,6 +746,7 @@ dependencies = [
  "insta",
  "lockfile",
  "log",
+ "tempfile",
  "walkdir",
  "yansi-term",
 ]
@@ -959,6 +961,7 @@ dependencies = [
  "codira_project",
  "codira_test",
  "itertools 0.12.1",
+ "libloading",
  "log",
  "notify",
  "once_cell",

@@ -119,14 +119,14 @@ public func repr_string(value: String) -> String {
 // repr for Array<T> where T: Representable
 // Produces output like: [1, 2, 3]
 // ---------------------------------------------------------------------------
-public func repr_array(values: Array<Representable>) -> String {
+public func repr_array(values: Array[Representable]) -> String {
     let mut result: String = "[";
     let mut i: usize = 0;
     while i < values.len() {
         if i > 0 {
             result = result + ", ";
         }
-        result = result + values[i].repr();
+        result = result + values.repr();
         i = i + 1;
     }
     result = result + "]";
@@ -137,7 +137,7 @@ public func repr_array(values: Array<Representable>) -> String {
 // repr for Optional<T>
 // Produces "Some(repr)" or "None".
 // ---------------------------------------------------------------------------
-public func repr_optional(value: Optional<Representable>) -> String {
+public func repr_optional(value: Optional[Representable]) -> String {
     if value.is_some() {
         return "Some(" + value.unwrap().repr() + ")";
     }

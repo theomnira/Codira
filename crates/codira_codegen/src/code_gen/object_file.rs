@@ -41,13 +41,22 @@ impl ObjectFile {
     }
 
     /// Links the object file into a shared object.
-    pub fn into_shared_object(self, output_path: &Path) -> Result<(), anyhow::Error> {
+    ///
+    /// `exported_symbols` names the `@export("C")` functions that must be
+    /// reachable from outside the assembly -- see
+    /// `linker::Linker::build_shared_object` for why only some platforms
+    /// need them spelled out.
+    pub fn into_shared_object(
+        self,
+        output_path: &Path,
+        exported_symbols: &[String],
+    ) -> Result<(), anyhow::Error> {
         // Construct a linker for the target
         let mut linker = linker::create_with_target(&self.target);
         linker.add_object(self.obj_file.path())?;
 
         // Link the object
-        linker.build_shared_object(output_path)?;
+        linker.build_shared_object(output_path, exported_symbols)?;
         linker.finalize()?;
 
         Ok(())

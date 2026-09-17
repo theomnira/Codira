@@ -111,9 +111,19 @@ pub(crate) fn build_target_assembly(
     // Construct a temporary file for the assembly
     let file = NamedTempFile::new().expect("could not create temp file for shared object");
 
+    // Every `@export("C")` function in this group must survive into the
+    // assembly's export table; see `linker::Linker::build_shared_object`.
+    let module_partition = db.module_partition();
+    let exported_symbols: Vec<String> = module_partition[module_group]
+        .iter()
+        .flat_map(|module| module.all_functions(db))
+        .filter(|f| f.export_abi(db).as_deref() == Some("C"))
+        .map(|f| f.name(db).to_string())
+        .collect();
+
     // Translate the object file into a shared object
     obj_file
-        .into_shared_object(file.path())
+        .into_shared_object(file.path(), &exported_symbols)
         .expect("could not link object file");
 
     let target = db.target();

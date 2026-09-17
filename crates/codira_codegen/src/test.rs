@@ -1238,3 +1238,163 @@ fn cast_identity_emits_nothing() {
     public func same(a: i32) -> i32 { a as i32 }"#,
     );
 }
+
+/// Tuples lower to anonymous LLVM structs built with `insertvalue`, with no
+/// allocation and no runtime call -- the property that makes them usable as
+/// the stdlib's multiple-return mechanism (`frexp(x) -> (f64, i32)`).
+///
+/// Unoptimised so the aggregate construction is actually visible; the
+/// optimised form is covered by `tuple_is_zero_overhead` below.
+#[test]
+fn tuple_expr() {
+    test_snapshot_unoptimized(
+        "tuple_expr",
+        r#"
+    public func divmod(a: i32, b: i32) -> (i32, i32) {
+        (a / b, a % b)
+    }
+
+    public func first(t: (i32, f64)) -> i32 {
+        t.0
+    }
+
+    public func second(t: (i32, f64)) -> f64 {
+        t.1
+    }
+
+    public func nested(a: i32) -> i32 {
+        let t = ((a, a), a);
+        t.0.1
+    }
+
+    public func unit() -> () {
+        ()
+    }"#,
+    );
+}
+
+/// With optimisation on, a tuple used only to carry two values out of a
+/// function disappears entirely: the aggregate is scalarised and the whole
+/// body folds to a constant. This is the guarantee that matters -- returning
+/// a tuple costs nothing versus returning the values some other way, so
+/// stdlib signatures never have to trade clarity for speed.
+#[test]
+fn tuple_is_zero_overhead() {
+    test_snapshot(
+        "tuple_is_zero_overhead",
+        r#"
+    func divmod(a: i32, b: i32) -> (i32, i32) {
+        (a / b, a % b)
+    }
+
+    public func main() -> i32 {
+        let qr = divmod(17, 5);
+        qr.0 * 100 + qr.1
+    }"#,
+    );
+}
+
+/// Methods take their receiver as LLVM parameter 0, ahead of the value
+/// parameters; associated functions (no `self`) take none. Both go through
+/// the same `gen_call` a free function does, so they share its dispatch
+/// table and hot-reload behaviour rather than living on a parallel path.
+#[test]
+fn method_call() {
+    test_snapshot_unoptimized(
+        "method_call",
+        r#"
+    public struct Counter { value: i32 };
+
+    extend Counter {
+        func get(self) -> i32 {
+            self.value
+        }
+
+        func bumped(self, by: i32) -> Counter {
+            Counter { value: self.value + by }
+        }
+
+        func make(start: i32) -> Counter {
+            Counter { value: start }
+        }
+    }
+
+    public func chained(start: i32, by: i32) -> i32 {
+        Counter.make(start).bumped(by).get()
+    }"#,
+    );
+}
+
+/// `Type.assoc_fn(..)` is static member access (`LANGUAGE_SPEC` section 3),
+/// not a method call on a value. Inference recognises the type-path receiver
+/// and resolves without a `self`; codegen passes no receiver because the
+/// *callee* has no `self` parameter.
+#[test]
+fn static_member_access() {
+    test_snapshot(
+        "static_member_access",
+        r#"
+    struct Counter { value: i32 };
+
+    extend Counter {
+        func make(start: i32) -> Counter {
+            Counter { value: start }
+        }
+        func get(self) -> i32 {
+            self.value
+        }
+    }
+
+    public func main() -> i32 {
+        Counter.make(7).get()
+    }"#,
+    );
+}
+
+/// Tuple patterns destructure with `extractvalue` and no branch: the arity is
+/// fixed by the type and inference has already checked it, so there is no
+/// test to emit. Nesting falls out by recursion, and `_` binds nothing.
+#[test]
+fn tuple_pattern() {
+    test_snapshot_unoptimized(
+        "tuple_pattern",
+        r#"
+    public func sum_pair(p: (i64, i64)) -> i64 {
+        let (x, y) = p;
+        x + y
+    }
+
+    public func destructured_param((a, b): (i64, i64)) -> i64 {
+        a + b
+    }
+
+    public func nested(v: ((i64, i64), i64)) -> i64 {
+        let ((p, q), r) = v;
+        p + q + r
+    }
+
+    public func discards(p: (i64, i64)) -> i64 {
+        let (_, keep) = p;
+        keep
+    }"#,
+    );
+}
+
+/// The payoff for tuple returns: naming both results of a multi-value
+/// function at once. Optimised, so the whole thing folds to a constant --
+/// destructuring costs nothing.
+#[test]
+fn tuple_pattern_is_zero_overhead() {
+    test_snapshot(
+        "tuple_pattern_is_zero_overhead",
+        r#"
+    func divmod(a: i64, b: i64) -> (i64, i64) {
+        (a / b, a % b)
+    }
+
+    public func main() -> i64 {
+        let (q, r) = divmod(47, 5);
+        q * 100 + r
+    }"#,
+    );
+}

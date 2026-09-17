@@ -38,12 +38,12 @@ import std.memory.pointer;
 //
 //   let result = llvm_intrinsic[f64, "llvm.sqrt.f64"](value);
 public func llvm_intrinsic[ReturnType, name: StringLiteral](args: ...) -> ReturnType {
-    return __intrinsic_llvm_call[ReturnType, name](args);
+    return __intrinsic_llvm_call(args);
 }
 
 // Variant with no return value (void intrinsics).
 public func llvm_intrinsic_void[name: StringLiteral](args: ...) -> void {
-    __intrinsic_llvm_call_void[name](args);
+    __intrinsic_llvm_call_void(args);
 }
 
 // =============================================================================
@@ -61,14 +61,14 @@ public type PrefetchLocality = i32;
 //
 //   prefetch_read(ptr.address(), 3);  // prefetch to L1 for reading
 public func prefetch_read(addr: usize, locality: PrefetchLocality) -> void {
-    __intrinsic_llvm_call_void["llvm.prefetch"](addr, 0, locality, 1);
+    __intrinsic_llvm_call_void(addr, 0, locality, 1);
 }
 
 // Prefetch for writing.
 //
 //   prefetch_write(ptr.address(), 1);  // prefetch to L3 for writing
 public func prefetch_write(addr: usize, locality: PrefetchLocality) -> void {
-    __intrinsic_llvm_call_void["llvm.prefetch"](addr, 1, locality, 1);
+    __intrinsic_llvm_call_void(addr, 1, locality, 1);
 }
 
 // Prefetch a typed pointer for reading (convenience).
@@ -101,14 +101,14 @@ public func gather[T, N: usize](
     mask: SIMD[bool, N],
     passthrough: SIMD[T, N],
 ) -> SIMD[T, N] {
-    return __intrinsic_simd_gather[T, N](base.address(), offsets, mask, passthrough);
+    return __intrinsic_simd_gather(base.address(), offsets, mask, passthrough);
 }
 
 // Gather without a mask (all lanes active, passthrough = zero).
 public func gather[T, N: usize](base: Pointer[T], offsets: SIMD[i32, N]) -> SIMD[T, N] {
-    let mask = SIMD[bool, N].splat(true);
-    let passthrough = SIMD[T, N].zero();
-    return gather[T, N](base, offsets, mask, passthrough);
+    let mask = SIMD.splat(true);
+    let passthrough = SIMD.zero();
+    return gather(base, offsets, mask, passthrough);
 }
 
 // =============================================================================
@@ -127,7 +127,7 @@ public func scatter[T, N: usize](
     values: SIMD[T, N],
     mask: SIMD[bool, N],
 ) -> void {
-    __intrinsic_simd_scatter[T, N](base.address(), offsets, values, mask);
+    __intrinsic_simd_scatter(base.address(), offsets, values, mask);
 }
 
 // Scatter without mask (all lanes active).
@@ -136,8 +136,8 @@ public func scatter[T, N: usize](
     offsets: SIMD[i32, N],
     values: SIMD[T, N],
 ) -> void {
-    let mask = SIMD[bool, N].splat(true);
-    scatter[T, N](base, offsets, values, mask);
+    let mask = SIMD.splat(true);
+    scatter(base, offsets, values, mask);
 }
 
 // =============================================================================
@@ -156,7 +156,7 @@ public func compressed_store[T, N: usize](
     values: SIMD[T, N],
     mask: SIMD[bool, N],
 ) -> usize {
-    return __intrinsic_simd_compressed_store[T, N](dest.address(), values, mask);
+    return __intrinsic_simd_compressed_store(dest.address(), values, mask);
 }
 
 // =============================================================================
@@ -170,11 +170,11 @@ public func compressed_store[T, N: usize](
 public func strided_load[T, N: usize](base: Pointer[T], stride: usize) -> SIMD[T, N] {
     let result: SIMD[T, N];
     let addr = base.address();
-    let elem_stride = stride * __intrinsic_sizeof[T]();
+    let elem_stride = stride * __intrinsic_sizeof();
     let i: usize = 0;
     while i < N {
         let elem_addr = addr + i * elem_stride;
-        result = result.set(i, __intrinsic_load[T](elem_addr));
+        result = result.set(i, __intrinsic_load(elem_addr));
         i = i + 1;
     }
     return result;
@@ -187,11 +187,11 @@ public func strided_store[T, N: usize](
     stride: usize,
 ) -> void {
     let addr = base.address();
-    let elem_stride = stride * __intrinsic_sizeof[T]();
+    let elem_stride = stride * __intrinsic_sizeof();
     let i: usize = 0;
     while i < N {
         let elem_addr = addr + i * elem_stride;
-        __intrinsic_store[T](elem_addr, values.get(i));
+        __intrinsic_store(elem_addr, values.get(i));
         i = i + 1;
     }
 }
@@ -202,12 +202,12 @@ public func strided_store[T, N: usize](
 
 // Atomic load with sequential consistency.
 public func atomic_load[T](addr: usize) -> T {
-    return __intrinsic_atomic_load[T](addr);
+    return __intrinsic_atomic_load(addr);
 }
 
 // Atomic store with sequential consistency.
 public func atomic_store[T](addr: usize, value: T) -> void {
-    __intrinsic_atomic_store[T](addr, value);
+    __intrinsic_atomic_store(addr, value);
 }
 
 // Atomic compare-and-swap.  If the value at `addr` equals `expected`,
@@ -218,37 +218,37 @@ public func atomic_compare_exchange[T](
     expected: T,
     desired: T,
 ) -> (T, bool) {
-    return __intrinsic_atomic_cmpxchg[T](addr, expected, desired);
+    return __intrinsic_atomic_cmpxchg(addr, expected, desired);
 }
 
 // Atomic fetch-and-add.  Returns the old value.
 public func atomic_fetch_add[T](addr: usize, value: T) -> T {
-    return __intrinsic_atomic_add[T](addr, value);
+    return __intrinsic_atomic_add(addr, value);
 }
 
 // Atomic fetch-and-sub.  Returns the old value.
 public func atomic_fetch_sub[T](addr: usize, value: T) -> T {
-    return __intrinsic_atomic_sub[T](addr, value);
+    return __intrinsic_atomic_sub(addr, value);
 }
 
 // Atomic fetch-and-and.  Returns the old value.
 public func atomic_fetch_and[T](addr: usize, value: T) -> T {
-    return __intrinsic_atomic_and[T](addr, value);
+    return __intrinsic_atomic_and(addr, value);
 }
 
 // Atomic fetch-and-or.  Returns the old value.
 public func atomic_fetch_or[T](addr: usize, value: T) -> T {
-    return __intrinsic_atomic_or[T](addr, value);
+    return __intrinsic_atomic_or(addr, value);
 }
 
 // Atomic fetch-and-xor.  Returns the old value.
 public func atomic_fetch_xor[T](addr: usize, value: T) -> T {
-    return __intrinsic_atomic_xor[T](addr, value);
+    return __intrinsic_atomic_xor(addr, value);
 }
 
 // Atomic exchange.  Returns the old value.
 public func atomic_exchange[T](addr: usize, value: T) -> T {
-    return __intrinsic_atomic_xchg[T](addr, value);
+    return __intrinsic_atomic_xchg(addr, value);
 }
 
 // =============================================================================
@@ -282,37 +282,37 @@ public func compiler_fence() -> void {
 
 // Count leading zeros.
 public func ctlz[T](value: T) -> T {
-    return __intrinsic_ctlz[T](value);
+    return __intrinsic_ctlz(value);
 }
 
 // Count trailing zeros.
 public func cttz[T](value: T) -> T {
-    return __intrinsic_cttz[T](value);
+    return __intrinsic_cttz(value);
 }
 
 // Population count (number of set bits).
 public func ctpop[T](value: T) -> T {
-    return __intrinsic_ctpop[T](value);
+    return __intrinsic_ctpop(value);
 }
 
 // Bit reverse.
 public func bitreverse[T](value: T) -> T {
-    return __intrinsic_bitreverse[T](value);
+    return __intrinsic_bitreverse(value);
 }
 
 // Byte swap (endianness conversion).
 public func bswap[T](value: T) -> T {
-    return __intrinsic_bswap[T](value);
+    return __intrinsic_bswap(value);
 }
 
 // Rotate left by `amount` bits.
 public func rotl[T](value: T, amount: T) -> T {
-    return __intrinsic_rotl[T](value, amount);
+    return __intrinsic_rotl(value, amount);
 }
 
 // Rotate right by `amount` bits.
 public func rotr[T](value: T, amount: T) -> T {
-    return __intrinsic_rotr[T](value, amount);
+    return __intrinsic_rotr(value, amount);
 }
 
 // =============================================================================
@@ -321,100 +321,100 @@ public func rotr[T](value: T, amount: T) -> T {
 
 // Square root.
 public func sqrt(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.sqrt.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 public func sqrtf(x: f32) -> f32 {
-    return __intrinsic_llvm_call[f32, "llvm.sqrt.f32"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Fused multiply-add: a * b + c  (single rounding).
 public func fma(a: f64, b: f64, c: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.fma.f64"](a, b, c);
+    return __intrinsic_llvm_call(a, b, c);
 }
 
 public func fmaf(a: f32, b: f32, c: f32) -> f32 {
-    return __intrinsic_llvm_call[f32, "llvm.fma.f32"](a, b, c);
+    return __intrinsic_llvm_call(a, b, c);
 }
 
 // Absolute value.
 public func fabs(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.fabs.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Floor.
 public func floor(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.floor.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Ceil.
 public func ceil(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.ceil.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Round to nearest, ties to even.
 public func round(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.round.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Truncate toward zero.
 public func trunc(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.trunc.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Copy sign: |x| with sign of y.
 public func copysign(x: f64, y: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.copysign.f64"](x, y);
+    return __intrinsic_llvm_call(x, y);
 }
 
 // Min of two floats (propagates NaN).
 public func fmin(a: f64, b: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.minnum.f64"](a, b);
+    return __intrinsic_llvm_call(a, b);
 }
 
 // Max of two floats (propagates NaN).
 public func fmax(a: f64, b: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.maxnum.f64"](a, b);
+    return __intrinsic_llvm_call(a, b);
 }
 
 // Power: x^y.
 public func pow(x: f64, y: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.pow.f64"](x, y);
+    return __intrinsic_llvm_call(x, y);
 }
 
 // Natural logarithm.
 public func log(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.log.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Base-2 logarithm.
 public func log2(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.log2.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Base-10 logarithm.
 public func log10(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.log10.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Base-e exponential.
 public func exp(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.exp.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Base-2 exponential.
 public func exp2(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.exp2.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Sine.
 public func sin(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.sin.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // Cosine.
 public func cos(x: f64) -> f64 {
-    return __intrinsic_llvm_call[f64, "llvm.cos.f64"](x);
+    return __intrinsic_llvm_call(x);
 }
 
 // =============================================================================
@@ -423,17 +423,17 @@ public func cos(x: f64) -> f64 {
 
 // Signed addition with overflow detection.
 public func add_overflow[T](a: T, b: T) -> (T, bool) {
-    return __intrinsic_llvm_call[(T, bool), "llvm.sadd.with.overflow"](a, b);
+    return __intrinsic_llvm_call(a, b);
 }
 
 // Signed subtraction with overflow detection.
 public func sub_overflow[T](a: T, b: T) -> (T, bool) {
-    return __intrinsic_llvm_call[(T, bool), "llvm.ssub.with.overflow"](a, b);
+    return __intrinsic_llvm_call(a, b);
 }
 
 // Signed multiplication with overflow detection.
 public func mul_overflow[T](a: T, b: T) -> (T, bool) {
-    return __intrinsic_llvm_call[(T, bool), "llvm.smul.with.overflow"](a, b);
+    return __intrinsic_llvm_call(a, b);
 }
 
 // =============================================================================
@@ -441,32 +441,32 @@ public func mul_overflow[T](a: T, b: T) -> (T, bool) {
 // =============================================================================
 
 // Trap — unconditionally caimport an abnormal program termination.
-public func trap() -> ! {
-    __intrinsic_llvm_call_void["llvm.trap"]();
+public func trap() -> Never {
+    __intrinsic_llvm_call_void();
 }
 
 // Debug trap — break into debugger if attached, otherwise continue.
 public func debug_trap() -> void {
-    __intrinsic_llvm_call_void["llvm.debugtrap"]();
+    __intrinsic_llvm_call_void();
 }
 
 // Assume — tell the optimizer that `condition` is always true.
 // UB if it is ever false at runtime.
 public func assume(condition: bool) -> void {
-    __intrinsic_llvm_call_void["llvm.assume"](condition);
+    __intrinsic_llvm_call_void(condition);
 }
 
 // Unreachable — hint that this point in the code is never reached.
 // UB if it IS reached at runtime.
-public func unreachable() -> ! {
+public func unreachable() -> Never {
     __intrinsic_unreachable();
 }
 
 // Likely / unlikely branch hints for the optimizer.
 public func likely(condition: bool) -> bool {
-    return __intrinsic_llvm_call[bool, "llvm.expect.i1"](condition, true);
+    return __intrinsic_llvm_call(condition, true);
 }
 
 public func unlikely(condition: bool) -> bool {
-    return __intrinsic_llvm_call[bool, "llvm.expect.i1"](condition, false);
+    return __intrinsic_llvm_call(condition, false);
 }

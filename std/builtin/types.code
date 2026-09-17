@@ -178,15 +178,15 @@ public func UINT64_MAX() -> u64 {
 
 // Returns the size in bytes of the given type.
 public func type_sizeof[T]() -> usize {
-    __intrinsic_sizeof[T]()
+    __intrinsic_sizeof()
 }
 
 // Returns the alignment in bytes of the given type.
 public func type_alignof[T]() -> usize {
-    __intrinsic_alignof[T]()
+    __intrinsic_alignof()
 }
 
 // Returns the bit-width of the given type.
 public func type_bitwidth[T]() -> usize {
-    __intrinsic_sizeof[T]() * 8
+    __intrinsic_sizeof() * 8
 }

@@ -49,33 +49,35 @@ public struct ArcPointer[T] {
 // =============================================================================
 
 // Allocate a new ArcPointer with the given value.  Initial strong = 1.
-public func ArcPointer[T].new(value: T) -> ArcPointer[T] {
-    // Allocate combined block: control header + payload.
-    let header_size = __intrinsic_sizeof[_ArcControlBlock]();
-    let payload_size = __intrinsic_sizeof[T]();
-    let payload_align = __intrinsic_alignof[T]();
-    let header_align = __intrinsic_alignof[_ArcControlBlock]();
-    let align = header_align;
-    if payload_align > align {
-        align = payload_align;
+extend ArcPointer[T] {
+    public func new(value: T) -> ArcPointer[T] {
+        // Allocate combined block: control header + payload.
+        let header_size = __intrinsic_sizeof();
+        let payload_size = __intrinsic_sizeof();
+        let payload_align = __intrinsic_alignof();
+        let header_align = __intrinsic_alignof();
+        let align = header_align;
+        if payload_align > align {
+            align = payload_align;
+        }
+
+        // Pad header to payload alignment.
+        let padding = (align - (header_size % align)) % align;
+        let total_size = header_size + padding + payload_size;
+
+        let addr = __intrinsic_alloc(total_size, align);
+        let block_ptr = UnsafePointer[_ArcControlBlock] { _addr: addr };
+
+        // Initialize control block.
+        block_ptr.store(_ArcControlBlock { strong_count: 1, weak_count: 0 });
+
+        // Initialize payload.
+        let payload_addr = addr + header_size + padding;
+        let payload_ptr = UnsafePointer[T] { _addr: payload_addr };
+        payload_ptr.init_pointee_move(value);
+
+        return ArcPointer[T] { _block: block_ptr };
     }
-
-    // Pad header to payload alignment.
-    let padding = (align - (header_size % align)) % align;
-    let total_size = header_size + padding + payload_size;
-
-    let addr = __intrinsic_alloc(total_size, align);
-    let block_ptr = UnsafePointer[_ArcControlBlock] { _addr: addr };
-
-    // Initialize control block.
-    block_ptr.store(_ArcControlBlock { strong_count: 1, weak_count: 0 });
-
-    // Initialize payload.
-    let payload_addr = addr + header_size + padding;
-    let payload_ptr = UnsafePointer[T] { _addr: payload_addr };
-    payload_ptr.init_pointee_move(value);
-
-    return ArcPointer[T] { _block: block_ptr };
 }
 
 // =============================================================================
@@ -83,32 +85,40 @@ public func ArcPointer[T].new(value: T) -> ArcPointer[T] {
 // =============================================================================
 
 // Return a pointer to the payload.
-func ArcPointer[T]._payload_ptr(self) -> UnsafePointer[T] {
-    let header_size = __intrinsic_sizeof[_ArcControlBlock]();
-    let payload_align = __intrinsic_alignof[T]();
-    let header_align = __intrinsic_alignof[_ArcControlBlock]();
-    let align = header_align;
-    if payload_align > align {
-        align = payload_align;
+extend ArcPointer[T] {
+    func _payload_ptr(self) -> UnsafePointer[T] {
+        let header_size = __intrinsic_sizeof();
+        let payload_align = __intrinsic_alignof();
+        let header_align = __intrinsic_alignof();
+        let align = header_align;
+        if payload_align > align {
+            align = payload_align;
+        }
+        let padding = (align - (header_size % align)) % align;
+        let payload_addr = self._block.address() + header_size + padding;
+        return UnsafePointer[T] { _addr: payload_addr };
     }
-    let padding = (align - (header_size % align)) % align;
-    let payload_addr = self._block.address() + header_size + padding;
-    return UnsafePointer[T] { _addr: payload_addr };
 }
 
 // Return the strong count (atomic load).
-func ArcPointer[T]._load_strong(self) -> u64 {
-    return __intrinsic_atomic_load_u64(self._block.address());
+extend ArcPointer[T] {
+    func _load_strong(self) -> u64 {
+        return __intrinsic_atomic_load_u64(self._block.address());
+    }
 }
 
 // Atomically increment the strong count and return the old value.
-func ArcPointer[T]._inc_strong(self) -> u64 {
-    return __intrinsic_atomic_add_u64(self._block.address(), 1);
+extend ArcPointer[T] {
+    func _inc_strong(self) -> u64 {
+        return __intrinsic_atomic_add_u64(self._block.address(), 1);
+    }
 }
 
 // Atomically decrement the strong count and return the old value.
-func ArcPointer[T]._dec_strong(self) -> u64 {
-    return __intrinsic_atomic_sub_u64(self._block.address(), 1);
+extend ArcPointer[T] {
+    func _dec_strong(self) -> u64 {
+        return __intrinsic_atomic_sub_u64(self._block.address(), 1);
+    }
 }
 
 // =============================================================================
@@ -116,18 +126,24 @@ func ArcPointer[T]._dec_strong(self) -> u64 {
 // =============================================================================
 
 // Read the shared value.
-public func ArcPointer[T].read(self) -> T {
-    return self._payload_ptr().load();
+extend ArcPointer[T] {
+    public func read(self) -> T {
+        return self._payload_ptr().load();
+    }
 }
 
 // Borrow the value as an immutable reference.
-public func ArcPointer[T].borrow(self) -> &T {
-    return __intrinsic_addr_to_ref[T](self._payload_ptr().address());
+extend ArcPointer[T] {
+    public func borrow(self) -> &T {
+        return __intrinsic_addr_to_ref(self._payload_ptr().address());
+    }
 }
 
 // Get a raw pointer to the payload (no ownership transfer).
-public func ArcPointer[T].as_ptr(self) -> Pointer[T] {
-    return self._payload_ptr().to_safe();
+extend ArcPointer[T] {
+    public func as_ptr(self) -> Pointer[T] {
+        return self._payload_ptr().to_safe();
+    }
 }
 
 // =============================================================================
@@ -135,13 +151,17 @@ public func ArcPointer[T].as_ptr(self) -> Pointer[T] {
 // =============================================================================
 
 // Return the current strong reference count.
-public func ArcPointer[T].strong_count(self) -> u64 {
-    return self._load_strong();
+extend ArcPointer[T] {
+    public func strong_count(self) -> u64 {
+        return self._load_strong();
+    }
 }
 
 // Return true if this is the only strong reference.
-public func ArcPointer[T].is_unique(self) -> bool {
-    return self._load_strong() == 1;
+extend ArcPointer[T] {
+    public func is_unique(self) -> bool {
+        return self._load_strong() == 1;
+    }
 }
 
 // =============================================================================
@@ -150,9 +170,11 @@ public func ArcPointer[T].is_unique(self) -> bool {
 
 // Create a new ArcPointer that shares ownership of the same allocation.
 // Atomically increments the strong count.
-public func ArcPointer[T].clone(self) -> ArcPointer[T] {
-    self._inc_strong();
-    return ArcPointer[T] { _block: self._block };
+extend ArcPointer[T] {
+    public func clone(self) -> ArcPointer[T] {
+        self._inc_strong();
+        return ArcPointer[T] { _block: self._block };
+    }
 }
 
 // =============================================================================
@@ -162,18 +184,20 @@ public func ArcPointer[T].clone(self) -> ArcPointer[T] {
 // If this is the only reference, return a mutable reference to the payload.
 // Otherwise, clone the payload into a new allocation and return a mutable
 // reference to that.  This implements copy-on-write (COW) semantics.
-public func ArcPointer[T: Copyable].make_unique(self) -> &T {
-    if self.is_unique() {
-        return __intrinsic_addr_to_ref[T](self._payload_ptr().address());
+extend ArcPointer[T: Copyable] {
+    public func make_unique(self) -> &T {
+        if self.is_unique() {
+            return __intrinsic_addr_to_ref(self._payload_ptr().address());
+        }
+        // Clone the payload into a new allocation.
+        let val = self._payload_ptr().load();
+        let new_arc = ArcPointer.new(val);
+        // Decrement old block.
+        self._dec_strong();
+        // Adopt new block.
+        self._block = new_arc._block;
+        return __intrinsic_addr_to_ref(self._payload_ptr().address());
     }
-    // Clone the payload into a new allocation.
-    let val = self._payload_ptr().load();
-    let new_arc = ArcPointer[T].new(val);
-    // Decrement old block.
-    self._dec_strong();
-    // Adopt new block.
-    self._block = new_arc._block;
-    return __intrinsic_addr_to_ref[T](self._payload_ptr().address());
 }
 
 // =============================================================================
@@ -182,18 +206,20 @@ public func ArcPointer[T: Copyable].make_unique(self) -> &T {
 
 // If this is the only strong reference, destroy the arc and return the
 // value.  Otherwise returns an error.
-public func ArcPointer[T].try_unwrap(self) -> Result[T, ArcPointer[T]] {
-    if self.is_unique() {
-        let val = self._payload_ptr().take_pointee();
-        // Free the control block.
-        let total_size = __intrinsic_sizeof[_ArcControlBlock]()
-            + __intrinsic_sizeof[T]()
-            + 16; // generous padding
-        __intrinsic_dealloc(self._block.address(), total_size, 8);
-        self._block = UnsafePointer[_ArcControlBlock].null();
-        return Result.ok(val);
+extend ArcPointer[T] {
+    public func try_unwrap(self) -> Result[T, ArcPointer[T]] {
+        if self.is_unique() {
+            let val = self._payload_ptr().take_pointee();
+            // Free the control block.
+            let total_size = __intrinsic_sizeof()
+                + __intrinsic_sizeof()
+                + 16; // generous padding
+            __intrinsic_dealloc(self._block.address(), total_size, 8);
+            self._block = UnsafePointer.null();
+            return Result.ok(val);
+        }
+        return Result.err(self);
     }
-    return Result.err(self);
 }
 
 // =============================================================================
@@ -202,30 +228,32 @@ public func ArcPointer[T].try_unwrap(self) -> Result[T, ArcPointer[T]] {
 
 // Decrement the strong count.  If it reaches zero, destroy the payload
 // and free the allocation.
-public func ArcPointer[T].destroy(self) -> void {
-    if self._block.is_null() {
-        return;
-    }
-    let old_count = self._dec_strong();
-    if old_count == 1 {
-        // We were the last strong reference.
-        // Destroy payload.
-        self._payload_ptr().destroy_pointee();
-
-        // Free entire allocation.
-        let header_size = __intrinsic_sizeof[_ArcControlBlock]();
-        let payload_size = __intrinsic_sizeof[T]();
-        let payload_align = __intrinsic_alignof[T]();
-        let header_align = __intrinsic_alignof[_ArcControlBlock]();
-        let align = header_align;
-        if payload_align > align {
-            align = payload_align;
+extend ArcPointer[T] {
+    public func destroy(self) -> void {
+        if self._block.is_null() {
+            return;
         }
-        let padding = (align - (header_size % align)) % align;
-        let total_size = header_size + padding + payload_size;
-        __intrinsic_dealloc(self._block.address(), total_size, align);
+        let old_count = self._dec_strong();
+        if old_count == 1 {
+            // We were the last strong reference.
+            // Destroy payload.
+            self._payload_ptr().destroy_pointee();
+
+            // Free entire allocation.
+            let header_size = __intrinsic_sizeof();
+            let payload_size = __intrinsic_sizeof();
+            let payload_align = __intrinsic_alignof();
+            let header_align = __intrinsic_alignof();
+            let align = header_align;
+            if payload_align > align {
+                align = payload_align;
+            }
+            let padding = (align - (header_size % align)) % align;
+            let total_size = header_size + padding + payload_size;
+            __intrinsic_dealloc(self._block.address(), total_size, align);
+        }
+        self._block = UnsafePointer.null();
     }
-    self._block = UnsafePointer[_ArcControlBlock].null();
 }
 
 // =============================================================================
@@ -234,40 +262,52 @@ public func ArcPointer[T].destroy(self) -> void {
 
 // ArcPointer is NOT Copyable — import clone() explicitly.
 // ArcPointer IS Movable.
-public func ArcPointer[T].move(self) -> ArcPointer[T] {
-    let moved = ArcPointer[T] { _block: self._block };
-    self._block = UnsafePointer[_ArcControlBlock].null();
-    return moved;
+extend ArcPointer[T] {
+    public func move(self) -> ArcPointer[T] {
+        let moved = ArcPointer[T] { _block: self._block };
+        self._block = UnsafePointer.null();
+        return moved;
+    }
 }
 
 // Stringable
-public func ArcPointer[T: Stringable].to_string(self) -> String {
-    return "ArcPointer(strong="
-        + __intrinsic_to_string(self._load_strong())
-        + ", value="
-        + self._payload_ptr().load().to_string()
-        + ")";
+extend ArcPointer[T: Stringable] {
+    public func to_string(self) -> String {
+        return "ArcPointer(strong="
+            + __intrinsic_to_string(self._load_strong())
+            + ", value="
+            + self._payload_ptr().load().to_string()
+            + ")";
+    }
 }
 
 // EqualityComparable — compares payloads.
-public func ArcPointer[T: EqualityComparable].eq(self, other: ArcPointer[T]) -> bool {
-    // Same allocation → always equal.
-    if self._block.address() == other._block.address() {
-        return true;
+extend ArcPointer[T: EqualityComparable] {
+    public func eq(self, other: ArcPointer[T]) -> bool {
+        // Same allocation → always equal.
+        if self._block.address() == other._block.address() {
+            return true;
+        }
+        return self._payload_ptr().load() == other._payload_ptr().load();
     }
-    return self._payload_ptr().load() == other._payload_ptr().load();
 }
 
-public func ArcPointer[T: EqualityComparable].ne(self, other: ArcPointer[T]) -> bool {
-    return !(self.eq(other));
+extend ArcPointer[T: EqualityComparable] {
+    public func ne(self, other: ArcPointer[T]) -> bool {
+        return !(self.eq(other));
+    }
 }
 
 // ptr_eq — true if both point to the same heap allocation (identity check).
-public func ArcPointer[T].ptr_eq(self, other: ArcPointer[T]) -> bool {
-    return self._block.address() == other._block.address();
+extend ArcPointer[T] {
+    public func ptr_eq(self, other: ArcPointer[T]) -> bool {
+        return self._block.address() == other._block.address();
+    }
 }
 
 // Hashable
-public func ArcPointer[T: Hashable].hash(self, hasher: &Hasher) -> void {
-    self._payload_ptr().load().hash(hasher);
+extend ArcPointer[T: Hashable] {
+    public func hash(self, hasher: &Hasher) -> void {
+        self._payload_ptr().load().hash(hasher);
+    }
 }

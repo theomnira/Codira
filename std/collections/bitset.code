@@ -20,7 +20,7 @@ class BitSet {
 /// Creates a BitSet that can represent integers in [0, capacity).
 public func bitset_new(capacity: usize) -> BitSet {
     let nw = (capacity + BITS_PER_WORD - 1) / BITS_PER_WORD;
-    let words = heap_alloc[u64](nw);
+    let words = heap_alloc(nw);
     // Zero all words
     let i: usize = 0;
     while i < nw {
@@ -60,71 +60,71 @@ func bit_mask(bit: usize) -> u64 {
 // ── Core API ─────────────────────────────────────────────────────────────────
 
 /// Returns the maximum number of bits (capacity) of the bitset.
-public func capacity(self: BitSet) -> usize {
-    return self.capacity;
+public func capacity(this: BitSet) -> usize {
+    return this.capacity;
 }
 
 /// Sets bit `index` to 1. Panics if out of range.
-public func set(self: BitSet, index: usize) -> BitSet {
-    if index >= self.capacity {
+public func set(this: BitSet, index: usize) -> BitSet {
+    if index >= this.capacity {
         panic("BitSet.set: index out of range");
     }
     let wi = word_index(index);
-    let w = raw_load(self.words, wi);
-    raw_store(self.words, wi, w | bit_mask(index));
-    return self;
+    let w = raw_load(this.words, wi);
+    raw_store(this.words, wi, w | bit_mask(index));
+    return this;
 }
 
 /// Clears bit `index` to 0. Panics if out of range.
-public func clear_bit(self: BitSet, index: usize) -> BitSet {
-    if index >= self.capacity {
+public func clear_bit(this: BitSet, index: usize) -> BitSet {
+    if index >= this.capacity {
         panic("BitSet.clear_bit: index out of range");
     }
     let wi = word_index(index);
-    let w = raw_load(self.words, wi);
-    raw_store(self.words, wi, w & ~bit_mask(index));
-    return self;
+    let w = raw_load(this.words, wi);
+    raw_store(this.words, wi, w & ~bit_mask(index));
+    return this;
 }
 
 /// Returns the value of bit `index` (true = set, false = clear).
-public func get(self: BitSet, index: usize) -> bool {
-    if index >= self.capacity {
+public func get(this: BitSet, index: usize) -> bool {
+    if index >= this.capacity {
         panic("BitSet.get: index out of range");
     }
     let wi = word_index(index);
-    let w = raw_load(self.words, wi);
+    let w = raw_load(this.words, wi);
     return (w & bit_mask(index)) != 0;
 }
 
 /// Toggles bit `index`.
-public func toggle(self: BitSet, index: usize) -> BitSet {
-    if index >= self.capacity {
+public func toggle(this: BitSet, index: usize) -> BitSet {
+    if index >= this.capacity {
         panic("BitSet.toggle: index out of range");
     }
     let wi = word_index(index);
-    let w = raw_load(self.words, wi);
-    raw_store(self.words, wi, w ^ bit_mask(index));
-    return self;
+    let w = raw_load(this.words, wi);
+    raw_store(this.words, wi, w ^ bit_mask(index));
+    return this;
 }
 
 /// Sets all bits to 0.
-public func clear(self: BitSet) -> BitSet {
+public func clear(this: BitSet) -> BitSet {
     let i: usize = 0;
-    while i < self.num_words {
-        raw_store(self.words, i, 0 as u64);
+    while i < this.num_words {
+        raw_store(this.words, i, 0 as u64);
         i = i + 1;
     }
-    return self;
+    return this;
 }
 
 // ── Counting ─────────────────────────────────────────────────────────────────
 
 /// Returns the number of bits that are set (popcount).
-public func count(self: BitSet) -> usize {
+public func count(this: BitSet) -> usize {
     let total: usize = 0;
     let i: usize = 0;
-    while i < self.num_words {
-        total = total + popcount64(raw_load(self.words, i));
+    while i < this.num_words {
+        total = total + popcount64(raw_load(this.words, i));
         i = i + 1;
     }
     return total;
@@ -143,10 +143,10 @@ func popcount64(x: u64) -> usize {
 }
 
 /// Returns true if at least one bit is set.
-public func any(self: BitSet) -> bool {
+public func any(this: BitSet) -> bool {
     let i: usize = 0;
-    while i < self.num_words {
-        if raw_load(self.words, i) != 0 {
+    while i < this.num_words {
+        if raw_load(this.words, i) != 0 {
             return true;
         }
         i = i + 1;
@@ -155,13 +155,13 @@ public func any(self: BitSet) -> bool {
 }
 
 /// Returns true if every bit in [0, capacity) is set.
-public func all(self: BitSet) -> bool {
-    return count(self) == self.capacity;
+public func all(this: BitSet) -> bool {
+    return count(this) == this.capacity;
 }
 
 /// Returns true if no bits are set.
-public func none_set(self: BitSet) -> bool {
-    return !any(self);
+public func none_set(this: BitSet) -> bool {
+    return !any(this);
 }
 
 // ── Bitwise set operations ───────────────────────────────────────────────────
@@ -224,15 +224,15 @@ public func bitset_symmetric_difference(a: BitSet, b: BitSet) -> BitSet {
 }
 
 /// Bitwise NOT — complement of the bitset.
-public func bitset_complement(self: BitSet) -> BitSet {
-    let out = bitset_new(self.capacity);
+public func bitset_complement(this: BitSet) -> BitSet {
+    let out = bitset_new(this.capacity);
     let i: usize = 0;
-    while i < self.num_words {
-        raw_store(out.words, i, ~raw_load(self.words, i));
+    while i < this.num_words {
+        raw_store(out.words, i, ~raw_load(this.words, i));
         i = i + 1;
     }
     // Mask off trailing bits
-    let trailing = self.capacity % BITS_PER_WORD;
+    let trailing = this.capacity % BITS_PER_WORD;
     if trailing > 0 && out.num_words > 0 {
         let mask = (1 as u64 << (trailing as u64)) - 1;
         let last = raw_load(out.words, out.num_words - 1);
@@ -266,11 +266,11 @@ public func bitset_is_superset(a: BitSet, b: BitSet) -> bool {
 // ── Iteration ────────────────────────────────────────────────────────────────
 
 /// Returns a List of all set bit indices.
-public func to_indices(self: BitSet) -> List[usize] {
-    let out = list_new[usize]();
+public func to_indices(this: BitSet) -> List[usize] {
+    let out = list_new();
     let i: usize = 0;
-    while i < self.capacity {
-        if get(self, i) {
+    while i < this.capacity {
+        if get(this, i) {
             out = push(out, i);
         }
         i = i + 1;
@@ -280,8 +280,8 @@ public func to_indices(self: BitSet) -> List[usize] {
 
 // ── Cleanup ──────────────────────────────────────────────────────────────────
 
-public func drop(self: BitSet) {
-    if self.num_words > 0 {
-        heap_free(self.words);
+public func drop(this: BitSet) {
+    if this.num_words > 0 {
+        heap_free(this.words);
     }
 }

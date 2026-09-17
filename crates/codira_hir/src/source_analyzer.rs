@@ -222,6 +222,11 @@ fn resolve_hir_path_qualifier(
         TypeNs::StructId(it) => PathResolution::Def(Struct::from(it).into()),
         TypeNs::TypeAliasId(it) => PathResolution::Def(TypeAlias::from(it).into()),
         TypeNs::PrimitiveType(it) => PathResolution::Def(PrimitiveType::from(it).into()),
+        // A generic parameter has no `ModuleDef` to point at -- it is not an
+        // item, it is scoped to its declaration -- and `PathResolution` can
+        // only name items. "Go to definition" on a `T` therefore finds
+        // nothing rather than finding something wrong.
+        TypeNs::GenericParam(..) => return None,
     };
 
     Some(res)

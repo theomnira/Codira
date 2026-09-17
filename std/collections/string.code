@@ -16,12 +16,12 @@ class String {
 
 /// Creates a new, empty string.
 public func string_new() -> String {
-    return String { data: null_ptr[u8](), len: 0, cap: 0 };
+    return String { data: null_ptr(), len: 0, cap: 0 };
 }
 
 /// Creates a string with pre-allocated capacity for `cap` bytes.
 public func string_with_capacity(cap: usize) -> String {
-    let ptr = heap_alloc[u8](cap);
+    let ptr = heap_alloc(cap);
     return String { data: ptr, len: 0, cap: cap };
 }
 
@@ -44,51 +44,51 @@ public func string_from_literal(lit: StringLiteral) -> String {
 
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
-func string_grow(self: String, min_cap: usize) -> String {
-    let new_cap = self.cap;
+func string_grow(this: String, min_cap: usize) -> String {
+    let new_cap = this.cap;
     if new_cap == 0 {
         new_cap = 8;
     }
     while new_cap < min_cap {
         new_cap = new_cap * 2;
     }
-    let new_data = heap_alloc[u8](new_cap);
+    let new_data = heap_alloc(new_cap);
     let i: usize = 0;
-    while i < self.len {
-        raw_store(new_data, i, raw_load(self.data, i));
+    while i < this.len {
+        raw_store(new_data, i, raw_load(this.data, i));
         i = i + 1;
     }
-    if self.cap > 0 {
-        heap_free(self.data);
+    if this.cap > 0 {
+        heap_free(this.data);
     }
-    return String { data: new_data, len: self.len, cap: new_cap };
+    return String { data: new_data, len: this.len, cap: new_cap };
 }
 
 // ── Core API ─────────────────────────────────────────────────────────────────
 
 /// Returns the byte length of the string.
-public func len(self: String) -> usize {
-    return self.len;
+public func len(this: String) -> usize {
+    return this.len;
 }
 
 /// Returns true if the string contains zero bytes.
-public func is_empty(self: String) -> bool {
-    return self.len == 0;
+public func is_empty(this: String) -> bool {
+    return this.len == 0;
 }
 
 /// Returns the byte at `index`. Panics if out of bounds.
-public func byte_at(self: String, index: usize) -> u8 {
-    if index >= self.len {
+public func byte_at(this: String, index: usize) -> u8 {
+    if index >= this.len {
         panic("String.byte_at: index out of bounds");
     }
-    return raw_load(self.data, index);
+    return raw_load(this.data, index);
 }
 
 // ── Mutation ─────────────────────────────────────────────────────────────────
 
 /// Appends the contents of `other` to the end of `self`.
-public func append(self: String, other: String) -> String {
-    let out = self;
+public func append(this: String, other: String) -> String {
+    let out = this;
     if out.len + other.len > out.cap {
         out = string_grow(out, out.len + other.len);
     }
@@ -102,8 +102,8 @@ public func append(self: String, other: String) -> String {
 }
 
 /// Appends a single byte (ASCII character) to the string.
-public func push_byte(self: String, b: u8) -> String {
-    let out = self;
+public func push_byte(this: String, b: u8) -> String {
+    let out = this;
     if out.len + 1 > out.cap {
         out = string_grow(out, out.len + 1);
     }
@@ -113,12 +113,12 @@ public func push_byte(self: String, b: u8) -> String {
 }
 
 /// Inserts the string `other` at byte position `index`.
-public func insert(self: String, index: usize, other: String) -> String {
-    if index > self.len {
+public func insert(this: String, index: usize, other: String) -> String {
+    if index > this.len {
         panic("String.insert: index out of bounds");
     }
-    let new_len = self.len + other.len;
-    let out = self;
+    let new_len = this.len + other.len;
+    let out = this;
     if new_len > out.cap {
         out = string_grow(out, new_len);
     }
@@ -139,16 +139,16 @@ public func insert(self: String, index: usize, other: String) -> String {
 }
 
 /// Removes `count` bytes starting at `index`.
-public func remove(self: String, index: usize, count: usize) -> String {
-    if index + count > self.len {
+public func remove(this: String, index: usize, count: usize) -> String {
+    if index + count > this.len {
         panic("String.remove: range out of bounds");
     }
     let i = index;
-    while i + count < self.len {
-        raw_store(self.data, i, raw_load(self.data, i + count));
+    while i + count < this.len {
+        raw_store(this.data, i, raw_load(this.data, i + count));
         i = i + 1;
     }
-    let out = self;
+    let out = this;
     out.len = out.len - count;
     return out;
 }
@@ -156,19 +156,19 @@ public func remove(self: String, index: usize, count: usize) -> String {
 // ── Search ───────────────────────────────────────────────────────────────────
 
 /// Returns the byte index of the first occurrence of `needle`, or -1 if not found.
-public func find(self: String, needle: String) -> isize {
+public func find(this: String, needle: String) -> isize {
     if needle.len == 0 {
         return 0;
     }
-    if needle.len > self.len {
+    if needle.len > this.len {
         return -1;
     }
     let i: usize = 0;
-    while i <= self.len - needle.len {
+    while i <= this.len - needle.len {
         let found = true;
         let j: usize = 0;
         while j < needle.len {
-            if raw_load(self.data, i + j) != raw_load(needle.data, j) {
+            if raw_load(this.data, i + j) != raw_load(needle.data, j) {
                 found = false;
                 break;
             }
@@ -183,19 +183,19 @@ public func find(self: String, needle: String) -> isize {
 }
 
 /// Returns the byte index of the last occurrence of `needle`, or -1.
-public func rfind(self: String, needle: String) -> isize {
+public func rfind(this: String, needle: String) -> isize {
     if needle.len == 0 {
-        return self.len as isize;
+        return this.len as isize;
     }
-    if needle.len > self.len {
+    if needle.len > this.len {
         return -1;
     }
-    let i: isize = (self.len - needle.len) as isize;
+    let i: isize = (this.len - needle.len) as isize;
     while i >= 0 {
         let found = true;
         let j: usize = 0;
         while j < needle.len {
-            if raw_load(self.data, (i as usize) + j) != raw_load(needle.data, j) {
+            if raw_load(this.data, (i as usize) + j) != raw_load(needle.data, j) {
                 found = false;
                 break;
             }
@@ -210,18 +210,18 @@ public func rfind(self: String, needle: String) -> isize {
 }
 
 /// Returns true if `self` contains `needle`.
-public func contains(self: String, needle: String) -> bool {
-    return find(self, needle) >= 0;
+public func contains(this: String, needle: String) -> bool {
+    return find(this, needle) >= 0;
 }
 
 /// Returns true if `self` starts with `prefix`.
-public func starts_with(self: String, prefix: String) -> bool {
-    if prefix.len > self.len {
+public func starts_with(this: String, prefix: String) -> bool {
+    if prefix.len > this.len {
         return false;
     }
     let i: usize = 0;
     while i < prefix.len {
-        if raw_load(self.data, i) != raw_load(prefix.data, i) {
+        if raw_load(this.data, i) != raw_load(prefix.data, i) {
             return false;
         }
         i = i + 1;
@@ -230,14 +230,14 @@ public func starts_with(self: String, prefix: String) -> bool {
 }
 
 /// Returns true if `self` ends with `suffix`.
-public func ends_with(self: String, suffix: String) -> bool {
-    if suffix.len > self.len {
+public func ends_with(this: String, suffix: String) -> bool {
+    if suffix.len > this.len {
         return false;
     }
-    let offset = self.len - suffix.len;
+    let offset = this.len - suffix.len;
     let i: usize = 0;
     while i < suffix.len {
-        if raw_load(self.data, offset + i) != raw_load(suffix.data, i) {
+        if raw_load(this.data, offset + i) != raw_load(suffix.data, i) {
             return false;
         }
         i = i + 1;
@@ -248,19 +248,19 @@ public func ends_with(self: String, suffix: String) -> bool {
 // ── Replacement ──────────────────────────────────────────────────────────────
 
 /// Replaces all occurrences of `old` with `new_str`.
-public func replace(self: String, old: String, new_str: String) -> String {
+public func replace(this: String, old: String, new_str: String) -> String {
     if old.len == 0 {
-        return self;
+        return this;
     }
     let result = string_new();
     let i: usize = 0;
-    while i < self.len {
+    while i < this.len {
         // Check for match at position i
-        if i + old.len <= self.len {
+        if i + old.len <= this.len {
             let found = true;
             let j: usize = 0;
             while j < old.len {
-                if raw_load(self.data, i + j) != raw_load(old.data, j) {
+                if raw_load(this.data, i + j) != raw_load(old.data, j) {
                     found = false;
                     break;
                 }
@@ -272,7 +272,7 @@ public func replace(self: String, old: String, new_str: String) -> String {
                 continue;
             }
         }
-        result = push_byte(result, raw_load(self.data, i));
+        result = push_byte(result, raw_load(this.data, i));
         i = i + 1;
     }
     return result;
@@ -281,31 +281,31 @@ public func replace(self: String, old: String, new_str: String) -> String {
 // ── Splitting and joining ────────────────────────────────────────────────────
 
 /// Splits the string by `delimiter`, returning a List of substrings.
-public func split(self: String, delimiter: String) -> List[String] {
-    let parts = list_new[String]();
+public func split(this: String, delimiter: String) -> List[String] {
+    let parts = list_new();
     if delimiter.len == 0 {
         // Split into individual bytes
         let i: usize = 0;
-        while i < self.len {
-            parts = push(parts, substring(self, i, i + 1));
+        while i < this.len {
+            parts = push(parts, substring(this, i, i + 1));
             i = i + 1;
         }
         return parts;
     }
     let start: usize = 0;
     let i: usize = 0;
-    while i <= self.len - delimiter.len {
+    while i <= this.len - delimiter.len {
         let found = true;
         let j: usize = 0;
         while j < delimiter.len {
-            if raw_load(self.data, i + j) != raw_load(delimiter.data, j) {
+            if raw_load(this.data, i + j) != raw_load(delimiter.data, j) {
                 found = false;
                 break;
             }
             j = j + 1;
         }
         if found {
-            parts = push(parts, substring(self, start, i));
+            parts = push(parts, substring(this, start, i));
             start = i + delimiter.len;
             i = start;
         } else {
@@ -313,7 +313,7 @@ public func split(self: String, delimiter: String) -> List[String] {
         }
     }
     // Remainder
-    parts = push(parts, substring(self, start, self.len));
+    parts = push(parts, substring(this, start, this.len));
     return parts;
 }
 
@@ -351,44 +351,44 @@ func is_whitespace(b: u8) -> bool {
 }
 
 /// Removes leading and trailing whitespace.
-public func trim(self: String) -> String {
+public func trim(this: String) -> String {
     let start: usize = 0;
-    while start < self.len && is_whitespace(raw_load(self.data, start)) {
+    while start < this.len && is_whitespace(raw_load(this.data, start)) {
         start = start + 1;
     }
-    let end = self.len;
-    while end > start && is_whitespace(raw_load(self.data, end - 1)) {
+    let end = this.len;
+    while end > start && is_whitespace(raw_load(this.data, end - 1)) {
         end = end - 1;
     }
-    return substring(self, start, end);
+    return substring(this, start, end);
 }
 
 /// Removes leading whitespace.
-public func trim_start(self: String) -> String {
+public func trim_start(this: String) -> String {
     let start: usize = 0;
-    while start < self.len && is_whitespace(raw_load(self.data, start)) {
+    while start < this.len && is_whitespace(raw_load(this.data, start)) {
         start = start + 1;
     }
-    return substring(self, start, self.len);
+    return substring(this, start, this.len);
 }
 
 /// Removes trailing whitespace.
-public func trim_end(self: String) -> String {
-    let end = self.len;
-    while end > 0 && is_whitespace(raw_load(self.data, end - 1)) {
+public func trim_end(this: String) -> String {
+    let end = this.len;
+    while end > 0 && is_whitespace(raw_load(this.data, end - 1)) {
         end = end - 1;
     }
-    return substring(self, 0, end);
+    return substring(this, 0, end);
 }
 
 // ── Case conversion ──────────────────────────────────────────────────────────
 
 /// Converts ASCII characters to uppercase.
-public func to_upper(self: String) -> String {
-    let out = string_with_capacity(self.len);
+public func to_upper(this: String) -> String {
+    let out = string_with_capacity(this.len);
     let i: usize = 0;
-    while i < self.len {
-        let b = raw_load(self.data, i);
+    while i < this.len {
+        let b = raw_load(this.data, i);
         // 'a' = 97, 'z' = 122
         if b >= 97 && b <= 122 {
             raw_store(out.data, i, b - 32);
@@ -397,16 +397,16 @@ public func to_upper(self: String) -> String {
         }
         i = i + 1;
     }
-    out.len = self.len;
+    out.len = this.len;
     return out;
 }
 
 /// Converts ASCII characters to lowercase.
-public func to_lower(self: String) -> String {
-    let out = string_with_capacity(self.len);
+public func to_lower(this: String) -> String {
+    let out = string_with_capacity(this.len);
     let i: usize = 0;
-    while i < self.len {
-        let b = raw_load(self.data, i);
+    while i < this.len {
+        let b = raw_load(this.data, i);
         // 'A' = 65, 'Z' = 90
         if b >= 65 && b <= 90 {
             raw_store(out.data, i, b + 32);
@@ -415,22 +415,22 @@ public func to_lower(self: String) -> String {
         }
         i = i + 1;
     }
-    out.len = self.len;
+    out.len = this.len;
     return out;
 }
 
 // ── Substrings ───────────────────────────────────────────────────────────────
 
 /// Returns a new string containing bytes from `start` (inclusive) to `end` (exclusive).
-public func substring(self: String, start: usize, end: usize) -> String {
-    if start > end || end > self.len {
+public func substring(this: String, start: usize, end: usize) -> String {
+    if start > end || end > this.len {
         panic("String.substring: invalid range");
     }
     let new_len = end - start;
     let out = string_with_capacity(new_len);
     let i: usize = 0;
     while i < new_len {
-        raw_store(out.data, i, raw_load(self.data, start + i));
+        raw_store(out.data, i, raw_load(this.data, start + i));
         i = i + 1;
     }
     out.len = new_len;
@@ -440,22 +440,22 @@ public func substring(self: String, start: usize, end: usize) -> String {
 // ── Byte / char views ────────────────────────────────────────────────────────
 
 /// Returns the raw bytes of the string as a List[u8].
-public func bytes(self: String) -> List[u8] {
-    let out = list_with_capacity[u8](self.len);
+public func bytes(this: String) -> List[u8] {
+    let out = list_with_capacity(this.len);
     let i: usize = 0;
-    while i < self.len {
-        out = push(out, raw_load(self.data, i));
+    while i < this.len {
+        out = push(out, raw_load(this.data, i));
         i = i + 1;
     }
     return out;
 }
 
 /// Returns a list of individual character strings (ASCII; one byte each for non-multibyte).
-public func chars(self: String) -> List[String] {
-    let out = list_new[String]();
+public func chars(this: String) -> List[String] {
+    let out = list_new();
     let i: usize = 0;
-    while i < self.len {
-        let b = raw_load(self.data, i);
+    while i < this.len {
+        let b = raw_load(this.data, i);
         // Determine UTF-8 code-point length
         let cp_len: usize = 1;
         if b >= 0xF0 {
@@ -465,10 +465,10 @@ public func chars(self: String) -> List[String] {
         } else if b >= 0xC0 {
             cp_len = 2;
         }
-        if i + cp_len > self.len {
+        if i + cp_len > this.len {
             cp_len = 1; // safety fallback
         }
-        out = push(out, substring(self, i, i + cp_len));
+        out = push(out, substring(this, i, i + cp_len));
         i = i + cp_len;
     }
     return out;
@@ -477,14 +477,14 @@ public func chars(self: String) -> List[String] {
 // ── Repetition ───────────────────────────────────────────────────────────────
 
 /// Returns a new string that repeats `self` `n` times.
-public func repeat(self: String, n: usize) -> String {
-    let total = self.len * n;
+public func repeat(this: String, n: usize) -> String {
+    let total = this.len * n;
     let out = string_with_capacity(total);
     let i: usize = 0;
     while i < n {
         let j: usize = 0;
-        while j < self.len {
-            raw_store(out.data, out.len, raw_load(self.data, j));
+        while j < this.len {
+            raw_store(out.data, out.len, raw_load(this.data, j));
             out.len = out.len + 1;
             j = j + 1;
         }
@@ -494,14 +494,14 @@ public func repeat(self: String, n: usize) -> String {
 }
 
 /// Reverses the string byte-by-byte (correct only for ASCII).
-public func reverse(self: String) -> String {
-    let out = string_with_capacity(self.len);
+public func reverse(this: String) -> String {
+    let out = string_with_capacity(this.len);
     let i: usize = 0;
-    while i < self.len {
-        raw_store(out.data, i, raw_load(self.data, self.len - 1 - i));
+    while i < this.len {
+        raw_store(out.data, i, raw_load(this.data, this.len - 1 - i));
         i = i + 1;
     }
-    out.len = self.len;
+    out.len = this.len;
     return out;
 }
 
@@ -572,8 +572,8 @@ public func equals(a: String, b: String) -> bool {
 
 // ── Cleanup ──────────────────────────────────────────────────────────────────
 
-public func drop(self: String) {
-    if self.cap > 0 {
-        heap_free(self.data);
+public func drop(this: String) {
+    if this.cap > 0 {
+        heap_free(this.data);
     }
 }

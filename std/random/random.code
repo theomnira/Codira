@@ -149,7 +149,7 @@ public func random_bool_weighted(p: f64) -> bool {
 // rand
 // Fills the provided byte buffer with random bytes.
 // ---------------------------------------------------------------------------
-public func rand(buffer: mut Array<u8>) {
+public func rand(buffer: mut Array[u8]) {
     let mut i: usize = 0;
     while i < buffer.len() {
         let word: u64 = _next_u64();
@@ -166,8 +166,8 @@ public func rand(buffer: mut Array<u8>) {
 // rand_bytes
 // Returns a new array filled with `count` random bytes.
 // ---------------------------------------------------------------------------
-public func rand_bytes(count: usize) -> Array<u8> {
-    let mut buffer: Array<u8> = Array::with_capacity(count);
+public func rand_bytes(count: usize) -> Array[u8] {
+    let mut buffer: Array[u8] = Array.with_capacity(count);
     let mut i: usize = 0;
     while i < count {
         buffer.push(0);
@@ -181,7 +181,7 @@ public func rand_bytes(count: usize) -> Array<u8> {
 // shuffle
 // Shuffles the elements of `arr` in-place using Fisher-Yates algorithm.
 // ---------------------------------------------------------------------------
-public func shuffle<T>(arr: mut Array<T>) {
+public func shuffle[T](arr: mut Array[T]) {
     let n: usize = arr.len();
     if n <= 1 {
         return;
@@ -201,7 +201,7 @@ public func shuffle<T>(arr: mut Array<T>) {
 // random_choice
 // Returns a random element from `arr`. Panics if the array is empty.
 // ---------------------------------------------------------------------------
-public func random_choice<T>(arr: Array<T>) -> T {
+public func random_choice[T](arr: Array[T]) -> T {
     if arr.len() == 0 {
         panic("random_choice: empty array");
     }
@@ -214,12 +214,12 @@ public func random_choice<T>(arr: Array<T>) -> T {
 // Returns `count` distinct random elements from `arr` (sampling without
 // replacement). Panics if count > arr.len().
 // ---------------------------------------------------------------------------
-public func random_sample<T>(arr: Array<T>, count: usize) -> Array<T> {
+public func random_sample[T](arr: Array[T], count: usize) -> Array[T] {
     if count > arr.len() {
         panic("random_sample: count exceeds array length");
     }
     // Copy and partial-shuffle.
-    let mut pool: Array<T> = arr.clone();
+    let mut pool: Array[T] = arr.clone();
     let mut i: usize = 0;
     while i < count {
         let j: usize = i + (random_ui64() % (pool.len() - i) as u64) as usize;
@@ -228,7 +228,7 @@ public func random_sample<T>(arr: Array<T>, count: usize) -> Array<T> {
         pool[j] = tmp;
         i = i + 1;
     }
-    let mut result: Array<T> = Array::with_capacity(count);
+    let mut result: Array[T] = Array.with_capacity(count);
     i = 0;
     while i < count {
         result.push(pool[i]);

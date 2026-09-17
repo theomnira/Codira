@@ -9,7 +9,7 @@ use std::{collections::HashMap, sync::Arc};
 use codira_abi as abi;
 use codira_hir::{
     ArithOp, BinaryOp, Body, CmpOp, Expr, ExprId, HirDatabase, HirDisplay, InferenceResult,
-    Literal, LogicOp, Name, Ordering, Pat, PatId, Path, ResolveBitness, Resolver, Statement,
+    Literal, LogicOp, Name, Ordering, Pat, PatId, Path, ResolveBitness, Resolver, Statement, Ty,
     TyKind, UnaryOp, ValueNs,
 };
 use inkwell::{
@@ -136,7 +136,24 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         // Iterate over all parameters and their type and store them so we can reference
         // them later in code.
-        for (i, (pat, _ty)) in self.body.params().iter().enumerate() {
+        //
+        // The `self` receiver, when present, is LLVM parameter 0 (see
+        // `HirTypeCache::receiver_and_param_tys`), so the value parameters
+        // start one slot later. `self` is bound through exactly the same
+        // alloca-and-store path as any other parameter -- `Body` gives it an
+        // ordinary `Pat::Bind { name: self }` -- so nothing downstream has to
+        // treat a method's receiver specially.
+        let self_param = self.body.self_param().copied();
+
+        // Collected up front so the loop body is free to take `&mut self`
+        // (the destructuring case below does).
+        let param_pats: Vec<PatId> = self_param
+            .iter()
+            .chain(self.body.params().iter())
+            .map(|(pat, _ty)| *pat)
+            .collect();
+
+        for (i, pat) in param_pats.iter().enumerate() {
             let body = self.body.clone(); // Avoid borrow issues
 
             match &body[*pat] {
@@ -156,6 +173,17 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 Pat::Wild => {
                     // Wildcard patterns cannot be referenced from code. So
                     // nothing to do.
+                }
+                // `func f((a, b): (i32, i32))` -- the parameter arrives as
+                // one aggregate and is destructured into its bindings,
+                // exactly as a `let (a, b) = ..` would be. The tuple itself
+                // never needs an `alloca`; only the named bindings do.
+                Pat::Tuple(_) => {
+                    let param = self
+                        .fn_value
+                        .get_nth_param(i as u32)
+                        .expect("every parameter pattern has a matching LLVM parameter");
+                    self.bind_pattern_to_value(*pat, param);
                 }
                 Pat::Path(_) => unreachable!(
                     "Path patterns are not supported as parameters, are we missing a diagnostic?"
@@ -270,9 +298,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 self.gen_binary_op(expr, *lhs, *rhs, op.expect("missing op"))
             }
             Expr::UnaryOp { expr, op } => self.gen_unary_op(*expr, *op),
-            Expr::MethodCall { .. } => {
-                unimplemented!("Method calls are not yet implemented in the IR generator")
-            }
+            Expr::MethodCall {
+                receiver, ref args, ..
+            } => self.gen_method_call(expr, *receiver, args),
             Expr::Call {
                 ref callee,
                 ref args,
@@ -319,6 +347,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 name,
             } => self.gen_field(expr, *receiver_expr, name),
             Expr::Array(exprs) => self.gen_array(expr, exprs).map(Into::into),
+            Expr::Tuple(exprs) => self.gen_tuple(expr, exprs),
             Expr::Index { base, index } => self.gen_index(expr, *base, *index),
             Expr::Cast { expr: operand, .. } => self.gen_cast(expr, *operand),
             Expr::Missing => {
@@ -645,6 +674,57 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         self.gen_struct_alloc(hir_struct, fields)
     }
 
+    /// Generates IR for `receiver.method(args...)`.
+    ///
+    /// Inference has already done the hard part: `infer_method_call` resolves
+    /// the callee against the receiver's type and records the winner in
+    /// `InferenceResult::method_resolutions`. All that is left is to build the
+    /// argument list and hand it to the same `gen_call` a free-function call
+    /// uses -- so methods get dispatch table treatment, hot reloading and
+    /// value-struct boxing for free, rather than through a parallel code path
+    /// that could drift.
+    ///
+    /// This covers both spellings, because they are the same syntax:
+    /// `value.method(..)` passes the receiver as argument 0, while
+    /// `Type.assoc_fn(..)` (`LANGUAGE_SPEC` section 3's static member access)
+    /// passes no receiver at all. The two are told apart by asking the
+    /// *callee* whether it declares a `self` parameter, which is precisely
+    /// the thing that decides whether an argument has to be passed -- rather
+    /// than by re-deriving what the receiver expression was, which inference
+    /// has already settled.
+    fn gen_method_call(
+        &mut self,
+        tgt_expr: ExprId,
+        receiver: ExprId,
+        args: &[ExprId],
+    ) -> Option<BasicValueEnum<'ink>> {
+        let resolved = self
+            .infer
+            .method_resolution(tgt_expr)
+            .expect("inference resolved this method call, or it would not have type-checked");
+        let function = codira_hir::Function::from(resolved);
+
+        let mut call_args: Vec<BasicMetadataValueEnum<'ink>> = Vec::with_capacity(args.len() + 1);
+        if function.data(self.db).self_param().is_some() {
+            // A diverging receiver or argument makes the call itself
+            // unreachable; propagate that rather than emitting a call that
+            // can never run.
+            call_args.push(self.gen_expr(receiver)?.into());
+        }
+        for arg in args {
+            call_args.push(self.gen_expr(*arg)?.into());
+        }
+
+        self.gen_call(function, &call_args)
+            // Same convention as `Expr::Call`: a void method returns the unit
+            // struct so callers always get *something*, while a `never`
+            // method genuinely returns nothing.
+            .or_else(|| match self.infer[tgt_expr].interned() {
+                TyKind::Never => None,
+                _ => Some(self.context.const_struct(&[], false).into()),
+            })
+    }
+
     /// Generates IR for a named tuple literal, e.g. `Foo(1.23, 4)`
     fn gen_named_tuple_lit(&mut self, type_expr: ExprId, args: &[ExprId]) -> BasicValueEnum<'ink> {
         let struct_ty = self.infer[type_expr].clone();
@@ -655,6 +735,41 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .collect();
 
         self.gen_struct_alloc(hir_struct, args)
+    }
+
+    /// Generates IR for a tuple literal, e.g. `(1.23, 4)`.
+    ///
+    /// A tuple is an unnamed value-kind aggregate: it lowers to the anonymous
+    /// LLVM struct `get_tuple_type` already produces for `TyKind::Tuple`, and
+    /// is built the same way `gen_struct_alloc` builds a value struct --
+    /// `undef` plus one `insertvalue` per element. Unlike `Expr::Array`, no
+    /// allocation and no runtime call is involved, so a tuple costs exactly
+    /// what the equivalent hand-written value struct costs and stays fully
+    /// visible to the Eidos optimiser rather than hiding behind an opaque
+    /// object pointer.
+    ///
+    /// `()` falls out of this naturally as the zero-element case, producing
+    /// the same empty struct as `gen_empty`.
+    fn gen_tuple(&mut self, tgt_expr: ExprId, exprs: &[ExprId]) -> Option<BasicValueEnum<'ink>> {
+        let tuple_ty = self.infer[tgt_expr].clone();
+        let TyKind::Tuple(_, substs) = tuple_ty.interned() else {
+            unreachable!("the type of a tuple literal expression must be a Tuple");
+        };
+
+        let struct_ty = self.hir_types.get_tuple_type(substs.as_ref());
+        let mut value: AggregateValueEnum<'_> = struct_ty.get_undef().into();
+        for (idx, expr) in exprs.iter().enumerate() {
+            // A diverging element (`(foo(), never_returns())`) means the rest
+            // of the tuple is unreachable; propagate that instead of building
+            // an aggregate that can never be observed.
+            let elem = self.gen_expr(*expr)?;
+            value = self
+                .builder
+                .build_insert_value(value, elem, idx as u32, "tuple_init")
+                .expect("failed to initialize tuple element");
+        }
+
+        Some(value.into_struct_value().into())
     }
 
     /// Generates IR for a unit struct literal, e.g `Foo`
@@ -747,11 +862,73 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 }
             }
             Pat::Wild => {}
+            // `let (a, b) = pair` -- bind each element to its sub-pattern.
+            //
+            // Irrefutable, so there is no test and no branch: the arity is
+            // fixed by the type and inference has already checked it. Each
+            // element is `extractvalue`d out of the aggregate, which is why
+            // this needs no `alloca` for the tuple itself -- only for the
+            // bindings, and only for the ones that are actually named.
+            Pat::Tuple(args) => {
+                let args = args.clone();
+                let Some(value) = initializer else {
+                    // No initializer means nothing to destructure; the
+                    // bindings stay unallocated, exactly as `Pat::Bind`
+                    // leaves them.
+                    return true;
+                };
+                let aggregate = value.into_struct_value();
+                for (idx, arg) in args.iter().enumerate() {
+                    let element = self
+                        .builder
+                        .build_extract_value(aggregate, idx as u32, &format!("tuple.{idx}"))
+                        .expect("tuple element index checked by inference");
+                    self.bind_pattern_to_value(*arg, element);
+                }
+            }
             Pat::Missing | Pat::Path(_) | Pat::Literal(_) | Pat::TupleStruct { .. } => {
                 unreachable!()
             }
         }
         true
+    }
+
+    /// Binds `pat` to an already-computed `value`.
+    ///
+    /// Split out of `gen_let_statement` so a tuple pattern's sub-patterns go
+    /// through the same allocate-and-store as a top-level binding, and so
+    /// nesting (`let ((a, b), c) = ..`) falls out by recursion rather than
+    /// needing its own case.
+    fn bind_pattern_to_value(&mut self, pat: PatId, value: BasicValueEnum<'ink>) {
+        let body = self.body.clone();
+        match &body[pat] {
+            Pat::Bind { name } => {
+                let builder = self.new_alloca_builder();
+                let ptr = builder
+                    .build_alloca(value.get_type(), &name.to_string())
+                    .expect("failed to build alloca for destructured binding");
+                self.builder
+                    .build_store(ptr, value)
+                    .expect("failed to build store for destructured binding");
+                self.pat_to_local.insert(pat, ptr);
+                self.pat_to_name.insert(pat, name.to_string());
+            }
+            Pat::Wild => {}
+            Pat::Tuple(args) => {
+                let args = args.clone();
+                let aggregate = value.into_struct_value();
+                for (idx, arg) in args.iter().enumerate() {
+                    let element = self
+                        .builder
+                        .build_extract_value(aggregate, idx as u32, &format!("tuple.{idx}"))
+                        .expect("tuple element index checked by inference");
+                    self.bind_pattern_to_value(*arg, element);
+                }
+            }
+            Pat::Missing | Pat::Path(_) | Pat::Literal(_) | Pat::TupleStruct { .. } => {
+                unreachable!("refutable patterns cannot appear in an irrefutable position")
+            }
+        }
     }
 
     /// Generates IR for looking up a certain path expression.
@@ -1724,6 +1901,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         receiver_expr: ExprId,
         name: &Name,
     ) -> Option<BasicValueEnum<'ink>> {
+        // `Expr::Field` covers both `point.x` and `pair.0`. A tuple has no
+        // `Struct` behind it -- its layout comes straight from the type's
+        // element list -- so it is handled first, before the struct lookup
+        // that would otherwise fail.
+        if let TyKind::Tuple(_, substs) = self.infer[receiver_expr].clone().interned() {
+            return self.gen_tuple_field(receiver_expr, name, substs.as_ref());
+        }
+
         let hir_struct = self.infer[receiver_expr]
             .as_struct()
             .expect("expected a struct");
@@ -1777,12 +1962,79 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         }
     }
 
+    /// Generates IR for `tuple.N`. The caller has already established that
+    /// the receiver is a tuple and passes its element types along, so the
+    /// returned `Option` carries only the usual meaning: `None` means the
+    /// receiver diverges and the rest of the block is unreachable.
+    ///
+    /// Element extraction is `extractvalue` on the aggregate directly, with
+    /// no `alloca` and no GEP, so `pair.0` is free after optimisation --
+    /// tuples stay the zero-overhead multiple-return mechanism they need to
+    /// be for stdlib signatures like `frexp(x) -> (f64, i32)`.
+    fn gen_tuple_field(
+        &mut self,
+        receiver_expr: ExprId,
+        name: &Name,
+        element_tys: &[Ty],
+    ) -> Option<BasicValueEnum<'ink>> {
+        let idx = name
+            .as_tuple_index()
+            .expect("inference accepted a non-index field name on a tuple");
+
+        let tuple_ty = self.hir_types.get_tuple_type(element_tys);
+        let field_ir_name = &format!("tuple.{idx}");
+
+        if self.is_place_expr(receiver_expr) {
+            let receiver_ptr = self.gen_place_expr(receiver_expr)?;
+            let receiver_ptr = self.opt_deref_place(receiver_expr, receiver_ptr);
+            let field_ptr = self
+                .builder
+                .build_struct_gep(tuple_ty, receiver_ptr, idx as u32, field_ir_name)
+                .unwrap_or_else(|_| panic!("could not get pointer to tuple element {idx}"));
+            let field_ty = tuple_ty
+                .get_field_type_at_index(idx as u32)
+                .expect("tuple element index out of bounds");
+            Some(
+                self.builder
+                    .build_load(field_ty, field_ptr, field_ir_name)
+                    .expect("failed to build load for tuple element"),
+            )
+        } else {
+            let receiver_value = self.gen_expr(receiver_expr)?;
+            let receiver_value = self.opt_deref_value(receiver_expr, receiver_value);
+            Some(
+                self.builder
+                    .build_extract_value(
+                        receiver_value.into_struct_value(),
+                        idx as u32,
+                        field_ir_name,
+                    )
+                    .unwrap_or_else(|_| panic!("could not extract tuple element {idx}")),
+            )
+        }
+    }
+
     fn gen_place_field(
         &mut self,
         _expr: ExprId,
         receiver_expr: ExprId,
         name: &Name,
     ) -> Option<PointerValue<'ink>> {
+        // As in `gen_field`: a tuple receiver has no `Struct` to look up.
+        if let TyKind::Tuple(_, substs) = self.infer[receiver_expr].clone().interned() {
+            let idx = name
+                .as_tuple_index()
+                .expect("inference accepted a non-index field name on a tuple");
+            let tuple_ty = self.hir_types.get_tuple_type(substs.as_ref());
+            let receiver_ptr = self.gen_place_expr(receiver_expr)?;
+            let receiver_ptr = self.opt_deref_place(receiver_expr, receiver_ptr);
+            return Some(
+                self.builder
+                    .build_struct_gep(tuple_ty, receiver_ptr, idx as u32, &format!("tuple.{idx}"))
+                    .unwrap_or_else(|_| panic!("could not get pointer to tuple element {idx}")),
+            );
+        }
+
         let hir_struct = self.infer[receiver_expr]
             .as_struct()
             .expect("expected a struct");

@@ -275,9 +275,47 @@ impl InferenceResultBuilder<'_> {
 
     /// Record the type of the specified pattern and all sub-patterns.
     fn infer_pat(&mut self, pat: PatId, ty: Ty) {
-        #[allow(clippy::single_match)]
         match &self.body[pat] {
             Pat::Bind { name: _name } => {
+                self.set_pat_type(pat, ty);
+            }
+            // `let (x, y): (A, B)` -- each sub-pattern takes the type of the
+            // element it destructures, so the binding types come out right
+            // without the sub-patterns having to be annotated.
+            //
+            // An arity mismatch is reported once, against the tuple pattern
+            // itself, and the sub-patterns are then left un-typed rather than
+            // being paired up against whatever happens to line up: a
+            // plausible-looking wrong type on `y` would send the error
+            // cascading into every later use of it.
+            Pat::Tuple(args) => {
+                let args = args.clone();
+                if let TyKind::Tuple(arity, substs) = ty.interned() {
+                    if *arity == args.len() {
+                        let substs = substs.clone();
+                        self.set_pat_type(pat, ty);
+                        for (&arg, elem_ty) in args.iter().zip(substs.iter()) {
+                            self.infer_pat(arg, elem_ty.clone());
+                        }
+                        return;
+                    }
+
+                    self.diagnostics
+                        .push(InferenceDiagnostic::InvalidTupleDestructure {
+                            id: pat,
+                            found: ty.clone(),
+                            arity: args.len(),
+                            expected_arity: Some(*arity),
+                        });
+                } else if !ty.is_unknown() {
+                    self.diagnostics
+                        .push(InferenceDiagnostic::InvalidTupleDestructure {
+                            id: pat,
+                            found: ty.clone(),
+                            arity: args.len(),
+                            expected_arity: None,
+                        });
+                }
                 self.set_pat_type(pat, ty);
             }
             _ => {}
@@ -554,6 +592,36 @@ impl InferenceResultBuilder<'_> {
 
                 TyKind::Array(elem_ty).intern()
             }
+            // `(a, b)`. Unlike an array, each element has its own type, so the
+            // expectation is pushed down element-wise: `let t: (i32, f64) =
+            // (1, 2)` must see `f64` for the second element, not a fresh
+            // variable that later defaults to an integer.
+            //
+            // An expectation of the wrong arity is simply not propagated; the
+            // resulting type still describes what was written, and the
+            // mismatch is reported by the caller's own unification rather
+            // than being masked by a silently truncated zip here.
+            Expr::Tuple(exprs) => {
+                let expected_elems = match expected.ty.interned() {
+                    TyKind::Tuple(arity, subs) if *arity == exprs.len() => Some(subs.clone()),
+                    _ => None,
+                };
+
+                let elem_tys: Vec<Ty> = exprs
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, expr)| {
+                        let expectation = expected_elems
+                            .as_ref()
+                            .map_or_else(Expectation::none, |subs| {
+                                Expectation::has_type(subs[idx].clone())
+                            });
+                        self.infer_expr_coerce(*expr, &expectation)
+                    })
+                    .collect();
+
+                TyKind::Tuple(elem_tys.len(), elem_tys.into_iter().collect()).intern()
+            }
             Expr::Index { base, index } => {
                 let elem_ty = if expected.ty.is_unknown() {
                     self.type_variables.new_type_var()
@@ -698,13 +766,24 @@ impl InferenceResultBuilder<'_> {
         method_name: &Name,
         _expected: &Expectation,
     ) -> Ty {
-        let receiver_ty = self.infer_expr(receiver, &Expectation::none());
-
         // If the method name is missing from the AST we simply return an error type
         // since an error would have already been emitted by the AST generation.
         if method_name.is_missing() {
             return error_type();
         }
+
+        // `Type.assoc_fn(args)` -- static member access, which
+        // `spec/LANGUAGE_SPEC.md` section 3 spells out directly
+        // (`Box[i32].new(5)`). Syntactically this is indistinguishable from a
+        // method call, so it has to be recognised here, *before* the receiver
+        // is inferred as a value: a record struct's name is not a value, so
+        // inferring it would report a spurious "mismatched struct literal"
+        // and then a "method does not exist" on top of it.
+        if let Some(ty) = self.infer_static_member_call(tgt_expr, receiver, args, method_name) {
+            return ty;
+        }
+
+        let receiver_ty = self.infer_expr(receiver, &Expectation::none());
 
         // Resolve the method on the receiver type.
         let resolved_function = match lookup_method(
@@ -759,6 +838,80 @@ impl InferenceResultBuilder<'_> {
             args,
             Function::from(resolved_function).into(),
         )
+    }
+
+    /// Handles `Type.assoc_fn(args)` when `receiver` is a bare path naming a
+    /// type, returning the call's type, or `None` when this is an ordinary
+    /// method call on a value after all.
+    ///
+    /// Two conditions must both hold before this claims the call, so that a
+    /// genuine method call is never stolen:
+    ///
+    /// 1. The receiver is a bare `Expr::Path` that resolves in the *type*
+    ///    namespace. A local variable, a field access or a call result never
+    ///    does, so those fall straight through.
+    /// 2. That type actually has an associated function of this name with no
+    ///    `self` parameter (`AssociationMode::WithoutSelf`). If it only has a
+    ///    method by that name, this is a user error better reported by the
+    ///    ordinary path, which already knows how to say "method `f` does not
+    ///    exist" and point at a field or associated function with the same
+    ///    name.
+    ///
+    /// The receiver expression is recorded as having the named type, and the
+    /// resolved function goes into `method_resolutions` exactly as a method
+    /// call's would. Codegen tells the two apart by asking the *callee*
+    /// whether it has a receiver, which is the only thing that actually
+    /// decides whether an argument has to be passed.
+    fn infer_static_member_call(
+        &mut self,
+        tgt_expr: ExprId,
+        receiver: ExprId,
+        args: &[ExprId],
+        method_name: &Name,
+    ) -> Option<Ty> {
+        let Expr::Path(path) = &self.body[receiver] else {
+            return None;
+        };
+        let path = path.clone();
+
+        let resolver = resolver_for_expr(self.db, self.body.owner(), tgt_expr);
+        // `_fully` already rejects a path with unresolved trailing segments.
+        // Visibility of the *type* is not checked here on purpose: the
+        // `lookup_method` call below gates on the visibility of the
+        // *function*, which is the thing actually being reached, and a type
+        // that is not visible at all fails to resolve in the first place.
+        let (type_ns, _visibility) = resolver.resolve_path_as_type_fully(self.db, &path)?;
+
+        let type_for_def = |def| self.db.type_for_def(def, Namespace::Types);
+        let self_ty = match type_ns {
+            TypeNs::StructId(id) => type_for_def(TypableDef::Struct(id.into())),
+            TypeNs::TypeAliasId(id) => type_for_def(TypableDef::TypeAlias(id.into())),
+            TypeNs::PrimitiveType(id) => type_for_def(TypableDef::PrimitiveType(id.into())),
+            TypeNs::SelfType(id) => self.db.type_for_impl_self(id),
+            // As above: `T.assoc(..)` needs `where T: Trait` bounds to
+            // resolve against, which are parsed but not yet resolved.
+            TypeNs::GenericParam(..) => return None,
+        };
+
+        let resolved_function = lookup_method(
+            self.db,
+            &self_ty,
+            self.module(),
+            method_name,
+            Some(AssociationMode::WithoutSelf),
+        )
+        .ok()?;
+
+        // Record the receiver's type so later stages never see `Unknown`
+        // here, and register the resolution the same way a method call does.
+        self.set_expr_type(receiver, self_ty);
+        self.method_resolution.insert(tgt_expr, resolved_function);
+
+        Some(self.infer_call_arguments_and_return(
+            tgt_expr,
+            args,
+            Function::from(resolved_function).into(),
+        ))
     }
 
     fn infer_call_arguments_and_return(
@@ -958,6 +1111,11 @@ impl InferenceResultBuilder<'_> {
             TypeNs::StructId(id) => type_for_def_fn(TypableDef::Struct(id.into())),
             TypeNs::TypeAliasId(id) => type_for_def_fn(TypableDef::TypeAlias(id.into())),
             TypeNs::PrimitiveType(id) => type_for_def_fn(TypableDef::PrimitiveType(id.into())),
+            // `T.method(..)` on an unconstrained type parameter needs bound
+            // resolution (`where T: Trait`) to know what methods exist.
+            // Bounds parse but are not yet resolved, so there is nothing to
+            // look the method up in.
+            TypeNs::GenericParam(..) => return None,
         };
 
         // Resolve the value.
@@ -1344,15 +1502,16 @@ mod diagnostics {
         diagnostics::{
             AccessUnknownField, BreakOutsideLoop, BreakWithValueOutsideLoop, CannotApplyBinaryOp,
             CannotApplyUnaryOp, CyclicType, DiagnosticSink, ExpectedFunction, FieldCountMismatch,
-            IncompatibleBranch, InvalidCast, InvalidLhs, LiteralOutOfRange, MethodNotFound,
-            MethodNotInScope, MismatchedStructLit, MismatchedType, MissingElseBranch,
-            MissingFields, NoFields, NoSuchField, ParameterCountMismatch, PrivateAccess,
-            ReturnMissingExpression, UnresolvedType, UnresolvedValue,
+            IncompatibleBranch, InvalidCast, InvalidLhs, InvalidTupleDestructure,
+            LiteralOutOfRange, MethodNotFound, MethodNotInScope, MismatchedStructLit,
+            MismatchedType, MissingElseBranch, MissingFields, NoFields, NoSuchField,
+            ParameterCountMismatch, PrivateAccess, ReturnMissingExpression, UnresolvedType,
+            UnresolvedValue,
         },
         ids::FunctionId,
         ty::{cast::InvalidCastReason, infer::ExprOrPatId},
         type_ref::LocalTypeRefId,
-        ExprId, Function, HirDatabase, IntTy, Name, Ty,
+        ExprId, Function, HirDatabase, IntTy, Name, PatId, Ty,
     };
 
     #[derive(Debug, PartialEq, Eq, Clone)]
@@ -1441,6 +1600,12 @@ mod diagnostics {
             id: ExprId,
             expected: StructKind,
             found: StructKind,
+        },
+        InvalidTupleDestructure {
+            id: PatId,
+            found: Ty,
+            arity: usize,
+            expected_arity: Option<usize>,
         },
         NoFields {
             id: ExprId,
@@ -1762,6 +1927,25 @@ mod diagnostics {
                         expr,
                         expected: *expected,
                         found: *found,
+                    });
+                }
+                InferenceDiagnostic::InvalidTupleDestructure {
+                    id,
+                    found,
+                    arity,
+                    expected_arity,
+                } => {
+                    let pat = body
+                        .pat_syntax(*id)
+                        .expect("a tuple pattern always has a syntax node")
+                        .value
+                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    sink.push(InvalidTupleDestructure {
+                        file,
+                        pat,
+                        found: found.clone(),
+                        arity: *arity,
+                        expected_arity: *expected_arity,
                     });
                 }
                 InferenceDiagnostic::NoFields { id, found } => {

@@ -36,12 +36,12 @@ public func sort[T](data: Slice[T], cmp: func(T, T) -> i32) -> void {
         return;
     }
     let max_depth = 2 * __intrinsic_ilog2(n as u64);
-    _introsort_impl[T](data, cmp, max_depth);
+    _introsort_impl(data, cmp, max_depth);
 }
 
 // Sort using the natural Comparable ordering.
 public func sort[T: Comparable](data: Slice[T]) -> void {
-    sort[T](data, func(a: T, b: T) -> i32 { return a.cmp(b); });
+    sort(data, func(a: T, b: T) -> i32 { return a.cmp(b); });
 }
 
 // Internal introsort: quicksort with fallback to heapsort at depth limit,
@@ -51,24 +51,24 @@ func _introsort_impl[T](data: Slice[T], cmp: func(T, T) -> i32, depth: usize) ->
 
     // Small partitions: fall back to insertion sort.
     if n <= 16 {
-        _insertion_sort_impl[T](data, cmp);
+        _insertion_sort_impl(data, cmp);
         return;
     }
 
     // Depth limit reached: fall back to heapsort to guarantee O(n log n).
     if depth == 0 {
-        _heapsort_impl[T](data, cmp);
+        _heapsort_impl(data, cmp);
         return;
     }
 
     // Partition around a median-of-three pivot.
-    let pivot_idx = _partition[T](data, cmp);
+    let pivot_idx = _partition(data, cmp);
 
     // Recurse on both halves.
     let left = data.subslice(0, pivot_idx);
     let right = data.subslice(pivot_idx + 1, n);
-    _introsort_impl[T](left, cmp, depth - 1);
-    _introsort_impl[T](right, cmp, depth - 1);
+    _introsort_impl(left, cmp, depth - 1);
+    _introsort_impl(right, cmp, depth - 1);
 }
 
 // Lomuto partition scheme with median-of-three pivot selection.
@@ -79,16 +79,16 @@ func _partition[T](data: Slice[T], cmp: func(T, T) -> i32) -> usize {
 
     // Sort three candidates to find the median.
     if cmp(data.get(0), data.get(mid)) > 0 {
-        _slice_swap[T](data, 0, mid);
+        _slice_swap(data, 0, mid);
     }
     if cmp(data.get(0), data.get(last)) > 0 {
-        _slice_swap[T](data, 0, last);
+        _slice_swap(data, 0, last);
     }
     if cmp(data.get(mid), data.get(last)) > 0 {
-        _slice_swap[T](data, mid, last);
+        _slice_swap(data, mid, last);
     }
     // Place pivot at position last-1.
-    _slice_swap[T](data, mid, last - 1);
+    _slice_swap(data, mid, last - 1);
     let pivot = data.get(last - 1);
 
     let i: usize = 0;
@@ -105,10 +105,10 @@ func _partition[T](data: Slice[T], cmp: func(T, T) -> i32) -> usize {
         if i >= j {
             break;
         }
-        _slice_swap[T](data, i, j);
+        _slice_swap(data, i, j);
     }
     // Restore pivot.
-    _slice_swap[T](data, i, last - 1);
+    _slice_swap(data, i, last - 1);
     return i;
 }
 
@@ -135,19 +135,19 @@ public func stable_sort[T](data: Slice[T], cmp: func(T, T) -> i32) -> void {
     }
 
     // Allocate temporary buffer.
-    let buf = Array[T].with_capacity(n);
+    let buf = Array.with_capacity(n);
     let i: usize = 0;
     while i < n {
         buf.push(data.get(i));
         i = i + 1;
     }
 
-    _merge_sort_impl[T](data, buf.as_mut_slice(), cmp, 0, n);
+    _merge_sort_impl(data, buf.as_mut_slice(), cmp, 0, n);
 }
 
 // Stable sort using natural Comparable ordering.
 public func stable_sort[T: Comparable](data: Slice[T]) -> void {
-    stable_sort[T](data, func(a: T, b: T) -> i32 { return a.cmp(b); });
+    stable_sort(data, func(a: T, b: T) -> i32 { return a.cmp(b); });
 }
 
 // Top-down merge sort.
@@ -164,20 +164,20 @@ func _merge_sort_impl[T](
 
     // Small runs: insertion sort.
     if hi - lo <= 16 {
-        _insertion_sort_impl[T](data.subslice(lo, hi), cmp);
+        _insertion_sort_impl(data.subslice(lo, hi), cmp);
         return;
     }
 
     let mid = lo + (hi - lo) / 2;
-    _merge_sort_impl[T](data, buf, cmp, lo, mid);
-    _merge_sort_impl[T](data, buf, cmp, mid, hi);
+    _merge_sort_impl(data, buf, cmp, lo, mid);
+    _merge_sort_impl(data, buf, cmp, mid, hi);
 
     // If already sorted across the boundary, skip merge.
     if cmp(data.get(mid - 1), data.get(mid)) <= 0 {
         return;
     }
 
-    _merge[T](data, buf, cmp, lo, mid, hi);
+    _merge(data, buf, cmp, lo, mid, hi);
 }
 
 // Merge two sorted runs [lo..mid) and [mid..hi) using `buf` as scratch.
@@ -242,21 +242,21 @@ public func partial_sort[T](data: Slice[T], k: usize, cmp: func(T, T) -> i32) ->
     }
 
     // Build a max-heap of the first `count` elements.
-    _build_max_heap[T](data.subslice(0, count), cmp);
+    _build_max_heap(data.subslice(0, count), cmp);
 
     // For each remaining element, if it's smaller than the heap root, swap
     // and sift down.
     let i: usize = count;
     while i < n {
         if cmp(data.get(i), data.get(0)) < 0 {
-            _slice_swap[T](data, 0, i);
-            _sift_down[T](data.subslice(0, count), cmp, 0);
+            _slice_swap(data, 0, i);
+            _sift_down(data.subslice(0, count), cmp, 0);
         }
         i = i + 1;
     }
 
     // Sort the heap to produce sorted output in [0, count).
-    _heapsort_impl[T](data.subslice(0, count), cmp);
+    _heapsort_impl(data.subslice(0, count), cmp);
 }
 
 // =============================================================================
@@ -266,7 +266,7 @@ public func partial_sort[T](data: Slice[T], k: usize, cmp: func(T, T) -> i32) ->
 // Sort a mutable slice using insertion sort.  Stable.
 // Efficient for small or nearly-sorted data.
 public func insertion_sort[T](data: Slice[T], cmp: func(T, T) -> i32) -> void {
-    _insertion_sort_impl[T](data, cmp);
+    _insertion_sort_impl(data, cmp);
 }
 
 // Internal insertion sort implementation.
@@ -298,11 +298,11 @@ func _heapsort_impl[T](data: Slice[T], cmp: func(T, T) -> i32) -> void {
     if n <= 1 {
         return;
     }
-    _build_max_heap[T](data, cmp);
+    _build_max_heap(data, cmp);
     let end: usize = n - 1;
     while end > 0 {
-        _slice_swap[T](data, 0, end);
-        _sift_down[T](data.subslice(0, end), cmp, 0);
+        _slice_swap(data, 0, end);
+        _sift_down(data.subslice(0, end), cmp, 0);
         end = end - 1;
     }
 }
@@ -311,7 +311,7 @@ func _build_max_heap[T](data: Slice[T], cmp: func(T, T) -> i32) -> void {
     let n = data.len();
     let i: isize = ((n / 2) as isize) - 1;
     while i >= 0 {
-        _sift_down[T](data, cmp, i as usize);
+        _sift_down(data, cmp, i as usize);
         i = i - 1;
     }
 }
@@ -325,7 +325,7 @@ func _sift_down[T](data: Slice[T], cmp: func(T, T) -> i32, start: usize) -> void
             child = child + 1;
         }
         if cmp(data.get(root), data.get(child)) < 0 {
-            _slice_swap[T](data, root, child);
+            _slice_swap(data, root, child);
             root = child;
         } else {
             return;
@@ -355,7 +355,7 @@ public func is_sorted[T](data: Slice[T], cmp: func(T, T) -> i32) -> bool {
 
 // Return true when sorted using natural ordering.
 public func is_sorted[T: Comparable](data: Slice[T]) -> bool {
-    return is_sorted[T](data, func(a: T, b: T) -> i32 { return a.cmp(b); });
+    return is_sorted(data, func(a: T, b: T) -> i32 { return a.cmp(b); });
 }
 
 // =============================================================================
@@ -370,7 +370,7 @@ public func nth_element[T](data: Slice[T], k: usize, cmp: func(T, T) -> i32) -> 
     let hi: usize = data.len();
     while lo < hi {
         let sub = data.subslice(lo, hi);
-        let pivot = _partition[T](sub, cmp);
+        let pivot = _partition(sub, cmp);
         let abs_pivot = lo + pivot;
         if abs_pivot == k {
             return;

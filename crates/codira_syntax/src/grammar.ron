@@ -194,6 +194,7 @@ Grammar(
 
         "STRUCT_DEF",
         "TYPE_ALIAS_DEF",
+        "CONST_DEF",
         "RECORD_FIELD_DEF_LIST",
         "RECORD_FIELD_DEF",
         "TUPLE_FIELD_DEF_LIST",
@@ -213,6 +214,11 @@ Grammar(
 
         "PATH_TYPE",
         "ARRAY_TYPE",
+        "TUPLE_TYPE",
+        "PAREN_TYPE",
+        "REFERENCE_TYPE",
+        "FUNCTION_TYPE",
+        "VARIADIC_TYPE",
         "NEVER_TYPE",
         "OPTIONAL_TYPE",
         "REFINEMENT_TYPE",
@@ -242,6 +248,8 @@ Grammar(
         "LOOP_EXPR",
         "BREAK_EXPR",
         "ARRAY_EXPR",
+        "TUPLE_EXPR",
+        "CLOSURE_EXPR",
         "CONDITION",
         "COMPTIME_EXPR",
         "MATCH_EXPR",
@@ -263,6 +271,8 @@ Grammar(
         "LITERAL_PAT",
         "PATH_PAT",
         "TUPLE_STRUCT_PAT",
+        "TUPLE_PAT",
+        "PAREN_PAT",
 
         "ARG_LIST",
 
@@ -294,7 +304,7 @@ Grammar(
             traits: [ "ModuleItemOwner", "FunctionDefOwner" ],
         ),
         "ModuleItem": (
-            enum: ["Use", "FunctionDef", "StructDef", "TypeAliasDef", "TraitDef", "EnumDef", "EffectDef", "MacroDef", "Extend", "ExternBlock", "SupervisorDef"]
+            enum: ["Use", "FunctionDef", "StructDef", "TypeAliasDef", "ConstDef", "TraitDef", "EnumDef", "EffectDef", "MacroDef", "Extend", "ExternBlock", "SupervisorDef"]
         ),
         "Visibility": (),
         "AttributeList": (collections: [("attributes", "Attribute")]),
@@ -396,6 +406,15 @@ Grammar(
             ],
             options: [ "ParamList", ["body", "BlockExpr"], "RetType" ],
         ),
+        "ConstDef": (
+            options: ["TypeRef", ["initializer", "Expr"]],
+            traits: [
+                "NameOwner",
+                "VisibilityOwner",
+                "DocCommentsOwner",
+                "AttributeOwner",
+            ]
+        ),
         "TypeAliasDef": (
             options: ["TypeRef"],
             traits: [
@@ -484,6 +503,21 @@ Grammar(
                 [ "exprs", "Expr" ]
             ]
         ),
+        // `(a, b, c)` -- a tuple literal, and `()` -- the unit value. A
+        // parenthesised expression with no comma stays a `ParenExpr`, so
+        // `(a)` and `(a,)` are deliberately different nodes.
+        "TupleExpr": (
+            collections: [
+                [ "exprs", "Expr" ]
+            ]
+        ),
+        // `func(a: T, b: T) -> R { .. }` -- a closure literal. Parses only;
+        // see `expressions::closure_expr` for what that does and does not
+        // claim.
+        "ClosureExpr": (
+            traits: ["ArgListOwner"],
+            options: ["ParamList", ["ret_type", "RetType"], ["body", "BlockExpr"]],
+        ),
         "ArgList": (
             collections: [
                 ["args", "Expr"]
@@ -538,6 +572,8 @@ Grammar(
                 "BreakExpr",
                 "BlockExpr",
                 "ArrayExpr",
+                "TupleExpr",
+                "ClosureExpr",
                 "IndexExpr",
                 "RecordLit",
                 "ComptimeExpr",
@@ -556,6 +592,34 @@ Grammar(
         "NameRef": (),
         "PathType": (options: ["Path", "GenericArgList"]),
         "ArrayType": (options: ["TypeRef"]),
+        // `(A, B)` -- a tuple type, and `()` -- the unit type. A
+        // parenthesised type with no comma is just that type (no node is
+        // introduced), so `(A)` is `A` while `(A,)` is a 1-tuple.
+        "TupleType": (
+            collections: [
+                [ "fields", "TypeRef" ]
+            ]
+        ),
+        // `(A)` -- grouping only, the exact type analogue of `ParenExpr`.
+        // Lowers transparently to its inner type.
+        "ParenType": (options: ["TypeRef"]),
+        // `&T`, `&mut T`, `mut T` -- a borrowed or in-place-mutable
+        // reference. Parse-level scaffolding: lowers transparently to `T`,
+        // exactly as the parameter ownership keywords do (LANGUAGE_SPEC
+        // section 14), since there is no borrow model to enforce yet.
+        "ReferenceType": (options: ["TypeRef"]),
+        // `func(A, B) -> R` -- a function type. Parse-level only; there are
+        // no function *values* yet (LANGUAGE_SPEC section 12 lists closures
+        // as unimplemented), so this exists so signatures that mention one
+        // can be read.
+        "FunctionType": (
+            collections: [("params", "TypeRef")],
+            options: [["ret_type", "RetType"]],
+        ),
+        // `...` -- a variadic parameter's type. Parse-level only: there is
+        // no argument-pack model, so this records that a parameter is
+        // variadic without claiming anything can be done with it.
+        "VariadicType": (),
         "NeverType": (),
         "OptionalType": (options: ["TypeRef"]),
         "RefinementType": (options: [["base", "TypeRef"], ["binder", "NameRef"], ["predicate", "Expr"]]),
@@ -563,6 +627,11 @@ Grammar(
             enum: [
                 "PathType",
                 "ArrayType",
+                "TupleType",
+                "ParenType",
+                "ReferenceType",
+                "FunctionType",
+                "VariadicType",
                 "NeverType",
                 "OptionalType",
                 "RefinementType",
@@ -615,6 +684,16 @@ Grammar(
             options: ["Path"],
             collections: [("args", "Pat")],
         ),
+        // `(a, b)` -- destructures a tuple. Unlike `TupleStructPat` there is
+        // no path, and unlike every other pattern here it is irrefutable, so
+        // it is legal wherever a binding is (`let`, a parameter).
+        "TuplePat": (
+            collections: [("args", "Pat")],
+        ),
+        // `(a)` -- grouping only, the pattern analogue of `ParenType` and
+        // `ParenExpr`. Lowers transparently to the inner pattern, which is
+        // what keeps `(a,)` (a genuine 1-tuple) distinguishable from it.
+        "ParenPat": (options: ["Pat"]),
         "Pat": (
             enum: [
                 "BindPat",
@@ -622,6 +701,8 @@ Grammar(
                 "LiteralPat",
                 "PathPat",
                 "TupleStructPat",
+                "TuplePat",
+                "ParenPat",
             ],
         ),
 

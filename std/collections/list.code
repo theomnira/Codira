@@ -24,20 +24,20 @@ class List[T] {
 
 /// Creates a new, empty list with zero capacity.
 public func list_new[T]() -> List[T] {
-    let buf = RawBuf[T] { ptr: null_ptr[T](), cap: 0 };
+    let buf = RawBuf[T] { ptr: null_ptr(), cap: 0 };
     return List[T] { buf: buf, len: 0 };
 }
 
 /// Creates a new list pre-allocated to hold at least `capacity` elements.
 public func list_with_capacity[T](capacity: usize) -> List[T] {
-    let ptr = heap_alloc[T](capacity);
+    let ptr = heap_alloc(capacity);
     let buf = RawBuf[T] { ptr: ptr, cap: capacity };
     return List[T] { buf: buf, len: 0 };
 }
 
 /// Creates a list from a fixed-size array (copies elements).
 public func list_from_array[T](arr: Span[T]) -> List[T] {
-    let out = list_with_capacity[T](arr.len);
+    let out = list_with_capacity(arr.len);
     let i: usize = 0;
     while i < arr.len {
         raw_store(out.buf.ptr, i, span_get(arr, i));
@@ -50,30 +50,30 @@ public func list_from_array[T](arr: Span[T]) -> List[T] {
 // ── Capacity helpers (internal) ──────────────────────────────────────────────
 
 /// Doubles capacity (or sets to 4 if currently 0).
-func list_grow[T](self: List[T]) -> List[T] {
+func list_grow[T](this: List[T]) -> List[T] {
     let new_cap: usize = 0;
-    if self.buf.cap == 0 {
+    if this.buf.cap == 0 {
         new_cap = 4;
     } else {
-        new_cap = self.buf.cap * 2;
+        new_cap = this.buf.cap * 2;
     }
-    let new_ptr = heap_alloc[T](new_cap);
+    let new_ptr = heap_alloc(new_cap);
     // Copy old data
     let i: usize = 0;
-    while i < self.len {
-        raw_store(new_ptr, i, raw_load(self.buf.ptr, i));
+    while i < this.len {
+        raw_store(new_ptr, i, raw_load(this.buf.ptr, i));
         i = i + 1;
     }
-    heap_free(self.buf.ptr);
+    heap_free(this.buf.ptr);
     let new_buf = RawBuf[T] { ptr: new_ptr, cap: new_cap };
-    return List[T] { buf: new_buf, len: self.len };
+    return List[T] { buf: new_buf, len: this.len };
 }
 
 /// Ensures the list can hold at least `min_cap` elements.
-func list_ensure_capacity[T](self: List[T], min_cap: usize) -> List[T] {
-    let out = self;
+func list_ensure_capacity[T](this: List[T], min_cap: usize) -> List[T] {
+    let out = this;
     while out.buf.cap < min_cap {
-        out = list_grow[T](out);
+        out = list_grow(out);
     }
     return out;
 }
@@ -81,76 +81,76 @@ func list_ensure_capacity[T](self: List[T], min_cap: usize) -> List[T] {
 // ── Core API ─────────────────────────────────────────────────────────────────
 
 /// Returns the number of elements currently stored.
-public func len[T](self: List[T]) -> usize {
-    return self.len;
+public func len[T](this: List[T]) -> usize {
+    return this.len;
 }
 
 /// Returns the total number of elements the backing buffer can hold.
-public func capacity[T](self: List[T]) -> usize {
-    return self.buf.cap;
+public func capacity[T](this: List[T]) -> usize {
+    return this.buf.cap;
 }
 
 /// Returns true when the list contains zero elements.
-public func is_empty[T](self: List[T]) -> bool {
-    return self.len == 0;
+public func is_empty[T](this: List[T]) -> bool {
+    return this.len == 0;
 }
 
 // ── Element access ───────────────────────────────────────────────────────────
 
 /// Returns the element at `index`. Panics if out of bounds.
-public func get[T](self: List[T], index: usize) -> T {
-    if index >= self.len {
+public func get[T](this: List[T], index: usize) -> T {
+    if index >= this.len {
         panic("List.get: index out of bounds");
     }
-    return raw_load(self.buf.ptr, index);
+    return raw_load(this.buf.ptr, index);
 }
 
 /// Overwrites the element at `index` with `value`. Panics if out of bounds.
-public func set[T](self: List[T], index: usize, value: T) -> List[T] {
-    if index >= self.len {
+public func set[T](this: List[T], index: usize, value: T) -> List[T] {
+    if index >= this.len {
         panic("List.set: index out of bounds");
     }
-    raw_store(self.buf.ptr, index, value);
-    return self;
+    raw_store(this.buf.ptr, index, value);
+    return this;
 }
 
 /// Returns the first element. Panics if the list is empty.
-public func first[T](self: List[T]) -> T {
-    return get(self, 0);
+public func first[T](this: List[T]) -> T {
+    return get(this, 0);
 }
 
 /// Returns the last element. Panics if the list is empty.
-public func last[T](self: List[T]) -> T {
-    return get(self, self.len - 1);
+public func last[T](this: List[T]) -> T {
+    return get(this, this.len - 1);
 }
 
 // ── Mutation ─────────────────────────────────────────────────────────────────
 
 /// Appends `value` to the end of the list, growing if necessary.
-public func push[T](self: List[T], value: T) -> List[T] {
-    let out = list_ensure_capacity[T](self, self.len + 1);
+public func push[T](this: List[T], value: T) -> List[T] {
+    let out = list_ensure_capacity(this, this.len + 1);
     raw_store(out.buf.ptr, out.len, value);
     out.len = out.len + 1;
     return out;
 }
 
 /// Removes and returns the last element. Panics if empty.
-public func pop[T](self: List[T]) -> (List[T], T) {
-    if self.len == 0 {
+public func pop[T](this: List[T]) -> (List[T], T) {
+    if this.len == 0 {
         panic("List.pop: list is empty");
     }
-    let val = raw_load(self.buf.ptr, self.len - 1);
-    let out = self;
+    let val = raw_load(this.buf.ptr, this.len - 1);
+    let out = this;
     out.len = out.len - 1;
     return (out, val);
 }
 
 /// Inserts `value` at `index`, shifting subsequent elements right.
-public func insert[T](self: List[T], index: usize, value: T) -> List[T] {
-    if index > self.len {
+public func insert[T](this: List[T], index: usize, value: T) -> List[T] {
+    if index > this.len {
         panic("List.insert: index out of bounds");
     }
-    let out = list_ensure_capacity[T](self, self.len + 1);
+    let out = list_ensure_capacity(this, this.len + 1);
     // Shift elements right from end down to index
     let i = out.len;
     while i > index {
@@ -163,24 +163,24 @@ public func insert[T](self: List[T], index: usize, value: T) -> List[T] {
 }
 
 /// Removes the element at `index`, shifting subsequent elements left.
-public func remove[T](self: List[T], index: usize) -> (List[T], T) {
-    if index >= self.len {
+public func remove[T](this: List[T], index: usize) -> (List[T], T) {
+    if index >= this.len {
         panic("List.remove: index out of bounds");
     }
-    let val = raw_load(self.buf.ptr, index);
+    let val = raw_load(this.buf.ptr, index);
     let i = index;
-    while i < self.len - 1 {
-        raw_store(self.buf.ptr, i, raw_load(self.buf.ptr, i + 1));
+    while i < this.len - 1 {
+        raw_store(this.buf.ptr, i, raw_load(this.buf.ptr, i + 1));
         i = i + 1;
     }
-    let out = self;
+    let out = this;
     out.len = out.len - 1;
     return (out, val);
 }
 
 /// Removes all elements without freeing the backing buffer.
-public func clear[T](self: List[T]) -> List[T] {
-    let out = self;
+public func clear[T](this: List[T]) -> List[T] {
+    let out = this;
     out.len = 0;
     return out;
 }
@@ -188,10 +188,10 @@ public func clear[T](self: List[T]) -> List[T] {
 // ── Search / query ───────────────────────────────────────────────────────────
 
 /// Returns `true` if any element equals `value`.
-public func contains[T](self: List[T], value: T) -> bool {
+public func contains[T](this: List[T], value: T) -> bool {
     let i: usize = 0;
-    while i < self.len {
-        if raw_load(self.buf.ptr, i) == value {
+    while i < this.len {
+        if raw_load(this.buf.ptr, i) == value {
             return true;
         }
         i = i + 1;
@@ -200,10 +200,10 @@ public func contains[T](self: List[T], value: T) -> bool {
 }
 
 /// Returns the index of the first occurrence of `value`, or -1.
-public func index_of[T](self: List[T], value: T) -> isize {
+public func index_of[T](this: List[T], value: T) -> isize {
     let i: usize = 0;
-    while i < self.len {
-        if raw_load(self.buf.ptr, i) == value {
+    while i < this.len {
+        if raw_load(this.buf.ptr, i) == value {
             return i as isize;
         }
         i = i + 1;
@@ -212,11 +212,11 @@ public func index_of[T](self: List[T], value: T) -> isize {
 }
 
 /// Counts occurrences of `value`.
-public func count[T](self: List[T], value: T) -> usize {
+public func count[T](this: List[T], value: T) -> usize {
     let n: usize = 0;
     let i: usize = 0;
-    while i < self.len {
-        if raw_load(self.buf.ptr, i) == value {
+    while i < this.len {
+        if raw_load(this.buf.ptr, i) == value {
             n = n + 1;
         }
         i = i + 1;
@@ -227,8 +227,8 @@ public func count[T](self: List[T], value: T) -> usize {
 // ── Bulk operations ──────────────────────────────────────────────────────────
 
 /// Appends every element of `other` to the end of `self`.
-public func extend[T](self: List[T], other: List[T]) -> List[T] {
-    let out = list_ensure_capacity[T](self, self.len + other.len);
+public func extend[T](this: List[T], other: List[T]) -> List[T] {
+    let out = list_ensure_capacity(this, this.len + other.len);
     let i: usize = 0;
     while i < other.len {
         raw_store(out.buf.ptr, out.len, raw_load(other.buf.ptr, i));
@@ -239,18 +239,18 @@ public func extend[T](self: List[T], other: List[T]) -> List[T] {
 }
 
 /// Returns a new list containing elements from `start` (inclusive) to `end` (exclusive).
-public func slice[T](self: List[T], start: usize, end: usize) -> List[T] {
+public func slice[T](this: List[T], start: usize, end: usize) -> List[T] {
     if start > end {
         panic("List.slice: start > end");
     }
-    if end > self.len {
+    if end > this.len {
         panic("List.slice: end out of bounds");
     }
     let new_len = end - start;
-    let out = list_with_capacity[T](new_len);
+    let out = list_with_capacity(new_len);
     let i: usize = 0;
     while i < new_len {
-        raw_store(out.buf.ptr, i, raw_load(self.buf.ptr, start + i));
+        raw_store(out.buf.ptr, i, raw_load(this.buf.ptr, start + i));
         i = i + 1;
     }
     out.len = new_len;
@@ -258,31 +258,31 @@ public func slice[T](self: List[T], start: usize, end: usize) -> List[T] {
 }
 
 /// Reverses the list in-place.
-public func reverse[T](self: List[T]) -> List[T] {
-    if self.len <= 1 {
-        return self;
+public func reverse[T](this: List[T]) -> List[T] {
+    if this.len <= 1 {
+        return this;
     }
     let lo: usize = 0;
-    let hi: usize = self.len - 1;
+    let hi: usize = this.len - 1;
     while lo < hi {
-        let tmp = raw_load(self.buf.ptr, lo);
-        raw_store(self.buf.ptr, lo, raw_load(self.buf.ptr, hi));
-        raw_store(self.buf.ptr, hi, tmp);
+        let tmp = raw_load(this.buf.ptr, lo);
+        raw_store(this.buf.ptr, lo, raw_load(this.buf.ptr, hi));
+        raw_store(this.buf.ptr, hi, tmp);
         lo = lo + 1;
         hi = hi - 1;
     }
-    return self;
+    return this;
 }
 
 // ── Sorting (in-place quicksort) ─────────────────────────────────────────────
 
 /// Sorts the list in ascending order (requires T to support `<`).
-public func sort[T](self: List[T]) -> List[T] {
-    if self.len <= 1 {
-        return self;
+public func sort[T](this: List[T]) -> List[T] {
+    if this.len <= 1 {
+        return this;
     }
-    quicksort_impl[T](self.buf.ptr, 0, self.len - 1);
-    return self;
+    quicksort_impl(this.buf.ptr, 0, this.len - 1);
+    return this;
 }
 
 func quicksort_impl[T](ptr: Pointer[T], lo: usize, hi: usize) {
@@ -306,32 +306,32 @@ func quicksort_impl[T](ptr: Pointer[T], lo: usize, hi: usize) {
     raw_store(ptr, i, raw_load(ptr, hi));
     raw_store(ptr, hi, tmp);
     if i > 0 {
-        quicksort_impl[T](ptr, lo, i - 1);
+        quicksort_impl(ptr, lo, i - 1);
     }
-    quicksort_impl[T](ptr, i + 1, hi);
+    quicksort_impl(ptr, i + 1, hi);
 }
 
 // ── Functional combinators ───────────────────────────────────────────────────
 
 /// Returns a new list produced by applying `f` to every element.
-public func map[T, U](self: List[T], f: func(T) -> U) -> List[U] {
-    let out = list_with_capacity[U](self.len);
+public func map[T, U](this: List[T], f: func(T) -> U) -> List[U] {
+    let out = list_with_capacity(this.len);
     let i: usize = 0;
-    while i < self.len {
-        let mapped = f(raw_load(self.buf.ptr, i));
+    while i < this.len {
+        let mapped = f(raw_load(this.buf.ptr, i));
         raw_store(out.buf.ptr, i, mapped);
         i = i + 1;
     }
-    out.len = self.len;
+    out.len = this.len;
     return out;
 }
 
 /// Returns a new list containing only elements for which `pred` is true.
-public func filter[T](self: List[T], pred: func(T) -> bool) -> List[T] {
-    let out = list_new[T]();
+public func filter[T](this: List[T], pred: func(T) -> bool) -> List[T] {
+    let out = list_new();
     let i: usize = 0;
-    while i < self.len {
-        let elem = raw_load(self.buf.ptr, i);
+    while i < this.len {
+        let elem = raw_load(this.buf.ptr, i);
         if pred(elem) {
             out = push(out, elem);
         }
@@ -342,21 +342,21 @@ public func filter[T](self: List[T], pred: func(T) -> bool) -> List[T] {
 
 /// Reduces the list to a single value by repeatedly applying `f`.
 /// `init` is the initial accumulator value.
-public func reduce[T, U](self: List[T], init: U, f: func(U, T) -> U) -> U {
+public func reduce[T, U](this: List[T], init: U, f: func(U, T) -> U) -> U {
     let acc = init;
     let i: usize = 0;
-    while i < self.len {
-        acc = f(acc, raw_load(self.buf.ptr, i));
+    while i < this.len {
+        acc = f(acc, raw_load(this.buf.ptr, i));
         i = i + 1;
     }
     return acc;
 }
 
 /// Returns true if `pred` holds for every element.
-public func all[T](self: List[T], pred: func(T) -> bool) -> bool {
+public func all[T](this: List[T], pred: func(T) -> bool) -> bool {
     let i: usize = 0;
-    while i < self.len {
-        if !pred(raw_load(self.buf.ptr, i)) {
+    while i < this.len {
+        if !pred(raw_load(this.buf.ptr, i)) {
             return false;
         }
         i = i + 1;
@@ -365,10 +365,10 @@ public func all[T](self: List[T], pred: func(T) -> bool) -> bool {
 }
 
 /// Returns true if `pred` holds for at least one element.
-public func any[T](self: List[T], pred: func(T) -> bool) -> bool {
+public func any[T](this: List[T], pred: func(T) -> bool) -> bool {
     let i: usize = 0;
-    while i < self.len {
-        if pred(raw_load(self.buf.ptr, i)) {
+    while i < this.len {
+        if pred(raw_load(this.buf.ptr, i)) {
             return true;
         }
         i = i + 1;
@@ -385,14 +385,14 @@ struct ListIter[T] {
 }
 
 /// Returns a forward iterator over the list.
-public func iter[T](self: List[T]) -> ListIter[T] {
-    return ListIter[T] { list: self, pos: 0 };
+public func iter[T](this: List[T]) -> ListIter[T] {
+    return ListIter[T] { list: this, pos: 0 };
 }
 
 /// Advances the iterator, returning the next element or none.
 public func iter_next[T](it: ListIter[T]) -> (ListIter[T], Optional[T]) {
     if it.pos >= it.list.len {
-        return (it, none[T]());
+        return (it, none());
     }
     let val = raw_load(it.list.buf.ptr, it.pos);
     let next_it = ListIter[T] { list: it.list, pos: it.pos + 1 };
@@ -402,8 +402,8 @@ public func iter_next[T](it: ListIter[T]) -> (ListIter[T], Optional[T]) {
 // ── Cleanup ──────────────────────────────────────────────────────────────────
 
 /// Frees the backing buffer. The list must not be used after this call.
-public func drop[T](self: List[T]) {
-    if self.buf.cap > 0 {
-        heap_free(self.buf.ptr);
+public func drop[T](this: List[T]) {
+    if this.buf.cap > 0 {
+        heap_free(this.buf.ptr);
     }
 }

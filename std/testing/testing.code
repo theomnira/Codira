@@ -48,7 +48,7 @@ public func assert_false(condition: bool) {
 // Asserts that `actual` equals `expected`.
 // Works for any type that supports == comparison.
 // ---------------------------------------------------------------------------
-public func assert_equal<T>(actual: T, expected: T, message: String) {
+public func assert_equal[T](actual: T, expected: T, message: String) {
     if actual != expected {
         panic("assert_equal failed: " + message
             + " (expected: " + to_string(expected)
@@ -56,7 +56,7 @@ public func assert_equal<T>(actual: T, expected: T, message: String) {
     }
 }
 
-public func assert_equal<T>(actual: T, expected: T) {
+public func assert_equal[T](actual: T, expected: T) {
     assert_equal(actual, expected, "values are not equal");
 }
 
@@ -64,14 +64,14 @@ public func assert_equal<T>(actual: T, expected: T) {
 // assert_not_equal
 // Asserts that `actual` does not equal `unexpected`.
 // ---------------------------------------------------------------------------
-public func assert_not_equal<T>(actual: T, unexpected: T, message: String) {
+public func assert_not_equal[T](actual: T, unexpected: T, message: String) {
     if actual == unexpected {
         panic("assert_not_equal failed: " + message
             + " (both values: " + to_string(actual) + ")");
     }
 }
 
-public func assert_not_equal<T>(actual: T, unexpected: T) {
+public func assert_not_equal[T](actual: T, unexpected: T) {
     assert_not_equal(actual, unexpected, "values should differ but are equal");
 }
 
@@ -122,13 +122,13 @@ public func assert_raises(f: func()) -> String {
 // assert_is_none
 // Asserts that an Optional value is None.
 // ---------------------------------------------------------------------------
-public func assert_is_none<T>(value: Optional<T>, message: String) {
+public func assert_is_none[T](value: Optional[T], message: String) {
     if value.is_some() {
         panic("assert_is_none failed: " + message + " (value is Some)");
     }
 }
 
-public func assert_is_none<T>(value: Optional<T>) {
+public func assert_is_none[T](value: Optional[T]) {
     assert_is_none(value, "expected None, got Some");
 }
 
@@ -136,14 +136,14 @@ public func assert_is_none<T>(value: Optional<T>) {
 // assert_is_some
 // Asserts that an Optional value is Some, and returns the inner value.
 // ---------------------------------------------------------------------------
-public func assert_is_some<T>(value: Optional<T>, message: String) -> T {
+public func assert_is_some[T](value: Optional[T], message: String) -> T {
     if value.is_none() {
         panic("assert_is_some failed: " + message + " (value is None)");
     }
     return value.unwrap();
 }
 
-public func assert_is_some<T>(value: Optional<T>) -> T {
+public func assert_is_some[T](value: Optional[T]) -> T {
     return assert_is_some(value, "expected Some, got None");
 }
 
@@ -151,14 +151,14 @@ public func assert_is_some<T>(value: Optional<T>) -> T {
 // assert_greater
 // Asserts that `actual` > `expected`.
 // ---------------------------------------------------------------------------
-public func assert_greater<T>(actual: T, expected: T, message: String) {
+public func assert_greater[T](actual: T, expected: T, message: String) {
     if !(actual > expected) {
         panic("assert_greater failed: " + message
             + " (" + to_string(actual) + " is not > " + to_string(expected) + ")");
     }
 }
 
-public func assert_greater<T>(actual: T, expected: T) {
+public func assert_greater[T](actual: T, expected: T) {
     assert_greater(actual, expected, "value not greater");
 }
 
@@ -166,14 +166,14 @@ public func assert_greater<T>(actual: T, expected: T) {
 // assert_greater_equal
 // Asserts that `actual` >= `expected`.
 // ---------------------------------------------------------------------------
-public func assert_greater_equal<T>(actual: T, expected: T, message: String) {
+public func assert_greater_equal[T](actual: T, expected: T, message: String) {
     if !(actual >= expected) {
         panic("assert_greater_equal failed: " + message
             + " (" + to_string(actual) + " is not >= " + to_string(expected) + ")");
     }
 }
 
-public func assert_greater_equal<T>(actual: T, expected: T) {
+public func assert_greater_equal[T](actual: T, expected: T) {
     assert_greater_equal(actual, expected, "value not greater or equal");
 }
 
@@ -181,14 +181,14 @@ public func assert_greater_equal<T>(actual: T, expected: T) {
 // assert_less
 // Asserts that `actual` < `expected`.
 // ---------------------------------------------------------------------------
-public func assert_less<T>(actual: T, expected: T, message: String) {
+public func assert_less[T](actual: T, expected: T, message: String) {
     if !(actual < expected) {
         panic("assert_less failed: " + message
             + " (" + to_string(actual) + " is not < " + to_string(expected) + ")");
     }
 }
 
-public func assert_less<T>(actual: T, expected: T) {
+public func assert_less[T](actual: T, expected: T) {
     assert_less(actual, expected, "value not less");
 }
 
@@ -216,4 +216,4 @@ struct CatchResult {
 }
 
 extern func catch_panic(f: func()) -> CatchResult;
-extern func to_string<T>(value: T) -> String;
+extern func to_string[T](value: T) -> String;

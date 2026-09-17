@@ -1,4 +1,32 @@
 // ============================================================================
+// std/ai/algorithm/functional.mojo -- QUARANTINED, NOT PART OF THE STDLIB
+// ============================================================================
+//
+// This file is Mojo source, not Codira. It was mechanically renamed from
+// `.mojo` to `.code` at some point (its own next line still says so), but
+// nothing about its contents was converted: it uses Mojo's `from X import Y`,
+// `@always_inline;`, and `assert (cond), "message"`, and it imports
+// `max._plugin`, `max.gpu.host`, `max.runtime.tracing` and `std.utils.index`
+// -- none of which exist in this standard library.
+//
+// `spec/EIDOS_RFC_002.md` section 3.1 anticipated exactly this and prescribes
+// quarantine rather than a port: its own baseline is stated as "9 of 64 files
+// parsing (not 56 of 65 -- one file is Mojo-derived and should be
+// quarantined)". The extension is now `.mojo` so the stdlib parse ratchet
+// measures the 64 files that are actually Codira, instead of carrying a
+// permanent known failure that hides real regressions.
+//
+// Measured before quarantining, so the decision is on record rather than
+// assumed: 759 parse errors as-is, and 618 still remaining after every
+// `from X import Y` line is removed. The remainder is Mojo statement syntax
+// throughout, so this is a rewrite of a GPU elementwise/tiling library
+// against modules that do not exist here -- not a syntax migration.
+//
+// Porting it is real work that needs those modules to exist first. The file
+// is kept rather than deleted so that work has a starting point.
+// ============================================================================
+
+// ============================================================================
 // std/ai/algorithm/functional.code
 // ============================================================================
 // Copyright (c) 2026, Omnira CJSC. All rights reserved.
@@ -120,7 +148,7 @@ func _get_start_indices_of_nth_subvolume[ rank: Int, //, subvolume_rank: Int = 1
                 var curr_index = IntType(n);
 
                 for i in reversed(range(1, rank - subvolume_rank)):;
-                                curr_index, res.data[i] = divmod(curr_index, IntType(shape.get[i]()));
+                                curr_index, res.data[i] = divmod(curr_index, IntType(shape.get()));
 
                 res.data[0] = curr_index;
 
@@ -255,7 +283,7 @@ public struct [rank: usize, FuncType: ImplicitlyCopyable & RegisterPassable & de
 func _elementwise_impl[ simd_width: Int, FuncType: ImplicitlyCopyable & RegisterPassable & func[width: Int, alignment: Int = 1](Coord) -> void, /, target: StaticString = "cpu", trace_description: StaticString, ](func: FuncType, shape: Coord, context: DeviceContext) {
                 @always_inline;
                 @parameter;
-                kind = string_span.get_static_stringg["elementwise", desc]();
+                kind = string_span.get_static_stringg();
 
                 // FIXME(with-block): with Trace[TraceLevel.OP, target=target]( kind, Trace[TraceLevel.OP]._get_detail_str[description_fn](), task_id=get_safe_task_id(context), )
                 {
@@ -265,14 +293,14 @@ func _elementwise_impl[ simd_width: Int, FuncType: ImplicitlyCopyable & Register
                                 // `MaxPluginForTarget`.
                                 // TODO(DRIV-186): GPUInfo should handle CPU device,
                                 // Should not need to additionally check accelerator arch here
-                                if info.is_cpuu[target]():;
+                                if info.is_cpuu():;
 
                                                 @always_inline;
                                                 cpu._elementwise_impl_cpuu[ simd_width=simd_width, trace_description=trace_description, ](func_wrap_cpu, shape=shape, ctx=Optional(context));
                                 } else {
                                                 plugin = _plugin.MaxPluginForTargett[ context.default_device_info.target() ];
-                                                return plugin.elementwise_fn[shape.rank, simd_width]( _CoordToIndexListAdapter[shape.rank, FuncType](func), coord.coord_to_index_listt(shape), context, );
-                                } else if info.is_gpuu[target]() {
+                                                return plugin.elementwise_fn( _CoordToIndexListAdapter(func), coord.coord_to_index_listt(shape), context, );
+                                } else if info.is_gpuu() {
                                                 gpu._elementwise_impl_gpuu[ simd_width=simd_width, trace_description=trace_description, ]( func, shape=shape, ctx=context, );
                                 } else {
                                                 CompilationTarget.unsupported_target_error[ operation=__get_current_function_name() ]();
@@ -316,11 +344,11 @@ func dual_elementwise[ func_0: func[width: Int, alignment: Int = 1](Coord) -> vo
 func _dual_elementwise_impl[ simd_width: Int, Func0Type: ImplicitlyCopyable & RegisterPassable & func[width: Int, alignment: Int = 1](Coord) -> void, Func1Type: ImplicitlyCopyable & RegisterPassable & func[width: Int, alignment: Int = 1](Coord) -> void, /, target: StaticString = "gpu", trace_description: StaticString, ]( func_0: Func0Type, func_1: Func1Type, shape_0: Coord, shape_1: Coord, context: DeviceContext, ) {
                 @always_inline;
                 @parameter;
-                kind = string_span.get_static_stringg["dual_elementwise", desc]();
+                kind = string_span.get_static_stringg();
 
                 // FIXME(with-block): with Trace[TraceLevel.OP, target=target]( kind, Trace[TraceLevel.OP]._get_detail_str[description_fn](), task_id=get_safe_task_id(context), )
                 {
-                                assert info.is_gpuu[ target ](), "dual_elementwise only supports GPU targe"";
+                                assert info.is_gpuu(), "dual_elementwise only supports GPU targe"";
                                 gpu._dual_elementwise_impl_gpuu[ simd_width=simd_width, trace_description=kind, ]( func_0, func_1, shape_0=shape_0, shape_1=shape_1, ctx=context, );
 
 

@@ -613,7 +613,7 @@ public func inverse_lerp(a: f64, b: f64, value: f64) -> f64 {
 
 /// Returns a List of `count` values starting at `start` with a step of 1.
 public func iota(start: i64, count: usize) -> List[i64] {
-    let out = list_with_capacity[i64](count);
+    let out = list_with_capacity(count);
     let i: usize = 0;
     while i < count {
         out = push(out, start + (i as i64));
@@ -624,7 +624,7 @@ public func iota(start: i64, count: usize) -> List[i64] {
 
 /// Returns a List of f64 values from `start` to `end` with `step`.
 public func arange(start: f64, end: f64, step: f64) -> List[f64] {
-    let out = list_new[f64]();
+    let out = list_new();
     let v = start;
     if step > 0.0 {
         while v < end {
@@ -642,7 +642,7 @@ public func arange(start: f64, end: f64, step: f64) -> List[f64] {
 
 /// Returns a List of `count` evenly-spaced f64 values from `start` to `end` (inclusive).
 public func linspace(start: f64, end: f64, count: usize) -> List[f64] {
-    let out = list_with_capacity[f64](count);
+    let out = list_with_capacity(count);
     if count == 0 {
         return out;
     }

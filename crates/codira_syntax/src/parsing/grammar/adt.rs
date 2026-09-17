@@ -172,7 +172,10 @@ fn record_field_def(p: &mut Parser<'_>) {
     // semantics); this is purely a syntax-level marker for now.
     p.eat(T![let]);
     p.eat(T![var]);
-    if p.at(IDENT) {
+    // A field may also be named with one of the keywords that stay usable as
+    // names (`std/os/path.code` has a field called `root`); `name` does the
+    // remapping.
+    if p.at(IDENT) || p.at_ts(super::KEYWORDS_USABLE_AS_NAMES) {
         name(p);
         p.expect(T![:]);
         types::type_(p);

@@ -8,7 +8,7 @@ use std::{
     io::stderr,
     path::Path,
     sync::{mpsc::channel, Arc},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use codira_compiler::{compute_source_relative_path, is_source_file, Config, DisplayColor, Driver};
@@ -16,6 +16,36 @@ use notify::{
     event::{ModifyKind, RenameMode},
     EventKind, RecursiveMode, Watcher,
 };
+
+/// Recompiles and reports how long it took.
+///
+/// Watch mode is the answer to "the compiler is slow": a one-shot `codira
+/// build` pays ~40 ms of process startup (loading a ~65 MB
+/// statically-linked-LLVM binary) and ~40 ms of linking before any
+/// compilation happens at all, and throws the salsa cache away afterwards. A
+/// watching process pays both once, then re-runs only the queries an edit
+/// actually invalidated.
+///
+/// The elapsed time is printed because that difference is invisible
+/// otherwise -- the user sees a rebuild happen either way, and has no way to
+/// tell that the second one cost a fraction of the first.
+fn recompile(driver: &mut Driver, display_color: DisplayColor) -> Result<(), anyhow::Error> {
+    let started = Instant::now();
+    if !driver.emit_diagnostics(&mut stderr(), display_color)? {
+        driver.write_all_assemblies(false)?;
+    }
+    let elapsed = started.elapsed();
+
+    // Sub-millisecond rebuilds are normal here once the cache is warm, so
+    // milliseconds alone would round most of them to "0 ms" and read as a
+    // measurement failure rather than a fast rebuild.
+    if elapsed.as_millis() >= 1 {
+        println!("rebuilt in {:.2} ms", elapsed.as_secs_f64() * 1_000.0);
+    } else {
+        println!("rebuilt in {} us", elapsed.as_micros());
+    }
+    Ok(())
+}
 
 /// Compiles and watches the package at the specified path. Recompiles changes
 /// that occur.
@@ -36,9 +66,7 @@ pub fn compile_and_watch_manifest(
     println!("Watching: {}", source_directory.display());
 
     // Emit all current errors, and write the assemblies if no errors occured
-    if !driver.emit_diagnostics(&mut stderr(), display_color)? {
-        driver.write_all_assemblies(false)?;
-    }
+    recompile(&mut driver, display_color)?;
 
     // Insert Ctrl+C handler so we can gracefully quit
     let should_quit = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -65,9 +93,7 @@ pub fn compile_and_watch_manifest(
 
                     log::info!("Renaming {} to {}", from_relative_path, to_relative_path,);
                     driver.rename(from_relative_path, to_relative_path);
-                    if !driver.emit_diagnostics(&mut stderr(), display_color)? {
-                        driver.write_all_assemblies(false)?;
-                    }
+                    recompile(&mut driver, display_color)?;
                 }
                 // A rename observed as two separate From/To events (or a
                 // platform that can't pair them) degrades to remove+create:
@@ -89,9 +115,7 @@ pub fn compile_and_watch_manifest(
                         let file_contents = std::fs::read_to_string(path)?;
                         log::info!("Creating {}", relative_path);
                         driver.add_file(relative_path, file_contents);
-                        if !driver.emit_diagnostics(&mut stderr(), display_color)? {
-                            driver.write_all_assemblies(false)?;
-                        }
+                        recompile(&mut driver, display_color)?;
                     }
                 }
                 EventKind::Modify(_) => {
@@ -100,9 +124,7 @@ pub fn compile_and_watch_manifest(
                         let file_contents = std::fs::read_to_string(path)?;
                         log::info!("Modifying {}", relative_path);
                         driver.update_file(relative_path, file_contents);
-                        if !driver.emit_diagnostics(&mut stderr(), display_color)? {
-                            driver.write_all_assemblies(false)?;
-                        }
+                        recompile(&mut driver, display_color)?;
                     }
                 }
                 _ => {}

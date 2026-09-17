@@ -5,14 +5,15 @@
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
 use super::{
-    error_block, expressions, name_ref, name_ref_or_index, paths, patterns, types, BlockLike,
-    CompletedMarker, Marker, Parser, SyntaxKind, TokenSet, ARG_LIST, ARRAY_EXPR, BIN_EXPR,
-    BLOCK_EXPR, BREAK_EXPR, CALL_EXPR, CAST_EXPR, CHANNEL_RECV_EXPR, CHANNEL_SEND_EXPR,
-    COMPTIME_EXPR, CONDITION, EOF, ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER, HANDLER_ARM,
-    HANDLER_ARM_LIST, HANDLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER, LET_STMT,
-    LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, PARAM, PARAM_LIST, PAREN_EXPR,
-    PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT,
-    RETURN_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, WHILE_EXPR,
+    error_block, expressions, generics, name_ref, name_ref_or_index, params, paths, patterns,
+    types, BlockLike, CompletedMarker, Marker, Parser, SyntaxKind, TokenSet, ARG_LIST, ARRAY_EXPR,
+    BIN_EXPR, BLOCK_EXPR, BREAK_EXPR, CALL_EXPR, CAST_EXPR, CHANNEL_RECV_EXPR, CHANNEL_SEND_EXPR,
+    CLOSURE_EXPR, COMPTIME_EXPR, CONDITION, EOF, ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER,
+    HANDLER_ARM, HANDLER_ARM_LIST, HANDLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER,
+    LET_STMT, LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, PARAM, PARAM_LIST,
+    PAREN_EXPR, PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR, RECORD_FIELD, RECORD_FIELD_LIST,
+    RECORD_LIT, RETURN_EXPR, RET_TYPE, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, TUPLE_EXPR,
+    WHILE_EXPR,
 };
 use crate::{parsing::grammar::paths::PATH_FIRST, SyntaxKind::METHOD_CALL_EXPR};
 
@@ -42,6 +43,7 @@ const ATOM_EXPR_FIRST: TokenSet = LITERAL_FIRST.union(PATH_FIRST).union(TokenSet
     T![perform],
     T![handle],
     T![spawn],
+    T![func],
 ]));
 
 const LHS_FIRST: TokenSet = ATOM_EXPR_FIRST.union(TokenSet::new(&[T![!], T![-], T![~], T![<-]]));
@@ -322,9 +324,26 @@ fn postfix_expr(
     mut allow_calls: bool,
 ) -> (CompletedMarker, BlockLike) {
     loop {
+        // A postfix `(` or `[` that begins a line starts a new statement
+        // rather than continuing this expression. Without this,
+        //
+        //     let x = f()
+        //     (y) + g(2)
+        //
+        // parses as `f()(y) + g(2)` with no syntax error at all -- the code
+        // silently means something other than it reads. LANGUAGE_SPEC
+        // section 1 promises `;` is never required at the end of a
+        // line-terminated statement, and this is the one place honouring
+        // that promise needs to know where the lines are.
+        //
+        // `.` is deliberately *not* included: a leading-dot continuation
+        // (`value\n    .method()`) is idiomatic method chaining and has no
+        // competing reading, since no statement can begin with `.`.
+        let continues_line = !p.at_start_of_line();
+
         lhs = match p.current() {
-            T!['('] if allow_calls => call_expr(p, lhs),
-            T!['['] if allow_calls => index_expr(p, lhs),
+            T!['('] if allow_calls && continues_line => call_expr(p, lhs),
+            T!['['] if allow_calls && continues_line => index_expr(p, lhs),
             T![.] => postfix_dot_expr(p, lhs),
             INDEX => field_expr(p, lhs),
             T![!] if !p.at(T![!=]) => force_unwrap_expr(p, lhs),
@@ -488,6 +507,7 @@ fn atom_expr(p: &mut Parser<'_>, r: Restrictions) -> Option<(CompletedMarker, Bl
         T![perform] => perform_expr(p),
         T![handle] => handle_expr(p),
         T![spawn] => spawn_expr(p),
+        T![func] => closure_expr(p),
         _ => {
             p.error_recover("expected expression", EXPR_RECOVERY_SET);
             return None;
@@ -634,6 +654,42 @@ fn path_expr(p: &mut Parser<'_>, r: Restrictions) -> (CompletedMarker, BlockLike
     assert!(paths::is_path_start(p));
     let m = p.start();
     paths::expr_path(p);
+
+    // `Deque[T] { .. }` -- a record literal whose type is written with
+    // explicit generic arguments.
+    //
+    // `spec/LANGUAGE_SPEC.md` section 3 rules out explicit generic arguments
+    // at *ordinary call sites* to avoid the `foo[Bar](x)`
+    // indexing-or-instantiation ambiguity that Rust answers with a
+    // turbofish. A record literal has no such ambiguity: nothing else in the
+    // expression grammar is `path [ .. ] {`, because a block is not an
+    // operand, so `Name[T] {` can only be one thing. Accepting it costs no
+    // ambiguity and is what most of the generic stdlib is written in
+    // (`Slice[T] { .. }`, `UnsafePointer[T] { .. }`, `SIMD[T, N] { .. }`).
+    //
+    // Only the `{` form is accepted here. Section 3 also names static member
+    // access (`Box[i32].new(5)`) as allowed, but that spelling is *not*
+    // parseable: `SIMD[T, N].splat(0)` and `buf[i].abs()` are the same shape,
+    // and telling them apart needs to know whether the base names a type --
+    // a resolution question the parser cannot answer. Accepting it silently
+    // swallowed the index in every `buf[i].method()` in the language, which
+    // a test now pins. `Box[i32].new(5)` therefore has to lose its explicit
+    // arguments and rely on inference, exactly as an ordinary call site does.
+    //
+    // The `{` form has no such problem: nothing else in the expression
+    // grammar is `path [ .. ] {`. It is still gated on `forbid_structs`, so
+    // an `if`/`while` condition -- where `buf[i] {` is an index followed by
+    // the *body* -- is untouched.
+    // `{` is additionally gated on `forbid_structs`: inside an `if`/`while`
+    // condition, `buf[i] {` is an index followed by the *body*, and
+    // consuming `[i]` as generic arguments there would silently discard the
+    // index. `.` needs no such gate -- `buf[i].len()` and
+    // `SIMD[T, N].splat(..)` are told apart by whether `buf` names a type,
+    // which is a resolution question, and both spellings parse identically.
+    if !r.forbid_structs && generic_args_terminator(p) == Some(T!['{']) {
+        generics::opt_generic_arg_list(p);
+    }
+
     match p.current() {
         T!['{'] if !r.forbid_structs => {
             let m = m.complete(p, PATH_TYPE).precede(p);
@@ -641,6 +697,60 @@ fn path_expr(p: &mut Parser<'_>, r: Restrictions) -> (CompletedMarker, BlockLike
             (m.complete(p, RECORD_LIT), BlockLike::NotBlock)
         }
         _ => (m.complete(p, PATH_EXPR), BlockLike::NotBlock),
+    }
+}
+
+/// The token following a `[ .. ]` that carries generic arguments, when the
+/// brackets could be a generic argument list at all.
+///
+/// The matching `]` must be followed by `{`. That is the whole
+/// disambiguation: `arr[i]` is indexing and is never followed by a block in
+/// expression position, while `Deque[T] { .. }` always is.
+///
+/// `.` is deliberately *not* a valid terminator, even though
+/// `spec/LANGUAGE_SPEC.md` section 3 lists static member access
+/// (`Box[i32].new(5)`) as allowed: `SIMD[T, N].splat(0)` and `buf[i].abs()`
+/// are syntactically identical, so accepting one silently reinterprets the
+/// other. See the call site.
+///
+/// This is the one decision in the grammar that needs more than the LL(3)
+/// window -- see `Parser::nth_beyond_window` -- because the bracket contents
+/// are of unbounded length and the deciding token is whatever follows them.
+/// The scan is bounded, so a pathological input cannot turn it into a linear
+/// pass over the file; giving up simply means "not a record literal", and
+/// the ordinary index-expression path handles it.
+fn generic_args_terminator(p: &Parser<'_>) -> Option<SyntaxKind> {
+    /// Matches `Parser::nth_beyond_window`'s own cap.
+    const MAX_SCAN: usize = 64;
+
+    if !p.at(T!['[']) {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    loop {
+        if i >= MAX_SCAN {
+            return None;
+        }
+        match p.nth_beyond_window(i) {
+            T!['['] => depth += 1,
+            T![']'] => {
+                depth -= 1;
+                if depth == 0 {
+                    let after = p.nth_beyond_window(i + 1);
+                    return (after == T!['{']).then_some(after);
+                }
+            }
+            // A generic argument list holds types: names, paths, nested
+            // brackets, commas, optionals, and integer literals for const
+            // generics like `SIMD[T, 4]`. Anything else means this is an
+            // index expression after all.
+            IDENT | T![,] | T![.] | T![?] | INT_NUMBER | T![never] | T!['('] | T![')'] => {}
+            // Unterminated, or not a type list.
+            _ => return None,
+        }
+        i += 1;
     }
 }
 
@@ -653,13 +763,43 @@ pub(super) fn literal(p: &mut Parser<'_>) -> Option<CompletedMarker> {
     Some(m.complete(p, LITERAL))
 }
 
+/// Parses `(` ... `)` in expression position, producing either a
+/// [`PAREN_EXPR`] (grouping) or a [`TUPLE_EXPR`].
+///
+/// The split mirrors [`types::paren_or_tuple_type`] exactly, so the two
+/// positions agree on what a comma means:
+///
+/// * `()` -- the unit value, a 0-tuple.
+/// * `(a)` -- grouping, a `PAREN_EXPR`.
+/// * `(a, b)` / `(a,)` -- a `TUPLE_EXPR`; the trailing comma is the only way to
+///   write a 1-tuple.
 fn paren_expr(p: &mut Parser<'_>) -> CompletedMarker {
     assert!(p.at(T!['(']));
     let m = p.start();
     p.bump(T!['(']);
-    expr(p);
+
+    // As in type position, it is the presence of a comma -- not the element
+    // count -- that distinguishes `(a)` from `(a,)`.
+    let mut saw_comma = false;
+    let mut element_count = 0usize;
+
+    while !p.at(T![')']) && !p.at(EOF) {
+        expr(p);
+        element_count += 1;
+        if p.at(T![,]) {
+            p.bump(T![,]);
+            saw_comma = true;
+        } else {
+            break;
+        }
+    }
     p.expect(T![')']);
-    m.complete(p, PAREN_EXPR)
+
+    if element_count == 1 && !saw_comma {
+        m.complete(p, PAREN_EXPR)
+    } else {
+        m.complete(p, TUPLE_EXPR)
+    }
 }
 
 fn if_expr(p: &mut Parser<'_>) -> CompletedMarker {
@@ -722,6 +862,44 @@ fn while_expr(p: &mut Parser<'_>) -> CompletedMarker {
     m.complete(p, WHILE_EXPR)
 }
 
+/// Parses a closure literal: `func(a: T, b: T) -> R { .. }`.
+///
+/// Syntax only. `spec/EIDOS_RFC_002.md` section 3.1 prices closures (S11) at
+/// 4-6 weeks -- capture analysis, a function type, an indirect-call op, GC
+/// interaction -- and notes they block exactly one stdlib file. This is not
+/// that work: HIR lowers a closure to `Missing`, so a program that *uses*
+/// one gets a diagnostic rather than silently compiling.
+///
+/// What it buys is the one thing the ratchet needs: a file that merely
+/// *mentions* a closure stops failing to parse, so every other construct in
+/// it can be checked. `std/builtin/sort.code` passes a comparator on one
+/// line and is otherwise ordinary code.
+///
+/// The parameter list reuses `params::param_list`, so a closure's parameters
+/// are parsed by exactly the same production a function's are -- including
+/// the ownership keywords -- rather than by a second, subtly different one.
+fn closure_expr(p: &mut Parser<'_>) -> CompletedMarker {
+    assert!(p.at(T![func]));
+    let m = p.start();
+    p.bump(T![func]);
+
+    if p.at(T!['(']) {
+        params::param_list(p);
+    } else {
+        p.error("expected a parameter list");
+    }
+
+    if p.at(T![->]) {
+        let ret = p.start();
+        p.bump(T![->]);
+        types::return_type(p);
+        ret.complete(p, RET_TYPE);
+    }
+
+    block(p);
+    m.complete(p, CLOSURE_EXPR)
+}
+
 fn record_field_list(p: &mut Parser<'_>) {
     assert!(p.at(T!['{']));
     let m = p.start();
@@ -731,6 +909,17 @@ fn record_field_list(p: &mut Parser<'_>) {
             IDENT | INT_NUMBER => {
                 let m = p.start();
                 name_ref_or_index(p);
+                if p.eat(T![:]) {
+                    expr(p);
+                }
+                m.complete(p, RECORD_FIELD);
+            }
+            // A field labelled with one of the keywords that stay usable as
+            // names -- `ExtPair { root: path }`. No keyword meaning applies
+            // to a label, and `name_ref` does the remapping.
+            k if super::KEYWORDS_USABLE_AS_NAMES.contains(k) => {
+                let m = p.start();
+                name_ref(p);
                 if p.eat(T![:]) {
                     expr(p);
                 }

@@ -25,8 +25,9 @@ use smallvec::SmallVec;
 
 use crate::{
     display::{HirDisplay, HirFormatter},
+    ids::TypeParamId,
     ty::{infer::InferTy, lower::fn_sig_for_struct_constructor},
-    HasVisibility, HirDatabase, Struct, StructMemoryKind, TypeAlias, Visibility,
+    HasVisibility, HirDatabase, Name, Struct, StructMemoryKind, TypeAlias, Visibility,
 };
 
 #[cfg(test)]
@@ -77,6 +78,17 @@ pub enum TyKind {
 
     /// An dynamically sized array type
     Array(Ty),
+
+    /// A bound generic type parameter: the `T` of `func map[T](..)` or
+    /// `struct Box[T]`.
+    ///
+    /// Distinct from `InferenceVar`, which is a hole the checker fills in.
+    /// A type parameter is *already* determined from the body's point of
+    /// view -- it just is not known which concrete type it stands for until
+    /// the declaration is instantiated. Identity is (owner, index), so the
+    /// `T` of one declaration never unifies with the `T` of another; the
+    /// `Name` is carried for display only and takes no part in equality.
+    TypeParam(TypeParamId, Name),
 
     /// A placeholder for a type which could not be computed; this is propagated
     /// to avoid useless error messages. Doubles as a placeholder where type
@@ -229,6 +241,24 @@ impl Ty {
             TyKind::Float(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Int(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Array(ty) => Some(format!("[{}]", ty.display(db))),
+            // A tuple is a structural type: two tuples are the same type
+            // exactly when their element types match, so the name is built
+            // from the elements rather than from a declaration site. `()`
+            // yields `"()"`, which is a perfectly good unique name for the
+            // unit type.
+            //
+            // Elements are recursed through `guid_string` (not `display`) so
+            // that a tuple of structs hashes over those structs' *field
+            // layouts*. That is what makes a tuple's GUID change when a
+            // struct inside it changes shape -- the same property hot
+            // reloading relies on for named structs.
+            TyKind::Tuple(_, substs) => {
+                let elements = substs
+                    .iter()
+                    .map(|ty| ty.guid_string(db))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(format!("({})", elements.join(", ")))
+            }
             _ => None,
         }
     }
@@ -379,6 +409,9 @@ impl HirDisplay for Ty {
             TyKind::Float(ty) => write!(f, "{ty}"),
             TyKind::Int(ty) => write!(f, "{ty}"),
             TyKind::Bool => write!(f, "bool"),
+            // The parameter's written name is what the reader needs; the
+            // (owner, index) identity is an implementation detail.
+            TyKind::TypeParam(_, name) => write!(f, "{name}"),
             TyKind::Tuple(_, elems) => {
                 write!(f, "(")?;
                 f.write_joined(elems.iter(), ", ")?;

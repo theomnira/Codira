@@ -42,9 +42,9 @@ public func _verify_xyz(dim: StringLiteral) -> void {
 // Read a compile-time fixed offset from the GCN implicit argument pointer
 // (AMD GPU block/grid dimensions are encoded there).
 public func _get_gcn_idx[T](offset: usize) -> usize {
-    let addr = intrinsics.llvm_intrinsic["llvm.amdgcn.implicitarg.ptr"]();
-    let byte_offset = offset * __intrinsic_sizeof[T]();
-    return __intrinsic_load[T](addr + byte_offset) as usize;
+    let addr = intrinsics.llvm_intrinsic();
+    let byte_offset = offset * __intrinsic_sizeof();
+    return __intrinsic_load(addr + byte_offset) as usize;
 }
 
 // =============================================================================
@@ -58,18 +58,18 @@ public func _get_gcn_idx[T](offset: usize) -> usize {
 // programming and thread synchronization within a warp.
 public func lane_id() -> usize {
     if info.is_nvidia_gpu() {
-        let i = intrinsics.llvm_intrinsic["llvm.nvvm.read.ptx.sreg.laneid"]();
+        let i = intrinsics.llvm_intrinsic();
         return i as usize;
     }
     if info.is_amd_gpu() {
         let none = 0xFFFFFFFF as u32;
         let zero = 0 as u32;
-        let t = intrinsics.llvm_intrinsic["llvm.amdgcn.mbcnt.lo"](none, zero);
-        let i = intrinsics.llvm_intrinsic["llvm.amdgcn.mbcnt.hi"](none, t);
+        let t = intrinsics.llvm_intrinsic(none, zero);
+        let i = intrinsics.llvm_intrinsic(none, t);
         return i as usize;
     }
     if info.is_apple_gpu() {
-        let i = intrinsics.llvm_intrinsic["llvm.air.thread_index_in_simdgroup"]();
+        let i = intrinsics.llvm_intrinsic();
         return i as usize;
     }
     info.unsupported_target_error("lane_id");
@@ -112,7 +112,7 @@ public func warp_id(broadcast: bool = false) -> usize {
 public func sm_id() -> usize {
     if info.is_nvidia_gpu() {
         return warp.broadcast_usize(
-            intrinsics.llvm_intrinsic["llvm.nvvm.read.ptx.sreg.smid"]() as usize
+            intrinsics.llvm_intrinsic() as usize
         );
     }
     info.unsupported_target_error("sm_id");
@@ -155,7 +155,7 @@ public func _get_thread_intrinsic_name(dim: StringLiteral) -> StringLiteral {
 public func _thread_idx(dim: StringLiteral) -> usize {
     _verify_xyz(dim);
     let name = _get_thread_intrinsic_name(dim);
-    let i = intrinsics.llvm_intrinsic[name]();
+    let i = intrinsics.llvm_intrinsic();
     return i as usize;
 }
 
@@ -196,7 +196,7 @@ public func _get_block_intrinsic_name(dim: StringLiteral) -> StringLiteral {
 public func _block_idx(dim: StringLiteral) -> usize {
     _verify_xyz(dim);
     let name = _get_block_intrinsic_name(dim);
-    let i = intrinsics.llvm_intrinsic[name]();
+    let i = intrinsics.llvm_intrinsic();
     return i as usize;
 }
 
@@ -225,23 +225,23 @@ public func _block_dim(dim: StringLiteral) -> usize {
 
     if info.is_nvidia_gpu() {
         let name = "llvm.nvvm.read.ptx.sreg.ntid." + dim;
-        let i = intrinsics.llvm_intrinsic[name]();
+        let i = intrinsics.llvm_intrinsic();
         return i as usize;
     }
     if info.is_apple_gpu() {
         let name = "llvm.air.threads_per_threadgroup." + dim;
-        let i = intrinsics.llvm_intrinsic[name]();
+        let i = intrinsics.llvm_intrinsic();
         return i as usize;
     }
     if info.is_amd_gpu() {
         // Block dimensions are stored as uint16 in the GCN implicit args.
         if dim == "y" {
-            return _get_gcn_idx[u16](7);
+            return _get_gcn_idx(7);
         }
         if dim == "z" {
-            return _get_gcn_idx[u16](8);
+            return _get_gcn_idx(8);
         }
-        return _get_gcn_idx[u16](6);
+        return _get_gcn_idx(6);
     }
     info.unsupported_target_error("block_dim");
 }
@@ -271,25 +271,25 @@ public func _grid_dim(dim: StringLiteral) -> usize {
 
     if info.is_nvidia_gpu() {
         let name = "llvm.nvvm.read.ptx.sreg.nctaid." + dim;
-        let i = intrinsics.llvm_intrinsic[name]();
+        let i = intrinsics.llvm_intrinsic();
         return i as usize;
     }
     if info.is_amd_gpu() {
         // Grid dimensions are stored as uint32 in the GCN implicit args.
         if dim == "y" {
-            return _get_gcn_idx[u32](1);
+            return _get_gcn_idx(1);
         }
         if dim == "z" {
-            return _get_gcn_idx[u32](2);
+            return _get_gcn_idx(2);
         }
-        return _get_gcn_idx[u32](0);
+        return _get_gcn_idx(0);
     }
     if info.is_apple_gpu() {
         // Metal passes grid dimension as gridDim.dim * blockDim.dim.  To
         // make things compatible with NVidia and AMDGPU, divide result by
         // block_dim.dim.
         let name = "llvm.air.threads_per_grid." + dim;
-        let grid_dim = intrinsics.llvm_intrinsic[name]() as usize;
+        let grid_dim = intrinsics.llvm_intrinsic() as usize;
         return grid_dim / _block_dim(dim);
     }
     info.unsupported_target_error("grid_dim");
@@ -349,7 +349,7 @@ public func _cluster_dim(dim: StringLiteral) -> usize {
     }
     _verify_xyz(dim);
     let name = "llvm.nvvm.read.ptx.sreg.cluster.nctaid." + dim;
-    return intrinsics.llvm_intrinsic[name]() as usize;
+    return intrinsics.llvm_intrinsic() as usize;
 }
 
 // =============================================================================
@@ -378,7 +378,7 @@ public func _cluster_idx(dim: StringLiteral) -> usize {
     }
     _verify_xyz(dim);
     let name = "llvm.nvvm.read.ptx.sreg.clusterid." + dim;
-    return intrinsics.llvm_intrinsic[name]() as usize;
+    return intrinsics.llvm_intrinsic() as usize;
 }
 
 // =============================================================================
@@ -407,5 +407,5 @@ public func _block_id_in_cluster(dim: StringLiteral) -> usize {
     }
     _verify_xyz(dim);
     let name = "llvm.nvvm.read.ptx.sreg.cluster.ctaid." + dim;
-    return intrinsics.llvm_intrinsic[name]() as usize;
+    return intrinsics.llvm_intrinsic() as usize;
 }

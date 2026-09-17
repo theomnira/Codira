@@ -1,7 +1,7 @@
 //! Fault Event Collector (Section 5.1 of the HERACLES spec) plus the
 //! memory-leak monotonicity test (Section 5.2).
 //!
-//! Copyright (c) 2026 Omnira CJSC
+//! Copyright (c) 2026 Omnira CJSC. All Rights Reserved.
 //! Author: Tunjay Akbarli
 //! Date: August 7, 2026
 //!

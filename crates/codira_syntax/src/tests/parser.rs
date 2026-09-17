@@ -988,3 +988,508 @@ fn cast_expr() {
     )
     .debug_dump());
 }
+
+// ===========================================================================
+// Tuples
+// ===========================================================================
+//
+// Tuples are the language's multiple-return mechanism (`frexp(x) -> (f64,
+// i32)` and friends throughout `std/math`). HIR and codegen already modelled
+// them -- `TypeRef::Tuple`, `TyKind::Tuple`, `HirTypes::get_tuple_type` --
+// so only the grammar was missing. What these tests pin down is the one rule
+// that is easy to get wrong in both positions at once: it is the *comma*,
+// not the element count, that separates grouping from a 1-tuple.
+
+/// Unwraps `expr` as a `TupleExpr`, naming what was found instead on failure.
+fn as_tuple(expr: &ast::Expr) -> ast::TupleExpr {
+    ast::TupleExpr::cast(expr.syntax().clone())
+        .unwrap_or_else(|| panic!("expected a TUPLE_EXPR, found {:?}", expr.syntax().kind()))
+}
+
+/// Parses `src` as a function's return type and hands back the typed node.
+fn only_return_type(src: &str) -> ast::TypeRef {
+    let text = format!("func f() -> {src} {{ }}");
+    let parse = SourceFile::parse(&text);
+    assert!(
+        parse.errors().is_empty(),
+        "`{src}` failed to parse: {:?}",
+        parse.errors()
+    );
+    parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::RetType::cast)
+        .expect("a RET_TYPE")
+        .type_ref()
+        .unwrap_or_else(|| panic!("`{src}` produced a `->` with no type"))
+}
+
+/// `(A, B)` is a tuple type whose element list is exactly what was written.
+#[test]
+fn tuple_type_multiple_elements() {
+    let ty = only_return_type("(f64, i32)");
+    let tuple = ast::TupleType::cast(ty.syntax().clone()).expect("a TUPLE_TYPE");
+    let fields: Vec<_> = tuple
+        .fields()
+        .map(|f| f.syntax().text().to_string())
+        .collect();
+    assert_eq!(fields, vec!["f64", "i32"]);
+}
+
+/// `()` is the unit type: a tuple type with no elements. HIR lowers this to
+/// `TypeRef::Tuple(vec![])`, the very thing `TypeRefMapBuilder::unit`
+/// produces, so an explicitly written `()` and an omitted return type end up
+/// as the same type.
+#[test]
+fn tuple_type_unit_has_no_elements() {
+    let ty = only_return_type("()");
+    let tuple = ast::TupleType::cast(ty.syntax().clone()).expect("a TUPLE_TYPE");
+    assert_eq!(tuple.fields().count(), 0);
+}
+
+/// `(A)` is grouping, not a 1-tuple -- it parses to a `PAREN_TYPE`, which HIR
+/// lowers straight through to `A`. Without this rule `(i32)` and `i32` would
+/// silently become different types.
+#[test]
+fn tuple_type_single_without_comma_is_grouping() {
+    let ty = only_return_type("(i32)");
+    assert_eq!(ty.syntax().kind(), SyntaxKind::PAREN_TYPE);
+    let paren = ast::ParenType::cast(ty.syntax().clone()).expect("a PAREN_TYPE");
+    assert_eq!(paren.type_ref().unwrap().syntax().text(), "i32");
+}
+
+/// `(A,)` *is* a 1-tuple. The trailing comma is the only way to write one, so
+/// it has to survive parsing rather than being swallowed as punctuation.
+#[test]
+fn tuple_type_single_with_comma_is_a_one_tuple() {
+    let ty = only_return_type("(i32,)");
+    let tuple = ast::TupleType::cast(ty.syntax().clone()).expect("a TUPLE_TYPE");
+    assert_eq!(tuple.fields().count(), 1);
+}
+
+/// Tuple types nest, and compose with the other type constructors (`[T]`,
+/// `T?`) in both directions.
+#[test]
+fn tuple_type_nests_and_composes() {
+    let ty = only_return_type("((i32, i32), [f64], bool?)");
+    let tuple = ast::TupleType::cast(ty.syntax().clone()).expect("a TUPLE_TYPE");
+    let fields: Vec<_> = tuple.fields().map(|f| f.syntax().kind()).collect();
+    assert_eq!(
+        fields,
+        vec![
+            SyntaxKind::TUPLE_TYPE,
+            SyntaxKind::ARRAY_TYPE,
+            SyntaxKind::OPTIONAL_TYPE
+        ]
+    );
+}
+
+/// The expression side mirrors the type side element for element.
+#[test]
+fn tuple_expr_multiple_elements() {
+    let tuple = as_tuple(&only_initializer("(1, 2.0, x)"));
+    let exprs: Vec<_> = tuple
+        .exprs()
+        .map(|e| e.syntax().text().to_string())
+        .collect();
+    assert_eq!(exprs, vec!["1", "2.0", "x"]);
+}
+
+/// `()` is the unit value, and it is a `TUPLE_EXPR` with no elements -- the
+/// exact expression-position analogue of the unit type.
+#[test]
+fn tuple_expr_unit_has_no_elements() {
+    let expr = only_initializer("()");
+    let tuple = as_tuple(&expr);
+    assert_eq!(tuple.exprs().count(), 0);
+}
+
+/// `(a)` stays a `PAREN_EXPR`, so adding tuples did not change what
+/// parenthesising an expression means. This is the case most at risk from
+/// the comma rule, and the reason `a * (b + c)` still groups rather than
+/// building a 1-tuple.
+#[test]
+fn tuple_expr_single_without_comma_is_grouping() {
+    let expr = only_initializer("(a + b)");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::PAREN_EXPR);
+}
+
+/// `(a,)` is a 1-tuple, matching `(A,)` on the type side.
+#[test]
+fn tuple_expr_single_with_comma_is_a_one_tuple() {
+    let tuple = as_tuple(&only_initializer("(a,)"));
+    assert_eq!(tuple.exprs().count(), 1);
+}
+
+/// A tuple element is a full expression, so a comma inside a nested call's
+/// argument list belongs to that call and must not split the tuple.
+#[test]
+fn tuple_expr_elements_are_full_expressions() {
+    let tuple = as_tuple(&only_initializer("(f(a, b), c + d)"));
+    let exprs: Vec<_> = tuple
+        .exprs()
+        .map(|e| e.syntax().text().to_string())
+        .collect();
+    assert_eq!(exprs, vec!["f(a, b)", "c + d"]);
+}
+
+/// Tuple element access reuses the ordinary postfix `.field` machinery, so
+/// `t.0` is a `FIELD_EXPR` -- the same node `point.x` produces. Inference
+/// tells the two apart by the receiver's type (`Name::as_tuple_index`).
+#[test]
+fn tuple_field_access_is_a_field_expr() {
+    let expr = only_initializer("t.0");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::FIELD_EXPR);
+}
+
+/// A whole-tree snapshot of the cases above, pinning down the exact
+/// `TUPLE_EXPR`/`PAREN_EXPR` split and where the commas land.
+#[test]
+fn tuple_expr() {
+    insta::assert_snapshot!(SourceFile::parse(
+        r#"
+    func f() -> (f64, i32) {
+        let _ = ();
+        let _ = (a);
+        let _ = (a,);
+        let _ = (1, 2.0, x);
+        let _ = (f(a, b), c + d);
+        let _ = t.0 + t.1;
+        let nested: ((i32, i32), f64) = ((1, 2), 3.0);
+        (1.0, 2)
+    }
+    "#,
+    )
+    .debug_dump());
+}
+
+// ===========================================================================
+// Statement termination across line breaks
+// ===========================================================================
+//
+// LANGUAGE_SPEC section 1: "`;` ... is **never** required at the end of a
+// line-terminated statement." Honouring that needs the grammar to know one
+// whitespace-derived fact -- whether a postfix `(` or `[` begins a line --
+// because those are the only postfix operators that can also start a
+// statement. Everything else about the grammar stays whitespace-insensitive.
+//
+// The failure mode this prevents is the dangerous kind: before the rule
+// existed, the case below parsed *successfully* as `f()(x) + g(2)`, so the
+// code compiled and meant something other than it read.
+
+/// A `(` on a new line starts a statement; it does not call the previous
+/// line's result.
+#[test]
+fn newline_before_paren_ends_the_statement() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = f()
+    (x) + g(2)
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    // The `let` initializer must be exactly `f()` -- not `f()(x)`.
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(let_stmt.initializer().unwrap().syntax().text(), "f()");
+}
+
+/// The same rule for `[`: a new line starting with `[` is an array literal
+/// statement, not an index into the previous expression.
+#[test]
+fn newline_before_bracket_ends_the_statement() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = f()
+    [1, 2][0]
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(let_stmt.initializer().unwrap().syntax().text(), "f()");
+}
+
+/// On the *same* line, `(` and `[` still mean call and index -- the rule is
+/// about line breaks only, so nothing about ordinary expressions changes.
+#[test]
+fn same_line_paren_and_bracket_still_call_and_index() {
+    let call = only_initializer("f()(x)");
+    assert_eq!(call.syntax().kind(), SyntaxKind::CALL_EXPR);
+    assert_eq!(call.syntax().text(), "f()(x)");
+
+    let index = only_initializer("f()[0]");
+    assert_eq!(index.syntax().kind(), SyntaxKind::INDEX_EXPR);
+}
+
+/// A `(` continuing a genuinely unfinished line still opens an argument
+/// list: the rule keys on the line break before the `(`, not on where the
+/// callee started, so an argument list split across lines is unaffected.
+#[test]
+fn multiline_argument_list_is_unaffected() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = g(
+        1,
+        2
+    )
+    x
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(
+        let_stmt.initializer().unwrap().syntax().kind(),
+        SyntaxKind::CALL_EXPR
+    );
+}
+
+/// A leading-dot continuation is deliberately exempt: no statement can begin
+/// with `.`, so `value\n    .method()` has only one possible reading and
+/// stays idiomatic method chaining.
+#[test]
+fn newline_before_dot_still_chains() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = f()
+        .method()
+        .other()
+    x
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(
+        let_stmt.initializer().unwrap().syntax().kind(),
+        SyntaxKind::METHOD_CALL_EXPR
+    );
+}
+
+/// An explicit `;` is still accepted and means the same thing, so existing
+/// semicolon-terminated code is unaffected by the rule.
+#[test]
+fn explicit_semicolon_still_terminates() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let x = f();
+    (x) + g(2)
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let let_stmt = parse
+        .syntax_node()
+        .descendants()
+        .find_map(ast::LetStmt::cast)
+        .expect("a LET_STMT");
+    assert_eq!(let_stmt.initializer().unwrap().syntax().text(), "f()");
+}
+
+/// A tuple pattern destructures a tuple, and follows the same comma rule as
+/// the tuple type and tuple expression: `(a)` is grouping, `(a,)` is a
+/// 1-tuple.
+#[test]
+fn tuple_pat_destructures() {
+    let parse = SourceFile::parse(
+        "func main() -> i64 {
+    let (x, y) = p
+    let ((a, b), c) = q
+    let (_, keep) = r
+    let (single) = s
+    let (one,) = t
+    x
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let kinds: Vec<_> = parse
+        .syntax_node()
+        .descendants()
+        .filter_map(ast::LetStmt::cast)
+        .map(|it| it.pat().unwrap().syntax().kind())
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            SyntaxKind::TUPLE_PAT,
+            SyntaxKind::TUPLE_PAT,
+            SyntaxKind::TUPLE_PAT,
+            // `(single)` is grouping, so it is a PAREN_PAT -- HIR lowers it
+            // straight through to the inner `BIND_PAT`.
+            SyntaxKind::PAREN_PAT,
+            // `(one,)` is a genuine 1-tuple; the trailing comma is what
+            // makes the two distinguishable at all.
+            SyntaxKind::TUPLE_PAT,
+        ]
+    );
+}
+
+/// A tuple pattern is irrefutable, so it is legal in a parameter position
+/// where a literal or tuple-struct pattern would not be.
+#[test]
+fn tuple_pat_in_parameter() {
+    let parse = SourceFile::parse("func f(p: (i32, i32)) -> i32 { p.0 }");
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+
+    let parse = SourceFile::parse("func f((a, b): (i32, i32)) -> i32 { a + b }");
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+}
+
+// ===========================================================================
+// Generic arguments in expression position (S9)
+// ===========================================================================
+//
+// `spec/LANGUAGE_SPEC.md` section 3 allows explicit generic arguments in
+// type position and in static member access, and rules them out at ordinary
+// call sites to keep `foo[Bar](x)` unambiguous. These pin down that the
+// allowed spellings parse *and* that indexing is untouched -- the failure
+// mode being silent, since a swallowed `[i]` still parses.
+
+/// `Deque[T] { .. }` is a record literal whose type carries generic
+/// arguments. Unambiguous: nothing else in the grammar is `path [ .. ] {`.
+#[test]
+fn generic_args_on_record_literal() {
+    let expr = only_initializer("Deque[T] { buf: b }");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::RECORD_LIT);
+
+    let path_type = expr
+        .syntax()
+        .descendants()
+        .find_map(ast::PathType::cast)
+        .expect("a PATH_TYPE for the literal's type");
+    assert!(
+        path_type.generic_arg_list().is_some(),
+        "the `[T]` should be attached to the literal's type"
+    );
+}
+
+/// Static member access with explicit generic arguments -- `Box[i32].new(5)`,
+/// which `spec/LANGUAGE_SPEC.md` section 3 lists as allowed -- is *not*
+/// accepted, and this records why rather than leaving it to be rediscovered.
+///
+/// `Box[i32].new(5)` and `buf[i].abs()` are the same shape. Telling them
+/// apart requires knowing whether the base names a type, which is a
+/// resolution question the parser cannot answer. Accepting the first form
+/// silently turns the second into a path with generic arguments and discards
+/// the index -- and it still parses, so nothing would report it. That
+/// regression is pinned by `indexing_then_method_call_stays_indexing`.
+///
+/// So the two spellings degrade differently, and neither is silently wrong:
+///
+/// * one argument (`Box[i32].new(5)`) parses as indexing-then-method-call. It
+///   is well-formed syntax that means something else.
+/// * more than one (`SIMD[T, N].splat(0)`) is a *syntax error*, because an
+///   index expression cannot contain a comma.
+///
+/// Either way the explicit arguments have to go and inference has to supply
+/// them, exactly as at an ordinary call site.
+#[test]
+fn generic_args_before_static_member_access_are_not_generic_args() {
+    let expr = only_initializer("Box[i32].new(5)");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::METHOD_CALL_EXPR);
+    assert!(
+        !expr
+            .syntax()
+            .descendants()
+            .any(|n| n.kind() == SyntaxKind::GENERIC_ARG_LIST),
+        "the brackets stay an index, not generic arguments"
+    );
+
+    let parse = SourceFile::parse("func f() -> i64 { SIMD[T, N].splat(0) }");
+    assert!(
+        !parse.errors().is_empty(),
+        "a multi-argument list is a syntax error rather than a silent misparse"
+    );
+}
+
+/// A const generic argument is a value, not a type: `SIMD[f32, 4]` has to
+/// parse as well as `SIMD[T, N]`, and is how `std/gpu` writes it.
+#[test]
+fn generic_args_accept_const_arguments() {
+    let expr = only_initializer("SIMD[f32, 4] { v: x }");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::RECORD_LIT);
+
+    let parse = SourceFile::parse("func f() -> SIMD[f32, 4] { }");
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+}
+
+/// Indexing is untouched, and this is the case that matters: a swallowed
+/// `[i]` would still *parse*, so only the resulting tree shows the
+/// difference.
+#[test]
+fn indexing_is_not_mistaken_for_generic_arguments() {
+    // Plain index.
+    let expr = only_initializer("buf[i]");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::INDEX_EXPR);
+
+    // Index inside an `if` condition, where the `{` that follows opens the
+    // *body*. This is the one place `expr [ .. ] {` genuinely occurs.
+    let parse = SourceFile::parse(
+        "func f(buf: [i64], i: usize) -> i64 {
+    if buf[i] > 0 { buf[i] } else { 0 }
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+    assert_eq!(
+        parse
+            .syntax_node()
+            .descendants()
+            .filter(|n| n.kind() == SyntaxKind::INDEX_EXPR)
+            .count(),
+        2,
+        "both `buf[i]` occurrences must stay index expressions"
+    );
+    assert!(
+        !parse
+            .syntax_node()
+            .descendants()
+            .any(|n| n.kind() == SyntaxKind::GENERIC_ARG_LIST),
+        "no generic argument list should appear in this function"
+    );
+
+    // The same in a `while` condition.
+    let parse = SourceFile::parse(
+        "func f(buf: [i64], i: usize) -> i64 {
+    var n: i64 = 0
+    while buf[i] > n { n = n + 1 }
+    n
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+    assert!(!parse
+        .syntax_node()
+        .descendants()
+        .any(|n| n.kind() == SyntaxKind::GENERIC_ARG_LIST));
+}
+
+/// An index followed by a method call is still an index: `buf[i].abs()`
+/// must not become a static member access on a type named `buf`.
+#[test]
+fn indexing_then_method_call_stays_indexing() {
+    let expr = only_initializer("buf[i].abs()");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::METHOD_CALL_EXPR);
+    // The receiver is the index expression, not a path with generic args.
+    let receiver = expr
+        .syntax()
+        .first_child()
+        .expect("a method call has a receiver");
+    assert_eq!(receiver.kind(), SyntaxKind::INDEX_EXPR);
+}

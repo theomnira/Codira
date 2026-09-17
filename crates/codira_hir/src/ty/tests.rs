@@ -719,7 +719,11 @@ fn satisfiable_refinement_type_produces_no_diagnostic() {
 fn unsatisfiable_healing_postcondition_is_a_real_diagnostic() {
     insta::assert_snapshot!(infer(
         r#"
-    @heal(on: [Timeout], postcondition: result > 0 && result < 0)
+    @heal(
+        on: [Timeout],
+        strategies: [ReturnDefault(0)],
+        postcondition: result > 0 && result < 0
+    )
     func risky() -> i32 {
         1
     }
@@ -733,7 +737,7 @@ fn unsatisfiable_healing_postcondition_is_a_real_diagnostic() {
 fn satisfiable_healing_postcondition_produces_no_diagnostic() {
     insta::assert_snapshot!(infer(
         r#"
-    @heal(on: [Timeout], postcondition: result >= 0)
+    @heal(on: [Timeout], strategies: [ReturnDefault(0)], postcondition: result >= 0)
     func risky() -> i32 {
         1
     }
@@ -1980,4 +1984,386 @@ fn ellipsize(mut text: String, max_len: usize) -> String {
     }
     text.replace_range(prefix_len..text.len() - suffix_len, ellipsis);
     text
+}
+
+/// A tuple literal's type is the element-wise product of its parts, and `t.N`
+/// projects out element `N`. Both sides already existed in the type system
+/// (`TyKind::Tuple`, `lookup_field`'s tuple arm); this pins down that the new
+/// `Expr::Tuple` inference arm feeds them correctly.
+#[test]
+fn infer_tuple() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> i32 {
+        let t = (1, 2.0);
+        let n = t.1;
+        t.0
+    }",
+    ));
+}
+
+/// The expectation is pushed down element-wise, not as a whole.
+///
+/// Both literals below are bare integers, so both would default to `i32` if
+/// the annotation were only checked against the finished tuple type. Getting
+/// `u8` for one and `u64` for the other is only possible if each element saw
+/// its own expected type while being inferred.
+#[test]
+fn infer_tuple_expected_type_propagates_per_element() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> u64 {
+        let t: (u8, u64) = (1, 2);
+        t.1
+    }",
+    ));
+}
+
+/// `()` is the unit type -- a zero-element tuple, the same type an omitted
+/// return type produces.
+#[test]
+fn infer_tuple_unit() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> () {
+        ()
+    }",
+    ));
+}
+
+/// Tuples nest, and projecting through two levels resolves to the innermost
+/// element's type rather than collapsing to the outer tuple.
+#[test]
+fn infer_tuple_nested() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> u8 {
+        let t = ((1, 2), 3.0);
+        let inner = t.0;
+        inner.1
+    }",
+    ));
+}
+
+/// A tuple pattern types each binding from the element it destructures, so
+/// `let (q, r) = divmod(..)` gives both bindings the right type without
+/// either being annotated.
+#[test]
+fn infer_tuple_pattern() {
+    insta::assert_snapshot!(infer(
+        r"
+    func divmod(a: i64, b: i64) -> (i64, i64) {
+        (a / b, a % b)
+    }
+
+    func main() -> i64 {
+        let (q, r) = divmod(47, 5);
+        q + r
+    }",
+    ));
+}
+
+/// Destructuring nests, and `_` discards without binding.
+#[test]
+fn infer_tuple_pattern_nested() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> u8 {
+        let ((a, b), c) = ((1, 2), 3.0);
+        let (_, keep) = (99, b);
+        a + keep
+    }",
+    ));
+}
+
+/// An arity mismatch is reported once, against the pattern, rather than
+/// silently pairing the sub-patterns against whatever lines up.
+#[test]
+fn infer_tuple_pattern_arity_mismatch() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> i32 {
+        let (a, b, c) = (1, 2);
+        a
+    }",
+    ));
+}
+
+/// Destructuring something that is not a tuple at all is a distinct error.
+#[test]
+fn infer_tuple_pattern_not_a_tuple() {
+    insta::assert_snapshot!(infer(
+        r"
+    func main() -> i32 {
+        let (a, b) = 5;
+        a
+    }",
+    ));
+}
+
+// ===========================================================================
+// `@heal(...)` healing contracts
+// ===========================================================================
+//
+// `spec/HERACLES_Codira_Implementation.md` section 2.2 requires strategy
+// feasibility to be checked statically. Before `crate::heal_contract` none
+// of it was: `on:` and `strategies:` were never read, so a contract naming a
+// misspelled fault class or an impossible strategy compiled clean and then
+// silently healed nothing. Each test below pins one of those silent
+// failures to a diagnostic.
+
+/// A well-formed contract produces no diagnostics at all.
+#[test]
+fn heal_contract_well_formed() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(
+        on: [ArithmeticFault, Timeout],
+        strategies: [ReturnDefault, PropagateToParent],
+        postcondition: result >= 0
+    )
+    func safe_div(a: i64, b: i64) -> i64 {
+        a / b
+    }
+
+    supervisor app {
+        restart_policy: 3,
+    }",
+    ));
+}
+
+/// A misspelled fault class is an error with a nearest-match suggestion, not
+/// a silent fallback to a user-defined class -- which would compile and then
+/// never fire.
+#[test]
+fn heal_contract_misspelled_fault_class() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeut], strategies: [ReturnDefault])
+    func risky() -> i64 { 0 }",
+    ));
+}
+
+/// `Custom(\"name\")` is the explicit escape hatch for a genuinely
+/// user-defined class, and is accepted without complaint.
+#[test]
+fn heal_contract_custom_fault_class() {
+    insta::assert_snapshot!(infer(
+        r#"
+    @heal(on: [Custom("DiskFull")], strategies: [DegradeGracefully])
+    func risky() -> i64 { 0 }"#,
+    ));
+}
+
+/// A misspelled strategy is reported, and leaves the contract with nothing
+/// to try -- which is itself reported, because a contract that cannot do
+/// anything looks like protection and is not.
+#[test]
+fn heal_contract_misspelled_strategy() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [ReturnDefualt])
+    func risky() -> i64 { 0 }",
+    ));
+}
+
+/// `RetryWithBackoff` re-runs the function's effects, so it needs an
+/// explicit idempotence declaration -- and the declared bound has to cover
+/// the number of attempts.
+#[test]
+fn heal_contract_retry_needs_idempotence() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [RetryWithBackoff(3)])
+    func no_declaration() -> i64 { 0 }
+
+    @idempotent(2)
+    @heal(on: [Timeout], strategies: [RetryWithBackoff(5)])
+    func bound_too_low() -> i64 { 0 }
+
+    @idempotent(5)
+    @heal(on: [Timeout], strategies: [RetryWithBackoff(5)])
+    func bound_sufficient() -> i64 { 0 }",
+    ));
+}
+
+/// `ReturnCached` needs `@memoizable`; `IsolateAndRestart` needs
+/// `@snapshot`. Both are the spec's own feasibility requirements.
+#[test]
+fn heal_contract_capability_requirements() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [ReturnCached])
+    func not_memoizable() -> i64 { 0 }
+
+    @memoizable
+    @heal(on: [Timeout], strategies: [ReturnCached])
+    func memoizable() -> i64 { 0 }
+
+    @heal(on: [Timeout], strategies: [IsolateAndRestart])
+    func no_snapshot() -> i64 { 0 }
+
+    @snapshot
+    @heal(on: [Timeout], strategies: [IsolateAndRestart])
+    func snapshotted() -> i64 { 0 }",
+    ));
+}
+
+/// `PropagateToParent` needs somewhere to propagate to.
+#[test]
+fn heal_contract_propagate_needs_supervisor() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [PropagateToParent])
+    func orphan() -> i64 { 0 }",
+    ));
+}
+
+/// A repeated strategy is never useful -- the engine tries each in order, so
+/// the second attempt does exactly what the first did.
+#[test]
+fn heal_contract_duplicate_strategy() {
+    insta::assert_snapshot!(infer(
+        r"
+    @heal(on: [Timeout], strategies: [ReturnDefault, ReturnDefault])
+    func risky() -> i64 { 0 }",
+    ));
+}
+
+/// `SubstituteAlternate` must name a function that can actually stand in:
+/// same signature, and not the guarded function itself.
+#[test]
+fn heal_contract_alternate_must_be_substitutable() {
+    insta::assert_snapshot!(infer(
+        r"
+    func wrong_shape(x: i64, y: i64) -> i64 { x + y }
+    func right_shape() -> i64 { 1 }
+
+    @heal(on: [Timeout], strategies: [SubstituteAlternate(wrong_shape)])
+    func mismatched() -> i64 { 0 }
+
+    @heal(on: [Timeout], strategies: [SubstituteAlternate(itself)])
+    func itself() -> i64 { 0 }
+
+    @heal(on: [Timeout], strategies: [SubstituteAlternate(right_shape)])
+    func ok() -> i64 { 0 }",
+    ));
+}
+
+// ===========================================================================
+// Generic parameters
+// ===========================================================================
+//
+// `[T]` generic parameters parsed, and were then bound by nothing: `T` in a
+// signature or a field resolved as an ordinary type name and failed, so
+// `func id[T](x: T) -> T` and `struct Box[T] { v: T }` -- the shape most of
+// the stdlib is written in -- were rejected outright.
+//
+// What these pin down is *declaration* and *interior* checking. Instantiating
+// a generic (`Box { v: 7 }` at `T = i64`) additionally needs generic
+// arguments to survive type-ref lowering and a populated `Substitution`;
+// until then an instantiation still reports a mismatch, which
+// `generic_instantiation_is_not_yet_supported` records deliberately rather
+// than leaving undocumented.
+
+/// A generic function's parameter is a real type in its own signature and
+/// body.
+#[test]
+fn infer_generic_function_parameter() {
+    insta::assert_snapshot!(infer(
+        r"
+    func id[T](x: T) -> T {
+        x
+    }
+
+    func second[A, B](a: A, b: B) -> B {
+        b
+    }",
+    ));
+}
+
+/// A generic struct's parameter is a real type in its field list, and a
+/// field access through it yields that parameter.
+///
+/// The method is declared in an `extend` on purpose: it is the one place
+/// the field's parameter and the return type's parameter are the *same*
+/// one. Writing the equivalent free function `func unwrap[T](b: Box[T]) -> T`
+/// would cross from `Box`'s `T` to `unwrap`'s own, and that is what needs
+/// substitution -- see `generic_instantiation_is_not_yet_supported`.
+#[test]
+fn infer_generic_struct_field() {
+    insta::assert_snapshot!(infer(
+        r"
+    struct Box[T] { v: T }
+    struct Pair[K, V] { k: K, v: V }
+
+    extend Box[T] {
+        func unwrap(self) -> T { self.v }
+    }
+
+    extend Pair[K, V] {
+        func key(self) -> K { self.k }
+    }",
+    ));
+}
+
+/// `extend Box[T]` binds `T` to *`Box`'s* parameter, not to a fresh one of
+/// the block's own.
+///
+/// This is the difference between `func get(self) -> T { self.v }`
+/// type-checking and failing with "expected `T`, found `T`" -- the field's
+/// type and the return type have to be the *same* parameter, and they only
+/// are if the `extend` borrows the extended type's.
+#[test]
+fn infer_generic_extend_binds_the_extended_types_parameters() {
+    insta::assert_snapshot!(infer(
+        r"
+    struct Tuple3[A, B, C] { a: A, b: B, c: C }
+
+    extend Tuple3[A, B, C] {
+        func first(self) -> A { self.a }
+        func third(self) -> C { self.c }
+    }",
+    ));
+}
+
+/// A parameter is scoped to its own declaration: the `T` of one function is
+/// a different type from the `T` of another, even though both are spelled
+/// `T`. Each body checks against its own, and neither leaks into the other.
+///
+/// Identity is (owner, index) precisely so these cannot be confused. The
+/// visible consequence -- that `one(x)` inside `two` does not type-check
+/// until instantiation exists -- is recorded separately in
+/// `generic_instantiation_is_not_yet_supported`.
+#[test]
+fn infer_generic_parameters_are_scoped_to_their_declaration() {
+    insta::assert_snapshot!(infer(
+        r"
+    func one[T](x: T) -> T { x }
+
+    func two[T](x: T) -> T { x }
+
+    func pair_up[T, U](a: T, b: U) -> U { b }",
+    ));
+}
+
+/// Instantiating a generic is *not* yet supported, and this records exactly
+/// where it stops: the declaration checks, the use does not.
+///
+/// Generic arguments are dropped during type-ref lowering (`TypeRef::Path`
+/// carries no arguments), so there is nothing to substitute `T` with at the
+/// use site. Monomorphisation is the follow-up; this test exists so that
+/// landing it turns a documented failure into a visible diff rather than
+/// passing silently.
+#[test]
+fn generic_instantiation_is_not_yet_supported() {
+    insta::assert_snapshot!(infer(
+        r"
+    struct Box[T] { v: T }
+
+    func main() -> i64 {
+        let b = Box { v: 7 };
+        b.v
+    }",
+    ));
 }

@@ -76,7 +76,7 @@ public func argv_checked(index: i32) -> Result[String, Error] {
 //   // all[0] is the program name, all[1..] are user arguments
 public func argv_all() -> Array[String] {
     let count = __intrinsic_argc();
-    let result = Array[String].with_capacity(count as usize);
+    let result = Array.with_capacity(count as usize);
     let i: i32 = 0;
     while i < count {
         result.push(__intrinsic_argv(i));
@@ -105,7 +105,7 @@ public func args() -> Array[String] {
     if n < 0 {
         n = 0;
     }
-    let result = Array[String].with_capacity(n as usize);
+    let result = Array.with_capacity(n as usize);
     let i: i32 = 1;
     while i < count {
         result.push(__intrinsic_argv(i));
