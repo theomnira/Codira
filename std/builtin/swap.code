@@ -54,9 +54,9 @@ public func swap_elements[T](data: Slice[T], i: usize, j: usize) -> void {
         return
     }
     let ptr = data.data()
-    let tmp = ptr.offset(__intrinsic_cast[isize](i)).read()
-    ptr.offset(__intrinsic_cast[isize](i)).write(ptr.offset(__intrinsic_cast[isize](j)).read())
-    ptr.offset(__intrinsic_cast[isize](j)).write(tmp)
+    let tmp = ptr.offset(__intrinsic_cast(i)).read()
+    ptr.offset(__intrinsic_cast(i)).write(ptr.offset(__intrinsic_cast(j)).read())
+    ptr.offset(__intrinsic_cast(j)).write(tmp)
 }
 
 // =============================================================================
@@ -70,8 +70,8 @@ public func swap_elements[T](data: Slice[T], i: usize, j: usize) -> void {
 public func swap_nonoverlapping[T](a: Pointer[T], b: Pointer[T], count: usize) -> void {
     var i: usize = 0
     while i < count {
-        let pa = a.offset(__intrinsic_cast[isize](i))
-        let pb = b.offset(__intrinsic_cast[isize](i))
+        let pa = a.offset(__intrinsic_cast(i))
+        let pb = b.offset(__intrinsic_cast(i))
         let tmp = pa.read()
         pa.write(pb.read())
         pb.write(tmp)
@@ -97,5 +97,5 @@ public func replace[T](dest: Pointer[T], new_value: T) -> T {
 // Move the value out of `src`, leaving `T::default()` behind.
 // Requires T: Defaultable.
 public func take[T: Defaultable](src: Pointer[T]) -> T {
-    replace[T](src, T.default())
+    replace(src, T.default())
 }

@@ -108,7 +108,7 @@ extend CacheOperation {
 // Args:
 //   x: Pointer to global memory location to load from.
 public func ldg[T](x: usize) -> T {
-    return __intrinsic_load[T](x);
+    return __intrinsic_load(x);
 }
 
 // =============================================================================
@@ -335,7 +335,7 @@ public func threadfence(scope: i32) -> void {
         suffix = "sys";
     }
     let name = "llvm.nvvm.membar." + suffix;
-    intrinsics.llvm_intrinsic_void[name]();
+    intrinsics.llvm_intrinsic_void();
 }
 
 // =============================================================================
@@ -356,7 +356,7 @@ extend AMDBufferResource {
             __panic("AMDBufferResource is only applicable on AMDGPU hardware.");
         }
         let r: AMDBufferResource;
-        r.desc = SIMD[u32, 4].zero();
+        r.desc = SIMD.zero();
         r.desc[0] = (address & 0xFFFF_FFFF) as u32;
         r.desc[1] = (address >> 32) as u32;
         r.desc[2] = elem_size * num_records;
@@ -393,8 +393,8 @@ extend AMDBufferResource {
         if !info.is_amd_gpu() {
             __panic("buffer_load is only applicable on AMDGPU hardware.");
         }
-        let vec_bytes = vector_offset * (__intrinsic_sizeof[T]() as i32);
-        let scalar_bytes = scalar_offset * (__intrinsic_sizeof[T]() as i32);
+        let vec_bytes = vector_offset * (__intrinsic_sizeof() as i32);
+        let scalar_bytes = scalar_offset * (__intrinsic_sizeof() as i32);
         return intrinsics.llvm_intrinsic["llvm.amdgcn.raw.buffer.load"][T](
             self.desc, vec_bytes, scalar_bytes, 0
         );
@@ -412,9 +412,9 @@ extend AMDBufferResource {
         if !info.is_amd_gpu() {
             __panic("buffer_store is only applicable on AMDGPU hardware.");
         }
-        let vec_bytes = vector_offset * (__intrinsic_sizeof[T]() as i32);
-        let scalar_bytes = scalar_offset * (__intrinsic_sizeof[T]() as i32);
-        intrinsics.llvm_intrinsic_void["llvm.amdgcn.raw.buffer.store"](
+        let vec_bytes = vector_offset * (__intrinsic_sizeof() as i32);
+        let scalar_bytes = scalar_offset * (__intrinsic_sizeof() as i32);
+        intrinsics.llvm_intrinsic_void(
             val, self.desc, vec_bytes, scalar_bytes, 0
         );
     }
@@ -433,7 +433,7 @@ public func ds_read_tr16_b64[T](shared_ptr: usize) -> SIMD[T, 4] {
         __panic("ds_read_tr16_b64 is only supported on CDNA4+");
     }
     let raw = intrinsics.llvm_intrinsic["llvm.amdgcn.ds.read.tr16.b64"][SIMD[u32, 4]](shared_ptr);
-    return raw.bitcast[T]();
+    return raw.bitcast();
 }
 
 // Reads a 64-bit LDS transpose block using the TR8 layout.
@@ -447,7 +447,7 @@ public func ds_read_tr8_b64[T](shared_ptr: usize) -> SIMD[T, 8] {
     // Read the raw 64-bit lanes as u32 pairs; the caller reinterprets via
     // SIMD.bitcast to obtain the target element type.
     let raw = intrinsics.llvm_intrinsic["llvm.amdgcn.ds.read.tr8.b64"][SIMD[u32, 8]](shared_ptr);
-    return raw.bitcast[T]();
+    return raw.bitcast();
 }
 
 // =============================================================================
@@ -473,5 +473,5 @@ public func permlane_swap(val1: u32, val2: u32, stride: i32) -> SIMD[u32, 2] {
         }
     }
     let result = intrinsics.llvm_intrinsic[name][(i32, i32)](val1 as i32, val2 as i32, false, false);
-    return SIMD[u32, 2].new(result.0 as u32, result.1 as u32);
+    return SIMD.new(result.0 as u32, result.1 as u32);
 }

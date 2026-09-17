@@ -1352,3 +1352,144 @@ fn tuple_pat_in_parameter() {
     let parse = SourceFile::parse("func f((a, b): (i32, i32)) -> i32 { a + b }");
     assert!(parse.errors().is_empty(), "{:?}", parse.errors());
 }
+
+// ===========================================================================
+// Generic arguments in expression position (S9)
+// ===========================================================================
+//
+// `spec/LANGUAGE_SPEC.md` section 3 allows explicit generic arguments in
+// type position and in static member access, and rules them out at ordinary
+// call sites to keep `foo[Bar](x)` unambiguous. These pin down that the
+// allowed spellings parse *and* that indexing is untouched -- the failure
+// mode being silent, since a swallowed `[i]` still parses.
+
+/// `Deque[T] { .. }` is a record literal whose type carries generic
+/// arguments. Unambiguous: nothing else in the grammar is `path [ .. ] {`.
+#[test]
+fn generic_args_on_record_literal() {
+    let expr = only_initializer("Deque[T] { buf: b }");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::RECORD_LIT);
+
+    let path_type = expr
+        .syntax()
+        .descendants()
+        .find_map(ast::PathType::cast)
+        .expect("a PATH_TYPE for the literal's type");
+    assert!(
+        path_type.generic_arg_list().is_some(),
+        "the `[T]` should be attached to the literal's type"
+    );
+}
+
+/// Static member access with explicit generic arguments -- `Box[i32].new(5)`,
+/// which `spec/LANGUAGE_SPEC.md` section 3 lists as allowed -- is *not*
+/// accepted, and this records why rather than leaving it to be rediscovered.
+///
+/// `Box[i32].new(5)` and `buf[i].abs()` are the same shape. Telling them
+/// apart requires knowing whether the base names a type, which is a
+/// resolution question the parser cannot answer. Accepting the first form
+/// silently turns the second into a path with generic arguments and discards
+/// the index -- and it still parses, so nothing would report it. That
+/// regression is pinned by `indexing_then_method_call_stays_indexing`.
+///
+/// So the two spellings degrade differently, and neither is silently wrong:
+///
+/// * one argument (`Box[i32].new(5)`) parses as indexing-then-method-call. It
+///   is well-formed syntax that means something else.
+/// * more than one (`SIMD[T, N].splat(0)`) is a *syntax error*, because an
+///   index expression cannot contain a comma.
+///
+/// Either way the explicit arguments have to go and inference has to supply
+/// them, exactly as at an ordinary call site.
+#[test]
+fn generic_args_before_static_member_access_are_not_generic_args() {
+    let expr = only_initializer("Box[i32].new(5)");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::METHOD_CALL_EXPR);
+    assert!(
+        !expr
+            .syntax()
+            .descendants()
+            .any(|n| n.kind() == SyntaxKind::GENERIC_ARG_LIST),
+        "the brackets stay an index, not generic arguments"
+    );
+
+    let parse = SourceFile::parse("func f() -> i64 { SIMD[T, N].splat(0) }");
+    assert!(
+        !parse.errors().is_empty(),
+        "a multi-argument list is a syntax error rather than a silent misparse"
+    );
+}
+
+/// A const generic argument is a value, not a type: `SIMD[f32, 4]` has to
+/// parse as well as `SIMD[T, N]`, and is how `std/gpu` writes it.
+#[test]
+fn generic_args_accept_const_arguments() {
+    let expr = only_initializer("SIMD[f32, 4] { v: x }");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::RECORD_LIT);
+
+    let parse = SourceFile::parse("func f() -> SIMD[f32, 4] { }");
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+}
+
+/// Indexing is untouched, and this is the case that matters: a swallowed
+/// `[i]` would still *parse*, so only the resulting tree shows the
+/// difference.
+#[test]
+fn indexing_is_not_mistaken_for_generic_arguments() {
+    // Plain index.
+    let expr = only_initializer("buf[i]");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::INDEX_EXPR);
+
+    // Index inside an `if` condition, where the `{` that follows opens the
+    // *body*. This is the one place `expr [ .. ] {` genuinely occurs.
+    let parse = SourceFile::parse(
+        "func f(buf: [i64], i: usize) -> i64 {
+    if buf[i] > 0 { buf[i] } else { 0 }
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+    assert_eq!(
+        parse
+            .syntax_node()
+            .descendants()
+            .filter(|n| n.kind() == SyntaxKind::INDEX_EXPR)
+            .count(),
+        2,
+        "both `buf[i]` occurrences must stay index expressions"
+    );
+    assert!(
+        !parse
+            .syntax_node()
+            .descendants()
+            .any(|n| n.kind() == SyntaxKind::GENERIC_ARG_LIST),
+        "no generic argument list should appear in this function"
+    );
+
+    // The same in a `while` condition.
+    let parse = SourceFile::parse(
+        "func f(buf: [i64], i: usize) -> i64 {
+    var n: i64 = 0
+    while buf[i] > n { n = n + 1 }
+    n
+}",
+    );
+    assert!(parse.errors().is_empty(), "{:?}", parse.errors());
+    assert!(!parse
+        .syntax_node()
+        .descendants()
+        .any(|n| n.kind() == SyntaxKind::GENERIC_ARG_LIST));
+}
+
+/// An index followed by a method call is still an index: `buf[i].abs()`
+/// must not become a static member access on a type named `buf`.
+#[test]
+fn indexing_then_method_call_stays_indexing() {
+    let expr = only_initializer("buf[i].abs()");
+    assert_eq!(expr.syntax().kind(), SyntaxKind::METHOD_CALL_EXPR);
+    // The receiver is the index expression, not a path with generic args.
+    let receiver = expr
+        .syntax()
+        .first_child()
+        .expect("a method call has a receiver");
+    assert_eq!(receiver.kind(), SyntaxKind::INDEX_EXPR);
+}

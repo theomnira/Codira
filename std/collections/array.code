@@ -16,7 +16,7 @@ struct InlineArray[T, N: usize] {
 
 /// Creates a new InlineArray with all elements set to `value`.
 public func inline_array_new[T, N: usize](value: T) -> InlineArray[T, N] {
-    let arr = InlineArray[T, N] { data: uninit_fixed_buf[T, N]() };
+    let arr = InlineArray[T, N] { data: uninit_fixed_buf() };
     let i: usize = 0;
     while i < N {
         fixed_buf_store(arr.data, i, value);
@@ -27,54 +27,54 @@ public func inline_array_new[T, N: usize](value: T) -> InlineArray[T, N] {
 
 /// Creates an InlineArray with every element set to the zero/default value.
 public func inline_array_zeroed[T, N: usize]() -> InlineArray[T, N] {
-    return inline_array_new[T, N](zero_value[T]());
+    return inline_array_new(zero_value());
 }
 
 // ── Core API ─────────────────────────────────────────────────────────────────
 
 /// Returns the compile-time length of the array.
-public func len[T, N: usize](self: InlineArray[T, N]) -> usize {
+public func len[T, N: usize](this: InlineArray[T, N]) -> usize {
     return N;
 }
 
 /// Returns true if the array has zero elements (only when N == 0).
-public func is_empty[T, N: usize](self: InlineArray[T, N]) -> bool {
+public func is_empty[T, N: usize](this: InlineArray[T, N]) -> bool {
     return N == 0;
 }
 
 /// Returns the element at `index`. Panics if out of bounds.
-public func get[T, N: usize](self: InlineArray[T, N], index: usize) -> T {
+public func get[T, N: usize](this: InlineArray[T, N], index: usize) -> T {
     if index >= N {
         panic("InlineArray.get: index out of bounds");
     }
-    return fixed_buf_load(self.data, index);
+    return fixed_buf_load(this.data, index);
 }
 
 /// Sets the element at `index` to `value`. Panics if out of bounds.
-public func set[T, N: usize](self: InlineArray[T, N], index: usize, value: T) -> InlineArray[T, N] {
+public func set[T, N: usize](this: InlineArray[T, N], index: usize, value: T) -> InlineArray[T, N] {
     if index >= N {
         panic("InlineArray.set: index out of bounds");
     }
-    let out = self;
+    let out = this;
     fixed_buf_store(out.data, index, value);
     return out;
 }
 
 /// Returns the first element. Panics if N == 0.
-public func first[T, N: usize](self: InlineArray[T, N]) -> T {
-    return get(self, 0);
+public func first[T, N: usize](this: InlineArray[T, N]) -> T {
+    return get(this, 0);
 }
 
 /// Returns the last element. Panics if N == 0.
-public func last[T, N: usize](self: InlineArray[T, N]) -> T {
-    return get(self, N - 1);
+public func last[T, N: usize](this: InlineArray[T, N]) -> T {
+    return get(this, N - 1);
 }
 
 // ── Fill ─────────────────────────────────────────────────────────────────────
 
 /// Sets every element to `value`.
-public func fill[T, N: usize](self: InlineArray[T, N], value: T) -> InlineArray[T, N] {
-    let out = self;
+public func fill[T, N: usize](this: InlineArray[T, N], value: T) -> InlineArray[T, N] {
+    let out = this;
     let i: usize = 0;
     while i < N {
         fixed_buf_store(out.data, i, value);
@@ -84,8 +84,8 @@ public func fill[T, N: usize](self: InlineArray[T, N], value: T) -> InlineArray[
 }
 
 /// Sets every element using a generator function: `f(index)`.
-public func fill_with[T, N: usize](self: InlineArray[T, N], f: func(usize) -> T) -> InlineArray[T, N] {
-    let out = self;
+public func fill_with[T, N: usize](this: InlineArray[T, N], f: func(usize) -> T) -> InlineArray[T, N] {
+    let out = this;
     let i: usize = 0;
     while i < N {
         fixed_buf_store(out.data, i, f(i));
@@ -97,10 +97,10 @@ public func fill_with[T, N: usize](self: InlineArray[T, N], f: func(usize) -> T)
 // ── Search ───────────────────────────────────────────────────────────────────
 
 /// Returns true if any element equals `value`.
-public func contains[T, N: usize](self: InlineArray[T, N], value: T) -> bool {
+public func contains[T, N: usize](this: InlineArray[T, N], value: T) -> bool {
     let i: usize = 0;
     while i < N {
-        if fixed_buf_load(self.data, i) == value {
+        if fixed_buf_load(this.data, i) == value {
             return true;
         }
         i = i + 1;
@@ -109,10 +109,10 @@ public func contains[T, N: usize](self: InlineArray[T, N], value: T) -> bool {
 }
 
 /// Returns the index of the first occurrence of `value`, or -1.
-public func index_of[T, N: usize](self: InlineArray[T, N], value: T) -> isize {
+public func index_of[T, N: usize](this: InlineArray[T, N], value: T) -> isize {
     let i: usize = 0;
     while i < N {
-        if fixed_buf_load(self.data, i) == value {
+        if fixed_buf_load(this.data, i) == value {
             return i as isize;
         }
         i = i + 1;
@@ -123,8 +123,8 @@ public func index_of[T, N: usize](self: InlineArray[T, N], value: T) -> isize {
 // ── Functional ───────────────────────────────────────────────────────────────
 
 /// Applies `f` to every element in-place.
-public func map_in_place[T, N: usize](self: InlineArray[T, N], f: func(T) -> T) -> InlineArray[T, N] {
-    let out = self;
+public func map_in_place[T, N: usize](this: InlineArray[T, N], f: func(T) -> T) -> InlineArray[T, N] {
+    let out = this;
     let i: usize = 0;
     while i < N {
         fixed_buf_store(out.data, i, f(fixed_buf_load(out.data, i)));
@@ -134,11 +134,11 @@ public func map_in_place[T, N: usize](self: InlineArray[T, N], f: func(T) -> T) 
 }
 
 /// Reduces all elements into a single value.
-public func reduce[T, U, N: usize](self: InlineArray[T, N], init: U, f: func(U, T) -> U) -> U {
+public func reduce[T, U, N: usize](this: InlineArray[T, N], init: U, f: func(U, T) -> U) -> U {
     let acc = init;
     let i: usize = 0;
     while i < N {
-        acc = f(acc, fixed_buf_load(self.data, i));
+        acc = f(acc, fixed_buf_load(this.data, i));
         i = i + 1;
     }
     return acc;
@@ -152,14 +152,14 @@ struct InlineArrayIter[T, N: usize] {
 }
 
 /// Returns a forward iterator.
-public func iter[T, N: usize](self: InlineArray[T, N]) -> InlineArrayIter[T, N] {
-    return InlineArrayIter[T, N] { arr: self, pos: 0 };
+public func iter[T, N: usize](this: InlineArray[T, N]) -> InlineArrayIter[T, N] {
+    return InlineArrayIter[T, N] { arr: this, pos: 0 };
 }
 
 /// Advances the iterator.
 public func iter_next[T, N: usize](it: InlineArrayIter[T, N]) -> (InlineArrayIter[T, N], Optional[T]) {
     if it.pos >= N {
-        return (it, none[T]());
+        return (it, none());
     }
     let val = fixed_buf_load(it.arr.data, it.pos);
     let next = InlineArrayIter[T, N] { arr: it.arr, pos: it.pos + 1 };
@@ -169,19 +169,19 @@ public func iter_next[T, N: usize](it: InlineArrayIter[T, N]) -> (InlineArrayIte
 // ── Conversion ───────────────────────────────────────────────────────────────
 
 /// Copies the array into a new List[T].
-public func to_list[T, N: usize](self: InlineArray[T, N]) -> List[T] {
-    let out = list_with_capacity[T](N);
+public func to_list[T, N: usize](this: InlineArray[T, N]) -> List[T] {
+    let out = list_with_capacity(N);
     let i: usize = 0;
     while i < N {
-        out = push(out, fixed_buf_load(self.data, i));
+        out = push(out, fixed_buf_load(this.data, i));
         i = i + 1;
     }
     return out;
 }
 
 /// Returns a Span[T] view over the array.
-public func as_span[T, N: usize](self: InlineArray[T, N]) -> Span[T] {
-    return span_from_raw(fixed_buf_ptr(self.data), N);
+public func as_span[T, N: usize](this: InlineArray[T, N]) -> Span[T] {
+    return span_from_raw(fixed_buf_ptr(this.data), N);
 }
 
 // ── Comparison ───────────────────────────────────────────────────────────────
@@ -201,11 +201,11 @@ public func array_equals[T, N: usize](a: InlineArray[T, N], b: InlineArray[T, N]
 // ── Swap ─────────────────────────────────────────────────────────────────────
 
 /// Swaps the elements at indices `i` and `j`.
-public func swap[T, N: usize](self: InlineArray[T, N], i: usize, j: usize) -> InlineArray[T, N] {
+public func swap[T, N: usize](this: InlineArray[T, N], i: usize, j: usize) -> InlineArray[T, N] {
     if i >= N || j >= N {
         panic("InlineArray.swap: index out of bounds");
     }
-    let out = self;
+    let out = this;
     let tmp = fixed_buf_load(out.data, i);
     fixed_buf_store(out.data, i, fixed_buf_load(out.data, j));
     fixed_buf_store(out.data, j, tmp);
@@ -213,8 +213,8 @@ public func swap[T, N: usize](self: InlineArray[T, N], i: usize, j: usize) -> In
 }
 
 /// Reverses the array in-place.
-public func reverse[T, N: usize](self: InlineArray[T, N]) -> InlineArray[T, N] {
-    let out = self;
+public func reverse[T, N: usize](this: InlineArray[T, N]) -> InlineArray[T, N] {
+    let out = this;
     let lo: usize = 0;
     let hi: usize = N;
     if hi == 0 {

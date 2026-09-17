@@ -58,6 +58,30 @@ impl<'t> Parser<'t> {
         self.token_source.lookahead_nth(n).kind
     }
 
+    /// Lookahead past the LL(3) window, for the one decision that needs it.
+    ///
+    /// [`Parser::nth`] caps at 3 deliberately: an LL(3) grammar is a design
+    /// constraint, and quietly relaxing it everywhere would let arbitrary
+    /// backtracking-shaped code creep in. One decision genuinely cannot fit
+    /// in three tokens -- telling `Deque[K, V] { .. }` (a record literal
+    /// with generic arguments) from `buf[i]` (an index) requires finding the
+    /// matching `]` and looking at what follows, and the bracket contents
+    /// are of unbounded length.
+    ///
+    /// `MAX_SCAN` bounds it anyway, so a pathological input cannot turn a
+    /// lookahead into a linear scan of the file. A generic argument list
+    /// longer than that is not a real program.
+    pub(crate) fn nth_beyond_window(&self, n: usize) -> SyntaxKind {
+        const MAX_SCAN: usize = 64;
+        assert!(n <= MAX_SCAN, "lookahead beyond the bounded scan window");
+
+        let steps = self.steps.get();
+        assert!(steps <= 10_000_000, "the parser seems stuck");
+        self.steps.set(steps + 1);
+
+        self.token_source.lookahead_nth(n).kind
+    }
+
     // Checks if the current token is `kind`.
     pub(crate) fn at(&self, kind: SyntaxKind) -> bool {
         self.nth_at(0, kind)

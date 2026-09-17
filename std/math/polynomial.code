@@ -149,7 +149,7 @@ public func polynomial_evaluate_estrin(coeffs: List[f64], x: f64) -> f64 {
         return polynomial_evaluate(coeffs, x);
     }
     // Build a mutable copy of values — we reduce pairs iteratively
-    let vals = list_with_capacity[f64](n);
+    let vals = list_with_capacity(n);
     let i: usize = 0;
     while i < n {
         vals = push(vals, get(coeffs, i));
@@ -159,7 +159,7 @@ public func polynomial_evaluate_estrin(coeffs: List[f64], x: f64) -> f64 {
     let count = n;
     while count > 1 {
         let new_count = (count + 1) / 2;
-        let new_vals = list_with_capacity[f64](new_count);
+        let new_vals = list_with_capacity(new_count);
         let j: usize = 0;
         while j + 1 < count {
             // Pair (j, j+1): result = vals[j] * pow_x + vals[j+1]
@@ -187,14 +187,14 @@ public func polynomial_evaluate_estrin(coeffs: List[f64], x: f64) -> f64 {
 ///   (x - r0)(x - r1)...(x - r_{n-1})
 public func polynomial_from_roots(roots: List[f64]) -> List[f64] {
     // Start with [1.0]  (the constant polynomial "1")
-    let coeffs = list_new[f64]();
+    let coeffs = list_new();
     let c = push(coeffs, 1.0);
     let i: usize = 0;
     while i < roots.len {
         let r = get(roots, i);
         // Multiply current polynomial by (x - r)
         let new_len = c.len + 1;
-        let new_c = list_with_capacity[f64](new_len);
+        let new_c = list_with_capacity(new_len);
         // Leading coefficient
         new_c = push(new_c, get(c, 0));
         let j: usize = 1;

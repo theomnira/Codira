@@ -20,7 +20,7 @@ class BitSet {
 /// Creates a BitSet that can represent integers in [0, capacity).
 public func bitset_new(capacity: usize) -> BitSet {
     let nw = (capacity + BITS_PER_WORD - 1) / BITS_PER_WORD;
-    let words = heap_alloc[u64](nw);
+    let words = heap_alloc(nw);
     // Zero all words
     let i: usize = 0;
     while i < nw {
@@ -267,7 +267,7 @@ public func bitset_is_superset(a: BitSet, b: BitSet) -> bool {
 
 /// Returns a List of all set bit indices.
 public func to_indices(this: BitSet) -> List[usize] {
-    let out = list_new[usize]();
+    let out = list_new();
     let i: usize = 0;
     while i < this.capacity {
         if get(this, i) {

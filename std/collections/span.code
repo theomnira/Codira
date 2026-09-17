@@ -40,98 +40,98 @@ public func mutable_span_from_raw[T](ptr: Pointer[T], len: usize) -> MutableSpan
 
 /// Creates an empty span.
 public func span_empty[T]() -> Span[T] {
-    return Span[T] { ptr: null_ptr[T](), len: 0 };
+    return Span[T] { ptr: null_ptr(), len: 0 };
 }
 
 // ── Core API (immutable) ─────────────────────────────────────────────────────
 
 /// Returns the number of elements in the span.
-public func span_len[T](self: Span[T]) -> usize {
-    return self.len;
+public func span_len[T](this: Span[T]) -> usize {
+    return this.len;
 }
 
 /// Returns true if the span has zero elements.
-public func span_is_empty[T](self: Span[T]) -> bool {
-    return self.len == 0;
+public func span_is_empty[T](this: Span[T]) -> bool {
+    return this.len == 0;
 }
 
 /// Returns the element at `index`. Panics if out of bounds.
-public func span_get[T](self: Span[T], index: usize) -> T {
-    if index >= self.len {
+public func span_get[T](this: Span[T], index: usize) -> T {
+    if index >= this.len {
         panic("Span.get: index out of bounds");
     }
-    return raw_load(self.ptr, index);
+    return raw_load(this.ptr, index);
 }
 
 /// Returns the first element. Panics if empty.
-public func span_first[T](self: Span[T]) -> T {
-    return span_get(self, 0);
+public func span_first[T](this: Span[T]) -> T {
+    return span_get(this, 0);
 }
 
 /// Returns the last element. Panics if empty.
-public func span_last[T](self: Span[T]) -> T {
-    return span_get(self, self.len - 1);
+public func span_last[T](this: Span[T]) -> T {
+    return span_get(this, this.len - 1);
 }
 
 // ── Slicing ──────────────────────────────────────────────────────────────────
 
 /// Returns a sub-span from `start` (inclusive) to `end` (exclusive).
-public func span_slice[T](self: Span[T], start: usize, end: usize) -> Span[T] {
+public func span_slice[T](this: Span[T], start: usize, end: usize) -> Span[T] {
     if start > end {
         panic("Span.slice: start > end");
     }
-    if end > self.len {
+    if end > this.len {
         panic("Span.slice: end out of bounds");
     }
-    return Span[T] { ptr: ptr_offset(self.ptr, start), len: end - start };
+    return Span[T] { ptr: ptr_offset(this.ptr, start), len: end - start };
 }
 
 /// Returns a sub-span from `start` to the end.
-public func span_slice_from[T](self: Span[T], start: usize) -> Span[T] {
-    return span_slice(self, start, self.len);
+public func span_slice_from[T](this: Span[T], start: usize) -> Span[T] {
+    return span_slice(this, start, this.len);
 }
 
 /// Returns a sub-span from the beginning up to `end` (exclusive).
-public func span_slice_to[T](self: Span[T], end: usize) -> Span[T] {
-    return span_slice(self, 0, end);
+public func span_slice_to[T](this: Span[T], end: usize) -> Span[T] {
+    return span_slice(this, 0, end);
 }
 
 // ── Core API (mutable) ──────────────────────────────────────────────────────
 
 /// Returns the number of elements in the mutable span.
-public func mspan_len[T](self: MutableSpan[T]) -> usize {
-    return self.len;
+public func mspan_len[T](this: MutableSpan[T]) -> usize {
+    return this.len;
 }
 
 /// Returns the element at `index`.
-public func mspan_get[T](self: MutableSpan[T], index: usize) -> T {
-    if index >= self.len {
+public func mspan_get[T](this: MutableSpan[T], index: usize) -> T {
+    if index >= this.len {
         panic("MutableSpan.get: index out of bounds");
     }
-    return raw_load(self.ptr, index);
+    return raw_load(this.ptr, index);
 }
 
 /// Sets the element at `index`.
-public func mspan_set[T](self: MutableSpan[T], index: usize, value: T) {
-    if index >= self.len {
+public func mspan_set[T](this: MutableSpan[T], index: usize, value: T) {
+    if index >= this.len {
         panic("MutableSpan.set: index out of bounds");
     }
-    raw_store(self.ptr, index, value);
+    raw_store(this.ptr, index, value);
 }
 
 /// Returns a sub-slice of the mutable span.
-public func mspan_slice[T](self: MutableSpan[T], start: usize, end: usize) -> MutableSpan[T] {
-    if start > end || end > self.len {
+public func mspan_slice[T](this: MutableSpan[T], start: usize, end: usize) -> MutableSpan[T] {
+    if start > end || end > this.len {
         panic("MutableSpan.slice: invalid range");
     }
-    return MutableSpan[T] { ptr: ptr_offset(self.ptr, start), len: end - start };
+    return MutableSpan[T] { ptr: ptr_offset(this.ptr, start), len: end - start };
 }
 
 /// Fills the entire mutable span with `value`.
-public func mspan_fill[T](self: MutableSpan[T], value: T) {
+public func mspan_fill[T](this: MutableSpan[T], value: T) {
     let i: usize = 0;
-    while i < self.len {
-        raw_store(self.ptr, i, value);
+    while i < this.len {
+        raw_store(this.ptr, i, value);
         i = i + 1;
     }
 }
@@ -139,10 +139,10 @@ public func mspan_fill[T](self: MutableSpan[T], value: T) {
 // ── Searching ────────────────────────────────────────────────────────────────
 
 /// Returns true if any element in the span equals `value`.
-public func span_contains[T](self: Span[T], value: T) -> bool {
+public func span_contains[T](this: Span[T], value: T) -> bool {
     let i: usize = 0;
-    while i < self.len {
-        if raw_load(self.ptr, i) == value {
+    while i < this.len {
+        if raw_load(this.ptr, i) == value {
             return true;
         }
         i = i + 1;
@@ -151,10 +151,10 @@ public func span_contains[T](self: Span[T], value: T) -> bool {
 }
 
 /// Returns the index of `value` in the span, or -1 if not found.
-public func span_index_of[T](self: Span[T], value: T) -> isize {
+public func span_index_of[T](this: Span[T], value: T) -> isize {
     let i: usize = 0;
-    while i < self.len {
-        if raw_load(self.ptr, i) == value {
+    while i < this.len {
+        if raw_load(this.ptr, i) == value {
             return i as isize;
         }
         i = i + 1;
@@ -184,14 +184,14 @@ struct SpanIter[T] {
 }
 
 /// Returns a forward iterator over the span.
-public func span_iter[T](self: Span[T]) -> SpanIter[T] {
-    return SpanIter[T] { span: self, pos: 0 };
+public func span_iter[T](this: Span[T]) -> SpanIter[T] {
+    return SpanIter[T] { span: this, pos: 0 };
 }
 
 /// Advances the iterator, returning the next element or none.
 public func span_iter_next[T](it: SpanIter[T]) -> (SpanIter[T], Optional[T]) {
     if it.pos >= it.span.len {
-        return (it, none[T]());
+        return (it, none());
     }
     let val = raw_load(it.span.ptr, it.pos);
     let next = SpanIter[T] { span: it.span, pos: it.pos + 1 };
@@ -216,17 +216,17 @@ public func span_equals[T](a: Span[T], b: Span[T]) -> bool {
 }
 
 /// Returns true if `self` begins with the elements from `prefix`.
-public func span_starts_with[T](self: Span[T], prefix: Span[T]) -> bool {
-    if prefix.len > self.len {
+public func span_starts_with[T](this: Span[T], prefix: Span[T]) -> bool {
+    if prefix.len > this.len {
         return false;
     }
-    return span_equals(span_slice_to(self, prefix.len), prefix);
+    return span_equals(span_slice_to(this, prefix.len), prefix);
 }
 
 /// Returns true if `self` ends with the elements from `suffix`.
-public func span_ends_with[T](self: Span[T], suffix: Span[T]) -> bool {
-    if suffix.len > self.len {
+public func span_ends_with[T](this: Span[T], suffix: Span[T]) -> bool {
+    if suffix.len > this.len {
         return false;
     }
-    return span_equals(span_slice_from(self, self.len - suffix.len), suffix);
+    return span_equals(span_slice_from(this, this.len - suffix.len), suffix);
 }

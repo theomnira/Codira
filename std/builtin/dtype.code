@@ -430,7 +430,7 @@ extend DType {
         if name == "float64" {
             return some(DType.float64);
         }
-        return none[DType]();
+        return none();
     }
 }
 

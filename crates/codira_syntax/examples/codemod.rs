@@ -393,6 +393,107 @@ fn method_owner(text: &str, toks: &[Spanned], at: usize) -> Option<(MethodOwner,
     ))
 }
 
+/// Drops explicit generic arguments at ordinary call sites:
+/// `dict_with_capacity[K, V](16)` becomes `dict_with_capacity(16)`.
+///
+/// `spec/LANGUAGE_SPEC.md` section 3 is explicit that these are not part of
+/// the language: "explicit generic arguments are only accepted in **type
+/// position** and in static member access (`Box[i32].new(5)`); at ordinary
+/// call sites, type arguments are always inferred from the arguments -- this
+/// keeps expression grammar unambiguous without needing a turbofish-style
+/// escape hatch."
+///
+/// That rule is what makes `foo[Bar](x)` unambiguous, and it is worth
+/// keeping: the alternative is inventing a turbofish the language has
+/// deliberately avoided. So the call sites are rewritten rather than the
+/// grammar relaxed.
+///
+/// Record literals (`Deque[T] { .. }`) are *not* touched -- those are
+/// unambiguous and the parser accepts them; see
+/// `expressions::at_record_lit_generic_args`. Neither is static member
+/// access (`Box[i32].new(5)`), which the spec names as allowed. The rule
+/// therefore only fires on `ident [ .. ] (`.
+///
+/// Where a type argument cannot be inferred from the arguments -- most of
+/// these calls take none, as `zero_value[T]()` does -- it has to come from
+/// the expected type instead. That is bidirectional inference doing its
+/// job, and it is the same mechanism a tuple literal already relies on.
+fn rewrite_call_site_generic_args(text: &str, toks: &[Spanned], edits: &mut Vec<Edit>) {
+    for i in 0..toks.len() {
+        // The callee must be a bare identifier immediately followed by `[`.
+        if toks[i].kind != IDENT {
+            continue;
+        }
+
+        // ...and must not be a *declaration's* name. `func dict_new[K, V](..)`
+        // has exactly the shape this rule looks for, and stripping its `[K, V]`
+        // would delete the parameter list rather than an argument list --
+        // turning a generic function into one referring to undefined types.
+        if preceding_keyword(text, toks, i).is_some_and(|kw| {
+            matches!(
+                kw,
+                "func" | "def" | "struct" | "class" | "enum" | "trait" | "type" | "extend"
+            )
+        }) {
+            continue;
+        }
+        let open = i + 1;
+        if open >= toks.len() || toks[open].kind != T_L_BRACKET {
+            continue;
+        }
+        if toks[i].end != toks[open].start {
+            // `arr [i]` with a space is still indexing; require the tight
+            // spelling a call site uses.
+            continue;
+        }
+
+        // Find the matching `]`, bailing on anything that is not a type
+        // list -- the same contents check the angle-bracket rule uses.
+        let mut depth = 1usize;
+        let mut j = open + 1;
+        let mut close = None;
+        while j < toks.len() {
+            match toks[j].kind {
+                T_L_BRACKET => depth += 1,
+                T_R_BRACKET => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(j);
+                        break;
+                    }
+                }
+                k if is_type_list_token(k) => {}
+                _ => break,
+            }
+            j += 1;
+        }
+        let Some(close) = close else { continue };
+
+        // A call, or static member access.
+        //
+        // `{` is excluded: `Deque[T] { .. }` is a record literal, which the
+        // parser accepts with its arguments because nothing else in the
+        // grammar is `path [ .. ] {`.
+        //
+        // `.` is *included*, despite section 3 listing `Box[i32].new(5)` as
+        // allowed, because that spelling is not parseable: it is the same
+        // shape as `buf[i].abs()`, so the parser cannot accept one without
+        // silently reinterpreting the other. See
+        // `expressions::generic_args_terminator`.
+        let next = skip_ws(toks, close + 1);
+        if next >= toks.len() || !matches!(toks[next].kind, T_L_PAREN | T_DOT) {
+            continue;
+        }
+
+        edits.push(Edit {
+            start: toks[open].start,
+            end: toks[close].end,
+            text: String::new(),
+            rule: "call-site-generic-args",
+        });
+    }
+}
+
 /// Renames the receiver of a top-level `func m(self: T, ..)` from `self` to
 /// `this`, throughout that declaration.
 ///
@@ -427,7 +528,25 @@ fn rewrite_ascribed_self_params(text: &str, toks: &[Spanned], edits: &mut Vec<Ed
             continue;
         }
 
-        let l_paren = skip_ws(toks, after_func + 1);
+        // Skip a generic parameter list: `func heap_grow[T](self: ..)` is
+        // the same shape as `func capacity(self: ..)` once `[T]` is out of
+        // the way, and the generic form is most of what `std/collections`
+        // is written in.
+        let mut cursor = after_func + 1;
+        if cursor < toks.len() && toks[cursor].kind == T_L_BRACKET {
+            let mut depth = 1usize;
+            cursor += 1;
+            while cursor < toks.len() && depth > 0 {
+                match toks[cursor].kind {
+                    T_L_BRACKET => depth += 1,
+                    T_R_BRACKET => depth -= 1,
+                    _ => {}
+                }
+                cursor += 1;
+            }
+        }
+
+        let l_paren = skip_ws(toks, cursor);
         if l_paren >= toks.len() || toks[l_paren].kind != T_L_PAREN {
             continue;
         }
@@ -498,6 +617,19 @@ fn declaration_end(toks: &[Spanned], at: usize) -> Option<usize> {
             }
             _ => i += 1,
         }
+    }
+    None
+}
+
+/// The text of the nearest non-whitespace token before `idx`, if any.
+fn preceding_keyword<'a>(text: &'a str, toks: &[Spanned], idx: usize) -> Option<&'a str> {
+    let mut j = idx;
+    while j > 0 {
+        j -= 1;
+        if toks[j].kind == WHITESPACE {
+            continue;
+        }
+        return Some(&text[toks[j].start..toks[j].end]);
     }
     None
 }
@@ -601,6 +733,7 @@ fn main() {
         rewrite_colon_colon(&code, &mut edits);
         rewrite_never_return(&code, &mut edits);
         rewrite_qualified_methods(&text, &code, &mut edits);
+        rewrite_call_site_generic_args(&text, &code, &mut edits);
         rewrite_ascribed_self_params(&text, &code, &mut edits);
 
         if edits.is_empty() {

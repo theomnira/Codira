@@ -112,7 +112,7 @@ public func and_opt[T, U](opt: Optional[T], other: Optional[U], default: U) -> O
     if opt.has_value {
         other
     } else {
-        none[U](default)
+        none(default)
     }
 }
 
@@ -132,7 +132,7 @@ public func xor_opt[T](opt: Optional[T], other: Optional[T], default: T) -> Opti
     } else if !opt.has_value && other.has_value {
         other
     } else {
-        none[T](default)
+        none(default)
     }
 }
 
@@ -141,7 +141,7 @@ public func flatten[T](opt: Optional[Optional[T]], default: T) -> Optional[T] {
     if opt.has_value {
         opt.value
     } else {
-        none[T](default)
+        none(default)
     }
 }
 

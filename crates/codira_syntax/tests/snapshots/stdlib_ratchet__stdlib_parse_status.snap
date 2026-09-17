@@ -2,70 +2,70 @@
 source: crates/codira_syntax/tests/stdlib_ratchet.rs
 expression: summary
 ---
-33 of 65 std files parse
+60 of 65 std files parse
 
-FAIL  std/ai/algorithm/functional.code  (768 errors)
-FAIL  std/atomic/atomic.code  (34 errors)
+FAIL  std/ai/algorithm/functional.code  (759 errors)
+ok    std/atomic/atomic.code
 ok    std/base64/base64.code
 ok    std/bit/bit.code
 ok    std/bit/mask.code
 ok    std/builtin/bool.code
 ok    std/builtin/dtype.code
 ok    std/builtin/error.code
-FAIL  std/builtin/int.code  (13 errors)
+ok    std/builtin/int.code
 ok    std/builtin/range.code
-FAIL  std/builtin/simd.code  (148 errors)
-FAIL  std/builtin/slice.code  (94 errors)
-FAIL  std/builtin/sort.code  (334 errors)
+ok    std/builtin/simd.code
+ok    std/builtin/slice.code
+FAIL  std/builtin/sort.code  (94 errors)
 ok    std/builtin/swap.code
 ok    std/builtin/traits.code
 ok    std/builtin/tuple.code
 ok    std/builtin/types.code
-FAIL  std/collections/array.code  (407 errors)
-FAIL  std/collections/binary_heap.code  (297 errors)
+ok    std/collections/array.code
+ok    std/collections/binary_heap.code
 ok    std/collections/bitset.code
-FAIL  std/collections/counter.code  (319 errors)
-FAIL  std/collections/deque.code  (286 errors)
-FAIL  std/collections/dict.code  (460 errors)
-FAIL  std/collections/linked_list.code  (313 errors)
-FAIL  std/collections/list.code  (589 errors)
+ok    std/collections/counter.code
+ok    std/collections/deque.code
+ok    std/collections/dict.code
+ok    std/collections/linked_list.code
+ok    std/collections/list.code
 ok    std/collections/optional.code
-FAIL  std/collections/set.code  (229 errors)
-FAIL  std/collections/span.code  (351 errors)
+ok    std/collections/set.code
+ok    std/collections/span.code
 ok    std/collections/string.code
 ok    std/complex/complex.code
 ok    std/ffi/cstring.code
-FAIL  std/ffi/unsafe_union.code  (36 errors)
+ok    std/ffi/unsafe_union.code
 ok    std/format/format.code
 ok    std/format/repr.code
 ok    std/gpu/globals.code
 ok    std/gpu/host_info.code
 ok    std/gpu/id.code
-FAIL  std/gpu/intrinsics.code  (22 errors)
-FAIL  std/gpu/profiler.code  (13 errors)
+FAIL  std/gpu/intrinsics.code  (10 errors)
+ok    std/gpu/profiler.code
 FAIL  std/gpu/warp.code  (11 errors)
 ok    std/hashlib/hash.code
-FAIL  std/hashlib/hasher.code  (45 errors)
+ok    std/hashlib/hasher.code
 ok    std/math/constants.code
 ok    std/math/fast.code
 ok    std/math/math.code
 ok    std/math/polynomial.code
-FAIL  std/memory/alloc.code  (24 errors)
-FAIL  std/memory/arc_pointer.code  (339 errors)
+ok    std/memory/alloc.code
+ok    std/memory/arc_pointer.code
 ok    std/memory/memory.code
-FAIL  std/memory/owned_pointer.code  (218 errors)
-FAIL  std/memory/pointer.code  (32 errors)
-FAIL  std/memory/unsafe_pointer.code  (9 errors)
+ok    std/memory/owned_pointer.code
+ok    std/memory/pointer.code
+ok    std/memory/unsafe_pointer.code
 ok    std/os/env.code
 ok    std/os/os.code
-FAIL  std/os/path.code  (26 errors)
+ok    std/os/path.code
 ok    std/os/process.code
 ok    std/pathlib/path.code
-FAIL  std/random/random.code  (4 errors)
+ok    std/random/random.code
 ok    std/sys/arg.code
 ok    std/sys/info.code
-FAIL  std/sys/intrinsics.code  (129 errors)
-FAIL  std/sys/terminate.code  (80 errors)
-FAIL  std/testing/suite.code  (29 errors)
-FAIL  std/testing/testing.code  (31 errors)
-FAIL  std/time/time.code  (31 errors)
+FAIL  std/sys/intrinsics.code  (33 errors)
+ok    std/sys/terminate.code
+ok    std/testing/suite.code
+ok    std/testing/testing.code
+ok    std/time/time.code

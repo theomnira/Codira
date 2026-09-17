@@ -17,18 +17,18 @@ class BinaryHeap[T] {
 
 /// Creates a new, empty max-heap.
 public func heap_new[T]() -> BinaryHeap[T] {
-    return heap_with_capacity[T](8);
+    return heap_with_capacity(8);
 }
 
 /// Creates a new max-heap pre-allocated for `cap` elements.
 public func heap_with_capacity[T](cap: usize) -> BinaryHeap[T] {
-    let ptr = heap_alloc[T](cap);
+    let ptr = heap_alloc(cap);
     return BinaryHeap[T] { data: ptr, len: 0, cap: cap };
 }
 
 /// Creates a max-heap from a List[T] using Floyd's algorithm (O(n)).
 public func heap_from_list[T](items: List[T]) -> BinaryHeap[T] {
-    let h = heap_with_capacity[T](items.len);
+    let h = heap_with_capacity(items.len);
     // Copy elements
     let i: usize = 0;
     while i < items.len {
@@ -61,89 +61,89 @@ func right_child(i: usize) -> usize {
     return 2 * i + 2;
 }
 
-func heap_grow[T](self: BinaryHeap[T]) -> BinaryHeap[T] {
-    let new_cap = self.cap * 2;
+func heap_grow[T](this: BinaryHeap[T]) -> BinaryHeap[T] {
+    let new_cap = this.cap * 2;
     if new_cap == 0 {
         new_cap = 8;
     }
-    let new_data = heap_alloc[T](new_cap);
+    let new_data = heap_alloc(new_cap);
     let i: usize = 0;
-    while i < self.len {
-        raw_store(new_data, i, raw_load(self.data, i));
+    while i < this.len {
+        raw_store(new_data, i, raw_load(this.data, i));
         i = i + 1;
     }
-    heap_free(self.data);
-    return BinaryHeap[T] { data: new_data, len: self.len, cap: new_cap };
+    heap_free(this.data);
+    return BinaryHeap[T] { data: new_data, len: this.len, cap: new_cap };
 }
 
 /// Restores the heap property by moving element at `idx` upward.
-func sift_up[T](self: BinaryHeap[T], idx: usize) -> BinaryHeap[T] {
+func sift_up[T](this: BinaryHeap[T], idx: usize) -> BinaryHeap[T] {
     let i = idx;
     while i > 0 {
         let p = parent_index(i);
-        if raw_load(self.data, i) > raw_load(self.data, p) {
+        if raw_load(this.data, i) > raw_load(this.data, p) {
             // Swap
-            let tmp = raw_load(self.data, i);
-            raw_store(self.data, i, raw_load(self.data, p));
-            raw_store(self.data, p, tmp);
+            let tmp = raw_load(this.data, i);
+            raw_store(this.data, i, raw_load(this.data, p));
+            raw_store(this.data, p, tmp);
             i = p;
         } else {
             break;
         }
     }
-    return self;
+    return this;
 }
 
 /// Restores the heap property by moving element at `idx` downward.
-func sift_down[T](self: BinaryHeap[T], idx: usize) -> BinaryHeap[T] {
+func sift_down[T](this: BinaryHeap[T], idx: usize) -> BinaryHeap[T] {
     let i = idx;
     while true {
         let largest = i;
         let l = left_child(i);
         let r = right_child(i);
-        if l < self.len && raw_load(self.data, l) > raw_load(self.data, largest) {
+        if l < this.len && raw_load(this.data, l) > raw_load(this.data, largest) {
             largest = l;
         }
-        if r < self.len && raw_load(self.data, r) > raw_load(self.data, largest) {
+        if r < this.len && raw_load(this.data, r) > raw_load(this.data, largest) {
             largest = r;
         }
         if largest == i {
             break;
         }
         // Swap
-        let tmp = raw_load(self.data, i);
-        raw_store(self.data, i, raw_load(self.data, largest));
-        raw_store(self.data, largest, tmp);
+        let tmp = raw_load(this.data, i);
+        raw_store(this.data, i, raw_load(this.data, largest));
+        raw_store(this.data, largest, tmp);
         i = largest;
     }
-    return self;
+    return this;
 }
 
 // ── Core API ─────────────────────────────────────────────────────────────────
 
 /// Returns the number of elements in the heap.
-public func len[T](self: BinaryHeap[T]) -> usize {
-    return self.len;
+public func len[T](this: BinaryHeap[T]) -> usize {
+    return this.len;
 }
 
 /// Returns true if the heap is empty.
-public func is_empty[T](self: BinaryHeap[T]) -> bool {
-    return self.len == 0;
+public func is_empty[T](this: BinaryHeap[T]) -> bool {
+    return this.len == 0;
 }
 
 /// Returns the largest element without removing it. Panics if empty.
-public func peek[T](self: BinaryHeap[T]) -> T {
-    if self.len == 0 {
+public func peek[T](this: BinaryHeap[T]) -> T {
+    if this.len == 0 {
         panic("BinaryHeap.peek: heap is empty");
     }
-    return raw_load(self.data, 0);
+    return raw_load(this.data, 0);
 }
 
 /// Pushes `value` into the heap, maintaining the max-heap property.
-public func push[T](self: BinaryHeap[T], value: T) -> BinaryHeap[T] {
-    let out = self;
+public func push[T](this: BinaryHeap[T], value: T) -> BinaryHeap[T] {
+    let out = this;
     if out.len == out.cap {
-        out = heap_grow[T](out);
+        out = heap_grow(out);
     }
     raw_store(out.data, out.len, value);
     out.len = out.len + 1;
@@ -152,12 +152,12 @@ public func push[T](self: BinaryHeap[T], value: T) -> BinaryHeap[T] {
 }
 
 /// Removes and returns the largest element. Panics if empty.
-public func pop[T](self: BinaryHeap[T]) -> (BinaryHeap[T], T) {
-    if self.len == 0 {
+public func pop[T](this: BinaryHeap[T]) -> (BinaryHeap[T], T) {
+    if this.len == 0 {
         panic("BinaryHeap.pop: heap is empty");
     }
-    let val = raw_load(self.data, 0);
-    let out = self;
+    let val = raw_load(this.data, 0);
+    let out = this;
     out.len = out.len - 1;
     if out.len > 0 {
         // Move last element to root and sift down
@@ -168,40 +168,40 @@ public func pop[T](self: BinaryHeap[T]) -> (BinaryHeap[T], T) {
 }
 
 /// Pushes `value` then pops the max. More efficient than push + pop separately.
-public func push_pop[T](self: BinaryHeap[T], value: T) -> (BinaryHeap[T], T) {
-    if self.len == 0 || value >= raw_load(self.data, 0) {
-        return (self, value);
+public func push_pop[T](this: BinaryHeap[T], value: T) -> (BinaryHeap[T], T) {
+    if this.len == 0 || value >= raw_load(this.data, 0) {
+        return (this, value);
     }
-    let out_val = raw_load(self.data, 0);
-    raw_store(self.data, 0, value);
-    let out = sift_down(self, 0);
+    let out_val = raw_load(this.data, 0);
+    raw_store(this.data, 0, value);
+    let out = sift_down(this, 0);
     return (out, out_val);
 }
 
 /// Replaces the top element with `value` and returns the old top.
-public func replace_top[T](self: BinaryHeap[T], value: T) -> (BinaryHeap[T], T) {
-    if self.len == 0 {
+public func replace_top[T](this: BinaryHeap[T], value: T) -> (BinaryHeap[T], T) {
+    if this.len == 0 {
         panic("BinaryHeap.replace_top: heap is empty");
     }
-    let old = raw_load(self.data, 0);
-    raw_store(self.data, 0, value);
-    let out = sift_down(self, 0);
+    let old = raw_load(this.data, 0);
+    raw_store(this.data, 0, value);
+    let out = sift_down(this, 0);
     return (out, old);
 }
 
 // ── Bulk ─────────────────────────────────────────────────────────────────────
 
 /// Removes all elements.
-public func clear[T](self: BinaryHeap[T]) -> BinaryHeap[T] {
-    let out = self;
+public func clear[T](this: BinaryHeap[T]) -> BinaryHeap[T] {
+    let out = this;
     out.len = 0;
     return out;
 }
 
 /// Returns a sorted List[T] in descending order (drains the heap).
-public func into_sorted_list[T](self: BinaryHeap[T]) -> List[T] {
-    let out = list_with_capacity[T](self.len);
-    let h = self;
+public func into_sorted_list[T](this: BinaryHeap[T]) -> List[T] {
+    let out = list_with_capacity(this.len);
+    let h = this;
     while h.len > 0 {
         let result = pop(h);
         h = result.0;
@@ -211,8 +211,8 @@ public func into_sorted_list[T](self: BinaryHeap[T]) -> List[T] {
 }
 
 /// Extends the heap with elements from a List[T].
-public func extend[T](self: BinaryHeap[T], items: List[T]) -> BinaryHeap[T] {
-    let out = self;
+public func extend[T](this: BinaryHeap[T], items: List[T]) -> BinaryHeap[T] {
+    let out = this;
     let i: usize = 0;
     while i < items.len {
         out = push(out, get(items, i));
@@ -229,14 +229,14 @@ struct BinaryHeapIter[T] {
 }
 
 /// Returns an iterator over heap elements (NOT in sorted order).
-public func iter[T](self: BinaryHeap[T]) -> BinaryHeapIter[T] {
-    return BinaryHeapIter[T] { heap: self, pos: 0 };
+public func iter[T](this: BinaryHeap[T]) -> BinaryHeapIter[T] {
+    return BinaryHeapIter[T] { heap: this, pos: 0 };
 }
 
 /// Advances the iterator.
 public func iter_next[T](it: BinaryHeapIter[T]) -> (BinaryHeapIter[T], Optional[T]) {
     if it.pos >= it.heap.len {
-        return (it, none[T]());
+        return (it, none());
     }
     let val = raw_load(it.heap.data, it.pos);
     let next = BinaryHeapIter[T] { heap: it.heap, pos: it.pos + 1 };
@@ -245,8 +245,8 @@ public func iter_next[T](it: BinaryHeapIter[T]) -> (BinaryHeapIter[T], Optional[
 
 // ── Cleanup ──────────────────────────────────────────────────────────────────
 
-public func drop[T](self: BinaryHeap[T]) {
-    if self.cap > 0 {
-        heap_free(self.data);
+public func drop[T](this: BinaryHeap[T]) {
+    if this.cap > 0 {
+        heap_free(this.data);
     }
 }

@@ -42,14 +42,14 @@ extend Slice[T] {
 // Create an empty slice (null pointer, zero length).
 extend Slice[T] {
     public func empty() -> Slice[T] {
-        return Slice[T] { _ptr: Pointer[T].null(), _len: 0 };
+        return Slice[T] { _ptr: Pointer.null(), _len: 0 };
     }
 }
 
 // Create a slice of a single element.
 extend Slice[T] {
     public func from_ref(ref: &T) -> Slice[T] {
-        return Slice[T] { _ptr: Pointer[T].from_ref(ref), _len: 1 };
+        return Slice[T] { _ptr: Pointer.from_ref(ref), _len: 1 };
     }
 }
 

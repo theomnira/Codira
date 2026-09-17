@@ -57,7 +57,7 @@ extend Pointer[T] {
 // Allocate a new value on the heap and return a pointer to it.
 extend Pointer[T] {
     public func alloc(value: T) -> Pointer[T] {
-        let addr = __intrinsic_alloc(__intrinsic_sizeof[T](), __intrinsic_alignof[T]());
+        let addr = __intrinsic_alloc(__intrinsic_sizeof(), __intrinsic_alignof());
         let p = Pointer[T] { _addr: addr };
         p.write(value);
         return p;
@@ -100,7 +100,7 @@ extend Pointer[T] {
         if self._addr == 0 {
             __panic("Pointer.read: null pointer dereference");
         }
-        return __intrinsic_load[T](self._addr);
+        return __intrinsic_load(self._addr);
     }
 }
 
@@ -111,21 +111,21 @@ extend Pointer[T] {
         if self._addr == 0 {
             __panic("Pointer.write: null pointer dereference");
         }
-        __intrinsic_store[T](self._addr, value);
+        __intrinsic_store(self._addr, value);
     }
 }
 
 // Read without null check.  Caller MUST guarantee non-null.
 extend Pointer[T] {
     public func read_unchecked(self) -> T {
-        return __intrinsic_load[T](self._addr);
+        return __intrinsic_load(self._addr);
     }
 }
 
 // Write without null check.  Caller MUST guarantee non-null.
 extend Pointer[T] {
     public func write_unchecked(self, value: T) -> void {
-        __intrinsic_store[T](self._addr, value);
+        __intrinsic_store(self._addr, value);
     }
 }
 
@@ -137,7 +137,7 @@ extend Pointer[T] {
 // Positive n moves forward, negative n moves backward.
 extend Pointer[T] {
     public func offset(self, n: isize) -> Pointer[T] {
-        let byte_offset = n * (__intrinsic_sizeof[T]() as isize);
+        let byte_offset = n * (__intrinsic_sizeof() as isize);
         return Pointer[T] { _addr: (self._addr as isize + byte_offset) as usize };
     }
 }
@@ -160,7 +160,7 @@ extend Pointer[T] {
 extend Pointer[T] {
     public func distance_to(self, other: Pointer[T]) -> isize {
         let byte_diff = (self._addr as isize) - (other._addr as isize);
-        return byte_diff / (__intrinsic_sizeof[T]() as isize);
+        return byte_diff / (__intrinsic_sizeof() as isize);
     }
 }
 
@@ -179,7 +179,7 @@ extend Pointer[T] {
 // Convert to an UnsafePointer (drops safety guarantees).
 extend Pointer[T] {
     public func to_unsafe(self) -> UnsafePointer[T] {
-        return UnsafePointer[T].from_address(self._addr);
+        return UnsafePointer.from_address(self._addr);
     }
 }
 
@@ -239,7 +239,7 @@ extend Pointer[T] {
 
 extend Pointer[T] {
     public func repr(self) -> String {
-        return "Pointer[" + __intrinsic_type_name[T]() + "](0x"
+        return "Pointer[" + __intrinsic_type_name() + "](0x"
             + __intrinsic_to_hex(self._addr) + ")";
     }
 }
@@ -258,7 +258,7 @@ extend Pointer[T] {
 
 extend Pointer[T] {
     public func default() -> Pointer[T] {
-        return Pointer[T].null();
+        return Pointer.null();
     }
 }
 
@@ -269,6 +269,6 @@ extend Pointer[T] {
 // Construct a Slice[T] from this pointer and a length.
 extend Pointer[T] {
     public func as_slice(self, len: usize) -> Slice[T] {
-        return Slice[T].new(self, len);
+        return Slice.new(self, len);
     }
 }

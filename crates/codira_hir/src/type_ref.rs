@@ -117,7 +117,8 @@ impl TypeRefMapBuilder {
     /// `TypeRef`.
     pub fn alloc_from_node(&mut self, node: &ast::TypeRef) -> LocalTypeRefId {
         use codira_syntax::ast::TypeRefKind::{
-            ArrayType, NeverType, OptionalType, ParenType, PathType, RefinementType, TupleType,
+            ArrayType, FunctionType, NeverType, OptionalType, ParenType, PathType, ReferenceType,
+            RefinementType, TupleType,
         };
 
         let ptr = AstPtr::new(node);
@@ -140,6 +141,22 @@ impl TypeRefMapBuilder {
             ParenType(inner) => {
                 return self.alloc_from_node_opt(inner.type_ref().as_ref());
             }
+            // `&T` / `mut T` lower transparently to `T`, the same treatment
+            // the parameter ownership keywords get (`spec/LANGUAGE_SPEC.md`
+            // section 14): the spelling is recorded in the syntax tree, but
+            // there is no borrow model for the type system to enforce, so
+            // inventing a distinct `Ty` would mean claiming a check that
+            // does not happen.
+            ReferenceType(inner) => {
+                return self.alloc_from_node_opt(inner.type_ref().as_ref());
+            }
+            // `func(A, B) -> R`. There are no function *values* yet
+            // (LANGUAGE_SPEC section 12 lists closures as unimplemented), so
+            // there is nothing for this to lower to. `Error` rather than a
+            // silent stand-in: a signature mentioning one is readable, and
+            // any *use* of it reports rather than quietly type-checking
+            // against a type that does not exist.
+            FunctionType(_) => TypeRef::Error,
             OptionalType(inner) => {
                 TypeRef::Optional(self.alloc_from_node_opt(inner.type_ref().as_ref()))
             }

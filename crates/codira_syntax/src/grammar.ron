@@ -216,6 +216,8 @@ Grammar(
         "ARRAY_TYPE",
         "TUPLE_TYPE",
         "PAREN_TYPE",
+        "REFERENCE_TYPE",
+        "FUNCTION_TYPE",
         "NEVER_TYPE",
         "OPTIONAL_TYPE",
         "REFINEMENT_TYPE",
@@ -591,6 +593,19 @@ Grammar(
         // `(A)` -- grouping only, the exact type analogue of `ParenExpr`.
         // Lowers transparently to its inner type.
         "ParenType": (options: ["TypeRef"]),
+        // `&T`, `&mut T`, `mut T` -- a borrowed or in-place-mutable
+        // reference. Parse-level scaffolding: lowers transparently to `T`,
+        // exactly as the parameter ownership keywords do (LANGUAGE_SPEC
+        // section 14), since there is no borrow model to enforce yet.
+        "ReferenceType": (options: ["TypeRef"]),
+        // `func(A, B) -> R` -- a function type. Parse-level only; there are
+        // no function *values* yet (LANGUAGE_SPEC section 12 lists closures
+        // as unimplemented), so this exists so signatures that mention one
+        // can be read.
+        "FunctionType": (
+            collections: [("params", "TypeRef")],
+            options: [["ret_type", "RetType"]],
+        ),
         "NeverType": (),
         "OptionalType": (options: ["TypeRef"]),
         "RefinementType": (options: [["base", "TypeRef"], ["binder", "NameRef"], ["predicate", "Expr"]]),
@@ -600,6 +615,8 @@ Grammar(
                 "ArrayType",
                 "TupleType",
                 "ParenType",
+                "ReferenceType",
+                "FunctionType",
                 "NeverType",
                 "OptionalType",
                 "RefinementType",

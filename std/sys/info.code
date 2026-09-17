@@ -64,10 +64,10 @@ public let is_wasm: bool = __intrinsic_target_arch() == "wasm32"
                          | __intrinsic_target_arch() == "wasm64";
 
 // True on 32-bit platforms (pointer width = 4 bytes).
-public let is_32bit: bool = __intrinsic_sizeof[usize]() == 4;
+public let is_32bit: bool = __intrinsic_sizeof() == 4;
 
 // True on 64-bit platforms (pointer width = 8 bytes).
-public let is_64bit: bool = __intrinsic_sizeof[usize]() == 8;
+public let is_64bit: bool = __intrinsic_sizeof() == 8;
 
 // Return the architecture name as a string.
 public func arch_name() -> String {
@@ -126,7 +126,7 @@ public func target_vendor() -> String {
 //   sizeof[f64]()    // 8
 //   sizeof[usize]()  // 8 (on 64-bit)
 public func sizeof[T]() -> usize {
-    return __intrinsic_sizeof[T]();
+    return __intrinsic_sizeof();
 }
 
 // Return the alignment of type T in bytes.
@@ -134,7 +134,7 @@ public func sizeof[T]() -> usize {
 //   alignof[i32]()   // 4
 //   alignof[f64]()   // 8
 public func alignof[T]() -> usize {
-    return __intrinsic_alignof[T]();
+    return __intrinsic_alignof();
 }
 
 // Return the bit-width of type T.
@@ -142,7 +142,7 @@ public func alignof[T]() -> usize {
 //   bitwidthof[i32]()  // 32
 //   bitwidthof[u8]()   // 8
 public func bitwidthof[T]() -> usize {
-    return __intrinsic_sizeof[T]() * 8;
+    return __intrinsic_sizeof() * 8;
 }
 
 // Return the natural SIMD vector width for element type T on the
@@ -153,14 +153,14 @@ public func bitwidthof[T]() -> usize {
 //   simdwidthof[f64]()  // 4   (256 / 64)
 //   simdwidthof[i8]()   // 32  (256 / 8)
 public func simdwidthof[T]() -> usize {
-    return __intrinsic_simd_width[T]();
+    return __intrinsic_simd_width();
 }
 
 // Return the stride (size rounded to alignment) for type T.
 // This is the distance between consecutive elements in an array.
 public func strideof[T]() -> usize {
-    let size = __intrinsic_sizeof[T]();
-    let align = __intrinsic_alignof[T]();
+    let size = __intrinsic_sizeof();
+    let align = __intrinsic_alignof();
     return (size + align - 1) & (0 - align);
 }
 

@@ -50,21 +50,21 @@ extend SIMD[T, N] {
 // Construct from a pointer to N contiguous elements (aligned load).
 extend SIMD[T, N] {
     public func load(ptr: Pointer[T]) -> SIMD[T, N] {
-        return __intrinsic_simd_load[T, N](ptr);
+        return __intrinsic_simd_load(ptr);
     }
 }
 
 // Construct from a pointer with a potentially unaligned load.
 extend SIMD[T, N] {
     public func load_unaligned(ptr: Pointer[T]) -> SIMD[T, N] {
-        return __intrinsic_simd_load_unaligned[T, N](ptr);
+        return __intrinsic_simd_load_unaligned(ptr);
     }
 }
 
 // Construct a vector of all zeros.
 extend SIMD[T, N] {
     public func zero() -> SIMD[T, N] {
-        return SIMD[T, N].splat(0 as T);
+        return SIMD.splat(0 as T);
     }
 }
 
@@ -114,56 +114,56 @@ extend SIMD[T, N] {
 // Lane-wise addition.
 extend SIMD[T, N] {
     public func add(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_add[T, N](self, other);
+        return __intrinsic_simd_add(self, other);
     }
 }
 
 // Lane-wise subtraction.
 extend SIMD[T, N] {
     public func sub(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_sub[T, N](self, other);
+        return __intrinsic_simd_sub(self, other);
     }
 }
 
 // Lane-wise multiplication.
 extend SIMD[T, N] {
     public func mul(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_mul[T, N](self, other);
+        return __intrinsic_simd_mul(self, other);
     }
 }
 
 // Lane-wise division.
 extend SIMD[T, N] {
     public func div(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_div[T, N](self, other);
+        return __intrinsic_simd_div(self, other);
     }
 }
 
 // Lane-wise remainder (integers) or fmod (floats).
 extend SIMD[T, N] {
     public func mod(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_rem[T, N](self, other);
+        return __intrinsic_simd_rem(self, other);
     }
 }
 
 // Lane-wise negation.
 extend SIMD[T, N] {
     public func neg(self) -> SIMD[T, N] {
-        return SIMD[T, N].zero().sub(self);
+        return SIMD.zero().sub(self);
     }
 }
 
 // Lane-wise absolute value.
 extend SIMD[T, N] {
     public func abs(self) -> SIMD[T, N] {
-        return __intrinsic_simd_abs[T, N](self);
+        return __intrinsic_simd_abs(self);
     }
 }
 
 // Fused multiply-add: self * a + b  (single rounding step for floats).
 extend SIMD[T, N] {
     public func fma(self, a: SIMD[T, N], b: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_fma[T, N](self, a, b);
+        return __intrinsic_simd_fma(self, a, b);
     }
 }
 
@@ -174,42 +174,42 @@ extend SIMD[T, N] {
 // Lane-wise equality.
 extend SIMD[T, N] {
     public func eq(self, other: SIMD[T, N]) -> SIMD[bool, N] {
-        return __intrinsic_simd_eq[T, N](self, other);
+        return __intrinsic_simd_eq(self, other);
     }
 }
 
 // Lane-wise inequality.
 extend SIMD[T, N] {
     public func ne(self, other: SIMD[T, N]) -> SIMD[bool, N] {
-        return __intrinsic_simd_ne[T, N](self, other);
+        return __intrinsic_simd_ne(self, other);
     }
 }
 
 // Lane-wise less-than.
 extend SIMD[T, N] {
     public func lt(self, other: SIMD[T, N]) -> SIMD[bool, N] {
-        return __intrinsic_simd_lt[T, N](self, other);
+        return __intrinsic_simd_lt(self, other);
     }
 }
 
 // Lane-wise less-than-or-equal.
 extend SIMD[T, N] {
     public func le(self, other: SIMD[T, N]) -> SIMD[bool, N] {
-        return __intrinsic_simd_le[T, N](self, other);
+        return __intrinsic_simd_le(self, other);
     }
 }
 
 // Lane-wise greater-than.
 extend SIMD[T, N] {
     public func gt(self, other: SIMD[T, N]) -> SIMD[bool, N] {
-        return __intrinsic_simd_gt[T, N](self, other);
+        return __intrinsic_simd_gt(self, other);
     }
 }
 
 // Lane-wise greater-than-or-equal.
 extend SIMD[T, N] {
     public func ge(self, other: SIMD[T, N]) -> SIMD[bool, N] {
-        return __intrinsic_simd_ge[T, N](self, other);
+        return __intrinsic_simd_ge(self, other);
     }
 }
 
@@ -220,42 +220,42 @@ extend SIMD[T, N] {
 // Lane-wise bitwise AND.
 extend SIMD[T, N] {
     public func band(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_and[T, N](self, other);
+        return __intrinsic_simd_and(self, other);
     }
 }
 
 // Lane-wise bitwise OR.
 extend SIMD[T, N] {
     public func bor(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_or[T, N](self, other);
+        return __intrinsic_simd_or(self, other);
     }
 }
 
 // Lane-wise bitwise XOR.
 extend SIMD[T, N] {
     public func bxor(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_xor[T, N](self, other);
+        return __intrinsic_simd_xor(self, other);
     }
 }
 
 // Lane-wise bitwise NOT.
 extend SIMD[T, N] {
     public func bnot(self) -> SIMD[T, N] {
-        return __intrinsic_simd_not[T, N](self);
+        return __intrinsic_simd_not(self);
     }
 }
 
 // Lane-wise left shift by scalar amount.
 extend SIMD[T, N] {
     public func shl(self, bits: i32) -> SIMD[T, N] {
-        return __intrinsic_simd_shl[T, N](self, bits);
+        return __intrinsic_simd_shl(self, bits);
     }
 }
 
 // Lane-wise arithmetic right shift by scalar amount.
 extend SIMD[T, N] {
     public func shr(self, bits: i32) -> SIMD[T, N] {
-        return __intrinsic_simd_shr[T, N](self, bits);
+        return __intrinsic_simd_shr(self, bits);
     }
 }
 
@@ -266,42 +266,42 @@ extend SIMD[T, N] {
 // Sum of all lanes.
 extend SIMD[T, N] {
     public func reduce_add(self) -> T {
-        return __intrinsic_simd_reduce_add[T, N](self);
+        return __intrinsic_simd_reduce_add(self);
     }
 }
 
 // Product of all lanes.
 extend SIMD[T, N] {
     public func reduce_mul(self) -> T {
-        return __intrinsic_simd_reduce_mul[T, N](self);
+        return __intrinsic_simd_reduce_mul(self);
     }
 }
 
 // Minimum lane value.
 extend SIMD[T, N] {
     public func reduce_min(self) -> T {
-        return __intrinsic_simd_reduce_min[T, N](self);
+        return __intrinsic_simd_reduce_min(self);
     }
 }
 
 // Maximum lane value.
 extend SIMD[T, N] {
     public func reduce_max(self) -> T {
-        return __intrinsic_simd_reduce_max[T, N](self);
+        return __intrinsic_simd_reduce_max(self);
     }
 }
 
 // Bitwise AND reduction.
 extend SIMD[T, N] {
     public func reduce_and(self) -> T {
-        return __intrinsic_simd_reduce_and[T, N](self);
+        return __intrinsic_simd_reduce_and(self);
     }
 }
 
 // Bitwise OR reduction.
 extend SIMD[T, N] {
     public func reduce_or(self) -> T {
-        return __intrinsic_simd_reduce_or[T, N](self);
+        return __intrinsic_simd_reduce_or(self);
     }
 }
 
@@ -313,21 +313,21 @@ extend SIMD[T, N] {
 // Each element of `indices` selects a lane from `self`.
 extend SIMD[T, N] {
     public func shuffle(self, indices: SIMD[i32, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_shuffle[T, N](self, indices);
+        return __intrinsic_simd_shuffle(self, indices);
     }
 }
 
 // Interleave even lanes from self and other: [a0, b0, a2, b2, …].
 extend SIMD[T, N] {
     public func interleave_low(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_interleave_low[T, N](self, other);
+        return __intrinsic_simd_interleave_low(self, other);
     }
 }
 
 // Interleave odd lanes from self and other: [a1, b1, a3, b3, …].
 extend SIMD[T, N] {
     public func interleave_high(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_interleave_high[T, N](self, other);
+        return __intrinsic_simd_interleave_high(self, other);
     }
 }
 
@@ -368,21 +368,21 @@ extend SIMD[T, N] {
         true_vec: SIMD[T, N],
         false_vec: SIMD[T, N],
     ) -> SIMD[T, N] {
-        return __intrinsic_simd_select[T, N](mask, true_vec, false_vec);
+        return __intrinsic_simd_select(mask, true_vec, false_vec);
     }
 }
 
 // Lane-wise min.
 extend SIMD[T, N] {
     public func min(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_min[T, N](self, other);
+        return __intrinsic_simd_min(self, other);
     }
 }
 
 // Lane-wise max.
 extend SIMD[T, N] {
     public func max(self, other: SIMD[T, N]) -> SIMD[T, N] {
-        return __intrinsic_simd_max[T, N](self, other);
+        return __intrinsic_simd_max(self, other);
     }
 }
 
@@ -400,14 +400,14 @@ extend SIMD[T, N] {
 // Store all N lanes to contiguous, aligned memory.
 extend SIMD[T, N] {
     public func store(self, ptr: Pointer[T]) -> void {
-        __intrinsic_simd_store[T, N](self, ptr);
+        __intrinsic_simd_store(self, ptr);
     }
 }
 
 // Store to potentially unaligned memory.
 extend SIMD[T, N] {
     public func store_unaligned(self, ptr: Pointer[T]) -> void {
-        __intrinsic_simd_store_unaligned[T, N](self, ptr);
+        __intrinsic_simd_store_unaligned(self, ptr);
     }
 }
 
@@ -418,14 +418,14 @@ extend SIMD[T, N] {
 // Reinterpret (bitcast) the lanes to a different element type.
 extend SIMD[T, N] {
     public func bitcast[U]() -> SIMD[U, N] {
-        return __intrinsic_simd_bitcast[T, U, N](self);
+        return __intrinsic_simd_bitcast(self);
     }
 }
 
 // Element-wise cast (e.g. i32 → f32).
 extend SIMD[T, N] {
     public func cast[U]() -> SIMD[U, N] {
-        return __intrinsic_simd_cast[T, U, N](self);
+        return __intrinsic_simd_cast(self);
     }
 }
 
@@ -443,7 +443,7 @@ extend SIMD[T, N] {
 // Defaultable — default is the zero vector.
 extend SIMD[T, N] {
     public func default() -> SIMD[T, N] {
-        return SIMD[T, N].zero();
+        return SIMD.zero();
     }
 }
 

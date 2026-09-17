@@ -123,26 +123,26 @@ public func unsafe_union_load_i64(this: UnsafeUnion) -> i64 {
 // store_f32 / load_f32
 // ---------------------------------------------------------------------------
 public func unsafe_union_store_f32(this: mut UnsafeUnion, value: f32) {
-    let bits: u32 = bitcast[u32](value);
+    let bits: u32 = bitcast(value);
     unsafe_union_store_u32(this, bits);
 }
 
 public func unsafe_union_load_f32(this: UnsafeUnion) -> f32 {
     let bits: u32 = unsafe_union_load_u32(this);
-    return bitcast[f32](bits);
+    return bitcast(bits);
 }
 
 // ---------------------------------------------------------------------------
 // store_f64 / load_f64
 // ---------------------------------------------------------------------------
 public func unsafe_union_store_f64(this: mut UnsafeUnion, value: f64) {
-    let bits: u64 = bitcast[u64](value);
+    let bits: u64 = bitcast(value);
     unsafe_union_store_u64(this, bits);
 }
 
 public func unsafe_union_load_f64(this: UnsafeUnion) -> f64 {
     let bits: u64 = unsafe_union_load_u64(this);
-    return bitcast[f64](bits);
+    return bitcast(bits);
 }
 
 // ---------------------------------------------------------------------------

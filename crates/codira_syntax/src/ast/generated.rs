@@ -1291,6 +1291,38 @@ impl FunctionDef {
     }
 }
 
+// FunctionType
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct FunctionType {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for FunctionType {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, FUNCTION_TYPE)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(FunctionType { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl FunctionType {
+    pub fn params(&self) -> impl Iterator<Item = TypeRef> {
+        super::children(self)
+    }
+
+    pub fn ret_type(&self) -> Option<RetType> {
+        super::child_opt(self)
+    }
+}
+
 // GenericArgList
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -2692,6 +2724,34 @@ impl RecordLit {
     }
 }
 
+// ReferenceType
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ReferenceType {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for ReferenceType {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, REFERENCE_TYPE)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(ReferenceType { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl ReferenceType {
+    pub fn type_ref(&self) -> Option<TypeRef> {
+        super::child_opt(self)
+    }
+}
+
 // RefinementType
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -3429,6 +3489,8 @@ impl AstNode for TypeRef {
                 | ARRAY_TYPE
                 | TUPLE_TYPE
                 | PAREN_TYPE
+                | REFERENCE_TYPE
+                | FUNCTION_TYPE
                 | NEVER_TYPE
                 | OPTIONAL_TYPE
                 | REFINEMENT_TYPE
@@ -3451,6 +3513,8 @@ pub enum TypeRefKind {
     ArrayType(ArrayType),
     TupleType(TupleType),
     ParenType(ParenType),
+    ReferenceType(ReferenceType),
+    FunctionType(FunctionType),
     NeverType(NeverType),
     OptionalType(OptionalType),
     RefinementType(RefinementType),
@@ -3472,6 +3536,16 @@ impl From<TupleType> for TypeRef {
 }
 impl From<ParenType> for TypeRef {
     fn from(n: ParenType) -> TypeRef {
+        TypeRef { syntax: n.syntax }
+    }
+}
+impl From<ReferenceType> for TypeRef {
+    fn from(n: ReferenceType) -> TypeRef {
+        TypeRef { syntax: n.syntax }
+    }
+}
+impl From<FunctionType> for TypeRef {
+    fn from(n: FunctionType) -> TypeRef {
         TypeRef { syntax: n.syntax }
     }
 }
@@ -3498,6 +3572,12 @@ impl TypeRef {
             ARRAY_TYPE => TypeRefKind::ArrayType(ArrayType::cast(self.syntax.clone()).unwrap()),
             TUPLE_TYPE => TypeRefKind::TupleType(TupleType::cast(self.syntax.clone()).unwrap()),
             PAREN_TYPE => TypeRefKind::ParenType(ParenType::cast(self.syntax.clone()).unwrap()),
+            REFERENCE_TYPE => {
+                TypeRefKind::ReferenceType(ReferenceType::cast(self.syntax.clone()).unwrap())
+            }
+            FUNCTION_TYPE => {
+                TypeRefKind::FunctionType(FunctionType::cast(self.syntax.clone()).unwrap())
+            }
             NEVER_TYPE => TypeRefKind::NeverType(NeverType::cast(self.syntax.clone()).unwrap()),
             OPTIONAL_TYPE => {
                 TypeRefKind::OptionalType(OptionalType::cast(self.syntax.clone()).unwrap())

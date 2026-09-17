@@ -31,16 +31,16 @@ class Set[T] {
 
 /// Creates an empty set with a default initial capacity of 16.
 public func set_new[T]() -> Set[T] {
-    return set_with_capacity[T](16);
+    return set_with_capacity(16);
 }
 
 /// Creates an empty set pre-allocated for at least `cap` elements.
 public func set_with_capacity[T](cap: usize) -> Set[T] {
     let num = next_power_of_two(cap);
-    let buckets = heap_alloc[SetEntry[T]](num);
+    let buckets = heap_alloc(num);
     let i: usize = 0;
     while i < num {
-        raw_store(buckets, i, SetEntry[T] { value: zero_value[T](), hash: 0, state: SET_EMPTY });
+        raw_store(buckets, i, SetEntry[T] { value: zero_value(), hash: 0, state: SET_EMPTY });
         i = i + 1;
     }
     return Set[T] { buckets: buckets, num_buckets: num, len: 0, load_max: 0.75 };
@@ -48,7 +48,7 @@ public func set_with_capacity[T](cap: usize) -> Set[T] {
 
 /// Creates a set from a list of elements.
 public func set_from_list[T](items: List[T]) -> Set[T] {
-    let s = set_with_capacity[T](items.len);
+    let s = set_with_capacity(items.len);
     let i: usize = 0;
     while i < items.len {
         s = add(s, get(items, i));
@@ -59,17 +59,17 @@ public func set_from_list[T](items: List[T]) -> Set[T] {
 
 // ── Internal ─────────────────────────────────────────────────────────────────
 
-func set_rehash[T](self: Set[T]) -> Set[T] {
-    let new_num = self.num_buckets * 2;
-    let new_buckets = heap_alloc[SetEntry[T]](new_num);
+func set_rehash[T](this: Set[T]) -> Set[T] {
+    let new_num = this.num_buckets * 2;
+    let new_buckets = heap_alloc(new_num);
     let i: usize = 0;
     while i < new_num {
-        raw_store(new_buckets, i, SetEntry[T] { value: zero_value[T](), hash: 0, state: SET_EMPTY });
+        raw_store(new_buckets, i, SetEntry[T] { value: zero_value(), hash: 0, state: SET_EMPTY });
         i = i + 1;
     }
     i = 0;
-    while i < self.num_buckets {
-        let e = raw_load(self.buckets, i);
+    while i < this.num_buckets {
+        let e = raw_load(this.buckets, i);
         if e.state == SET_OCCUPIED {
             let idx = (e.hash as usize) & (new_num - 1);
             while raw_load(new_buckets, idx).state == SET_OCCUPIED {
@@ -79,28 +79,28 @@ func set_rehash[T](self: Set[T]) -> Set[T] {
         }
         i = i + 1;
     }
-    heap_free(self.buckets);
-    return Set[T] { buckets: new_buckets, num_buckets: new_num, len: self.len, load_max: self.load_max };
+    heap_free(this.buckets);
+    return Set[T] { buckets: new_buckets, num_buckets: new_num, len: this.len, load_max: this.load_max };
 }
 
 // ── Core API ─────────────────────────────────────────────────────────────────
 
 /// Number of elements in the set.
-public func len[T](self: Set[T]) -> usize {
-    return self.len;
+public func len[T](this: Set[T]) -> usize {
+    return this.len;
 }
 
 /// Returns true if the set has no elements.
-public func is_empty[T](self: Set[T]) -> bool {
-    return self.len == 0;
+public func is_empty[T](this: Set[T]) -> bool {
+    return this.len == 0;
 }
 
 /// Adds `value` to the set. No-op if already present.
-public func add[T](self: Set[T], value: T) -> Set[T] {
-    let out = self;
+public func add[T](this: Set[T], value: T) -> Set[T] {
+    let out = this;
     let load = (out.len + 1) as f64 / out.num_buckets as f64;
     if load > out.load_max {
-        out = set_rehash[T](out);
+        out = set_rehash(out);
     }
     let h = hash_of(value);
     let idx = (h as usize) & (out.num_buckets - 1);
@@ -120,50 +120,50 @@ public func add[T](self: Set[T], value: T) -> Set[T] {
 }
 
 /// Removes `value` from the set. Returns (set, true) if it was present.
-public func remove[T](self: Set[T], value: T) -> (Set[T], bool) {
+public func remove[T](this: Set[T], value: T) -> (Set[T], bool) {
     let h = hash_of(value);
-    let idx = (h as usize) & (self.num_buckets - 1);
+    let idx = (h as usize) & (this.num_buckets - 1);
     while true {
-        let e = raw_load(self.buckets, idx);
+        let e = raw_load(this.buckets, idx);
         if e.state == SET_EMPTY {
-            return (self, false);
+            return (this, false);
         }
         if e.state == SET_OCCUPIED && e.hash == h && e.value == value {
-            raw_store(self.buckets, idx, SetEntry[T] { value: e.value, hash: 0, state: SET_TOMBSTONE });
-            let out = self;
+            raw_store(this.buckets, idx, SetEntry[T] { value: e.value, hash: 0, state: SET_TOMBSTONE });
+            let out = this;
             out.len = out.len - 1;
             return (out, true);
         }
-        idx = (idx + 1) & (self.num_buckets - 1);
+        idx = (idx + 1) & (this.num_buckets - 1);
     }
-    return (self, false);
+    return (this, false);
 }
 
 /// Returns true if `value` is in the set.
-public func contains[T](self: Set[T], value: T) -> bool {
+public func contains[T](this: Set[T], value: T) -> bool {
     let h = hash_of(value);
-    let idx = (h as usize) & (self.num_buckets - 1);
+    let idx = (h as usize) & (this.num_buckets - 1);
     while true {
-        let e = raw_load(self.buckets, idx);
+        let e = raw_load(this.buckets, idx);
         if e.state == SET_EMPTY {
             return false;
         }
         if e.state == SET_OCCUPIED && e.hash == h && e.value == value {
             return true;
         }
-        idx = (idx + 1) & (self.num_buckets - 1);
+        idx = (idx + 1) & (this.num_buckets - 1);
     }
     return false;
 }
 
 /// Removes all elements.
-public func clear[T](self: Set[T]) -> Set[T] {
+public func clear[T](this: Set[T]) -> Set[T] {
     let i: usize = 0;
-    while i < self.num_buckets {
-        raw_store(self.buckets, i, SetEntry[T] { value: zero_value[T](), hash: 0, state: SET_EMPTY });
+    while i < this.num_buckets {
+        raw_store(this.buckets, i, SetEntry[T] { value: zero_value(), hash: 0, state: SET_EMPTY });
         i = i + 1;
     }
-    let out = self;
+    let out = this;
     out.len = 0;
     return out;
 }
@@ -172,7 +172,7 @@ public func clear[T](self: Set[T]) -> Set[T] {
 
 /// Returns a new set containing all elements in either `a` or `b`.
 public func union[T](a: Set[T], b: Set[T]) -> Set[T] {
-    let out = set_with_capacity[T](a.len + b.len);
+    let out = set_with_capacity(a.len + b.len);
     let i: usize = 0;
     while i < a.num_buckets {
         let e = raw_load(a.buckets, i);
@@ -194,7 +194,7 @@ public func union[T](a: Set[T], b: Set[T]) -> Set[T] {
 
 /// Returns a new set containing only elements in both `a` and `b`.
 public func intersection[T](a: Set[T], b: Set[T]) -> Set[T] {
-    let out = set_new[T]();
+    let out = set_new();
     // Iterate over the smaller set for efficiency
     let i: usize = 0;
     while i < a.num_buckets {
@@ -211,7 +211,7 @@ public func intersection[T](a: Set[T], b: Set[T]) -> Set[T] {
 
 /// Returns a new set containing elements in `a` but not in `b`.
 public func difference[T](a: Set[T], b: Set[T]) -> Set[T] {
-    let out = set_new[T]();
+    let out = set_new();
     let i: usize = 0;
     while i < a.num_buckets {
         let e = raw_load(a.buckets, i);
@@ -227,7 +227,7 @@ public func difference[T](a: Set[T], b: Set[T]) -> Set[T] {
 
 /// Returns elements in either `a` or `b` but not both.
 public func symmetric_difference[T](a: Set[T], b: Set[T]) -> Set[T] {
-    let out = set_new[T]();
+    let out = set_new();
     let i: usize = 0;
     while i < a.num_buckets {
         let e = raw_load(a.buckets, i);
@@ -292,11 +292,11 @@ public func is_disjoint[T](a: Set[T], b: Set[T]) -> bool {
 // ── Conversion ───────────────────────────────────────────────────────────────
 
 /// Returns a List of all elements in the set (unordered).
-public func to_list[T](self: Set[T]) -> List[T] {
-    let out = list_with_capacity[T](self.len);
+public func to_list[T](this: Set[T]) -> List[T] {
+    let out = list_with_capacity(this.len);
     let i: usize = 0;
-    while i < self.num_buckets {
-        let e = raw_load(self.buckets, i);
+    while i < this.num_buckets {
+        let e = raw_load(this.buckets, i);
         if e.state == SET_OCCUPIED {
             out = push(out, e.value);
         }
@@ -313,8 +313,8 @@ struct SetIter[T] {
 }
 
 /// Returns an iterator over the set elements.
-public func iter[T](self: Set[T]) -> SetIter[T] {
-    return SetIter[T] { set: self, pos: 0 };
+public func iter[T](this: Set[T]) -> SetIter[T] {
+    return SetIter[T] { set: this, pos: 0 };
 }
 
 /// Advances the iterator.
@@ -329,13 +329,13 @@ public func iter_next[T](it: SetIter[T]) -> (SetIter[T], Optional[T]) {
         pos = pos + 1;
     }
     let done = SetIter[T] { set: it.set, pos: pos };
-    return (done, none[T]());
+    return (done, none());
 }
 
 // ── Cleanup ──────────────────────────────────────────────────────────────────
 
-public func drop[T](self: Set[T]) {
-    if self.num_buckets > 0 {
-        heap_free(self.buckets);
+public func drop[T](this: Set[T]) {
+    if this.num_buckets > 0 {
+        heap_free(this.buckets);
     }
 }

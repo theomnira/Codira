@@ -32,7 +32,7 @@ public func os_ok[T](value: T) -> OsResult[T] {
 }
 
 public func os_err[T](err: OsError) -> OsResult[T] {
-    return OsResult { value: default[T](), error: err, is_ok: false };
+    return OsResult { value: default(), error: err, is_ok: false };
 }
 
 // ---------------------------------------------------------------------------

@@ -502,4 +502,4 @@ public let INT_MAX: Int = Int { _value: __intrinsic_isize_max() };
 public let INT_MIN: Int = Int { _value: __intrinsic_isize_min() };
 
 // Number of bits in an Int on this platform.
-public let INT_BITS: usize = __intrinsic_sizeof[isize]() * 8;
+public let INT_BITS: usize = __intrinsic_sizeof() * 8;

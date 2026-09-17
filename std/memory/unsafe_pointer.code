@@ -54,8 +54,8 @@ extend UnsafePointer[T] {
 // Memory is uninitialized — reading before writing is undefined behavior.
 extend UnsafePointer[T] {
     public func alloc(count: usize) -> UnsafePointer[T] {
-        let size = count * __intrinsic_sizeof[T]();
-        let align = __intrinsic_alignof[T]();
+        let size = count * __intrinsic_sizeof();
+        let align = __intrinsic_alignof();
         let addr = __intrinsic_alloc(size, align);
         return UnsafePointer[T] { _addr: addr };
     }
@@ -64,8 +64,8 @@ extend UnsafePointer[T] {
 // Allocate and zero-initialize memory for `count` elements.
 extend UnsafePointer[T] {
     public func alloc_zeroed(count: usize) -> UnsafePointer[T] {
-        let size = count * __intrinsic_sizeof[T]();
-        let align = __intrinsic_alignof[T]();
+        let size = count * __intrinsic_sizeof();
+        let align = __intrinsic_alignof();
         let addr = __intrinsic_alloc_zeroed(size, align);
         return UnsafePointer[T] { _addr: addr };
     }
@@ -97,7 +97,7 @@ extend UnsafePointer[T] {
 // UB if the pointer is null, dangling, or misaligned.
 extend UnsafePointer[T] {
     public func load(self) -> T {
-        return __intrinsic_load[T](self._addr);
+        return __intrinsic_load(self._addr);
     }
 }
 
@@ -105,37 +105,37 @@ extend UnsafePointer[T] {
 // UB if the pointer is null, dangling, or misaligned.
 extend UnsafePointer[T] {
     public func store(self, value: T) -> void {
-        __intrinsic_store[T](self._addr, value);
+        __intrinsic_store(self._addr, value);
     }
 }
 
 // Load from an element offset (self + index * sizeof(T)).
 extend UnsafePointer[T] {
     public func load_element(self, index: usize) -> T {
-        let addr = self._addr + index * __intrinsic_sizeof[T]();
-        return __intrinsic_load[T](addr);
+        let addr = self._addr + index * __intrinsic_sizeof();
+        return __intrinsic_load(addr);
     }
 }
 
 // Store at an element offset.
 extend UnsafePointer[T] {
     public func store_element(self, index: usize, value: T) -> void {
-        let addr = self._addr + index * __intrinsic_sizeof[T]();
-        __intrinsic_store[T](addr, value);
+        let addr = self._addr + index * __intrinsic_sizeof();
+        __intrinsic_store(addr, value);
     }
 }
 
 // Volatile load — prevents compiler reordering / elision.
 extend UnsafePointer[T] {
     public func volatile_load(self) -> T {
-        return __intrinsic_volatile_load[T](self._addr);
+        return __intrinsic_volatile_load(self._addr);
     }
 }
 
 // Volatile store.
 extend UnsafePointer[T] {
     public func volatile_store(self, value: T) -> void {
-        __intrinsic_volatile_store[T](self._addr, value);
+        __intrinsic_volatile_store(self._addr, value);
     }
 }
 
@@ -146,7 +146,7 @@ extend UnsafePointer[T] {
 // Offset by `n` elements (positive or negative).
 extend UnsafePointer[T] {
     public func offset(self, n: isize) -> UnsafePointer[T] {
-        let byte_off = n * (__intrinsic_sizeof[T]() as isize);
+        let byte_off = n * (__intrinsic_sizeof() as isize);
         return UnsafePointer[T] { _addr: (self._addr as isize + byte_off) as usize };
     }
 }
@@ -175,7 +175,7 @@ extend UnsafePointer[T] {
 // Distance in elements between two pointers.
 extend UnsafePointer[T] {
     public func distance(self, other: UnsafePointer[T]) -> isize {
-        return ((self._addr as isize) - (other._addr as isize)) / (__intrinsic_sizeof[T]() as isize);
+        return ((self._addr as isize) - (other._addr as isize)) / (__intrinsic_sizeof() as isize);
     }
 }
 
@@ -187,14 +187,14 @@ extend UnsafePointer[T] {
 // Call this exactly once on uninitialized memory.
 extend UnsafePointer[T] {
     public func init_pointee_move(self, value: T) -> void {
-        __intrinsic_store[T](self._addr, value);
+        __intrinsic_store(self._addr, value);
     }
 }
 
 // Initialize by copying from `value`.
 extend UnsafePointer[T] {
     public func init_pointee_copy(self, value: T) -> void {
-        __intrinsic_store[T](self._addr, value);
+        __intrinsic_store(self._addr, value);
     }
 }
 
@@ -202,15 +202,15 @@ extend UnsafePointer[T] {
 // After this call, the memory is considered uninitialized.
 extend UnsafePointer[T] {
     public func destroy_pointee(self) -> void {
-        __intrinsic_destroy[T](self._addr);
+        __intrinsic_destroy(self._addr);
     }
 }
 
 // Move the pointee out, leaving memory uninitialized.
 extend UnsafePointer[T] {
     public func take_pointee(self) -> T {
-        let val = __intrinsic_load[T](self._addr);
-        __intrinsic_destroy[T](self._addr);
+        let val = __intrinsic_load(self._addr);
+        __intrinsic_destroy(self._addr);
         return val;
     }
 }
@@ -222,7 +222,7 @@ extend UnsafePointer[T] {
 // Copy `count` elements from `src` to `self`.  Regions may overlap.
 extend UnsafePointer[T] {
     public func move_from(self, src: UnsafePointer[T], count: usize) -> void {
-        let bytes = count * __intrinsic_sizeof[T]();
+        let bytes = count * __intrinsic_sizeof();
         __intrinsic_memmove(self._addr, src._addr, bytes);
     }
 }
@@ -230,7 +230,7 @@ extend UnsafePointer[T] {
 // Copy `count` elements from `src` to `self`.  Regions must NOT overlap.
 extend UnsafePointer[T] {
     public func copy_from(self, src: UnsafePointer[T], count: usize) -> void {
-        let bytes = count * __intrinsic_sizeof[T]();
+        let bytes = count * __intrinsic_sizeof();
         __intrinsic_memcpy(self._addr, src._addr, bytes);
     }
 }
@@ -238,7 +238,7 @@ extend UnsafePointer[T] {
 // Set `count` elements to zero bytes.
 extend UnsafePointer[T] {
     public func zero_memory(self, count: usize) -> void {
-        let bytes = count * __intrinsic_sizeof[T]();
+        let bytes = count * __intrinsic_sizeof();
         __intrinsic_memset(self._addr, 0, bytes);
     }
 }
@@ -251,8 +251,8 @@ extend UnsafePointer[T] {
 // After this call, the pointer is dangling.
 extend UnsafePointer[T] {
     public func free(self, count: usize) -> void {
-        let size = count * __intrinsic_sizeof[T]();
-        let align = __intrinsic_alignof[T]();
+        let size = count * __intrinsic_sizeof();
+        let align = __intrinsic_alignof();
         __intrinsic_dealloc(self._addr, size, align);
     }
 }
@@ -278,7 +278,7 @@ extend UnsafePointer[T] {
 // Convert to a safe Pointer[T].
 extend UnsafePointer[T] {
     public func to_safe(self) -> Pointer[T] {
-        return Pointer[T].from_address(self._addr);
+        return Pointer.from_address(self._addr);
     }
 }
 
@@ -321,6 +321,6 @@ extend UnsafePointer[T] {
 
 extend UnsafePointer[T] {
     public func default() -> UnsafePointer[T] {
-        return UnsafePointer[T].null();
+        return UnsafePointer.null();
     }
 }

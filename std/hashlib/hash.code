@@ -129,7 +129,7 @@ public func hash_f64(value: f64) -> u64 {
     if v == 0.0 {
         v = 0.0;
     }
-    let bits: u64 = bitcast[u64](v);
+    let bits: u64 = bitcast(v);
     return hash_u64(bits);
 }
 

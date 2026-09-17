@@ -11,6 +11,7 @@ use super::{
 
 pub(super) const PATTERN_FIRST: TokenSet = expressions::LITERAL_FIRST
     .union(paths::PATH_FIRST)
+    .union(super::KEYWORDS_USABLE_AS_NAMES)
     .union(TokenSet::new(&[T![-], T![_], T!['(']]));
 
 pub(super) fn pattern(p: &mut Parser<'_>) {
@@ -28,6 +29,15 @@ fn atom_pat(p: &mut Parser<'_>, recovery_set: TokenSet) -> Option<CompletedMarke
 
     if paths::is_path_start(p) {
         return Some(path_like_pat(p));
+    }
+
+    // A binding may be named with one of the keywords that stay usable as
+    // names (`init`, `root`, ...). `is_path_start` cannot see those -- they
+    // are not `IDENT` at this point -- so they are dispatched here, and
+    // `bind_pat`'s call to `name` does the remapping. This is what lets
+    // `func reduce(.., init: U, ..)` declare a parameter called `init`.
+    if p.at_ts(super::KEYWORDS_USABLE_AS_NAMES) {
+        return Some(bind_pat(p));
     }
 
     #[allow(clippy::single_match_else)]

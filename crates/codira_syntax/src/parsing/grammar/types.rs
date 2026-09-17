@@ -6,11 +6,17 @@
 //! - Part of the Codira compiler and runtime toolchain.
 use super::{
     expressions, generics, name_ref, paths, CompletedMarker, Parser, TokenSet, ARRAY_TYPE,
-    NEVER_TYPE, OPTIONAL_TYPE, PAREN_TYPE, PATH_TYPE, REFINEMENT_TYPE, TUPLE_TYPE,
+    FUNCTION_TYPE, NEVER_TYPE, OPTIONAL_TYPE, PAREN_TYPE, PATH_TYPE, REFERENCE_TYPE,
+    REFINEMENT_TYPE, RET_TYPE, TUPLE_TYPE,
 };
 
-pub(super) const TYPE_FIRST: TokenSet =
-    paths::PATH_FIRST.union(TokenSet::new(&[T![never], T!['['], T!['(']]));
+pub(super) const TYPE_FIRST: TokenSet = paths::PATH_FIRST.union(TokenSet::new(&[
+    T![never],
+    T!['['],
+    T!['('],
+    T![&],
+    T![func],
+]));
 
 pub(super) const TYPE_RECOVERY_SET: TokenSet =
     TokenSet::new(&[T!['('], T![,], T![public], T![internal]]);
@@ -60,7 +66,13 @@ fn type_inner(p: &mut Parser<'_>, allow_refinement: bool) {
     let mut inner = match p.current() {
         T!['['] => array_type(p),
         T!['('] => paren_or_tuple_type(p),
+        T![&] => reference_type(p),
+        T![func] => function_type(p),
         T![never] => never_type(p),
+        // `mut T` -- an in-place mutable reference, written without the `&`.
+        // `mut` is contextual, so it arrives as an IDENT; promoting it here
+        // is what distinguishes `mut Atomic[u64]` from a type *named* `mut`.
+        _ if p.at_contextual_kw("mut") && TYPE_FIRST.contains(p.nth(1)) => reference_type(p),
         _ if paths::is_path_start(p) => path_type(p),
         _ => {
             p.error_recover("expected type", TYPE_RECOVERY_SET);
@@ -158,6 +170,64 @@ fn paren_or_tuple_type(p: &mut Parser<'_>) -> CompletedMarker {
     } else {
         m.complete(p, TUPLE_TYPE)
     }
+}
+
+/// Parses `&T`, `&mut T` or `mut T` -- a reference type.
+///
+/// Parse-level scaffolding only, in the same sense as the parameter
+/// ownership keywords (`spec/LANGUAGE_SPEC.md` section 14): HIR lowers it
+/// transparently to `T`, because there is no borrow model to enforce yet.
+/// Accepting the spelling is what lets signatures that mention a reference
+/// be read at all -- `std/hashlib` writes `hasher: &Hasher`, `std/atomic`
+/// writes `this: mut Atomic[u64]`.
+///
+/// The distinction between the three spellings survives in the lossless
+/// tree even though it means nothing downstream yet, so the day borrowing is
+/// checked, the information is already there.
+fn reference_type(p: &mut Parser<'_>) -> CompletedMarker {
+    let m = p.start();
+    if p.at(T![&]) {
+        p.bump(T![&]);
+    }
+    if p.at_contextual_kw("mut") {
+        p.bump_remap(T![mut]);
+    }
+    type_(p);
+    m.complete(p, REFERENCE_TYPE)
+}
+
+/// Parses `func(A, B) -> R` -- a function type.
+///
+/// Parse-level only. `spec/LANGUAGE_SPEC.md` section 12 lists closures as
+/// unimplemented, and without function *values* a function type has nothing
+/// to describe -- but signatures that take one (`std/builtin/sort.code`'s
+/// `cmp: func(T, T) -> i32`) have to be readable before the feature lands,
+/// and rejecting the whole file until then blocks everything else in it.
+///
+/// The return type is optional: `func()` is a function returning unit, which
+/// is how `std/gpu/profiler.code` writes a callback parameter.
+fn function_type(p: &mut Parser<'_>) -> CompletedMarker {
+    assert!(p.at(T![func]));
+    let m = p.start();
+    p.bump(T![func]);
+
+    p.expect(T!['(']);
+    while !p.at(T![')']) && !p.at(crate::SyntaxKind::EOF) {
+        type_(p);
+        if !p.at(T![')']) && !p.expect(T![,]) {
+            break;
+        }
+    }
+    p.expect(T![')']);
+
+    if p.at(T![->]) {
+        let ret = p.start();
+        p.bump(T![->]);
+        return_type(p);
+        ret.complete(p, RET_TYPE);
+    }
+
+    m.complete(p, FUNCTION_TYPE)
 }
 
 fn array_type(p: &mut Parser<'_>) -> CompletedMarker {

@@ -46,8 +46,8 @@ public func suite_results_failures(r: SuiteResults) -> Array[String] {
     let mut names: Array[String] = Array.new();
     let mut i: usize = 0;
     while i < r.results.len() {
-        if !r.results[i].passed {
-            names.push(r.results[i].name);
+        if !r.results.passed {
+            names.push(r.results.name);
         }
         i = i + 1;
     }

@@ -39,7 +39,7 @@ public struct OwnedPointer[T] {
 // Allocate a new OwnedPointer on the heap, initialized with `value`.
 extend OwnedPointer[T] {
     public func new(value: T) -> OwnedPointer[T] {
-        let ptr = UnsafePointer[T].alloc(1);
+        let ptr = UnsafePointer.alloc(1);
         ptr.init_pointee_move(value);
         return OwnedPointer[T] { _inner: ptr };
     }
@@ -48,7 +48,7 @@ extend OwnedPointer[T] {
 // Allocate with default value (requires T: Defaultable).
 extend OwnedPointer[T: Defaultable] {
     public func default_value() -> OwnedPointer[T] {
-        return OwnedPointer[T].new(T.default());
+        return OwnedPointer.new(T.default());
     }
 }
 
@@ -56,7 +56,7 @@ extend OwnedPointer[T: Defaultable] {
 // Useful for POD types.
 extend OwnedPointer[T] {
     public func zeroed() -> OwnedPointer[T] {
-        let ptr = UnsafePointer[T].alloc_zeroed(1);
+        let ptr = UnsafePointer.alloc_zeroed(1);
         return OwnedPointer[T] { _inner: ptr };
     }
 }
@@ -83,14 +83,14 @@ extend OwnedPointer[T] {
 // Borrow the pointee as an immutable reference.
 extend OwnedPointer[T] {
     public func borrow(self) -> &T {
-        return __intrinsic_addr_to_ref[T](self._inner.address());
+        return __intrinsic_addr_to_ref(self._inner.address());
     }
 }
 
 // Borrow the pointee as a mutable reference.
 extend OwnedPointer[T] {
     public func borrow_mut(self) -> &T {
-        return __intrinsic_addr_to_ref[T](self._inner.address());
+        return __intrinsic_addr_to_ref(self._inner.address());
     }
 }
 
@@ -119,7 +119,7 @@ extend OwnedPointer[T] {
         let val = self._inner.take_pointee();
         self._inner.free_one();
         // Mark self as consumed (compiler enforces no further use).
-        self._inner = UnsafePointer[T].null();
+        self._inner = UnsafePointer.null();
         return val;
     }
 }
@@ -160,7 +160,7 @@ extend OwnedPointer[T] {
 extend OwnedPointer[T] {
     public func map[U](self, f: func(T) -> U) -> OwnedPointer[U] {
         let val = self.into_inner();
-        return OwnedPointer[U].new(f(val));
+        return OwnedPointer.new(f(val));
     }
 }
 
@@ -194,7 +194,7 @@ extend OwnedPointer[T] {
         if !self._inner.is_null() {
             self._inner.destroy_pointee();
             self._inner.free_one();
-            self._inner = UnsafePointer[T].null();
+            self._inner = UnsafePointer.null();
         }
     }
 }
@@ -208,7 +208,7 @@ extend OwnedPointer[T] {
     public func move(self) -> OwnedPointer[T] {
         let moved = OwnedPointer[T] { _inner: self._inner };
         // Null out source to prevent double-free.
-        self._inner = UnsafePointer[T].null();
+        self._inner = UnsafePointer.null();
         return moved;
     }
 }
@@ -223,7 +223,7 @@ extend OwnedPointer[T: Stringable] {
 // Representable
 extend OwnedPointer[T] {
     public func repr(self) -> String {
-        return "OwnedPointer[" + __intrinsic_type_name[T]() + "](0x"
+        return "OwnedPointer[" + __intrinsic_type_name() + "](0x"
             + __intrinsic_to_hex(self._inner.address()) + ")";
     }
 }
@@ -257,7 +257,7 @@ extend OwnedPointer[T: Hashable] {
 extend OwnedPointer[T] {
     public func leak(self) -> Pointer[T] {
         let ptr = self._inner.to_safe();
-        self._inner = UnsafePointer[T].null();
+        self._inner = UnsafePointer.null();
         return ptr;
     }
 }

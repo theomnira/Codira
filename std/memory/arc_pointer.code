@@ -52,10 +52,10 @@ public struct ArcPointer[T] {
 extend ArcPointer[T] {
     public func new(value: T) -> ArcPointer[T] {
         // Allocate combined block: control header + payload.
-        let header_size = __intrinsic_sizeof[_ArcControlBlock]();
-        let payload_size = __intrinsic_sizeof[T]();
-        let payload_align = __intrinsic_alignof[T]();
-        let header_align = __intrinsic_alignof[_ArcControlBlock]();
+        let header_size = __intrinsic_sizeof();
+        let payload_size = __intrinsic_sizeof();
+        let payload_align = __intrinsic_alignof();
+        let header_align = __intrinsic_alignof();
         let align = header_align;
         if payload_align > align {
             align = payload_align;
@@ -87,9 +87,9 @@ extend ArcPointer[T] {
 // Return a pointer to the payload.
 extend ArcPointer[T] {
     func _payload_ptr(self) -> UnsafePointer[T] {
-        let header_size = __intrinsic_sizeof[_ArcControlBlock]();
-        let payload_align = __intrinsic_alignof[T]();
-        let header_align = __intrinsic_alignof[_ArcControlBlock]();
+        let header_size = __intrinsic_sizeof();
+        let payload_align = __intrinsic_alignof();
+        let header_align = __intrinsic_alignof();
         let align = header_align;
         if payload_align > align {
             align = payload_align;
@@ -135,7 +135,7 @@ extend ArcPointer[T] {
 // Borrow the value as an immutable reference.
 extend ArcPointer[T] {
     public func borrow(self) -> &T {
-        return __intrinsic_addr_to_ref[T](self._payload_ptr().address());
+        return __intrinsic_addr_to_ref(self._payload_ptr().address());
     }
 }
 
@@ -187,16 +187,16 @@ extend ArcPointer[T] {
 extend ArcPointer[T: Copyable] {
     public func make_unique(self) -> &T {
         if self.is_unique() {
-            return __intrinsic_addr_to_ref[T](self._payload_ptr().address());
+            return __intrinsic_addr_to_ref(self._payload_ptr().address());
         }
         // Clone the payload into a new allocation.
         let val = self._payload_ptr().load();
-        let new_arc = ArcPointer[T].new(val);
+        let new_arc = ArcPointer.new(val);
         // Decrement old block.
         self._dec_strong();
         // Adopt new block.
         self._block = new_arc._block;
-        return __intrinsic_addr_to_ref[T](self._payload_ptr().address());
+        return __intrinsic_addr_to_ref(self._payload_ptr().address());
     }
 }
 
@@ -211,11 +211,11 @@ extend ArcPointer[T] {
         if self.is_unique() {
             let val = self._payload_ptr().take_pointee();
             // Free the control block.
-            let total_size = __intrinsic_sizeof[_ArcControlBlock]()
-                + __intrinsic_sizeof[T]()
+            let total_size = __intrinsic_sizeof()
+                + __intrinsic_sizeof()
                 + 16; // generous padding
             __intrinsic_dealloc(self._block.address(), total_size, 8);
-            self._block = UnsafePointer[_ArcControlBlock].null();
+            self._block = UnsafePointer.null();
             return Result.ok(val);
         }
         return Result.err(self);
@@ -240,10 +240,10 @@ extend ArcPointer[T] {
             self._payload_ptr().destroy_pointee();
 
             // Free entire allocation.
-            let header_size = __intrinsic_sizeof[_ArcControlBlock]();
-            let payload_size = __intrinsic_sizeof[T]();
-            let payload_align = __intrinsic_alignof[T]();
-            let header_align = __intrinsic_alignof[_ArcControlBlock]();
+            let header_size = __intrinsic_sizeof();
+            let payload_size = __intrinsic_sizeof();
+            let payload_align = __intrinsic_alignof();
+            let header_align = __intrinsic_alignof();
             let align = header_align;
             if payload_align > align {
                 align = payload_align;
@@ -252,7 +252,7 @@ extend ArcPointer[T] {
             let total_size = header_size + padding + payload_size;
             __intrinsic_dealloc(self._block.address(), total_size, align);
         }
-        self._block = UnsafePointer[_ArcControlBlock].null();
+        self._block = UnsafePointer.null();
     }
 }
 
@@ -265,7 +265,7 @@ extend ArcPointer[T] {
 extend ArcPointer[T] {
     public func move(self) -> ArcPointer[T] {
         let moved = ArcPointer[T] { _block: self._block };
-        self._block = UnsafePointer[_ArcControlBlock].null();
+        self._block = UnsafePointer.null();
         return moved;
     }
 }

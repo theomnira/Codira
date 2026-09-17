@@ -126,7 +126,7 @@ public func repr_array(values: Array[Representable]) -> String {
         if i > 0 {
             result = result + ", ";
         }
-        result = result + values[i].repr();
+        result = result + values.repr();
         i = i + 1;
     }
     result = result + "]";

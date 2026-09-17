@@ -67,8 +67,8 @@ extend Layout {
 extend Layout {
     public func of[T]() -> Layout {
         return Layout {
-            size: __intrinsic_sizeof[T](),
-            align: __intrinsic_alignof[T](),
+            size: __intrinsic_sizeof(),
+            align: __intrinsic_alignof(),
         };
     }
 }
@@ -77,8 +77,8 @@ extend Layout {
 // Handles inter-element padding.
 extend Layout {
     public func array[T](count: usize) -> Layout {
-        let elem_size = __intrinsic_sizeof[T]();
-        let elem_align = __intrinsic_alignof[T]();
+        let elem_size = __intrinsic_sizeof();
+        let elem_align = __intrinsic_alignof();
         // Stride = size rounded up to alignment.
         let stride = (elem_size + elem_align - 1) & (0 - elem_align);
         return Layout {
@@ -226,26 +226,26 @@ public func aligned_free(addr: usize, size: usize, align: usize) -> void {
 
 // Allocate for a single T and return a typed pointer.
 public func alloc_one[T]() -> Pointer[T] {
-    let layout = Layout.of[T]();
+    let layout = Layout.of();
     let addr = allocate(layout.size, layout.align);
-    return Pointer[T].from_address(addr);
+    return Pointer.from_address(addr);
 }
 
 // Allocate an array of `count` elements of T and return a typed pointer.
 public func alloc_array[T](count: usize) -> Pointer[T] {
-    let layout = Layout.array[T](count);
+    let layout = Layout.array(count);
     let addr = allocate(layout.size, layout.align);
-    return Pointer[T].from_address(addr);
+    return Pointer.from_address(addr);
 }
 
 // Free a single T allocation.
 public func free_one[T](ptr: Pointer[T]) -> void {
-    let layout = Layout.of[T]();
+    let layout = Layout.of();
     deallocate(ptr.address(), layout.size, layout.align);
 }
 
 // Free an array allocation.
 public func free_array[T](ptr: Pointer[T], count: usize) -> void {
-    let layout = Layout.array[T](count);
+    let layout = Layout.array(count);
     deallocate(ptr.address(), layout.size, layout.align);
 }

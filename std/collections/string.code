@@ -16,12 +16,12 @@ class String {
 
 /// Creates a new, empty string.
 public func string_new() -> String {
-    return String { data: null_ptr[u8](), len: 0, cap: 0 };
+    return String { data: null_ptr(), len: 0, cap: 0 };
 }
 
 /// Creates a string with pre-allocated capacity for `cap` bytes.
 public func string_with_capacity(cap: usize) -> String {
-    let ptr = heap_alloc[u8](cap);
+    let ptr = heap_alloc(cap);
     return String { data: ptr, len: 0, cap: cap };
 }
 
@@ -52,7 +52,7 @@ func string_grow(this: String, min_cap: usize) -> String {
     while new_cap < min_cap {
         new_cap = new_cap * 2;
     }
-    let new_data = heap_alloc[u8](new_cap);
+    let new_data = heap_alloc(new_cap);
     let i: usize = 0;
     while i < this.len {
         raw_store(new_data, i, raw_load(this.data, i));
@@ -282,7 +282,7 @@ public func replace(this: String, old: String, new_str: String) -> String {
 
 /// Splits the string by `delimiter`, returning a List of substrings.
 public func split(this: String, delimiter: String) -> List[String] {
-    let parts = list_new[String]();
+    let parts = list_new();
     if delimiter.len == 0 {
         // Split into individual bytes
         let i: usize = 0;
@@ -441,7 +441,7 @@ public func substring(this: String, start: usize, end: usize) -> String {
 
 /// Returns the raw bytes of the string as a List[u8].
 public func bytes(this: String) -> List[u8] {
-    let out = list_with_capacity[u8](this.len);
+    let out = list_with_capacity(this.len);
     let i: usize = 0;
     while i < this.len {
         out = push(out, raw_load(this.data, i));
@@ -452,7 +452,7 @@ public func bytes(this: String) -> List[u8] {
 
 /// Returns a list of individual character strings (ASCII; one byte each for non-multibyte).
 public func chars(this: String) -> List[String] {
-    let out = list_new[String]();
+    let out = list_new();
     let i: usize = 0;
     while i < this.len {
         let b = raw_load(this.data, i);
