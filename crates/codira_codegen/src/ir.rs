@@ -21,6 +21,7 @@ pub(crate) mod dispatch_table;
 pub mod file;
 pub(crate) mod file_group;
 pub mod function;
+pub(crate) mod intrinsic_ops;
 mod intrinsics;
 mod reference;
 pub mod ty;

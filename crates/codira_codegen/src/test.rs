@@ -903,6 +903,69 @@ fn gc_struct() {
 }
 
 #[test]
+fn intrinsic_load_and_store() {
+    // `load_*`/`store_*` must become a bare `inttoptr` plus a `load`/`store`
+    // with no call left behind: the whole point is that reaching a
+    // caller-owned buffer costs one instruction, not a function call.
+    test_snapshot_unoptimized(
+        "intrinsic_load_and_store",
+        r#"
+    extern "codira-intrinsic" {
+        func load_u32(addr: usize) -> u32;
+        func store_u32(addr: usize, value: u32);
+    }
+    public func copy_one(src: usize, dst: usize) {
+        store_u32(dst, load_u32(src));
+    }
+    "#,
+    );
+}
+
+#[test]
+fn intrinsic_bit_counting() {
+    // `ctlz_u32` must lower to `@llvm.ctlz.i32`, which becomes a single
+    // `LZCNT`/`CLZ`. The second argument is the is-zero-poison flag and must
+    // be false, so `ctlz_u32(0)` is 32 rather than undefined.
+    test_snapshot_unoptimized(
+        "intrinsic_bit_counting",
+        r#"
+    extern "codira-intrinsic" {
+        func ctlz_u32(value: u32) -> u32;
+        func cttz_u32(value: u32) -> u32;
+        func popcount_u32(value: u32) -> u32;
+    }
+    public func counts(x: u32) -> u32 {
+        ctlz_u32(x) + cttz_u32(x) + popcount_u32(x)
+    }
+    "#,
+    );
+}
+
+#[test]
+fn intrinsic_load_widths() {
+    // Every width maps to its own LLVM type and alignment; a `load_u8` that
+    // silently loaded 4 bytes would read past a caller's buffer.
+    test_snapshot_unoptimized(
+        "intrinsic_load_widths",
+        r#"
+    extern "codira-intrinsic" {
+        func load_u8(addr: usize) -> u8;
+        func load_u16(addr: usize) -> u16;
+        func load_u64(addr: usize) -> u64;
+        func load_f32(addr: usize) -> f32;
+        func load_f64(addr: usize) -> f64;
+    }
+    public func widths(p: usize) -> f64 {
+        load_f64(p) + load_f32(p) as f64
+    }
+    public func ints(p: usize) -> u64 {
+        load_u64(p) + load_u16(p) as u64 + load_u8(p) as u64
+    }
+    "#,
+    );
+}
+
+#[test]
 fn extern_fn() {
     test_snapshot(
         "extern_fn",

@@ -133,7 +133,7 @@ pub fn build(args: Args) -> Result<ExitStatus, anyhow::Error> {
 
 /// Find a Codira manifest file in the specified directory or one of its
 /// parents.
-fn find_manifest(directory: &Path) -> Option<PathBuf> {
+pub(crate) fn find_manifest(directory: &Path) -> Option<PathBuf> {
     let mut current_dir = Some(directory);
     while let Some(dir) = current_dir {
         let manifest_path = dir.join(MANIFEST_FILENAME);

@@ -24,7 +24,7 @@ use smallvec::SmallVec;
 use super::{
     diagnostics, AssociatedItem, Const, Field, Fields, Function, FunctionFlags, GenericParamData,
     IdRange, Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities, LocalItemTreeId,
-    ModItem, Param, ParamAstId, RawVisibilityId, Struct, TypeAlias,
+    ModItem, Param, ParamAstId, RawVisibilityId, Struct, TypeAlias, INTRINSIC_ABI,
 };
 use crate::{
     item_tree::Import,
@@ -231,7 +231,7 @@ impl Context {
     }
 
     fn lower_function(&mut self, func: &ast::FunctionDef) -> Option<LocalItemTreeId<Function>> {
-        self.lower_function_inner(func, false)
+        self.lower_function_inner(func, false, None)
     }
 
     /// Lowers a function, optionally forcing it to be treated as `extern`.
@@ -245,6 +245,7 @@ impl Context {
         &mut self,
         func: &ast::FunctionDef,
         force_extern: bool,
+        abi: Option<&str>,
     ) -> Option<LocalItemTreeId<Function>> {
         let name = func.name()?.as_name();
         let visibility = lower_visibility(func);
@@ -294,6 +295,15 @@ impl Context {
         if force_extern || func.is_extern() {
             flags |= FunctionFlags::IS_EXTERN;
         }
+        // `extern "codira-intrinsic"` declares operations the compiler knows
+        // how to emit directly -- a raw load is a single LLVM instruction,
+        // and routing it through a call would cost more than the operation
+        // itself. The ABI string carries this rather than an attribute so
+        // the declaration reads as what it is: a foreign thing, provided by
+        // the compiler instead of by a library.
+        if abi == Some(INTRINSIC_ABI) {
+            flags |= FunctionFlags::IS_INTRINSIC;
+        }
         if func.body().is_some() {
             flags |= FunctionFlags::HAS_BODY;
         }
@@ -341,13 +351,24 @@ impl Context {
     /// across compilers -- storing the string without that metadata would
     /// imply a distinction the backend does not yet make.
     fn lower_extern_block(&mut self, block: &ast::ExternBlock) -> ModItems {
+        // The ABI string is a bare token on the block rather than a node, so
+        // it is read off the syntax directly. `extern_block` in the parser
+        // bumps exactly one STRING before the item list, so the first one is
+        // the ABI.
+        let abi = block
+            .syntax()
+            .children_with_tokens()
+            .filter_map(codira_syntax::SyntaxElement::into_token)
+            .find(|t| t.kind() == codira_syntax::SyntaxKind::STRING)
+            .map(|t| t.text().trim_matches('"').to_owned());
+
         let items: SmallVec<[ModItem; 1]> = block
             .extern_item_list()
             .into_iter()
             .flat_map(|list| list.extern_items())
             .filter_map(|item| match item.kind() {
                 ast::ExternItemKind::FunctionDef(func) => self
-                    .lower_function_inner(&func, true)
+                    .lower_function_inner(&func, true, abi.as_deref())
                     .map(Into::<ModItem>::into),
             })
             .collect();

@@ -226,6 +226,12 @@ impl FunctionData {
         self.flags.is_extern()
     }
 
+    /// Returns true if this function is a compiler intrinsic, declared in an
+    /// `extern "codira-intrinsic"` block.
+    pub fn is_intrinsic(&self) -> bool {
+        self.flags.is_intrinsic()
+    }
+
     /// Returns true if the first param is `self`. This is relevant to decide
     /// whether this can be called as a method as opposed to an associated
     /// function.
@@ -377,6 +383,12 @@ impl Function {
 
     pub fn is_extern(self, db: &dyn HirDatabase) -> bool {
         db.fn_data(self.id).flags.is_extern()
+    }
+
+    /// Whether this function is a compiler intrinsic, which codegen emits
+    /// inline at the call site instead of calling as a symbol.
+    pub fn is_intrinsic(self, db: &dyn HirDatabase) -> bool {
+        db.fn_data(self.id).flags.is_intrinsic()
     }
 
     pub(crate) fn body_source_map(self, db: &dyn HirDatabase) -> Arc<BodySourceMap> {

@@ -26,8 +26,8 @@ use inkwell::{
 use crate::{
     intrinsics,
     ir::{
-        dispatch_table::DispatchTable, ty::HirTypeCache, type_table::TypeTable, RuntimeArrayValue,
-        RuntimeReferenceValue,
+        dispatch_table::DispatchTable, intrinsic_ops, ty::HirTypeCache, type_table::TypeTable,
+        RuntimeArrayValue, RuntimeReferenceValue,
     },
     module_group::ModuleGroup,
     value::Global,
@@ -313,6 +313,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                             .iter()
                             .map(|expr| self.gen_expr(*expr).expect("expected a value").into())
                             .collect();
+
+                        // An `extern "codira-intrinsic"` callee has no symbol
+                        // to call: it names an operation the compiler emits
+                        // here, in place. See `intrinsic_ops::gen_intrinsic`.
+                        if def.is_intrinsic(self.db) {
+                            return self.gen_intrinsic_call(expr, def, &args);
+                        }
 
                         self.gen_call(def, &args)
                             // If the called function is a void function it doesn't return anything.
@@ -1560,6 +1567,38 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// A direct (same-module) call goes straight to the plain internal
     /// function and needs none of that. This box/unbox step is the
     /// corresponding caller-side half of that convention.
+    /// Emits a call to an `extern "codira-intrinsic"` function as inline IR.
+    ///
+    /// The name is checked here rather than at the declaration because the
+    /// declaration is just a signature -- what makes `load_u32` meaningful is
+    /// that codegen knows how to emit it. A name codegen does not recognise
+    /// is a hard error rather than a silent no-op: the alternative is a
+    /// program that compiles, returns garbage, and gives no indication why.
+    fn gen_intrinsic_call(
+        &mut self,
+        expr: ExprId,
+        function: codira_hir::Function,
+        args: &[BasicMetadataValueEnum<'ink>],
+    ) -> Option<BasicValueEnum<'ink>> {
+        let name = function.name(self.db).to_string();
+        match intrinsic_ops::gen_intrinsic(&name, args, self.context, self.module, &self.builder) {
+            Ok(Some(value)) => Some(value),
+            // A `store_*` yields nothing. Unit is substituted for the same
+            // reason a void call does above: `None` here would be read as
+            // `never`, and a store does return.
+            Ok(None) => match self.infer[expr].interned() {
+                TyKind::Never => None,
+                _ => Some(self.context.const_struct(&[], false).into()),
+            },
+            Err(intrinsic_ops::IntrinsicError::Unknown) => panic!(
+                "`{name}` is not a known compiler intrinsic. Functions declared in an                  `extern \"codira-intrinsic\"` block must name an operation the compiler                  can emit; see `codira_codegen::ir::intrinsic_ops` for the list."
+            ),
+            Err(intrinsic_ops::IntrinsicError::Arity { expected, found }) => panic!(
+                "intrinsic `{name}` takes {expected} argument(s) but was declared with {found}"
+            ),
+        }
+    }
+
     fn gen_call(
         &mut self,
         function: codira_hir::Function,

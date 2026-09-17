@@ -345,6 +345,14 @@ pub struct GenericParamData {
     pub bound: Option<LocalTypeRefId>,
 }
 
+/// The ABI string that marks an `extern` block as declaring compiler
+/// intrinsics rather than foreign symbols.
+///
+/// Spelled with a `codira-` prefix so it cannot collide with a real platform
+/// ABI (`"C"`, `"C++"`, `"system"`), which are the names a linker would
+/// recognise.
+pub const INTRINSIC_ABI: &str = "codira-intrinsic";
+
 bitflags::bitflags! {
     #[doc = "Flags that are used to store additional information about a function"]
     #[derive(Debug, Clone, Copy, Eq, PartialEq, Default)]
@@ -352,6 +360,7 @@ bitflags::bitflags! {
         const HAS_SELF_PARAM = 1 << 0;
         const HAS_BODY = 1 << 1;
         const IS_EXTERN = 1 << 2;
+        const IS_INTRINSIC = 1 << 3;
     }
 }
 
@@ -369,6 +378,13 @@ impl FunctionFlags {
     /// Whether the function is extern.
     pub fn is_extern(self) -> bool {
         self.contains(Self::IS_EXTERN)
+    }
+
+    /// Whether the function is a compiler intrinsic -- declared in an
+    /// `extern "codira-intrinsic"` block and lowered to inline IR at the call
+    /// site rather than called as a symbol.
+    pub fn is_intrinsic(self) -> bool {
+        self.contains(Self::IS_INTRINSIC)
     }
 }
 
