@@ -1,0 +1,37 @@
+name: Install Z3
+description: >
+  Installs the Z3 SMT solver and points codira_smt's build script at it.
+  codira_smt/build.rs only auto-discovers Z3 via Z3_LIB_DIR/Z3_ROOT or the
+  default Chocolatey install location on Windows -- it has no search path for
+  Linux or macOS -- so those two platforms need Z3_LIB_DIR set explicitly
+  after install.
+runs:
+  using: composite
+  steps:
+    - name: Install Z3 (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libz3-dev
+        # The multiarch triplet (e.g. x86_64-linux-gnu) is computed rather
+        # than hardcoded so this works unchanged on an arm64 runner.
+        triplet="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"
+        echo "Z3_LIB_DIR=/usr/lib/${triplet}" >> "$GITHUB_ENV"
+
+    - name: Install Z3 (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        brew install z3
+        echo "Z3_LIB_DIR=$(brew --prefix z3)/lib" >> "$GITHUB_ENV"
+
+    - name: Install Z3 (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        choco install z3 -y --no-progress
+        # codira_smt/build.rs already searches
+        # $env:ProgramData/chocolatey/lib/z3/tools/bin/bin by default, so no
+        # Z3_LIB_DIR/Z3_ROOT export is needed here -- Chocolatey always
+        # installs to that path.

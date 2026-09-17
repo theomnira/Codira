@@ -38,6 +38,9 @@ jobs:
       - name: Install LLVM
         uses: ./.github/actions/install-llvm
 
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Cargo check
@@ -81,6 +84,9 @@ jobs:
 
       - name: Install LLVM
         uses: ./.github/actions/install-llvm
+
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
 
       - name: Install nightly rustfmt
         uses: actions-rs/toolchain@v1
@@ -146,6 +152,9 @@ jobs:
       - name: Install LLVM
         uses: ./.github/actions/install-llvm
 
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
+
       - name: Install packages
         if: matrix.os == 'ubuntu-20.04'
         run: |
@@ -176,6 +185,9 @@ jobs:
 
       - name: Install LLVM
         uses: ./.github/actions/install-llvm
+
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
 
       - name: Install nightly rustfmt
         uses: actions-rs/toolchain@v1
@@ -232,6 +244,9 @@ jobs:
 
       - name: Install LLVM
         uses: ./.github/actions/install-llvm
+
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
 
       - name: Install nightly rustfmt
         uses: actions-rs/toolchain@v1
@@ -320,6 +335,9 @@ jobs:
 
       - name: Install LLVM
         uses: ./.github/actions/install-llvm
+
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
 
       - name: Run cargo clippy
         uses: actions-rs/clippy-check@v1

@@ -46,12 +46,22 @@ jobs:
       - name: Install LLVM (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install llvm@14
-          echo "$(brew --prefix llvm@14)/bin" >> $GITHUB_PATH
+          # llvm@14 is the wrong major version -- Codira targets LLVM 22.1
+          # (inkwell's `llvm22-1` feature) -- and was why this job's build
+          # never got as far as needing Z3 to fail on: it would have failed
+          # here first once LLVM version checking rejected the mismatch.
+          brew install llvm@22
+          llvm_prefix="$(brew --prefix llvm@22)"
+          echo "${llvm_prefix}/bin" >> "$GITHUB_PATH"
+          echo "LLVM_SYS_221_PREFIX=${llvm_prefix}" >> "$GITHUB_ENV"
+          echo "LIBCLANG_PATH=${llvm_prefix}/lib" >> "$GITHUB_ENV"
 
       - name: Install LLVM (Windows)
         if: runner.os == 'Windows'
         uses: ./.github/actions/install-llvm
+
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
 
       - name: Cargo build
         uses: actions-rs/cargo@v1
