@@ -65,6 +65,15 @@ pub struct Driver {
 
 impl Driver {
     /// Constructs a driver with a specific configuration.
+    /// The salsa database backing this driver.
+    ///
+    /// Exposed so tooling can run individual queries -- profilers, IDE
+    /// integrations, and anything that needs to ask the compiler a question
+    /// without driving a whole build.
+    pub fn db(&self) -> &CompilerDatabase {
+        &self.db
+    }
+
     pub fn with_config(config: Config, out_dir: PathBuf) -> Self {
         Self {
             db: CompilerDatabase::new(&config),
