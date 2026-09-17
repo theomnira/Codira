@@ -888,6 +888,9 @@ impl InferenceResultBuilder<'_> {
             TypeNs::TypeAliasId(id) => type_for_def(TypableDef::TypeAlias(id.into())),
             TypeNs::PrimitiveType(id) => type_for_def(TypableDef::PrimitiveType(id.into())),
             TypeNs::SelfType(id) => self.db.type_for_impl_self(id),
+            // As above: `T.assoc(..)` needs `where T: Trait` bounds to
+            // resolve against, which are parsed but not yet resolved.
+            TypeNs::GenericParam(..) => return None,
         };
 
         let resolved_function = lookup_method(
@@ -1108,6 +1111,11 @@ impl InferenceResultBuilder<'_> {
             TypeNs::StructId(id) => type_for_def_fn(TypableDef::Struct(id.into())),
             TypeNs::TypeAliasId(id) => type_for_def_fn(TypableDef::TypeAlias(id.into())),
             TypeNs::PrimitiveType(id) => type_for_def_fn(TypableDef::PrimitiveType(id.into())),
+            // `T.method(..)` on an unconstrained type parameter needs bound
+            // resolution (`where T: Trait`) to know what methods exist.
+            // Bounds parse but are not yet resolved, so there is nothing to
+            // look the method up in.
+            TypeNs::GenericParam(..) => return None,
         };
 
         // Resolve the value.

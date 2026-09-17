@@ -155,6 +155,10 @@ impl Ty {
             TypeNs::StructId(id) => type_for_def_fn(TypableDef::Struct(id.into())),
             TypeNs::TypeAliasId(id) => type_for_def_fn(TypableDef::TypeAlias(id.into())),
             TypeNs::PrimitiveType(id) => type_for_def_fn(TypableDef::PrimitiveType(id.into())),
+            // This is the whole point of the generic-parameter scope: `T`
+            // in a signature or field becomes a real type rather than an
+            // unresolved-name error.
+            TypeNs::GenericParam(id, name) => Some(TyKind::TypeParam(id, name).intern()),
         }
     }
 }

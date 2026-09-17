@@ -25,8 +25,9 @@ use smallvec::SmallVec;
 
 use crate::{
     display::{HirDisplay, HirFormatter},
+    ids::TypeParamId,
     ty::{infer::InferTy, lower::fn_sig_for_struct_constructor},
-    HasVisibility, HirDatabase, Struct, StructMemoryKind, TypeAlias, Visibility,
+    HasVisibility, HirDatabase, Name, Struct, StructMemoryKind, TypeAlias, Visibility,
 };
 
 #[cfg(test)]
@@ -77,6 +78,17 @@ pub enum TyKind {
 
     /// An dynamically sized array type
     Array(Ty),
+
+    /// A bound generic type parameter: the `T` of `func map[T](..)` or
+    /// `struct Box[T]`.
+    ///
+    /// Distinct from `InferenceVar`, which is a hole the checker fills in.
+    /// A type parameter is *already* determined from the body's point of
+    /// view -- it just is not known which concrete type it stands for until
+    /// the declaration is instantiated. Identity is (owner, index), so the
+    /// `T` of one declaration never unifies with the `T` of another; the
+    /// `Name` is carried for display only and takes no part in equality.
+    TypeParam(TypeParamId, Name),
 
     /// A placeholder for a type which could not be computed; this is propagated
     /// to avoid useless error messages. Doubles as a placeholder where type
@@ -397,6 +409,9 @@ impl HirDisplay for Ty {
             TyKind::Float(ty) => write!(f, "{ty}"),
             TyKind::Int(ty) => write!(f, "{ty}"),
             TyKind::Bool => write!(f, "bool"),
+            // The parameter's written name is what the reader needs; the
+            // (owner, index) identity is an implementation detail.
+            TyKind::TypeParam(_, name) => write!(f, "{name}"),
             TyKind::Tuple(_, elems) => {
                 write!(f, "(")?;
                 f.write_joined(elems.iter(), ", ")?;

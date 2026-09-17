@@ -2269,3 +2269,121 @@ fn heal_contract_alternate_must_be_substitutable() {
     func ok() -> i64 { 0 }",
     ));
 }
+
+// ===========================================================================
+// Generic parameters
+// ===========================================================================
+//
+// `[T]` generic parameters parsed, and were then bound by nothing: `T` in a
+// signature or a field resolved as an ordinary type name and failed, so
+// `func id[T](x: T) -> T` and `struct Box[T] { v: T }` -- the shape most of
+// the stdlib is written in -- were rejected outright.
+//
+// What these pin down is *declaration* and *interior* checking. Instantiating
+// a generic (`Box { v: 7 }` at `T = i64`) additionally needs generic
+// arguments to survive type-ref lowering and a populated `Substitution`;
+// until then an instantiation still reports a mismatch, which
+// `generic_instantiation_is_not_yet_supported` records deliberately rather
+// than leaving undocumented.
+
+/// A generic function's parameter is a real type in its own signature and
+/// body.
+#[test]
+fn infer_generic_function_parameter() {
+    insta::assert_snapshot!(infer(
+        r"
+    func id[T](x: T) -> T {
+        x
+    }
+
+    func second[A, B](a: A, b: B) -> B {
+        b
+    }",
+    ));
+}
+
+/// A generic struct's parameter is a real type in its field list, and a
+/// field access through it yields that parameter.
+///
+/// The method is declared in an `extend` on purpose: it is the one place
+/// the field's parameter and the return type's parameter are the *same*
+/// one. Writing the equivalent free function `func unwrap[T](b: Box[T]) -> T`
+/// would cross from `Box`'s `T` to `unwrap`'s own, and that is what needs
+/// substitution -- see `generic_instantiation_is_not_yet_supported`.
+#[test]
+fn infer_generic_struct_field() {
+    insta::assert_snapshot!(infer(
+        r"
+    struct Box[T] { v: T }
+    struct Pair[K, V] { k: K, v: V }
+
+    extend Box[T] {
+        func unwrap(self) -> T { self.v }
+    }
+
+    extend Pair[K, V] {
+        func key(self) -> K { self.k }
+    }",
+    ));
+}
+
+/// `extend Box[T]` binds `T` to *`Box`'s* parameter, not to a fresh one of
+/// the block's own.
+///
+/// This is the difference between `func get(self) -> T { self.v }`
+/// type-checking and failing with "expected `T`, found `T`" -- the field's
+/// type and the return type have to be the *same* parameter, and they only
+/// are if the `extend` borrows the extended type's.
+#[test]
+fn infer_generic_extend_binds_the_extended_types_parameters() {
+    insta::assert_snapshot!(infer(
+        r"
+    struct Tuple3[A, B, C] { a: A, b: B, c: C }
+
+    extend Tuple3[A, B, C] {
+        func first(self) -> A { self.a }
+        func third(self) -> C { self.c }
+    }",
+    ));
+}
+
+/// A parameter is scoped to its own declaration: the `T` of one function is
+/// a different type from the `T` of another, even though both are spelled
+/// `T`. Each body checks against its own, and neither leaks into the other.
+///
+/// Identity is (owner, index) precisely so these cannot be confused. The
+/// visible consequence -- that `one(x)` inside `two` does not type-check
+/// until instantiation exists -- is recorded separately in
+/// `generic_instantiation_is_not_yet_supported`.
+#[test]
+fn infer_generic_parameters_are_scoped_to_their_declaration() {
+    insta::assert_snapshot!(infer(
+        r"
+    func one[T](x: T) -> T { x }
+
+    func two[T](x: T) -> T { x }
+
+    func pair_up[T, U](a: T, b: U) -> U { b }",
+    ));
+}
+
+/// Instantiating a generic is *not* yet supported, and this records exactly
+/// where it stops: the declaration checks, the use does not.
+///
+/// Generic arguments are dropped during type-ref lowering (`TypeRef::Path`
+/// carries no arguments), so there is nothing to substitute `T` with at the
+/// use site. Monomorphisation is the follow-up; this test exists so that
+/// landing it turns a documented failure into a visible diff rather than
+/// passing silently.
+#[test]
+fn generic_instantiation_is_not_yet_supported() {
+    insta::assert_snapshot!(infer(
+        r"
+    struct Box[T] { v: T }
+
+    func main() -> i64 {
+        let b = Box { v: 7 };
+        b.v
+    }",
+    ));
+}
