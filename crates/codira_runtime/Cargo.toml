@@ -15,6 +15,8 @@ license.workspace = true
 [dependencies]
 codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
 codira_libloader = { version = "0.6.0-dev", path = "../codira_libloader" }
+# Used to resolve `extern "C"` symbols from the host process at load time.
+libloading = { workspace = true }
 codira_capi_utils = { version = "0.6.0-dev", path = "../codira_capi_utils" }
 codira_memory = { version = "0.6.0-dev", path = "../codira_memory" }
 codira_project = { version = "0.6.0-dev", path = "../codira_project" }

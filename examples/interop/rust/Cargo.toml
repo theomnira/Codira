@@ -1,0 +1,22 @@
+[package]
+name = "codira-interop-rust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# Direct C-ABI calls into the exported symbols. Nothing Codira-specific is
+# needed for this half -- the library is an ordinary shared object.
+libloading = "0.8.6"
+
+# Hosting the Codira runtime, which is the other half: it resolves `extern "C"`
+# dependencies and enables hot reloading, neither of which a raw `dlopen` can
+# do.
+codira_runtime = { path = "../../../crates/codira_runtime" }
+
+# Used for the error type the runtime-hosting half returns.
+anyhow = "1.0"
+
+[[bin]]
+name = "codira-interop-rust"
+path = "src/main.rs"

@@ -1,3 +1,3 @@
 [workspace]
-members = ["rust-*", "buoyancy/rust", "fibonacci/rust"]
+members = ["rust-*", "buoyancy/rust", "fibonacci/rust", "interop/rust"]
 resolver = "2"

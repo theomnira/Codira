@@ -9,7 +9,7 @@ use std::{iter::once, sync::Arc};
 use codira_hir_input::FileId;
 use codira_syntax::{
     ast,
-    ast::{AttributeOwner, GenericParamsOwner, NameOwner, TypeAscriptionOwner},
+    ast::{AstNode, AttributeOwner, GenericParamsOwner, NameOwner, TypeAscriptionOwner},
 };
 
 use super::Module;
@@ -73,6 +73,15 @@ pub struct FunctionData {
     /// Whether this function carries the `@strict` attribute, opting it
     /// into `expr::validator::move_check`'s use-after-consume checking.
     is_strict: bool,
+    /// The ABI named by an `@export("C")` attribute, if present.
+    ///
+    /// `spec/LANGUAGE_SPEC.md` section 10: "`@export(\"C\")` on a Codira
+    /// function emits it with C linkage/calling convention and a stable,
+    /// unmangled symbol name, so C/C++ code can call back into Codira."
+    /// Codegen turns this into `Linkage::DLLExport`; without it the symbol
+    /// exists in the object file but is not exported from the assembly, so
+    /// no external caller can find it.
+    export_abi: Option<String>,
     /// The receiver's type, for a method declared with a `self` parameter.
     ///
     /// Deliberately kept *out* of `params`, which stays the list of ordinary
@@ -121,6 +130,24 @@ impl FunctionData {
             }
         }
 
+        // `@export("C")` -- the ABI string is captured rather than just a
+        // flag, so a future `@export("C++")` (which needs mangled-linkage
+        // metadata, see LANGUAGE_SPEC section 10) is a change here and not a
+        // change to the shape of the data.
+        let export_abi = src.attribute_list().and_then(|attrs| {
+            attrs.attributes().find_map(|attr| {
+                let is_export = attr
+                    .path()
+                    .and_then(|p| p.segment())
+                    .is_some_and(|s| matches!(s.kind(), Some(ast::PathSegmentKind::Name(n)) if n.text() == "export"));
+                if !is_export {
+                    return None;
+                }
+                let arg = attr.arg_list()?.args().next()?;
+                Some(arg.syntax().text().to_string().trim_matches('"').to_string())
+            })
+        });
+
         let is_strict = src.attribute_list().is_some_and(|attrs| {
             attrs.attributes().any(|attr| {
                 attr.path()
@@ -158,6 +185,7 @@ impl FunctionData {
             effects: func.effects.clone(),
             consuming_params,
             is_strict,
+            export_abi,
             self_param,
         })
     }
@@ -252,6 +280,11 @@ impl FunctionData {
     pub fn is_strict(&self) -> bool {
         self.is_strict
     }
+
+    /// The ABI named by this function's `@export("...")` attribute, if any.
+    pub fn export_abi(&self) -> Option<&str> {
+        self.export_abi.as_deref()
+    }
 }
 
 impl Function {
@@ -305,6 +338,16 @@ impl Function {
                 idx,
             })
             .collect()
+    }
+
+    /// The ABI named by this function's `@export("...")` attribute, if any.
+    ///
+    /// `Some("C")` means the function must be exported from the assembly
+    /// under its own unmangled name, so C, Rust, Python (`ctypes`) and Node
+    /// (`ffi`) callers can all reach it through the one mechanism every
+    /// platform already understands.
+    pub fn export_abi(self, db: &dyn HirDatabase) -> Option<String> {
+        self.data(db).export_abi().map(ToString::to_string)
     }
 
     pub fn ret_type(self, db: &dyn HirDatabase) -> Ty {

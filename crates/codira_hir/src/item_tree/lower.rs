@@ -151,8 +151,8 @@ impl Context {
             | ast::ModuleItemKind::EnumDef(_)
             | ast::ModuleItemKind::EffectDef(_)
             | ast::ModuleItemKind::MacroDef(_)
-            | ast::ModuleItemKind::ExternBlock(_)
             | ast::ModuleItemKind::SupervisorDef(_) => None,
+            ast::ModuleItemKind::ExternBlock(ast) => Some(self.lower_extern_block(&ast)),
         }
     }
 
@@ -231,6 +231,21 @@ impl Context {
     }
 
     fn lower_function(&mut self, func: &ast::FunctionDef) -> Option<LocalItemTreeId<Function>> {
+        self.lower_function_inner(func, false)
+    }
+
+    /// Lowers a function, optionally forcing it to be treated as `extern`.
+    ///
+    /// `ast::ExternOwner::is_extern` looks for an `extern` token on the
+    /// declaration itself, which is right for a bare `extern func f(..);`
+    /// but finds nothing for a function *inside* an `extern "C" { .. }`
+    /// block -- there the keyword belongs to the block. Passing the fact in
+    /// keeps the one source of truth at the call site that knows it.
+    fn lower_function_inner(
+        &mut self,
+        func: &ast::FunctionDef,
+        force_extern: bool,
+    ) -> Option<LocalItemTreeId<Function>> {
         let name = func.name()?.as_name();
         let visibility = lower_visibility(func);
         let mut types = TypeRefMap::builder();
@@ -276,7 +291,7 @@ impl Context {
         let ast_id = self.source_ast_id_map.ast_id(func);
 
         let mut flags = FunctionFlags::default();
-        if func.is_extern() {
+        if force_extern || func.is_extern() {
             flags |= FunctionFlags::IS_EXTERN;
         }
         if func.body().is_some() {
@@ -299,6 +314,45 @@ impl Context {
         };
 
         Some(self.data.functions.alloc(res).into())
+    }
+
+    /// Lowers an `extern "C" { .. }` / `extern "C++" { .. }` block.
+    ///
+    /// Each signature inside becomes an ordinary module-level function item
+    /// marked `IS_EXTERN`, so it is name-resolvable and callable exactly
+    /// like any other function -- which is the whole point. Before this,
+    /// extern blocks parsed into a correct syntax tree and were then
+    /// dropped on the floor, so `extern "C" { func sqrt(x: f64) -> f64; }`
+    /// followed by `sqrt(16.0)` failed with "cannot find value `sqrt` in
+    /// this scope". `spec/LANGUAGE_SPEC.md` section 12 listed this under
+    /// "HIR-level scaffolding" rather than among the implemented features.
+    ///
+    /// The block introduces no scope of its own: C symbols are flat, and a
+    /// nested namespace would have to be invented rather than modelled.
+    /// Flattening into the enclosing module is also what makes the
+    /// downstream machinery work unchanged -- codegen already skips a body
+    /// for `is_extern` functions and emits an LLVM `declare`, and the
+    /// dispatch table already treats them as external symbols resolved at
+    /// link time.
+    ///
+    /// The ABI string (`"C"` vs `"C++"`) is deliberately not recorded here.
+    /// Both lower identically today, and `spec/LANGUAGE_SPEC.md` section 10
+    /// is explicit that C++ needs *linkage-name metadata* to be usable
+    /// across compilers -- storing the string without that metadata would
+    /// imply a distinction the backend does not yet make.
+    fn lower_extern_block(&mut self, block: &ast::ExternBlock) -> ModItems {
+        let items: SmallVec<[ModItem; 1]> = block
+            .extern_item_list()
+            .into_iter()
+            .flat_map(|list| list.extern_items())
+            .filter_map(|item| match item.kind() {
+                ast::ExternItemKind::FunctionDef(func) => self
+                    .lower_function_inner(&func, true)
+                    .map(Into::<ModItem>::into),
+            })
+            .collect();
+
+        ModItems(items)
     }
 
     /// Lowers a struct

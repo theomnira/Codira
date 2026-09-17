@@ -97,7 +97,24 @@ pub fn create_with_target(target: &spec::Target) -> Box<dyn Linker> {
 
 pub trait Linker {
     fn add_object(&mut self, path: &Path) -> Result<(), LinkerError>;
-    fn build_shared_object(&mut self, path: &Path) -> Result<(), LinkerError>;
+
+    /// Links the accumulated objects into a shared object at `path`.
+    ///
+    /// `exported_symbols` names the functions carrying `@export("C")`, which
+    /// must be reachable from outside the assembly under their own names
+    /// (`spec/LANGUAGE_SPEC.md` section 10).
+    ///
+    /// Only the COFF linker needs them: ELF and Mach-O export every symbol
+    /// with external linkage by default, so setting the linkage in codegen
+    /// is sufficient there, while COFF exports *nothing* from a DLL unless
+    /// it is named explicitly. That asymmetry is why this is a linker
+    /// argument rather than purely an IR attribute.
+    fn build_shared_object(
+        &mut self,
+        path: &Path,
+        exported_symbols: &[String],
+    ) -> Result<(), LinkerError>;
+
     fn finalize(&mut self) -> Result<(), LinkerError>;
 }
 
@@ -129,7 +146,11 @@ impl Linker for LdLinker {
         Ok(())
     }
 
-    fn build_shared_object(&mut self, path: &Path) -> Result<(), LinkerError> {
+    fn build_shared_object(
+        &mut self,
+        path: &Path,
+        _exported_symbols: &[String],
+    ) -> Result<(), LinkerError> {
         let path_str = path
             .to_str()
             .ok_or_else(|| LinkerError::PathError(path.to_owned()))?;
@@ -210,7 +231,11 @@ impl Linker for Ld64Linker {
         Ok(())
     }
 
-    fn build_shared_object(&mut self, path: &Path) -> Result<(), LinkerError> {
+    fn build_shared_object(
+        &mut self,
+        path: &Path,
+        _exported_symbols: &[String],
+    ) -> Result<(), LinkerError> {
         let path_str = path
             .to_str()
             .ok_or_else(|| LinkerError::PathError(path.to_owned()))?;
@@ -272,7 +297,11 @@ impl Linker for MsvcLinker {
         Ok(())
     }
 
-    fn build_shared_object(&mut self, path: &Path) -> Result<(), LinkerError> {
+    fn build_shared_object(
+        &mut self,
+        path: &Path,
+        exported_symbols: &[String],
+    ) -> Result<(), LinkerError> {
         let dll_path_str = path
             .to_str()
             .ok_or_else(|| LinkerError::PathError(path.to_owned()))?;
@@ -288,6 +317,12 @@ impl Linker for MsvcLinker {
             .push(format!("/EXPORT:{}", abi::GET_VERSION_FN_NAME));
         self.args
             .push(format!("/EXPORT:{}", abi::SET_ALLOCATOR_HANDLE_FN_NAME));
+        // COFF exports nothing from a DLL unless it is named, so every
+        // `@export("C")` function needs its own entry here -- external
+        // linkage alone is not enough on this platform.
+        for symbol in exported_symbols {
+            self.args.push(format!("/EXPORT:{symbol}"));
+        }
         self.args.push(format!("/IMPLIB:{dll_lib_path_str}"));
         self.args.push(format!("/OUT:{dll_path_str}"));
         Ok(())
