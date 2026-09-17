@@ -746,6 +746,7 @@ dependencies = [
  "insta",
  "lockfile",
  "log",
+ "tempfile",
  "walkdir",
  "yansi-term",
 ]
@@ -960,6 +961,7 @@ dependencies = [
  "codira_project",
  "codira_test",
  "itertools 0.12.1",
+ "libloading",
  "log",
  "notify",
  "once_cell",
