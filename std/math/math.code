@@ -2,6 +2,150 @@
 // Core mathematical functions for Codira.
 // Provides trigonometric, exponential, logarithmic, rounding, and integer math
 // operations for f32, f64, and integer types.
+//
+// ─────────────────────────────────────────────────────────────────────────────
+// Where each operation comes from
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// Three sources, and which one an operation uses is not arbitrary:
+//
+//   1. `extern "codira-intrinsic"` -- the compiler emits these inline. Every
+//      one has a hardware instruction on some target (`SQRTSD`, `FSQRT`,
+//      `VFMADD`), and the backend falls back to a libm call only where the
+//      instruction does not exist. Writing them in Codira would give up the
+//      instruction everywhere.
+//
+//   2. `extern "C"` into libm -- for the operations LLVM has no intrinsic
+//      for. There is no hardware instruction to lose, and libm's versions
+//      are correctly rounded and well tested, which a hand-written series
+//      expansion here would not be.
+//
+//   3. Ordinary Codira, built from the above -- `tan` from `sin`/`cos`,
+//      `isinf` from a comparison against `inf()`.
+//
+// Infinity and NaN are built by reinterpreting their exact bit patterns.
+// They have no source spelling, and the usual workarounds (`1.0 / 0.0`,
+// `0.0 / 0.0`) are constant-folded by the optimiser into whatever it likes
+// rather than reliably the value asked for.
+
+extern "codira-intrinsic" {
+    // Trigonometric, exponential and logarithmic.
+    public func __intrinsic_sin_f64(x: f64) -> f64;
+    public func __intrinsic_sin_f32(x: f32) -> f32;
+    public func __intrinsic_cos_f64(x: f64) -> f64;
+    public func __intrinsic_cos_f32(x: f32) -> f32;
+    public func __intrinsic_sqrt_f64(x: f64) -> f64;
+    public func __intrinsic_sqrt_f32(x: f32) -> f32;
+    public func __intrinsic_pow_f64(base: f64, exponent: f64) -> f64;
+    public func __intrinsic_pow_f32(base: f32, exponent: f32) -> f32;
+    public func __intrinsic_exp_f64(x: f64) -> f64;
+    public func __intrinsic_exp_f32(x: f32) -> f32;
+    public func __intrinsic_exp2_f64(x: f64) -> f64;
+    public func __intrinsic_exp2_f32(x: f32) -> f32;
+    public func __intrinsic_log_f64(x: f64) -> f64;
+    public func __intrinsic_log_f32(x: f32) -> f32;
+    public func __intrinsic_log2_f64(x: f64) -> f64;
+    public func __intrinsic_log2_f32(x: f32) -> f32;
+    public func __intrinsic_log10_f64(x: f64) -> f64;
+    public func __intrinsic_log10_f32(x: f32) -> f32;
+
+    // Rounding and sign. `round` rounds halfway cases away from zero, which
+    // is what `round` means everywhere that ships one -- `rint` would
+    // follow the current rounding mode instead.
+    public func __intrinsic_floor_f64(x: f64) -> f64;
+    public func __intrinsic_floor_f32(x: f32) -> f32;
+    public func __intrinsic_ceil_f64(x: f64) -> f64;
+    public func __intrinsic_ceil_f32(x: f32) -> f32;
+    public func __intrinsic_trunc_f64(x: f64) -> f64;
+    public func __intrinsic_trunc_f32(x: f32) -> f32;
+    public func __intrinsic_round_f64(x: f64) -> f64;
+    public func __intrinsic_round_f32(x: f32) -> f32;
+    public func __intrinsic_fabs_f64(x: f64) -> f64;
+    public func __intrinsic_fabs_f32(x: f32) -> f32;
+    public func __intrinsic_copysign_f64(magnitude: f64, sign: f64) -> f64;
+    public func __intrinsic_copysign_f32(magnitude: f32, sign: f32) -> f32;
+
+    // Fused multiply-add: one rounding, not two, and one instruction where
+    // the target has it.
+    public func __intrinsic_fma_f64(a: f64, b: f64, c: f64) -> f64;
+    public func __intrinsic_fma_f32(a: f32, b: f32, c: f32) -> f32;
+
+    // Reinterpretation, which is no instruction at run time.
+    public func __intrinsic_bitcast_u64_f64(bits: u64) -> f64;
+    public func __intrinsic_bitcast_u32_f32(bits: u32) -> f32;
+    public func __intrinsic_bitcast_f64_u64(value: f64) -> u64;
+    public func __intrinsic_bitcast_f32_u32(value: f32) -> u32;
+}
+
+extern "C" {
+    // The operations LLVM has no intrinsic for, declared under the exact
+    // names libm exports: an `extern "C"` function links by its Codira name
+    // and there is no link-name attribute, so the spelling here *is* the
+    // symbol.
+    //
+    // That is why these are the public entry points rather than sitting
+    // behind wrappers. `asin` is already the name the API wants, and a
+    // wrapper that only forwards to it would add a layer and no meaning.
+
+    /// Arcsine -- inverse of sin. Returns a value in [-pi/2, pi/2].
+    public func asin(x: f64) -> f64;
+    /// Arccosine -- inverse of cos. Returns a value in [0, pi].
+    public func acos(x: f64) -> f64;
+    /// Arctangent -- inverse of tan. Returns a value in [-pi/2, pi/2].
+    public func atan(x: f64) -> f64;
+    /// Two-argument arctangent: the angle to the point (x, y), in [-pi, pi].
+    public func atan2(y: f64, x: f64) -> f64;
+
+    /// Arcsine (f32).
+    public func asinf(x: f32) -> f32;
+    /// Arccosine (f32).
+    public func acosf(x: f32) -> f32;
+    /// Arctangent (f32).
+    public func atanf(x: f32) -> f32;
+    /// Two-argument arctangent (f32).
+    public func atan2f(y: f32, x: f32) -> f32;
+
+    /// Cube root. Exact for perfect cubes, unlike `pow(x, 1.0/3.0)`.
+    public func cbrt(x: f64) -> f64;
+    /// `exp(x) - 1`, accurate for x near zero where `exp(x) - 1` cancels.
+    public func expm1(x: f64) -> f64;
+    /// `log(1 + x)`, accurate for x near zero for the same reason.
+    public func log1p(x: f64) -> f64;
+    /// `sqrt(x*x + y*y)` without the intermediate overflow.
+    public func hypot(x: f64, y: f64) -> f64;
+    /// IEEE remainder: `x - round(x/y) * y`.
+    public func remainder(x: f64, y: f64) -> f64;
+    /// Multiplies `x` by 2^exp, exactly.
+    public func ldexp(x: f64, exp: i32) -> f64;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Non-finite values
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Positive infinity: exponent all ones, significand zero.
+public func inf() -> f64 {
+    return __intrinsic_bitcast_u64_f64(9218868437227405312);
+}
+
+// Positive infinity, single precision.
+public func inf_f32() -> f32 {
+    return __intrinsic_bitcast_u32_f32(2139095040);
+}
+
+// A quiet NaN: exponent all ones with the significand's top bit set.
+//
+// Quiet rather than signalling on purpose -- a signalling NaN raises an
+// exception the moment it is used in arithmetic, which is not what a
+// function called `nan()` should hand back.
+public func nan() -> f64 {
+    return __intrinsic_bitcast_u64_f64(9221120237041090560);
+}
+
+// A quiet NaN, single precision.
+public func nan_f32() -> f32 {
+    return __intrinsic_bitcast_u32_f32(2143289344);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Trigonometric functions (f64)
@@ -22,27 +166,6 @@ public func tan(x: f64) -> f64 {
     return sin(x) / cos(x);
 }
 
-/// Arcsine — inverse of sin. Returns value in [-pi/2, pi/2].
-public func asin(x: f64) -> f64 {
-    return __intrinsic_asin_f64(x);
-}
-
-/// Arccosine — inverse of cos. Returns value in [0, pi].
-public func acos(x: f64) -> f64 {
-    return __intrinsic_acos_f64(x);
-}
-
-/// Arctangent — inverse of tan. Returns value in [-pi/2, pi/2].
-public func atan(x: f64) -> f64 {
-    return __intrinsic_atan_f64(x);
-}
-
-/// Two-argument arctangent. Returns the angle in radians between the
-/// positive x-axis and the point (x, y), in [-pi, pi].
-public func atan2(y: f64, x: f64) -> f64 {
-    return __intrinsic_atan2_f64(y, x);
-}
-
 // ── f32 trigonometric overloads ──────────────────────────────────────────────
 
 /// Sine (f32).
@@ -57,27 +180,27 @@ public func cos_f32(x: f32) -> f32 {
 
 /// Tangent (f32).
 public func tan_f32(x: f32) -> f32 {
-    return sin_f32(x) / cos_f32(x);
+    return __intrinsic_sin_f32(x) / __intrinsic_cos_f32(x);
 }
 
 /// Arcsine (f32).
 public func asin_f32(x: f32) -> f32 {
-    return __intrinsic_asin_f32(x);
+    return asinf(x);
 }
 
 /// Arccosine (f32).
 public func acos_f32(x: f32) -> f32 {
-    return __intrinsic_acos_f32(x);
+    return acosf(x);
 }
 
 /// Arctangent (f32).
 public func atan_f32(x: f32) -> f32 {
-    return __intrinsic_atan_f32(x);
+    return atanf(x);
 }
 
 /// Two-argument arctangent (f32).
 public func atan2_f32(y: f32, x: f32) -> f32 {
-    return __intrinsic_atan2_f32(y, x);
+    return atan2f(y, x);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,16 +257,6 @@ public func log_base(x: f64, base: f64) -> f64 {
     return log(x) / log(base);
 }
 
-/// e^x - 1, accurate for small x.
-public func expm1(x: f64) -> f64 {
-    return __intrinsic_expm1_f64(x);
-}
-
-/// ln(1 + x), accurate for small x.
-public func log1p(x: f64) -> f64 {
-    return __intrinsic_log1p_f64(x);
-}
-
 // ── f32 exponential/log overloads ────────────────────────────────────────────
 
 public func exp_f32(x: f32) -> f32 {
@@ -180,19 +293,9 @@ public func sqrt(x: f64) -> f64 {
     return __intrinsic_sqrt_f64(x);
 }
 
-/// Cube root.
-public func cbrt(x: f64) -> f64 {
-    return __intrinsic_cbrt_f64(x);
-}
-
 /// Reciprocal square root: 1 / sqrt(x).
 public func rsqrt(x: f64) -> f64 {
     return 1.0 / sqrt(x);
-}
-
-/// Hypotenuse: sqrt(x*x + y*y) without intermediate overflow.
-public func hypot(x: f64, y: f64) -> f64 {
-    return __intrinsic_hypot_f64(x, y);
 }
 
 // ── f32 overloads ────────────────────────────────────────────────────────────
@@ -206,7 +309,7 @@ public func sqrt_f32(x: f32) -> f32 {
 }
 
 public func rsqrt_f32(x: f32) -> f32 {
-    return 1.0 as f32 / sqrt_f32(x);
+    return 1.0 as f32 / __intrinsic_sqrt_f32(x);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -379,20 +482,45 @@ public func copysign(mag: f64, sign: f64) -> f64 {
     return __intrinsic_copysign_f64(mag, sign);
 }
 
-/// Multiplies `x` by 2^exp.
-public func ldexp(x: f64, exp: i32) -> f64 {
-    return __intrinsic_ldexp_f64(x, exp);
-}
-
-/// Splits `x` into a normalised fraction in [0.5, 1) and an integer exponent.
-/// Returns (fraction, exponent).
+/// Splits `x` into a normalised fraction in [0.5, 1) and an integer exponent,
+/// such that `x == fraction * 2^exponent`.
+///
+/// Built from the bit pattern rather than called out to libm, because C's
+/// `frexp` returns the exponent through an `int *` out-parameter and Codira
+/// has no way to spell that. Reading the fields directly is also exact:
+/// there is no arithmetic here to round.
+///
+/// Zero, infinity and NaN are returned unchanged with an exponent of 0,
+/// which is what C specifies for them.
 public func frexp(x: f64) -> (f64, i32) {
-    return __intrinsic_frexp_f64(x);
-}
+    if x == 0.0 || isnan(x) || isinf(x) {
+        return (x, 0);
+    }
 
-/// IEEE remainder: x - round(x/y) * y.
-public func remainder(x: f64, y: f64) -> f64 {
-    return __intrinsic_remainder_f64(x, y);
+    let bits = __intrinsic_bitcast_f64_u64(x);
+    let raw_exponent = (bits >> 52) & 2047;
+
+    if raw_exponent == 0 {
+        // Subnormal: no implicit leading 1, so the exponent field says
+        // nothing useful. Scaling into the normal range first and then
+        // correcting is exact -- multiplying by a power of two only moves
+        // the exponent.
+        let scaled = __intrinsic_bitcast_f64_u64(x * 18014398509481984.0);
+        let scaled_exponent = (scaled >> 52) & 2047;
+        let fraction_bits = (scaled & 9227875636482146303) | 4602678819172646912;
+        return (
+            __intrinsic_bitcast_u64_f64(fraction_bits),
+            (scaled_exponent as i32) - 1022 - 54,
+        );
+    }
+
+    // Replace the exponent field with the one that means [0.5, 1), keeping
+    // the sign and the significand exactly as they are.
+    let fraction_bits = (bits & 9227875636482146303) | 4602678819172646912;
+    return (
+        __intrinsic_bitcast_u64_f64(fraction_bits),
+        (raw_exponent as i32) - 1022,
+    );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -541,7 +669,7 @@ public func isnan(x: f64) -> bool {
 
 /// Returns true if `x` is positive or negative infinity.
 public func isinf(x: f64) -> bool {
-    return x == __intrinsic_inf_f64() || x == -__intrinsic_inf_f64();
+    return x == inf() || x == -inf();
 }
 
 /// Returns true if `x` is neither NaN nor infinity.
@@ -560,7 +688,7 @@ public func isnan_f32(x: f32) -> bool {
 }
 
 public func isinf_f32(x: f32) -> bool {
-    return x == __intrinsic_inf_f32() || x == -__intrinsic_inf_f32();
+    return x == inf_f32() || x == -inf_f32();
 }
 
 public func isfinite_f32(x: f32) -> bool {

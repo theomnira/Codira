@@ -942,6 +942,104 @@ fn intrinsic_bit_counting() {
 }
 
 #[test]
+fn intrinsic_float_math() {
+    // Each of these must become the LLVM intrinsic of the matching width,
+    // which the backend turns into the hardware instruction where one
+    // exists (`SQRTSD`, `FSQRT`) and a libm call where it does not. Writing
+    // them in Codira would give up the instruction on every target that has
+    // it.
+    //
+    // Both widths appear so that a regression picking the wrong suffix --
+    // `llvm.sqrt.f64` for an `f32` argument -- shows up as a verifier
+    // failure rather than a silent precision change.
+    test_snapshot_unoptimized(
+        "intrinsic_float_math",
+        r#"
+    extern "codira-intrinsic" {
+        func sqrt_f64(x: f64) -> f64;
+        func sqrt_f32(x: f32) -> f32;
+        func pow_f64(base: f64, exponent: f64) -> f64;
+        func fma_f64(a: f64, b: f64, c: f64) -> f64;
+        func floor_f32(x: f32) -> f32;
+    }
+    public func mix(x: f64, y: f32) -> f64 {
+        sqrt_f64(x) + pow_f64(x, x) + fma_f64(x, x, x)
+    }
+    public func narrow(y: f32) -> f32 {
+        sqrt_f32(y) + floor_f32(y)
+    }
+    "#,
+    );
+}
+
+#[test]
+fn intrinsic_byte_and_bit_reversal() {
+    // `bswap` is one instruction (`BSWAP`, `REV`) and `bitreverse` is one on
+    // AArch64 (`RBIT`); both are a handful of shifts and masks written by
+    // hand.
+    test_snapshot_unoptimized(
+        "intrinsic_byte_and_bit_reversal",
+        r#"
+    extern "codira-intrinsic" {
+        func bswap_u32(value: u32) -> u32;
+        func bitreverse_u64(value: u64) -> u64;
+    }
+    public func reverse(x: u32, y: u64) -> u64 {
+        bitreverse_u64(y)
+    }
+    "#,
+    );
+}
+
+#[test]
+fn intrinsic_bulk_memory() {
+    // `memcpy` and `memmove` must stay distinct: `memcpy` is only valid when
+    // the regions do not overlap, and lowering both to the permissive one
+    // would be a miscompile that appears only on overlapping input.
+    //
+    // All three are emitted non-volatile, so the backend is free to turn
+    // them into the vectorised form that is the reason to call them at all.
+    test_snapshot_unoptimized(
+        "intrinsic_bulk_memory",
+        r#"
+    extern "codira-intrinsic" {
+        func memcpy(dst: usize, src: usize, len: usize);
+        func memmove(dst: usize, src: usize, len: usize);
+        func memset(dst: usize, byte: u8, len: usize);
+    }
+    public func bulk(dst: usize, src: usize, len: usize) {
+        memcpy(dst, src, len);
+        memmove(dst, src, len);
+        memset(dst, 0, len);
+    }
+    "#,
+    );
+}
+
+#[test]
+fn intrinsic_bitcast() {
+    // A bitcast is no instruction at run time, which is exactly why it is
+    // the way to build a float constant with no source spelling: infinity
+    // and NaN have exact bit patterns, and `1.0 / 0.0` is folded by the
+    // optimiser into whatever it likes rather than reliably that value.
+    test_snapshot_unoptimized(
+        "intrinsic_bitcast",
+        r#"
+    extern "codira-intrinsic" {
+        func bitcast_u64_f64(bits: u64) -> f64;
+        func bitcast_f64_u64(value: f64) -> u64;
+    }
+    public func infinity() -> f64 {
+        bitcast_u64_f64(9218868437227405312)
+    }
+    public func bits_of(x: f64) -> u64 {
+        bitcast_f64_u64(x)
+    }
+    "#,
+    );
+}
+
+#[test]
 fn intrinsic_is_not_a_dispatch_table_dependency() {
     // An intrinsic is `IS_EXTERN`, and every other extern function is
     // recorded in the dispatch table as a symbol the runtime must resolve at
