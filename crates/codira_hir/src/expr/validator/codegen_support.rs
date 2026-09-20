@@ -16,6 +16,11 @@
 //! func id[T](x: T) -> T  // panicked at ir/ty.rs:240 / 438 / 452
 //! ```
 //!
+//! The string case is no longer among them: a literal lowers to
+//! `{ ptr, usize }` over constant bytes. What is left is `nil`, which still
+//! has no representation to produce, and generic instantiation, which type
+//! inference now handles but code generation does not.
+//!
 //! A `panic!` reaching a user is the worst outcome available: it aborts with
 //! a Rust backtrace and an invitation to debug the compiler, gives no source
 //! location, and -- for a toolchain meant for mission-critical work -- is
@@ -81,9 +86,12 @@ impl ExprValidator<'_> {
                 continue;
             };
             let what = match literal {
-                Literal::String(_) => "a string literal",
                 Literal::Nil => "`nil`",
-                Literal::Bool(_) | Literal::Int(_) | Literal::Float(_) => continue,
+                // A string literal lowers to `{ ptr, usize }` over constant
+                // bytes now, so it is no longer a backend gap.
+                Literal::String(_) | Literal::Bool(_) | Literal::Int(_) | Literal::Float(_) => {
+                    continue
+                }
             };
 
             let Some(node) = self.body_source_map.expr_syntax(expr_id).map(|ptr| {

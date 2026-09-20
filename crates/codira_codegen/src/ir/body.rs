@@ -571,7 +571,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 }
             }
 
-            Literal::String(_) => unimplemented!("string literals are not implemented yet"),
+            Literal::String(value) => self.gen_string_literal(value),
 
             Literal::Nil => unimplemented!(
                 "`nil`/optional codegen is not implemented yet -- `Type?` currently lowers \
@@ -579,6 +579,45 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                  IR representation for the absent case yet"
             ),
         }
+    }
+
+    /// Emits a string literal as `{ ptr, usize }` over constant bytes.
+    ///
+    /// The bytes go into a private, constant, `unnamed_addr` global: private
+    /// because nothing outside this module can name it, constant because a
+    /// literal cannot be written to, and `unnamed_addr` because the address
+    /// itself carries no meaning -- which is what lets the linker merge two
+    /// modules that both contain `"hello"` into one copy.
+    ///
+    /// The value is a compile-time constant struct, so a literal costs no
+    /// instructions at all: it is materialised where it is used.
+    ///
+    /// A trailing NUL is appended but *not* counted in the length. Nothing
+    /// in Codira needs it -- the length is right there -- but it means the
+    /// pointer can be handed to a C function expecting a `const char *`
+    /// without copying, which is the whole reason an FFI-oriented language
+    /// would pay the extra byte.
+    fn gen_string_literal(&mut self, value: &str) -> BasicValueEnum<'ink> {
+        let bytes = self.context.const_string(value.as_bytes(), true);
+
+        let global = self.module.add_global(
+            bytes.get_type(),
+            Some(AddressSpace::default()),
+            "codira.str",
+        );
+        global.set_initializer(&bytes);
+        global.set_constant(true);
+        global.set_unnamed_addr(true);
+        global.set_linkage(inkwell::module::Linkage::Private);
+
+        let length = self
+            .hir_types
+            .get_usize_type()
+            .const_int(value.len() as u64, false);
+
+        self.context
+            .const_struct(&[global.as_pointer_value().into(), length.into()], false)
+            .into()
     }
 
     /// Constructs an empty struct value e.g. `{}`

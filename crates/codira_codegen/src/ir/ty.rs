@@ -35,6 +35,10 @@ pub struct HirTypeCache<'db, 'ink> {
     array_ty_to_type_id: RefCell<HashMap<codira_hir::TyKind, Arc<TypeId>>>,
     tuple_ty_to_type_id: RefCell<HashMap<codira_hir::TyKind, Arc<TypeId>>>,
     struct_to_type_id: RefCell<HashMap<codira_hir::Struct, Arc<TypeId>>>,
+
+    /// There is exactly one `str` type, so its id is a single cell rather
+    /// than a map keyed by something that never varies.
+    str_type_id: std::cell::OnceCell<Arc<TypeId>>,
 }
 
 impl<'db, 'ink> HirTypeCache<'db, 'ink> {
@@ -48,6 +52,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             struct_to_type_id: RefCell::default(),
             array_ty_to_type_id: RefCell::default(),
             tuple_ty_to_type_id: RefCell::default(),
+            str_type_id: std::cell::OnceCell::new(),
         }
     }
 
@@ -281,6 +286,22 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
         }
     }
 
+    /// Returns the IR type of a string literal: `{ ptr, usize }`.
+    ///
+    /// A fat pointer rather than a bare `ptr` to a NUL-terminated buffer,
+    /// so that taking a length is a field read rather than a scan, and so
+    /// that a literal containing a NUL byte is still one string. The bytes
+    /// themselves live in a constant global; this is only the handle.
+    pub fn get_str_type(&self) -> StructType<'ink> {
+        self.context.struct_type(
+            &[
+                self.context.ptr_type(AddressSpace::default()).into(),
+                self.get_usize_type().into(),
+            ],
+            false,
+        )
+    }
+
     /// Returns the inkwell type of the specified HIR type as a basic value. If
     /// the type cannot be represented as a basic type enum, `None` is
     /// returned.
@@ -291,6 +312,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             TyKind::Int(int_ty) => Some(self.get_int_type(*int_ty).into()),
             TyKind::Struct(struct_ty, _) => Some(self.get_struct_reference_type(*struct_ty)),
             TyKind::Bool => Some(self.get_bool_type().into()),
+            TyKind::Str => Some(self.get_str_type().into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             _ => None,
         }
@@ -307,6 +329,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             TyKind::Int(int_ty) => Some(self.get_int_type(*int_ty).into()),
             TyKind::Struct(struct_ty, _) => Some(self.get_public_struct_reference_type(*struct_ty)),
             TyKind::Bool => Some(self.get_bool_type().into()),
+            TyKind::Str => Some(self.get_str_type().into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             _ => None,
         }
@@ -327,6 +350,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
                 Some(self.get_function_type(*fn_ty).into())
             }
             TyKind::Bool => Some(self.get_bool_type().into()),
+            TyKind::Str => Some(self.get_str_type().into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             _ => None,
         }
@@ -379,6 +403,23 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
                 }
             }
             TyKind::Bool => bool::type_id().clone(),
+            // Structural, like the tuple case below, and for the same
+            // reason: to the runtime a `str` is an anonymous value struct
+            // of a pointer and a length. There is exactly one `str`, so the
+            // id is built once from a constant name rather than cached per
+            // instantiation.
+            TyKind::Str => self
+                .str_type_id
+                .get_or_init(|| {
+                    let name = ty
+                        .guid_string(self.db)
+                        .expect("`str` has a constant guid string");
+                    Arc::new(TypeId {
+                        data: TypeIdData::Concrete(Guid::from_str(&name)),
+                        name,
+                    })
+                })
+                .clone(),
             &TyKind::Struct(s, _) => self
                 .struct_to_type_id
                 .borrow_mut()

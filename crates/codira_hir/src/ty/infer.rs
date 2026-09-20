@@ -429,7 +429,7 @@ impl InferenceResultBuilder<'_> {
                 method_name,
             } => self.infer_method_call(tgt_expr, *receiver, args, method_name, expected),
             Expr::Literal(lit) => match lit {
-                Literal::String(_) => TyKind::Unknown.intern(),
+                Literal::String(_) => TyKind::Str.intern(),
                 Literal::Bool(_) => TyKind::Bool.intern(),
                 Literal::Int(LiteralInt {
                     kind: LiteralIntKind::Suffixed(suffix),

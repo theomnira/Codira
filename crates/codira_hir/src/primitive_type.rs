@@ -52,12 +52,21 @@ pub enum PrimitiveType {
     Float(PrimitiveFloat),
     Int(PrimitiveInt),
     Bool,
+    /// A string literal: static, immutable UTF-8 bytes in the program image,
+    /// named by an address and a byte length.
+    ///
+    /// Primitive because a literal has to have a type before any library
+    /// exists to give it one -- the compiler produces these itself, from a
+    /// `"..."` token, with nothing to resolve. `String`, which owns and can
+    /// grow its bytes, is a library type built on top.
+    Str,
 }
 
 impl PrimitiveType {
     #[rustfmt::skip]
     pub const ALL: &'static [(Name, PrimitiveType)] = &[
         (name![bool], PrimitiveType::Bool),
+        (name![str], PrimitiveType::Str),
 
         (name![isize], PrimitiveType::Int(PrimitiveInt::ISIZE)),
         (name![i8], PrimitiveType::Int(PrimitiveInt::I8)),
@@ -88,6 +97,7 @@ impl PrimitiveType {
     pub fn as_str(self) -> &'static str {
         match self {
             PrimitiveType::Bool => "bool",
+            PrimitiveType::Str => "str",
             PrimitiveType::Int(PrimitiveInt {
                 signedness,
                 bitness,

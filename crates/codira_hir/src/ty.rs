@@ -56,6 +56,14 @@ pub enum TyKind {
     /// The primitive boolean type. Written as `bool`.
     Bool,
 
+    /// The type of a string literal. Written as `str`.
+    ///
+    /// Static, immutable UTF-8 bytes in the program image, represented as an
+    /// address and a byte length. The length is carried rather than implied
+    /// by a terminator so that taking a length is not a scan, and so that a
+    /// literal containing a NUL byte is still one string.
+    Str,
+
     /// A tuple type. For example `(f32, f64, bool)`.
     Tuple(usize, Substitution),
 
@@ -254,6 +262,11 @@ impl Ty {
                 })
             }
             TyKind::Bool => Some("core::bool".to_string()),
+            // `str` is structural, like a tuple: there is one `str` type and
+            // its layout -- a pointer and a length -- is fixed by the
+            // compiler rather than by a declaration site, so the name is a
+            // constant.
+            TyKind::Str => Some("core::str".to_string()),
             TyKind::Float(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Int(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Array(ty) => Some(format!("[{}]", ty.display(db))),
@@ -442,6 +455,7 @@ impl HirDisplay for Ty {
             TyKind::Float(ty) => write!(f, "{ty}"),
             TyKind::Int(ty) => write!(f, "{ty}"),
             TyKind::Bool => write!(f, "bool"),
+            TyKind::Str => write!(f, "str"),
             // The parameter's written name is what the reader needs; the
             // (owner, index) identity is an implementation detail.
             TyKind::TypeParam(_, name) => write!(f, "{name}"),

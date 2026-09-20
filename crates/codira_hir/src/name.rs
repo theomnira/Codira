@@ -130,7 +130,7 @@ pub mod known {
     known_names!(
         // Primitives
         int, isize, i8, i16, i32, i64, i128, uint, usize, u8, u16, u32, u64, u128, float, f32, f64,
-        bool,
+        bool, str,
     );
 
     // self/Self cannot be used as an identifier

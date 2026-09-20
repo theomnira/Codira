@@ -438,7 +438,10 @@ fn ty_to_mir_type(ty: &Ty, layout: &TargetDataLayout) -> Option<TypeId> {
         TyKind::Tuple(0, _) => Some(TypeId::UNIT),
         // A generic parameter joins these: it has no MIR type until the
         // declaration is instantiated.
-        TyKind::TypeParam(..)
+        // A string has no MIR type: this pass models scalars, and a
+        // fat pointer is neither an integer nor a float.
+        TyKind::Str
+        | TyKind::TypeParam(..)
         | TyKind::Tuple(..)
         | TyKind::Struct(..)
         | TyKind::Array(_)

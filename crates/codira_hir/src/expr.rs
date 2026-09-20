@@ -256,6 +256,18 @@ pub enum LiteralError {
     /// Trying to add floating point suffix to a literal that is not a floating
     /// point number
     NonDecimalFloat(u32),
+
+    /// A `\x` escape in a string literal that is not followed by two
+    /// hexadecimal digits, or that names a value above `0x7F`.
+    ///
+    /// Above `0x7F` is rejected rather than encoded because `\xNN` means
+    /// "this byte" everywhere it exists, and silently turning `\xFF` into
+    /// the two bytes of U+00FF would make a literal whose length is not the
+    /// number of escapes written.
+    InvalidByteEscape,
+
+    /// An escape sequence whose character is not one this language defines.
+    UnknownEscape(char),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -709,9 +721,16 @@ impl<'a> ExprCollector<'a> {
 
                     expr_id
                 }
-                ast::LiteralKind::String(_lit) => {
-                    let lit = Literal::String(String::default());
-                    self.alloc_expr(Expr::Literal(lit), syntax_ptr)
+                ast::LiteralKind::String(lit) => {
+                    let (value, errors) = string_lit(codira_syntax::AstToken::text(&lit));
+                    let expr_id = self.alloc_expr(Expr::Literal(Literal::String(value)), syntax_ptr);
+
+                    for err in errors {
+                        self.diagnostics
+                            .push(ExprDiagnostic::LiteralError { expr: expr_id, err });
+                    }
+
+                    expr_id
                 }
                 ast::LiteralKind::Nil => {
                     self.alloc_expr(Expr::Literal(Literal::Nil), syntax_ptr)
@@ -1065,7 +1084,9 @@ impl<'a> ExprCollector<'a> {
                         let (text, suffix) = lit.split_into_parts();
                         float_lit(text, suffix).0
                     }
-                    ast::LiteralKind::String(_) => Literal::String(String::default()),
+                    ast::LiteralKind::String(lit) => {
+                        Literal::String(string_lit(codira_syntax::AstToken::text(&lit)).0)
+                    }
                     ast::LiteralKind::Nil => Literal::Nil,
                 });
                 literal.map_or(Pat::Missing, Pat::Literal)
@@ -1143,6 +1164,73 @@ fn strip_underscores(s: &str) -> Cow<'_, str> {
     } else {
         Cow::Borrowed(s)
     }
+}
+
+/// Decodes a string-literal token into the bytes it denotes.
+///
+/// `text` is the token exactly as it appears in the source, quotes included,
+/// because that is what the lexer produces; the quotes are stripped here so
+/// that no caller has to know whether they were.
+///
+/// Escapes are resolved at compile time rather than carried into the code
+/// generator. A literal has to become constant bytes eventually, and the
+/// only place that can know whether `\n` was meant literally is the place
+/// that can still see the source.
+///
+/// Errors are collected rather than aborting, and the offending escape is
+/// dropped from the result. A malformed escape is a diagnostic, not a reason
+/// to lose the rest of the string -- the remainder is still worth checking.
+fn string_lit(text: &str) -> (String, Vec<LiteralError>) {
+    // The lexer may hand back an unterminated literal when the source is
+    // malformed, so the closing quote is stripped only if it is there.
+    let inner = text
+        .strip_prefix('"')
+        .map_or(text, |rest| rest.strip_suffix('"').unwrap_or(rest));
+
+    let mut value = String::with_capacity(inner.len());
+    let mut errors = Vec::new();
+    let mut chars = inner.chars();
+
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            value.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('n') => value.push('\n'),
+            Some('r') => value.push('\r'),
+            Some('t') => value.push('\t'),
+            Some('0') => value.push('\0'),
+            Some('\\') => value.push('\\'),
+            Some('"') => value.push('"'),
+            Some('\'') => value.push('\''),
+            Some('x') => {
+                let digits: String = chars.clone().take(2).collect();
+                let byte = (digits.len() == 2)
+                    .then(|| u8::from_str_radix(&digits, 16).ok())
+                    .flatten();
+
+                // Only ASCII: `\xNN` means "this byte" in every language
+                // that has it, and encoding `\xFF` as the two bytes of
+                // U+00FF would give the literal a length that does not match
+                // what was written.
+                match byte {
+                    Some(byte) if byte <= 0x7F => {
+                        value.push(byte as char);
+                        chars.next();
+                        chars.next();
+                    }
+                    _ => errors.push(LiteralError::InvalidByteEscape),
+                }
+            }
+            Some(other) => errors.push(LiteralError::UnknownEscape(other)),
+            // A trailing backslash: the literal ended mid-escape.
+            None => errors.push(LiteralError::UnknownEscape('\\')),
+        }
+    }
+
+    (value, errors)
 }
 
 /// Parses the given string into a float literal
@@ -1605,6 +1693,13 @@ mod diagnostics {
                                 literal,
                                 base: *base,
                             });
+                        }
+                        // A bad escape makes the literal malformed, which is
+                        // what `InvalidLiteral` says; the escape itself is
+                        // inside the highlighted span, so the reader can see
+                        // which one it was.
+                        LiteralError::InvalidByteEscape | LiteralError::UnknownEscape(_) => {
+                            sink.push(InvalidLiteral { literal });
                         }
                     }
                 }

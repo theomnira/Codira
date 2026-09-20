@@ -329,6 +329,7 @@ pub(crate) fn type_for_primitive(def: PrimitiveType) -> Ty {
         crate::primitive_type::PrimitiveType::Float(f) => TyKind::Float(f.into()),
         crate::primitive_type::PrimitiveType::Int(i) => TyKind::Int(i.into()),
         crate::primitive_type::PrimitiveType::Bool => TyKind::Bool,
+        crate::primitive_type::PrimitiveType::Str => TyKind::Str,
     }
     .intern()
 }

@@ -1017,6 +1017,47 @@ fn intrinsic_bulk_memory() {
 }
 
 #[test]
+fn string_literal() {
+    // A literal is `{ ptr, usize }` over a private constant global. Three
+    // things this asserts, each load-bearing:
+    //
+    //   - the global is `private unnamed_addr constant`, so the linker may merge
+    //     the two identical literals below into one copy;
+    //   - the length is the byte count and excludes the trailing NUL, which exists
+    //     only so the pointer can be handed to C unchanged;
+    //   - the value is a constant struct, so a literal costs no instructions.
+    test_snapshot_unoptimized(
+        "string_literal",
+        r#"
+    public func greeting() -> str {
+        "hello"
+    }
+    public func same_again() -> str {
+        "hello"
+    }
+    public func empty() -> str {
+        ""
+    }
+    "#,
+    );
+}
+
+#[test]
+fn string_literal_with_embedded_nul_keeps_its_length() {
+    // The length is carried, not implied by a terminator, so a literal
+    // containing a NUL is still one string of the full length rather than
+    // being silently truncated at the NUL.
+    test_snapshot_unoptimized(
+        "string_literal_with_embedded_nul",
+        r#"
+    public func awkward() -> str {
+        "a\0b"
+    }
+    "#,
+    );
+}
+
+#[test]
 fn intrinsic_bitcast() {
     // A bitcast is no instruction at run time, which is exactly why it is
     // the way to build a float constant with no source spelling: infinity
