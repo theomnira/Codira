@@ -205,7 +205,7 @@ fn classify(ty: &Ty) -> Class {
         TyKind::InferenceVar(InferTy::Type(_)) | TyKind::Unknown | TyKind::TypeAlias(_) => {
             Class::Unknown
         }
-        TyKind::Struct(_)
+        TyKind::Struct(..)
         | TyKind::Tuple(..)
         | TyKind::Array(_)
         | TyKind::FnDef(..)

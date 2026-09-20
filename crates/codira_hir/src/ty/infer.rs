@@ -20,7 +20,7 @@ use crate::{
         cast::{check_cast, CastCheck},
         infer::{diagnostics::InferenceDiagnostic, type_variable::TypeVariableTable},
         lower::LowerDiagnostic,
-        op, Ty, TypableDef,
+        op, Substitution, Ty, TyKind, TypableDef, TypeWalk,
     },
     type_ref::LocalTypeRefId,
     BinaryOp, CallableDef, Function, HirDatabase, Name, Path,
@@ -33,13 +33,10 @@ mod unify;
 use crate::{
     expr::{LiteralFloat, LiteralFloatKind, LiteralInt, LiteralIntKind},
     has_module::HasModule,
-    ids::{DefWithBodyId, FunctionId},
+    ids::{DefWithBodyId, FunctionId, GenericDefId, TypeParamId},
     method_resolution::{lookup_method, AssociationMode},
     resolve::{resolver_for_expr, HasResolver, ResolveValueResult},
-    ty::{
-        primitives::{FloatTy, IntTy},
-        TyKind,
-    },
+    ty::primitives::{FloatTy, IntTy},
 };
 
 mod coerce;
@@ -483,9 +480,19 @@ impl InferenceResultBuilder<'_> {
                 fields,
                 spread,
             } => {
-                let ty = self.resolve_type(*type_id);
+                // `Box { v: 7 }` names `Box`, which lowers to `Box[T]` with
+                // its own parameter standing in. Instantiating it here is
+                // what lets the field values decide what `T` is -- written
+                // without an argument list, that is the only thing that can.
+                let declared = self.resolve_type(*type_id);
+                let ty = self.instantiate_type(&declared);
                 let def_id = ty.as_struct();
                 self.unify(&ty, &expected.ty);
+
+                let substitution = ty
+                    .type_parameters()
+                    .cloned()
+                    .unwrap_or_else(Substitution::empty);
 
                 for (idx, field) in fields.iter().enumerate() {
                     let field_ty = def_id
@@ -501,7 +508,21 @@ impl InferenceResultBuilder<'_> {
                                 None
                             }
                         })
-                        .map_or(error_type(), |field| field.ty(self.db));
+                        .map_or(error_type(), |field| {
+                            // The field's declared type is in terms of the
+                            // struct's parameters, so it has to be read
+                            // through the same instantiation the literal got.
+                            def_id.map_or_else(
+                                || field.ty(self.db),
+                                |s| {
+                                    substitute_type_params(
+                                        field.ty(self.db),
+                                        &GenericDefId::from(s.id),
+                                        &substitution,
+                                    )
+                                },
+                            )
+                        });
                     self.infer_expr_coerce(field.expr, &Expectation::has_type(field_ty));
                 }
                 if let Some(expr) = spread {
@@ -743,14 +764,25 @@ impl InferenceResultBuilder<'_> {
                 let field_ty = subs.interned().get(idx)?.clone();
                 Some((field_ty, true))
             }
-            TyKind::Struct(s) => {
+            TyKind::Struct(s, substitution) => {
                 let struct_data = self.db.struct_data(s.id);
                 let local_field_idx = struct_data.find_field(field_name)?;
                 let field_types = self.db.lower_struct(*s);
                 let field_visibilities = self.db.field_visibilities(s.id.into());
                 let field_data = &struct_data.fields[local_field_idx];
+
+                // The declared field type is written in terms of the
+                // struct's own parameters -- `value: T` for `Box[T]`. The
+                // receiver says what `T` is here, so applying its
+                // substitution is what turns `T` into `i32` for a
+                // `Box[i32]`. Without it every field of a generic struct
+                // reads back as the parameter itself.
+                let declared = field_types[field_data.type_ref].clone();
+                let field_ty =
+                    substitute_type_params(declared, &GenericDefId::from(s.id), substitution);
+
                 Some((
-                    field_types[field_data.type_ref].clone(),
+                    field_ty,
                     field_visibilities[local_field_idx].is_visible_from(self.db, self.module()),
                 ))
             }
@@ -914,6 +946,63 @@ impl InferenceResultBuilder<'_> {
         ))
     }
 
+    /// Replaces each generic parameter in a callee's signature with a fresh
+    /// inference variable, so that every call gets its own instantiation.
+    ///
+    /// `func first[T](list: List[T]) -> T` declares one `T`; two calls in
+    /// the same body may pass `List[i32]` and `List[f64]`, and they must not
+    /// be forced to agree. Handing the declared signature to the checker
+    /// unchanged is what previously made `b.get()` on a `Box[i32]` report
+    /// "expected i32, found T": nothing ever connected the parameter to the
+    /// argument.
+    ///
+    /// Every parameter in the signature is instantiated regardless of owner.
+    /// A callee's signature is written in its own scope, so the only
+    /// parameters that can appear are its own and those of the type it is
+    /// associated with -- and for an associated function, the type's
+    /// parameters are exactly what the receiver has to determine.
+    /// Replaces every generic parameter in a single type with a fresh
+    /// inference variable.
+    ///
+    /// The one-type counterpart of `instantiate_signature`, for a use site
+    /// that has no signature to go with it -- a record literal naming a
+    /// generic struct.
+    fn instantiate_type(&mut self, ty: &Ty) -> Ty {
+        let (mut instantiated, _) = self.instantiate_signature(std::slice::from_ref(ty), ty);
+        instantiated.pop().unwrap_or_else(|| ty.clone())
+    }
+
+    fn instantiate_signature(&mut self, params: &[Ty], ret: &Ty) -> (Vec<Ty>, Ty) {
+        let mut fresh: FxHashMap<TypeParamId, Ty> = FxHashMap::default();
+
+        for ty in params.iter().chain(std::iter::once(ret)) {
+            ty.walk(&mut |inner| {
+                if let TyKind::TypeParam(id, _) = inner.interned() {
+                    fresh.entry(*id).or_insert_with(|| {
+                        // Deliberately an ordinary type variable and not an
+                        // integer/float one: a parameter is unconstrained
+                        // until an argument says otherwise, and guessing a
+                        // numeric default here would silently pick a type.
+                        self.type_variables.new_type_var()
+                    });
+                }
+            });
+        }
+
+        if fresh.is_empty() {
+            return (params.to_vec(), ret.clone());
+        }
+
+        let apply = |ty: &Ty| {
+            ty.clone().fold(&mut |inner| match inner.interned() {
+                TyKind::TypeParam(id, _) => fresh.get(id).cloned().unwrap_or(inner),
+                _ => inner,
+            })
+        };
+
+        (params.iter().map(apply).collect(), apply(ret))
+    }
+
     fn infer_call_arguments_and_return(
         &mut self,
         tgt_expr: ExprId,
@@ -922,23 +1011,24 @@ impl InferenceResultBuilder<'_> {
     ) -> Ty {
         // Retrieve the function signature.
         let signature = self.db.callable_sig(callable);
+        let (param_tys, ret_ty) = self.instantiate_signature(signature.params(), signature.ret());
 
         // Verify that the number of arguments matches
-        if signature.params().len() != args.len() {
+        if param_tys.len() != args.len() {
             self.diagnostics
                 .push(InferenceDiagnostic::ParameterCountMismatch {
                     id: tgt_expr,
                     found: args.len(),
-                    expected: signature.params().len(),
+                    expected: param_tys.len(),
                 });
         }
 
         // Verify the argument types
-        for (&arg, param_ty) in args.iter().zip(signature.params().iter()) {
+        for (&arg, param_ty) in args.iter().zip(param_tys.iter()) {
             self.infer_expr_coerce(arg, &Expectation::has_type(param_ty.clone()));
         }
 
-        signature.ret().clone()
+        ret_ty
     }
 
     /// Inferences the type of a call expression.
@@ -958,7 +1048,7 @@ impl InferenceResultBuilder<'_> {
         );
 
         match callee_ty.interned() {
-            TyKind::Struct(s) => {
+            TyKind::Struct(s, _) => {
                 // Erroneously found either a unit struct or record struct literal. Record
                 // struct literals can never be used as a value so that will
                 // have already been reported.
@@ -981,7 +1071,7 @@ impl InferenceResultBuilder<'_> {
             TyKind::FnDef(def, _substs) => {
                 // Found either a tuple struct literal or function
                 let sig = callee_ty.callable_sig(self.db).unwrap();
-                let (param_tys, ret_ty) = (sig.params().to_vec(), sig.ret().clone());
+                let (param_tys, ret_ty) = self.instantiate_signature(sig.params(), sig.ret());
                 self.check_call_argument_count(
                     tgt_expr,
                     def.is_struct(),
@@ -1397,24 +1487,31 @@ impl InferenceResultBuilder<'_> {
         Ty::unit()
     }
 
-    #[allow(clippy::unused_self)]
-    pub fn report_pat_inference_failure(&mut self, _pat: PatId) {
-        //        self.diagnostics.push(InferenceDiagnostic::PatInferenceFailed {
-        //            pat
-        //        });
-        // Currently this should never happen because we can only infer integer and
-        // floating-point types which always have a fallback value.
-        panic!("pattern failed inferencing");
+    /// Records that inference could not determine the type of `pat`.
+    ///
+    /// This used to panic, on the reasoning that only integer and float
+    /// variables existed and both have a fallback. Generic instantiation
+    /// broke that: a type parameter no call constrains resolves to nothing,
+    /// and there is no default that would be right. An ambiguous type is an
+    /// ordinary thing for a program to contain and a diagnostic to report --
+    /// crashing the compiler over it would take the whole rest of the file's
+    /// diagnostics down with it.
+    pub fn report_pat_inference_failure(&mut self, pat: PatId) {
+        self.diagnostics
+            .push(InferenceDiagnostic::TypeAnnotationNeeded {
+                id: ExprOrPatId::PatId(pat),
+            });
     }
 
-    #[allow(clippy::unused_self)]
-    pub fn report_expr_inference_failure(&mut self, _expr: ExprId) {
-        //        self.diagnostics.push(InferenceDiagnostic::ExprInferenceFailed {
-        //            expr
-        //        });
-        // Currently this should never happen because we can only infer integer and
-        // floating-point types which always have a fallback value.
-        panic!("expression failed inferencing");
+    /// Records that inference could not determine the type of `expr`.
+    ///
+    /// See `report_pat_inference_failure` for why this reports rather than
+    /// panics.
+    pub fn report_expr_inference_failure(&mut self, expr: ExprId) {
+        self.diagnostics
+            .push(InferenceDiagnostic::TypeAnnotationNeeded {
+                id: ExprOrPatId::ExprId(expr),
+            });
     }
 }
 
@@ -1505,8 +1602,8 @@ mod diagnostics {
             IncompatibleBranch, InvalidCast, InvalidLhs, InvalidTupleDestructure,
             LiteralOutOfRange, MethodNotFound, MethodNotInScope, MismatchedStructLit,
             MismatchedType, MissingElseBranch, MissingFields, NoFields, NoSuchField,
-            ParameterCountMismatch, PrivateAccess, ReturnMissingExpression, UnresolvedType,
-            UnresolvedValue,
+            ParameterCountMismatch, PrivateAccess, ReturnMissingExpression, TypeAnnotationNeeded,
+            UnresolvedType, UnresolvedValue,
         },
         ids::FunctionId,
         ty::{cast::InvalidCastReason, infer::ExprOrPatId},
@@ -1528,6 +1625,9 @@ mod diagnostics {
         ExpectedFunction {
             id: ExprId,
             found: Ty,
+        },
+        TypeAnnotationNeeded {
+            id: ExprOrPatId,
         },
         ParameterCountMismatch {
             id: ExprId,
@@ -1662,6 +1762,26 @@ mod diagnostics {
                     .unwrap();
 
                     sink.push(UnresolvedValue { file, expr });
+                }
+                InferenceDiagnostic::TypeAnnotationNeeded { id } => {
+                    // Unlike most diagnostics this one can point at a node
+                    // the source map has no entry for -- a compiler-generated
+                    // expression has no syntax to blame -- so a missing entry
+                    // is skipped rather than unwrapped.
+                    let expr = match id {
+                        ExprOrPatId::ExprId(id) => body.expr_syntax(*id).map(|ptr| {
+                            ptr.value
+                                .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr())
+                        }),
+                        ExprOrPatId::PatId(id) => body.pat_syntax(*id).map(|ptr| {
+                            ptr.value
+                                .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr())
+                        }),
+                    };
+
+                    if let Some(expr) = expr {
+                        sink.push(TypeAnnotationNeeded { file, expr });
+                    }
                 }
                 InferenceDiagnostic::UnresolvedType { id } => {
                     let type_ref = body.type_ref_syntax(*id).expect("If this is not found, it must be a type ref generated by the library which should never be unresolved.");
@@ -2033,4 +2153,42 @@ mod diagnostics {
             }
         }
     }
+}
+
+/// Replaces every type parameter belonging to `owner` with the corresponding
+/// entry of `substitution`.
+///
+/// This is instantiation: a declaration's types are written in terms of its
+/// own parameters, and a use site says what those parameters are. Applying
+/// the substitution is what turns the declared `T` into the `i32` the caller
+/// actually wrote.
+///
+/// Parameters belonging to some *other* owner are left alone. That matters
+/// inside a generic function that calls another generic function: the
+/// caller's own `T` is a fixed type from the body's point of view, and
+/// rewriting it with the callee's arguments would confuse two unrelated
+/// parameters that happen to share a name.
+///
+/// An index past the end of `substitution` is also left alone, which happens
+/// when a type is written with fewer arguments than it has parameters. There
+/// is no substitute that would be more correct than the parameter itself,
+/// and silently supplying `Unknown` would turn an arity mistake into a
+/// mismatch reported somewhere else entirely.
+pub(crate) fn substitute_type_params(
+    ty: Ty,
+    owner: &GenericDefId,
+    substitution: &Substitution,
+) -> Ty {
+    if substitution.is_empty() {
+        return ty;
+    }
+
+    ty.fold(&mut |inner| match inner.interned() {
+        TyKind::TypeParam(id, _) if &id.owner == owner => substitution
+            .interned()
+            .get(id.index as usize)
+            .cloned()
+            .unwrap_or(inner),
+        _ => inner,
+    })
 }

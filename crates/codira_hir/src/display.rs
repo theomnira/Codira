@@ -118,7 +118,20 @@ fn write_type_ref(
 ) -> fmt::Result {
     let type_ref = &container[type_ref_id];
     match type_ref {
-        TypeRef::Path(path) => write!(f, "{path}"),
+        TypeRef::Path(path, generic_args) => {
+            write!(f, "{path}")?;
+            if generic_args.is_empty() {
+                return Ok(());
+            }
+            write!(f, "[")?;
+            for (i, arg) in generic_args.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write_type_ref(*arg, container, f)?;
+            }
+            write!(f, "]")
+        }
         TypeRef::Array(element_ty) => {
             write!(f, "[")?;
             write_type_ref(*element_ty, container, f)?;

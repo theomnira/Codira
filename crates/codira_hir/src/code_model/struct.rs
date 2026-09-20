@@ -224,6 +224,15 @@ pub struct StructData {
     pub fields: Arena<FieldData>,
     pub kind: StructKind,
     pub memory_kind: StructMemoryKind,
+
+    /// The names of this struct's generic parameters, in declaration order.
+    ///
+    /// The index into this list *is* the `TypeParamId::index` used to refer
+    /// to the parameter, so the order is load-bearing rather than cosmetic.
+    /// Read from the item tree, the same source `Resolver` uses, so that a
+    /// parameter resolves to the same id from both directions.
+    pub generic_params: Box<[Name]>,
+
     type_ref_map: TypeRefMap,
     type_ref_source_map: TypeRefSourceMap,
 }
@@ -266,6 +275,11 @@ impl StructData {
         };
 
         let visibility = item_tree[strukt.visibility].clone();
+        let generic_params = strukt
+            .generic_params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect();
 
         let (type_ref_map, type_ref_source_map) = type_ref_builder.finish();
         Arc::new(StructData {
@@ -274,6 +288,7 @@ impl StructData {
             fields,
             kind,
             memory_kind,
+            generic_params,
             type_ref_map,
             type_ref_source_map,
         })

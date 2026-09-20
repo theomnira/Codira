@@ -189,6 +189,32 @@ impl Diagnostic for ExpectedFunction {
     }
 }
 
+/// A type that inference could not pin down.
+///
+/// Reached when a generic parameter is left undetermined -- nothing in the
+/// call constrains it, and unlike an integer or float variable there is no
+/// sensible default to fall back on. `let x = List.new();` with no other
+/// use of `x` is the canonical case.
+#[derive(Debug)]
+pub struct TypeAnnotationNeeded {
+    pub file: FileId,
+    pub expr: SyntaxNodePtr,
+}
+
+impl Diagnostic for TypeAnnotationNeeded {
+    fn message(&self) -> String {
+        "type annotations needed: the type of this expression is ambiguous".to_string()
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.expr.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
 #[derive(Debug)]
 pub struct ExportedPrivate {
     pub file: FileId,

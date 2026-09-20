@@ -1058,7 +1058,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             TyKind::Bool => self.gen_binary_op_bool(lhs, rhs, op),
             TyKind::Float(_) => self.gen_binary_op_float(lhs, rhs, op),
             TyKind::Int(ty) => self.gen_binary_op_int(lhs, rhs, op, ty.signedness),
-            TyKind::Struct(s) => {
+            TyKind::Struct(s, _) => {
                 if s.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
                     self.gen_binary_op_value_struct(lhs, rhs, op)
                 } else {

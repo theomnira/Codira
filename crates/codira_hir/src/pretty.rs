@@ -22,7 +22,20 @@ pub(crate) fn print_type_ref<W: Write>(
 ) -> fmt::Result {
     match &type_ref[id] {
         TypeRef::Never => write!(write, "!"),
-        TypeRef::Path(path) => print_path(db, path, write),
+        TypeRef::Path(path, generic_args) => {
+            print_path(db, path, write)?;
+            if generic_args.is_empty() {
+                return Ok(());
+            }
+            write!(write, "[")?;
+            for (i, arg) in generic_args.iter().enumerate() {
+                if i > 0 {
+                    write!(write, ", ")?;
+                }
+                print_type_ref(db, type_ref, *arg, write)?;
+            }
+            write!(write, "]")
+        }
         TypeRef::Array(elem) => {
             write!(write, "[")?;
             print_type_ref(db, type_ref, *elem, write)?;

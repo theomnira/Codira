@@ -36,9 +36,16 @@ mod tests;
 /// A kind of type.
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum TyKind {
-    /// An abstract datatype (structures, tuples, or enumerations)
+    /// A struct type, with the arguments its generic parameters were
+    /// instantiated with.
+    ///
+    /// The substitution is what makes `Box[i32]` and `Box[f64]` different
+    /// types. Without it they were the same `Ty`, so a field of type `T`
+    /// had no concrete type to be read as, and unifying the two succeeded.
+    /// It is empty for a non-generic struct, which is the common case.
+    ///
     /// TODO: Add enumerations
-    Struct(Struct),
+    Struct(Struct, Substitution),
 
     /// The primitive floating point type. Written as `float`.
     Float(FloatTy),
@@ -118,7 +125,7 @@ impl TyKind {
 impl HasVisibility for TyKind {
     fn visibility(&self, db: &dyn HirDatabase) -> Visibility {
         match self {
-            TyKind::Struct(strukt) => strukt.visibility(db),
+            TyKind::Struct(strukt, _) => strukt.visibility(db),
             TyKind::TypeAlias(type_alias) => type_alias.visibility(db),
             TyKind::FnDef(callable_def, _) => callable_def.visibility(db),
             _ => Visibility::Public,
@@ -149,15 +156,24 @@ impl Ty {
         TyKind::Tuple(0, Substitution::empty()).intern()
     }
 
-    /// Constructs a new struct type
+    /// Constructs a new struct type with no generic arguments applied.
+    ///
+    /// Only correct for a struct that has no generic parameters. An
+    /// instantiated generic struct is built by `Ty::struct_with_substitution`,
+    /// which is what the type lowerer uses once it has the arguments.
     pub fn struct_ty(strukt: Struct) -> Ty {
-        TyKind::Struct(strukt).intern()
+        TyKind::Struct(strukt, Substitution::empty()).intern()
+    }
+
+    /// Constructs a struct type with its generic parameters instantiated.
+    pub fn struct_with_substitution(strukt: Struct, substitution: Substitution) -> Ty {
+        TyKind::Struct(strukt, substitution).intern()
     }
 
     /// If this type represents a struct type, returns the type of the struct.
     pub fn as_struct(&self) -> Option<Struct> {
         match self.interned() {
-            TyKind::Struct(s) => Some(*s),
+            TyKind::Struct(s, _) => Some(*s),
             _ => None,
         }
     }
@@ -212,7 +228,7 @@ impl Ty {
     /// This name needs to be unique as it is used to generate a type's `Guid`.
     pub fn guid_string(&self, db: &dyn HirDatabase) -> Option<String> {
         match self.interned() {
-            &TyKind::Struct(s) => {
+            &TyKind::Struct(s, _) => {
                 let name = s.name(db).to_string();
 
                 Some(if s.data(db).memory_kind == StructMemoryKind::Gc {
@@ -278,7 +294,9 @@ impl Ty {
     /// `u32`
     pub fn type_parameters(&self) -> Option<&Substitution> {
         match self.interned() {
-            TyKind::Tuple(_, substs) | TyKind::FnDef(_, substs) => Some(substs),
+            TyKind::Tuple(_, substs) | TyKind::FnDef(_, substs) | TyKind::Struct(_, substs) => {
+                Some(substs)
+            }
             _ => None,
         }
     }
@@ -288,7 +306,9 @@ impl Ty {
     /// `Option<u32>`, this returns the `u32`
     pub fn type_parameters_mut(&mut self) -> Option<&mut Substitution> {
         match self.interned_mut() {
-            TyKind::Tuple(_, substs) | TyKind::FnDef(_, substs) => Some(substs),
+            TyKind::Tuple(_, substs) | TyKind::FnDef(_, substs) | TyKind::Struct(_, substs) => {
+                Some(substs)
+            }
             _ => None,
         }
     }
@@ -296,7 +316,7 @@ impl Ty {
     /// Returns true if the other type has the same type constructor
     pub fn equals_ctor(&self, other: &Ty) -> bool {
         match (self.interned(), other.interned()) {
-            (TyKind::Struct(s1), TyKind::Struct(s2)) => s1 == s2,
+            (TyKind::Struct(s1, _), TyKind::Struct(s2, _)) => s1 == s2,
             (TyKind::Tuple(_, substs1), TyKind::Tuple(_, substs2)) => substs1 == substs2,
             (TyKind::Array(_), TyKind::Array(_)) | (TyKind::Bool, TyKind::Bool) => true,
             (TyKind::Float(f1), TyKind::Float(f2)) => f1 == f2,
@@ -405,7 +425,20 @@ impl FnSig {
 impl HirDisplay for Ty {
     fn hir_fmt(&self, f: &mut HirFormatter<'_, '_>) -> fmt::Result {
         match self.interned() {
-            TyKind::Struct(s) => write!(f, "{}", s.name(f.db)),
+            TyKind::Struct(s, substitution) => {
+                write!(f, "{}", s.name(f.db))?;
+                if substitution.is_empty() {
+                    return Ok(());
+                }
+                write!(f, "[")?;
+                for (i, arg) in substitution.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    arg.hir_fmt(f)?;
+                }
+                write!(f, "]")
+            }
             TyKind::Float(ty) => write!(f, "{ty}"),
             TyKind::Int(ty) => write!(f, "{ty}"),
             TyKind::Bool => write!(f, "bool"),

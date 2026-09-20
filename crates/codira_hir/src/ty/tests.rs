@@ -2259,12 +2259,12 @@ fn heal_contract_alternate_must_be_substitutable() {
 // `func id[T](x: T) -> T` and `struct Box[T] { v: T }` -- the shape most of
 // the stdlib is written in -- were rejected outright.
 //
-// What these pin down is *declaration* and *interior* checking. Instantiating
-// a generic (`Box { v: 7 }` at `T = i64`) additionally needs generic
-// arguments to survive type-ref lowering and a populated `Substitution`;
-// until then an instantiation still reports a mismatch, which
-// `generic_instantiation_is_not_yet_supported` records deliberately rather
-// than leaving undocumented.
+// These pin down *declaration* and *interior* checking. Instantiation --
+// `Box { v: 7 }` at `T = i64` -- is covered by
+// `generic_instantiation_binds_parameters_to_arguments`, and needed two
+// things the declaration cases do not: generic arguments surviving type-ref
+// lowering, and `TyKind::Struct` carrying a `Substitution` so that
+// `Box[i64]` is a different type from `Box[f64]`.
 
 /// A generic function's parameter is a real type in its own signature and
 /// body.
@@ -2347,16 +2347,20 @@ fn infer_generic_parameters_are_scoped_to_their_declaration() {
     ));
 }
 
-/// Instantiating a generic is *not* yet supported, and this records exactly
-/// where it stops: the declaration checks, the use does not.
+/// Instantiating a generic binds its parameters to the arguments the use
+/// site implies.
 ///
-/// Generic arguments are dropped during type-ref lowering (`TypeRef::Path`
-/// carries no arguments), so there is nothing to substitute `T` with at the
-/// use site. Monomorphisation is the follow-up; this test exists so that
-/// landing it turns a documented failure into a visible diff rather than
-/// passing silently.
+/// `Box { v: 7 }` writes no argument list, so the field value is the only
+/// thing that can say what `T` is; the literal takes a fresh inference
+/// variable for `T`, `7` unifies it with `i64` through `main`'s return
+/// type, and `b.v` reads back as `i64` rather than as `T`.
+///
+/// The remaining diagnostic is the code generator's, not the type
+/// checker's: inference is complete here, and monomorphisation -- emitting
+/// a concrete layout per instantiation -- is the separate step still to
+/// come.
 #[test]
-fn generic_instantiation_is_not_yet_supported() {
+fn generic_instantiation_binds_parameters_to_arguments() {
     insta::assert_snapshot!(infer(
         r"
     struct Box[T] { v: T }

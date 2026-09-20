@@ -144,7 +144,15 @@ impl TypeVariableTable {
         let b = self.replace_if_possible(db, b);
         if a.equals_ctor(&b) {
             match (a.interned(), b.interned()) {
-                (TyKind::Tuple(_, a), TyKind::Tuple(_, b)) => self.unify_substitutions(db, a, b),
+                // Struct is here for the same reason as tuple: the
+                // constructors already match, so what is left to check is
+                // that the arguments do. `equals_ctor` compares only the
+                // struct itself, which would let `Box[i32]` and `Box[f64]`
+                // unify.
+                (TyKind::Tuple(_, a), TyKind::Tuple(_, b))
+                | (TyKind::Struct(_, a), TyKind::Struct(_, b)) => {
+                    self.unify_substitutions(db, a, b)
+                }
                 (TyKind::Array(t1), TyKind::Array(t2)) => self.unify_inner(db, t1, t2),
                 _ => true,
             }
@@ -159,6 +167,13 @@ impl TypeVariableTable {
         substs1: &Substitution,
         substs2: &Substitution,
     ) -> bool {
+        // `zip` alone would call a two-argument type and a three-argument
+        // one unified after checking the first two, so the lengths are
+        // compared rather than left to the shorter iterator.
+        if substs1.0.len() != substs2.0.len() {
+            return false;
+        }
+
         substs1
             .0
             .iter()

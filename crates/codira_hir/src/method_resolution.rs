@@ -96,7 +96,7 @@ impl InherentImpls {
                 // Make sure the type is a struct
                 let self_ty = lowered[impl_data.self_ty].clone();
                 let s = match self_ty.interned() {
-                    TyKind::Struct(s) => s,
+                    TyKind::Struct(s, _) => s,
                     TyKind::Unknown => continue,
                     _ => {
                         self.diagnostics
@@ -170,7 +170,7 @@ impl InherentImpls {
     /// Returns all implementations defined for the specified type.
     pub fn for_self_ty(&self, self_ty: &Ty) -> &[ImplId] {
         match self_ty.interned() {
-            TyKind::Struct(s) => self.map.get(&s.id).map_or(&[], AsRef::as_ref),
+            TyKind::Struct(s, _) => self.map.get(&s.id).map_or(&[], AsRef::as_ref),
             _ => &[],
         }
     }
@@ -348,7 +348,7 @@ impl<'db> MethodResolutionCtx<'db> {
     /// Returns the package in which the type was defined.
     fn defining_package(&self) -> Option<PackageId> {
         match self.ty.interned() {
-            TyKind::Struct(s) => {
+            TyKind::Struct(s, _) => {
                 let module = s.module(self.db);
                 Some(module.id.package)
             }

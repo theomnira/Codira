@@ -16,7 +16,7 @@ pub(crate) use self::diagnostics::LowerDiagnostic;
 use crate::{
     code_model::StructKind,
     diagnostics::DiagnosticSink,
-    ids::ImplId,
+    ids::{ImplId, TypeParamId},
     name_resolution::Namespace,
     resolve::{HasResolver, Resolver, TypeNs},
     ty::{FnSig, Substitution, Ty, TyKind},
@@ -93,7 +93,15 @@ impl Ty {
         type_ref: LocalTypeRefId,
     ) -> Ty {
         let res = match &type_ref_map[type_ref] {
-            TypeRef::Path(path) => Ty::from_path(db, resolver, type_ref, path, diagnostics),
+            TypeRef::Path(path, generic_args) => Ty::from_path(
+                db,
+                resolver,
+                type_ref_map,
+                type_ref,
+                path,
+                generic_args,
+                diagnostics,
+            ),
             TypeRef::Error => Some(TyKind::Unknown.intern()),
             TypeRef::Tuple(inner) => {
                 let inner_tys = inner.iter().map(|tr| {
@@ -130,12 +138,15 @@ impl Ty {
         }
     }
 
-    /// Constructs a `Ty` from a path.
+    /// Constructs a `Ty` from a path and the generic arguments applied to it.
+    #[allow(clippy::too_many_arguments)]
     fn from_path(
         db: &dyn HirDatabase,
         resolver: &Resolver,
+        type_ref_map: &TypeRefMap,
         type_ref: LocalTypeRefId,
         path: &Path,
+        generic_args: &[LocalTypeRefId],
         diagnostics: &mut Vec<LowerDiagnostic>,
     ) -> Option<Self> {
         // Find the type namespace and visibility
@@ -152,7 +163,40 @@ impl Ty {
 
         match type_ns {
             TypeNs::SelfType(id) => Some(db.type_for_impl_self(id)),
-            TypeNs::StructId(id) => type_for_def_fn(TypableDef::Struct(id.into())),
+            TypeNs::StructId(id) => {
+                let strukt: Struct = id.into();
+                let base = db.type_for_def(TypableDef::Struct(strukt), Namespace::Types);
+
+                // `Box` with no arguments keeps the identity substitution the
+                // definition supplies, which is what makes a recursive or
+                // self-referential mention inside the definition mean the
+                // same `Box[T]` the definition is about. Only an explicit
+                // argument list replaces it.
+                if generic_args.is_empty() {
+                    return Some(base);
+                }
+
+                let arguments: Substitution = generic_args
+                    .iter()
+                    .map(|arg| {
+                        Self::from_hir_with_diagnostics(
+                            db,
+                            resolver,
+                            type_ref_map,
+                            diagnostics,
+                            *arg,
+                        )
+                    })
+                    .collect();
+
+                // An arity mismatch is a real error, but there is no
+                // diagnostic for it yet and inventing a silent truncation
+                // would be worse: taking the arguments as written keeps the
+                // mistake visible as a type mismatch at the use site rather
+                // than hiding it behind a type that quietly means something
+                // else.
+                Some(Ty::struct_with_substitution(strukt, arguments))
+            }
             TypeNs::TypeAliasId(id) => type_for_def_fn(TypableDef::TypeAlias(id.into())),
             TypeNs::PrimitiveType(id) => type_for_def_fn(TypableDef::PrimitiveType(id.into())),
             // This is the whole point of the generic-parameter scope: `T`
@@ -336,8 +380,35 @@ fn type_for_struct_constructor(db: &dyn HirDatabase, def: Struct) -> Ty {
     }
 }
 
-fn type_for_struct(_db: &dyn HirDatabase, def: Struct) -> Ty {
-    TyKind::Struct(def).intern()
+/// The type of `def` referred to by name alone, with its own parameters
+/// standing in for its generic arguments.
+///
+/// `struct Box[T]` mentioned as bare `Box` means `Box[T]` -- inside its own
+/// definition that is exactly right, and at a use site the caller overwrites
+/// the substitution with the arguments it actually wrote. Returning an empty
+/// substitution instead would make `Box`'s field of type `T` belong to a
+/// `Box` that has no `T`, and nothing downstream could recover it.
+fn type_for_struct(db: &dyn HirDatabase, def: Struct) -> Ty {
+    Ty::struct_with_substitution(def, identity_substitution_for_struct(db, def))
+}
+
+/// A substitution mapping each of `def`'s generic parameters to itself.
+pub(crate) fn identity_substitution_for_struct(db: &dyn HirDatabase, def: Struct) -> Substitution {
+    db.struct_data(def.id)
+        .generic_params
+        .iter()
+        .enumerate()
+        .map(|(index, name)| {
+            TyKind::TypeParam(
+                TypeParamId {
+                    owner: def.id.into(),
+                    index: index as u32,
+                },
+                name.clone(),
+            )
+            .intern()
+        })
+        .collect()
 }
 
 fn type_for_type_alias(_db: &dyn HirDatabase, def: TypeAlias) -> Ty {

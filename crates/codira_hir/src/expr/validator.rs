@@ -208,7 +208,7 @@ impl<'a> TypeAliasValidator<'a> {
             let src = self.type_alias.source(self.db);
 
             let (kind, name) = match target_ty.interned() {
-                TyKind::Struct(s) => ("struct", s.name(self.db)),
+                TyKind::Struct(s, _) => ("struct", s.name(self.db)),
                 TyKind::TypeAlias(a) => ("type alias", a.name(self.db)),
                 _ => unreachable!(),
             };

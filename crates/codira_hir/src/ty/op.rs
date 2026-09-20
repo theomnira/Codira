@@ -29,7 +29,7 @@ pub(super) fn binary_op_rhs_expectation(op: BinaryOp, lhs_ty: Ty) -> Ty {
             TyKind::Int(_)
             | TyKind::Float(_)
             | TyKind::Bool
-            | TyKind::Struct(_)
+            | TyKind::Struct(..)
             | TyKind::Array(_)
             | TyKind::InferenceVar(InferTy::Float(_) | InferTy::Int(_)) => lhs_ty,
             _ => TyKind::Unknown.intern(),

@@ -88,7 +88,12 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
         // definitely does  between compilations. We have to have a way to
         // uniquely identify the `codira_hir::Struct` and  its contents.
 
-        let ty = TyKind::Struct(struct_ty);
+        // The substitution is empty rather than the struct's own
+        // parameters because this key is only ever compared against keys
+        // this same function builds, and code generation rejects a generic
+        // struct before it gets here -- there is no instantiation to
+        // distinguish.
+        let ty = TyKind::Struct(struct_ty, codira_hir::Substitution::empty());
 
         // Get the type from the cache
         if let Some(ir_ty) = self.types.borrow().get(&ty) {
@@ -284,7 +289,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             TyKind::Tuple(_, substs) => Some(self.get_tuple_type(substs).into()),
             TyKind::Float(float_ty) => Some(self.get_float_type(*float_ty).into()),
             TyKind::Int(int_ty) => Some(self.get_int_type(*int_ty).into()),
-            TyKind::Struct(struct_ty) => Some(self.get_struct_reference_type(*struct_ty)),
+            TyKind::Struct(struct_ty, _) => Some(self.get_struct_reference_type(*struct_ty)),
             TyKind::Bool => Some(self.get_bool_type().into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             _ => None,
@@ -300,7 +305,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             TyKind::Tuple(_, substs) => Some(self.get_tuple_type(substs).into()),
             TyKind::Float(float_ty) => Some(self.get_float_type(*float_ty).into()),
             TyKind::Int(int_ty) => Some(self.get_int_type(*int_ty).into()),
-            TyKind::Struct(struct_ty) => Some(self.get_public_struct_reference_type(*struct_ty)),
+            TyKind::Struct(struct_ty, _) => Some(self.get_public_struct_reference_type(*struct_ty)),
             TyKind::Bool => Some(self.get_bool_type().into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             _ => None,
@@ -314,7 +319,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             TyKind::Tuple(_, substs) => Some(self.get_tuple_type(substs).into()),
             TyKind::Float(float_ty) => Some(self.get_float_type(*float_ty).into()),
             TyKind::Int(int_ty) => Some(self.get_int_type(*int_ty).into()),
-            TyKind::Struct(struct_ty) => Some(self.get_struct_type(*struct_ty).into()),
+            TyKind::Struct(struct_ty, _) => Some(self.get_struct_type(*struct_ty).into()),
             TyKind::FnDef(codira_hir::CallableDef::Function(fn_ty), type_params) => {
                 if !type_params.is_empty() {
                     unimplemented!("cannot yet deal with type parameters in functions");
@@ -374,7 +379,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
                 }
             }
             TyKind::Bool => bool::type_id().clone(),
-            &TyKind::Struct(s) => self
+            &TyKind::Struct(s, _) => self
                 .struct_to_type_id
                 .borrow_mut()
                 .entry(s)

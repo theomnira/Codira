@@ -119,11 +119,11 @@ fn get_type_definition_array<'ink>(
 ) -> Value<'ink, *const ir::TypeDefinition<'ink>> {
     types
         .sorted_by_cached_key(|type_info| match type_info.interned() {
-            TyKind::Struct(s) => s.full_name(db),
+            TyKind::Struct(s, _) => s.full_name(db),
             _ => unreachable!("unsupported export type"),
         })
         .map(|type_info| match type_info.interned() {
-            TyKind::Struct(s) => {
+            TyKind::Struct(s, _) => {
                 let inkwell_type = hir_types.get_struct_type(*s);
                 let struct_name = s.full_name(db);
                 ir::TypeDefinition {

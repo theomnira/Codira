@@ -440,7 +440,7 @@ fn ty_to_mir_type(ty: &Ty, layout: &TargetDataLayout) -> Option<TypeId> {
         // declaration is instantiated.
         TyKind::TypeParam(..)
         | TyKind::Tuple(..)
-        | TyKind::Struct(_)
+        | TyKind::Struct(..)
         | TyKind::Array(_)
         | TyKind::FnDef(..)
         | TyKind::Never

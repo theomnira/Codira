@@ -22,7 +22,13 @@ pub type LocalTypeRefId = Idx<TypeRef>;
 /// Compare [`ty::Ty`]
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
 pub enum TypeRef {
-    Path(Path),
+    /// A named type, with the generic arguments applied to it.
+    ///
+    /// The arguments were previously dropped here, which made `Box[i32]`
+    /// and `Box[f64]` the same type reference -- and so the same `Ty` --
+    /// all the way down. Keeping them is what lets a generic type be
+    /// instantiated at all.
+    Path(Path, Vec<LocalTypeRefId>),
     Array(LocalTypeRefId),
     /// `Type?` -- an optional, i.e. a type that may additionally be `nil`.
     Optional(LocalTypeRefId),
@@ -123,10 +129,24 @@ impl TypeRefMapBuilder {
 
         let ptr = AstPtr::new(node);
         let type_ref = match node.kind() {
-            PathType(path) => path
-                .path()
-                .and_then(Path::from_ast)
-                .map_or(TypeRef::Error, TypeRef::Path),
+            PathType(path) => {
+                // Lower the arguments before the path so that their ids are
+                // allocated in source order, which keeps the arena readable
+                // when a lowering bug has to be traced back to a source
+                // position.
+                let generic_args: Vec<LocalTypeRefId> = path
+                    .generic_arg_list()
+                    .map(|list| {
+                        list.generic_args()
+                            .map(|arg| self.alloc_from_node(&arg))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                path.path()
+                    .and_then(Path::from_ast)
+                    .map_or(TypeRef::Error, |p| TypeRef::Path(p, generic_args))
+            }
             NeverType(_) => TypeRef::Never,
             ArrayType(inner) => TypeRef::Array(self.alloc_from_node_opt(inner.type_ref().as_ref())),
             // `(A, B)`. `()` lowers to `Tuple(vec![])`, which is exactly what
@@ -171,7 +191,9 @@ impl TypeRefMapBuilder {
     /// Constructs a new instance for a `Self` type. Returns the Id of the newly
     /// created `TypeRef`.
     pub fn alloc_self(&mut self) -> LocalTypeRefId {
-        self.map.type_refs.alloc(TypeRef::Path(name![Self].into()))
+        self.map
+            .type_refs
+            .alloc(TypeRef::Path(name![Self].into(), Vec::new()))
     }
 
     /// Constructs a new `TypeRef` for the empty tuple type. Returns the Id of
