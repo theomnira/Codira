@@ -28,7 +28,7 @@ pub use codira_target::spec::Target;
 
 pub use crate::{
     db::CompilerDatabase,
-    driver::{Config, DisplayColor, Driver},
+    driver::{CheckDiagnostic, Config, DiagnosticKind, DisplayColor, Driver, FileDiagnostics},
 };
 
 #[derive(Debug, Clone)]

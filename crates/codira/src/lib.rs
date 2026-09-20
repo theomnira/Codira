@@ -9,7 +9,7 @@ mod ops;
 use std::ffi::OsString;
 
 use clap::{Parser, Subcommand};
-use ops::{bindgen, build, init, language_server, new, start};
+use ops::{bindgen, build, check, init, language_server, new, start};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -26,6 +26,9 @@ enum Command {
 
     /// Compiles a local Codira file into a module
     Build(build::Args),
+
+    /// Type-checks Codira sources and reports diagnostics, emitting nothing
+    Check(check::Args),
 
     /// Generate FFI bindings for this project's `@export("C")` functions
     Bindgen(bindgen::Args),
@@ -64,6 +67,7 @@ where
     let args = Args::parse_from(args);
     match args.command {
         Command::Build(args) => build::build(args),
+        Command::Check(args) => check::check(args),
         Command::Bindgen(args) => bindgen::bindgen(args),
         Command::LanguageServer(args) => language_server::language_server(args),
         Command::New(args) => new::new(args),

@@ -49,6 +49,56 @@ use crate::diagnostics_snippets::{emit_hir_diagnostic, emit_syntax_error};
 
 pub const WORKSPACE: SourceRootId = SourceRootId(0);
 
+/// Which compiler phase produced a diagnostic.
+///
+/// Worth distinguishing because the two say different things about the
+/// compiler: a syntax error is a parser that cannot read the language,
+/// while a semantic error is a parser that could and a type system that
+/// then objected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum DiagnosticKind {
+    Syntax,
+    Semantic,
+}
+
+impl std::fmt::Display for DiagnosticKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DiagnosticKind::Syntax => f.write_str("syntax"),
+            DiagnosticKind::Semantic => f.write_str("semantic"),
+        }
+    }
+}
+
+/// A single diagnostic, reduced to what a tool needs to report or compare it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckDiagnostic {
+    pub kind: DiagnosticKind,
+    /// 1-based line number, as a human would cite it.
+    pub line: u32,
+    pub message: String,
+}
+
+/// Every diagnostic belonging to one source file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDiagnostics {
+    /// Path relative to the checked source directory, using `/` separators.
+    pub relative_path: String,
+    pub diagnostics: Vec<CheckDiagnostic>,
+}
+
+impl FileDiagnostics {
+    /// Whether this file is free of diagnostics.
+    pub fn is_clean(&self) -> bool {
+        self.diagnostics.is_empty()
+    }
+
+    /// The number of diagnostics of a given kind.
+    pub fn count_of(&self, kind: DiagnosticKind) -> usize {
+        self.diagnostics.iter().filter(|d| d.kind == kind).count()
+    }
+}
+
 pub struct Driver {
     db: CompilerDatabase,
     out_dir: PathBuf,
@@ -176,6 +226,65 @@ impl Driver {
 
         Ok((package, driver))
     }
+
+    /// Constructs a driver over every `.code` file under `source_directory`,
+    /// with no manifest involved.
+    ///
+    /// `with_package_path` is the build path: it needs a `codira.toml` because
+    /// it is going to *write* a `.codiralib`, and the manifest is what names
+    /// it. Checking writes nothing, so requiring a manifest would only mean
+    /// that a directory of sources -- the standard library being the case
+    /// that matters -- could not be type-checked at all without first being
+    /// dressed up as a package it is not.
+    pub fn with_source_directory<P: AsRef<Path>>(
+        source_directory: P,
+        config: Config,
+    ) -> Result<Driver, anyhow::Error> {
+        let source_directory = source_directory.as_ref();
+        if !source_directory.is_dir() {
+            anyhow::bail!(
+                "'{}' is not a directory of Codira sources",
+                source_directory.display()
+            );
+        }
+
+        // Checking produces no artifacts, so the output directory is never
+        // written to; it only has to be a path the driver can hold.
+        let out_dir = config
+            .out_dir
+            .clone()
+            .unwrap_or_else(|| source_directory.to_path_buf());
+        let mut driver = Driver::with_config(config, out_dir);
+
+        for source_file_path in iter_source_files(source_directory) {
+            let relative_path = compute_source_relative_path(source_directory, &source_file_path)?;
+
+            let file_contents = std::fs::read_to_string(&source_file_path).map_err(|e| {
+                anyhow::anyhow!(
+                    "could not read contents of '{}': {}",
+                    source_file_path.display(),
+                    e
+                )
+            })?;
+
+            let file_id = driver.alloc_file_id(&relative_path)?;
+            driver.db.set_file_text(file_id, Arc::from(file_contents));
+            driver.db.set_file_source_root(file_id, WORKSPACE);
+            driver
+                .source_root
+                .insert_file(file_id, relative_path.clone());
+        }
+
+        driver
+            .db
+            .set_source_root(WORKSPACE, Arc::new(driver.source_root.clone()));
+
+        let mut package_set = PackageSet::default();
+        package_set.add_package(WORKSPACE);
+        driver.db.set_packages(Arc::new(package_set));
+
+        Ok(driver)
+    }
 }
 
 impl Driver {
@@ -287,6 +396,61 @@ impl Driver {
         }
 
         Ok(has_error)
+    }
+
+    /// Collects every diagnostic in the database as structured data, one
+    /// entry per source file, sorted by path.
+    ///
+    /// `emit_diagnostics` renders directly to a writer, which is right for a
+    /// terminal and useless to anything that needs to *count* or *compare*
+    /// diagnostics -- a ratchet test, a CI gate, an IDE. Those callers would
+    /// otherwise have to scrape rendered snippets, so they get the data
+    /// before it becomes text.
+    pub fn collect_diagnostics(&self) -> Vec<FileDiagnostics> {
+        let mut per_file: Vec<FileDiagnostics> = Vec::new();
+
+        for package in codira_hir::Package::all(&self.db) {
+            for module in package.modules(&self.db) {
+                let Some(file_id) = module.file_id(&self.db) else {
+                    continue;
+                };
+
+                let parse = self.db.parse(file_id);
+                let line_index = self.db.line_index(file_id);
+                let relative_path = self.db.file_relative_path(file_id).to_string();
+
+                let mut diagnostics: Vec<CheckDiagnostic> = parse
+                    .errors()
+                    .iter()
+                    .map(|syntax_error| CheckDiagnostic {
+                        kind: DiagnosticKind::Syntax,
+                        line: line_index.line_col(syntax_error.location().offset()).line + 1,
+                        message: syntax_error.to_string(),
+                    })
+                    .collect();
+
+                module.diagnostics(
+                    &self.db,
+                    &mut DiagnosticSink::new(|d| {
+                        diagnostics.push(CheckDiagnostic {
+                            kind: DiagnosticKind::Semantic,
+                            line: line_index.line_col(d.highlight_range().start()).line + 1,
+                            message: d.message(),
+                        });
+                    }),
+                );
+
+                diagnostics.sort_by(|a, b| a.line.cmp(&b.line).then(a.message.cmp(&b.message)));
+
+                per_file.push(FileDiagnostics {
+                    relative_path,
+                    diagnostics,
+                });
+            }
+        }
+
+        per_file.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+        per_file
     }
 
     /// Returns all diagnostics as a human readable string
