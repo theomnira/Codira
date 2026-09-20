@@ -16,8 +16,8 @@
 //   let val = sub.get(0);              // 2
 // =============================================================================
 
-import std.builtin.traits;
-import std.memory.pointer;
+import root.builtin.traits.*;
+import root.memory.pointer.*;
 
 // A borrowed, bounds-checked view into a contiguous sequence of T.
 public struct Slice[T] {

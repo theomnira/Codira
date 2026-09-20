@@ -24,10 +24,10 @@
 // stays resident; see its own comment.
 // =============================================================================
 
-import std.ai.algorithm.functional;
-import std.ai.tensor.buffer;
-import std.ai.tensor.raw;
-import std.ai.tensor.shape;
+import root.ai.algorithm.functional.*;
+import root.ai.tensor.buffer.*;
+import root.ai.tensor.raw.*;
+import root.ai.tensor.shape.*;
 
 // Block edge for the tiled kernel.
 //

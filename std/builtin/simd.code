@@ -17,8 +17,8 @@
 //   let c = a.mul(b);   // [2.0, 4.0, 6.0, 8.0]
 // =============================================================================
 
-import std.builtin.types;
-import std.builtin.traits;
+import root.builtin.types.*;
+import root.builtin.traits.*;
 
 // A fixed-width SIMD vector of `N` elements of type `T`.
 //

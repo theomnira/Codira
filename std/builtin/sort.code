@@ -16,9 +16,9 @@
 // provided for types that implement Comparable.
 // =============================================================================
 
-import std.builtin.traits;
-import std.builtin.slice;
-import std.builtin.swap;
+import root.builtin.traits.*;
+import root.builtin.slice.*;
+import root.builtin.swap.*;
 
 // =============================================================================
 // sort — Unstable introsort

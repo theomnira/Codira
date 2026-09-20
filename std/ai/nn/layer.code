@@ -17,14 +17,14 @@
 // usually for.
 // =============================================================================
 
-import std.ai.algorithm.functional;
-import std.ai.algorithm.reduction;
-import std.ai.linalg.matmul;
-import std.ai.linalg.vector;
-import std.ai.nn.activation;
-import std.ai.tensor.buffer;
-import std.ai.tensor.raw;
-import std.ai.tensor.shape;
+import root.ai.algorithm.functional.*;
+import root.ai.algorithm.reduction.*;
+import root.ai.linalg.matmul.*;
+import root.ai.linalg.vector.*;
+import root.ai.nn.activation.*;
+import root.ai.tensor.buffer.*;
+import root.ai.tensor.raw.*;
+import root.ai.tensor.shape.*;
 
 // =============================================================================
 // Dense

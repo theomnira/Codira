@@ -9,7 +9,7 @@
 // main() when possible — import these only for truly unrecoverable situations.
 // =============================================================================
 
-import std.builtin.types;
+import root.builtin.types.*;
 
 // =============================================================================
 // exit — Graceful termination

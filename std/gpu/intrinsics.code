@@ -21,11 +21,11 @@
 // underlying GPU architecture.
 // =============================================================================
 
-import std.builtin.types;
-import std.builtin.simd;
-import std.sys.info;
-import std.sys.intrinsics;
-import std.gpu.warp;
+import root.builtin.types.*;
+import root.builtin.simd.*;
+import root.sys.info.*;
+import root.sys.intrinsics.*;
+import root.gpu.warp.*;
 
 // =============================================================================
 // CacheOperation

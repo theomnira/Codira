@@ -16,8 +16,8 @@
 // instead of reading off the end of an array when they do not.
 // =============================================================================
 
-import std.ai.tensor.raw;
-import std.ai.tensor.shape;
+import root.ai.tensor.raw.*;
+import root.ai.tensor.shape.*;
 
 // A view of f32 data laid out row-major at `data`.
 public struct TensorF32 {

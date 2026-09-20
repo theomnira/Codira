@@ -20,9 +20,9 @@
 //   // p is freed at end of scope
 // =============================================================================
 
-import std.builtin.traits;
-import std.builtin.types;
-import std.memory.unsafe_pointer;
+import root.builtin.traits.*;
+import root.builtin.types.*;
+import root.memory.unsafe_pointer.*;
 
 // A uniquely-owned, heap-allocated value of type T.
 //

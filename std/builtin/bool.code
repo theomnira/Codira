@@ -26,7 +26,7 @@
 // (agents/RUST_TO_CODIRA_MIGRATION.md §4).
 // =============================================================================
 
-import std.builtin.traits
+import root.builtin.traits.*;
 
 // A single boolean value — either `true` or `false`.
 //

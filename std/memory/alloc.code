@@ -15,8 +15,8 @@
 //   aligned_free(addr, size, align) — synonym for deallocate
 // =============================================================================
 
-import std.builtin.types;
-import std.builtin.error;
+import root.builtin.types.*;
+import root.builtin.error.*;
 
 // =============================================================================
 // Allocator trait

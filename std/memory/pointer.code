@@ -18,8 +18,8 @@
 //   let val = p.read();   // 42
 // =============================================================================
 
-import std.builtin.traits;
-import std.builtin.types;
+import root.builtin.traits.*;
+import root.builtin.types.*;
 
 // A safe, typed pointer to a single value of type T.
 public struct Pointer[T] {

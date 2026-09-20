@@ -18,11 +18,11 @@
 // through hardware-specific optimizations where applicable.
 // =============================================================================
 
-import std.builtin.types;
-import std.sys.info;
-import std.sys.intrinsics;
-import std.gpu.globals;
-import std.gpu.warp;
+import root.builtin.types.*;
+import root.sys.info.*;
+import root.sys.intrinsics.*;
+import root.gpu.globals.*;
+import root.gpu.warp.*;
 
 // =============================================================================
 // Helper functions

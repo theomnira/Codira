@@ -25,7 +25,7 @@
 //    a type that isn't there.
 // =============================================================================
 
-import std.builtin.traits
+import root.builtin.traits.*;
 
 // Represents an error with a message and an optional numeric code.
 public struct Error {

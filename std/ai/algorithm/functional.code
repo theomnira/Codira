@@ -42,9 +42,9 @@
 // element is about 6.4 ns.
 // =============================================================================
 
-import std.ai.tensor.buffer;
-import std.ai.tensor.raw;
-import std.ai.tensor.shape;
+import root.ai.tensor.buffer.*;
+import root.ai.tensor.raw.*;
+import root.ai.tensor.shape.*;
 
 // =============================================================================
 // Tiling

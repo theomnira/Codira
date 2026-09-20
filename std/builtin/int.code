@@ -16,8 +16,8 @@
 //                 Representable, Defaultable, Arithmetic
 // =============================================================================
 
-import std.builtin.traits;
-import std.builtin.types;
+import root.builtin.traits.*;
+import root.builtin.types.*;
 
 // Machine-width signed integer.
 public struct Int {

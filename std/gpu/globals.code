@@ -16,9 +16,9 @@
 // compatibility.
 // =============================================================================
 
-import std.builtin.types;
-import std.sys.info;
-import std.gpu.host_info;
+import root.builtin.types.*;
+import root.sys.info.*;
+import root.gpu.host_info.*;
 
 // =============================================================================
 // WARP_SIZE

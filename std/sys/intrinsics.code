@@ -21,9 +21,9 @@
 //   - Math accelerators
 // =============================================================================
 
-import std.builtin.types;
-import std.builtin.simd;
-import std.memory.pointer;
+import root.builtin.types.*;
+import root.builtin.simd.*;
+import root.memory.pointer.*;
 
 // =============================================================================
 // llvm_intrinsic — Generic LLVM intrinsic invocation

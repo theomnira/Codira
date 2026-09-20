@@ -13,8 +13,8 @@
 // characteristics.
 // =============================================================================
 
-import std.builtin.types;
-import std.math;
+import root.builtin.types.*;
+import root.math.math.*;
 
 // Common multiplier constants.
 public let KB: usize = 1024;

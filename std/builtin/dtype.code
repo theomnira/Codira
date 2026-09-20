@@ -19,8 +19,8 @@
 // code generator can pattern-match it.
 // =============================================================================
 
-import std.builtin.types;
-import std.collections.optional;
+import root.builtin.types.*;
+import root.collections.optional.*;
 
 // =============================================================================
 // DType

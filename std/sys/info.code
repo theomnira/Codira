@@ -17,7 +17,7 @@
 //   cache_line_size(), total_memory()
 // =============================================================================
 
-import std.builtin.types;
+import root.builtin.types.*;
 
 // =============================================================================
 // Operating system detection (compile-time constants)

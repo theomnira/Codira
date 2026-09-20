@@ -22,7 +22,7 @@
 //    finding). Replaced with `__intrinsic_cast[T](value)`.
 // =============================================================================
 
-import std.builtin.traits
+import root.builtin.traits.*;
 
 // =============================================================================
 // swap — Exchange the values behind two pointers

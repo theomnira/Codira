@@ -26,7 +26,7 @@
 // codebase's other `__intrinsic_*` compiler-magic calls.
 // =============================================================================
 
-import std.builtin.traits
+import root.builtin.traits.*;
 
 // The result of stepping a range's iterator: either a value plus `true`,
 // or (when the range is exhausted) `0`/`false`.

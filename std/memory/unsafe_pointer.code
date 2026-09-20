@@ -16,8 +16,8 @@
 // For everyday code, prefer Pointer[T] which provides safety checks.
 // =============================================================================
 
-import std.builtin.types;
-import std.builtin.traits;
+import root.builtin.types.*;
+import root.builtin.traits.*;
 
 // A raw, unchecked pointer to a value of type T.
 // No safety guarantees.  All operations are the caller's responsibility.

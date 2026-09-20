@@ -45,7 +45,7 @@
 //    with the "no turbofish" rule already documented for other positions.
 // =============================================================================
 
-import std.builtin.traits
+import root.builtin.traits.*;
 
 // =============================================================================
 // Tuple2 — pair
