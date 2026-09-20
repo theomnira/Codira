@@ -6,7 +6,7 @@
 // Internal node: raw heap buffer managed by the List itself.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class RawBuf[T] {
+public class RawBuf[T] {
     ptr: Pointer[T],
     cap: usize,
 }
@@ -15,7 +15,7 @@ class RawBuf[T] {
 // List[T] — a generic, dynamically-resizable array.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class List[T] {
+public class List[T] {
     buf:  RawBuf[T],
     len:  usize,
 }
@@ -379,7 +379,7 @@ public func any[T](this: List[T], pred: func(T) -> bool) -> bool {
 // ── Iteration ────────────────────────────────────────────────────────────────
 
 /// Iterator state for List[T].
-struct ListIter[T] {
+public struct ListIter[T] {
     list: List[T],
     pos:  usize,
 }

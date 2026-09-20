@@ -7,7 +7,7 @@
 // Counter[T]
 // ─────────────────────────────────────────────────────────────────────────────
 
-class Counter[T] {
+public class Counter[T] {
     counts: Dict[T, usize],
 }
 
@@ -104,7 +104,7 @@ public func contains[T](this: Counter[T], key: T) -> bool {
 // ── Most common ──────────────────────────────────────────────────────────────
 
 /// An element-count pair for ranking.
-struct CountEntry[T] {
+public struct CountEntry[T] {
     element: T,
     count:   usize,
 }

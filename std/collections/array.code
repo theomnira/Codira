@@ -8,7 +8,7 @@
 // N is a compile-time constant representing the number of elements.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct InlineArray[T, N: usize] {
+public struct InlineArray[T, N: usize] {
     data: FixedBuf[T, N],   // compiler-intrinsic fixed buffer
 }
 
@@ -146,7 +146,7 @@ public func reduce[T, U, N: usize](this: InlineArray[T, N], init: U, f: func(U, 
 
 // ── Iteration ────────────────────────────────────────────────────────────────
 
-struct InlineArrayIter[T, N: usize] {
+public struct InlineArrayIter[T, N: usize] {
     arr: InlineArray[T, N],
     pos: usize,
 }

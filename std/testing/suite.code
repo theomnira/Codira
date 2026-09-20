@@ -196,7 +196,7 @@ func uint_to_string(value: u64) -> String {
     return result;
 }
 
-struct CatchResult {
+public struct CatchResult {
     did_panic: bool,
     panic_message: String,
 }

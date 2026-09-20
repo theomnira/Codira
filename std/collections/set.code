@@ -6,7 +6,7 @@
 // SetEntry — internal bucket for the hash set.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct SetEntry[T] {
+public struct SetEntry[T] {
     value: T,
     hash:  u64,
     state: u8,   // 0 = empty, 1 = occupied, 2 = tombstone
@@ -20,7 +20,7 @@ let SET_TOMBSTONE: u8 = 2;
 // Set[T] — generic hash set.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class Set[T] {
+public class Set[T] {
     buckets:    Pointer[SetEntry[T]],
     num_buckets: usize,
     len:         usize,
@@ -307,7 +307,7 @@ public func to_list[T](this: Set[T]) -> List[T] {
 
 // ── Iteration ────────────────────────────────────────────────────────────────
 
-struct SetIter[T] {
+public struct SetIter[T] {
     set: Set[T],
     pos: usize,
 }

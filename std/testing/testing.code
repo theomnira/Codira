@@ -210,7 +210,7 @@ public func assert_contains(haystack: String, needle: String) {
 // ---------------------------------------------------------------------------
 // CatchResult – internal struct for assert_raises.
 // ---------------------------------------------------------------------------
-struct CatchResult {
+public struct CatchResult {
     did_panic: bool,
     panic_message: String,
 }

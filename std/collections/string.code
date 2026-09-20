@@ -6,7 +6,7 @@
 // String — heap-allocated, growable UTF-8 string.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class String {
+public class String {
     data: Pointer[u8],
     len:  usize,        // byte length (not code-point count)
     cap:  usize,

@@ -7,7 +7,7 @@
 // Span[T] — immutable view.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct Span[T] {
+public struct Span[T] {
     ptr: Pointer[T],
     len: usize,
 }
@@ -16,7 +16,7 @@ struct Span[T] {
 // MutableSpan[T] — mutable view.
 // ─────────────────────────────────────────────────────────────────────────────
 
-struct MutableSpan[T] {
+public struct MutableSpan[T] {
     ptr: Pointer[T],
     len: usize,
 }
@@ -178,7 +178,7 @@ public func span_copy_into[T](src: Span[T], dst: MutableSpan[T]) {
 
 // ── Iteration ────────────────────────────────────────────────────────────────
 
-struct SpanIter[T] {
+public struct SpanIter[T] {
     span: Span[T],
     pos:  usize,
 }
