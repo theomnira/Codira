@@ -19,7 +19,7 @@ use crate::{
         TypeAlias,
     },
     name_resolution::ReachedFixedPoint,
-    package_defs::diagnostics::DefDiagnostic,
+    package_defs::{diagnostics::DefDiagnostic, PRELUDE_MODULE_NAME},
     path::ImportAlias,
     visibility::RawVisibility,
     DefDatabase, InFile, Name, Path, PerNs, Visibility,
@@ -113,6 +113,7 @@ pub(super) fn collect(db: &dyn DefDatabase, package_id: PackageId) -> PackageDef
             id: package_id,
             modules: ArenaMap::default(),
             module_tree: db.module_tree(package_id),
+            prelude: None,
             diagnostics: Vec::default(),
         },
         unresolved_imports: Vec::default(),
@@ -208,6 +209,20 @@ impl DefCollector<'_> {
         // every module, all local definitions are accessible. This is the
         // starting point for the import resolution.
         collect_modules_recursive(self, module_tree.root, None);
+
+        // Find the prelude before resolving imports, not after: an import
+        // path's first segment goes through the same unqualified lookup as
+        // any other name, so a package whose prelude is only registered
+        // afterwards would resolve its own imports under different rules
+        // than the code that follows them.
+        //
+        // Its *contents* are still empty at this point -- they arrive via
+        // the prelude's own imports during the loop below -- but the
+        // fixed-point iteration is what that loop is for.
+        self.package_defs.prelude = module_tree[module_tree.root]
+            .children
+            .get(PRELUDE_MODULE_NAME)
+            .copied();
 
         // Now, as long as we have unresolved imports, try to resolve them, or part of
         // them.

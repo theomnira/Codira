@@ -31,7 +31,7 @@ import root.builtin.traits.*;
 // Exchange the values behind two pointers.
 //
 // Both pointers must be valid and non-overlapping.
-public func swap[T](a: Pointer[T], b: Pointer[T]) -> void {
+public func swap[T](a: Pointer[T], b: Pointer[T]) {
     let tmp = a.read()
     a.write(b.read())
     b.write(tmp)
@@ -43,7 +43,7 @@ public func swap[T](a: Pointer[T], b: Pointer[T]) -> void {
 
 // Swap elements at indices `i` and `j` within a mutable slice.
 // Panics if either index is out of bounds.
-public func swap_elements[T](data: Slice[T], i: usize, j: usize) -> void {
+public func swap_elements[T](data: Slice[T], i: usize, j: usize) {
     if i >= data.len() {
         __panic("swap_elements: index i out of bounds")
     }
@@ -67,7 +67,7 @@ public func swap_elements[T](data: Slice[T], i: usize, j: usize) -> void {
 //
 // The caller MUST guarantee that [a, a+count) and [b, b+count) do not
 // overlap.  Behavior is undefined if they do.
-public func swap_nonoverlapping[T](a: Pointer[T], b: Pointer[T], count: usize) -> void {
+public func swap_nonoverlapping[T](a: Pointer[T], b: Pointer[T], count: usize) {
     var i: usize = 0
     while i < count {
         let pa = a.offset(__intrinsic_cast(i))

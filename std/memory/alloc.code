@@ -31,7 +31,7 @@ public trait Allocator {
     func allocate(self, size: usize, align: usize) -> usize;
 
     // Deallocate a block previously allocated with the same size/align.
-    func deallocate(self, addr: usize, size: usize, align: usize) -> void;
+    func deallocate(self, addr: usize, size: usize, align: usize) ;
 
     // Resize a block.  May move it.  Returns the (possibly new) address.
     // If the block cannot be grown in place, a new block is allocated,
@@ -151,7 +151,7 @@ extend DefaultAllocator {
 
 // Free a block.
 extend DefaultAllocator {
-    public func deallocate(self, addr: usize, size: usize, align: usize) -> void {
+    public func deallocate(self, addr: usize, size: usize, align: usize) {
         if addr == 0 {
             return;
         }
@@ -205,7 +205,7 @@ public func allocate(size: usize, align: usize) -> usize {
 }
 
 // Free a block.
-public func deallocate(addr: usize, size: usize, align: usize) -> void {
+public func deallocate(addr: usize, size: usize, align: usize) {
     _global_allocator.deallocate(addr, size, align);
 }
 
@@ -220,7 +220,7 @@ public func aligned_alloc(size: usize, align: usize) -> usize {
 }
 
 // Convenience alias.
-public func aligned_free(addr: usize, size: usize, align: usize) -> void {
+public func aligned_free(addr: usize, size: usize, align: usize) {
     deallocate(addr, size, align);
 }
 
@@ -239,13 +239,13 @@ public func alloc_array[T](count: usize) -> Pointer[T] {
 }
 
 // Free a single T allocation.
-public func free_one[T](ptr: Pointer[T]) -> void {
+public func free_one[T](ptr: Pointer[T]) {
     let layout = Layout.of();
     deallocate(ptr.address(), layout.size, layout.align);
 }
 
 // Free an array allocation.
-public func free_array[T](ptr: Pointer[T], count: usize) -> void {
+public func free_array[T](ptr: Pointer[T], count: usize) {
     let layout = Layout.array(count);
     deallocate(ptr.address(), layout.size, layout.align);
 }

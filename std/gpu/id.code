@@ -29,7 +29,7 @@ import root.gpu.warp.*;
 // =============================================================================
 
 // Check that the dimension is either x, y, or z.
-public func _verify_xyz(dim: StringLiteral) -> void {
+public func _verify_xyz(dim: StringLiteral) {
     if dim != "x" {
         if dim != "y" {
             if dim != "z" {

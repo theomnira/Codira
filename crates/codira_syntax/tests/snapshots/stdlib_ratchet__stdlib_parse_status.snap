@@ -1,10 +1,9 @@
 ---
 source: crates/codira_syntax/tests/stdlib_ratchet.rs
-assertion_line: 94
 expression: summary
 snapshot_kind: text
 ---
-74 of 74 std files parse
+77 of 77 std files parse
 
 ok    std/ai/algorithm/functional.code
 ok    std/ai/algorithm/reduction.code
@@ -28,9 +27,11 @@ ok    std/builtin/range.code
 ok    std/builtin/simd.code
 ok    std/builtin/slice.code
 ok    std/builtin/sort.code
+ok    std/builtin/string_literal.code
 ok    std/builtin/swap.code
 ok    std/builtin/traits.code
 ok    std/builtin/tuple.code
+ok    std/builtin/type_aliases.code
 ok    std/builtin/types.code
 ok    std/collections/array.code
 ok    std/collections/binary_heap.code
@@ -72,6 +73,7 @@ ok    std/os/os.code
 ok    std/os/path.code
 ok    std/os/process.code
 ok    std/pathlib/path.code
+ok    std/prelude.code
 ok    std/random/random.code
 ok    std/sys/arg.code
 ok    std/sys/info.code

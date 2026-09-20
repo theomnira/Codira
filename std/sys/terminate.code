@@ -104,21 +104,21 @@ public func panic_with_context(context: String, message: String) -> Never {
 // Assert that a condition is true.  If false, panic with a message.
 //
 //   assert(index < len, "index out of bounds");
-public func assert(condition: bool, message: String) -> void {
+public func assert(condition: bool, message: String) {
     if !condition {
         __panic("assertion failed: " + message);
     }
 }
 
 // Assert that a condition is true with no custom message.
-public func assert(condition: bool) -> void {
+public func assert(condition: bool) {
     if !condition {
         __panic("assertion failed");
     }
 }
 
 // Debug-only assertion: compiled out in release builds.
-public func debug_assert(condition: bool, message: String) -> void {
+public func debug_assert(condition: bool, message: String) {
     if __intrinsic_is_debug() {
         if !condition {
             __panic("debug assertion failed: " + message);
@@ -127,7 +127,7 @@ public func debug_assert(condition: bool, message: String) -> void {
 }
 
 // Debug-only assertion with no custom message.
-public func debug_assert(condition: bool) -> void {
+public func debug_assert(condition: bool) {
     if __intrinsic_is_debug() {
         if !condition {
             __panic("debug assertion failed");
@@ -136,7 +136,7 @@ public func debug_assert(condition: bool) -> void {
 }
 
 // Assert that two values are equal.
-public func assert_eq[T: EqualityComparable + Stringable](a: T, b: T) -> void {
+public func assert_eq[T: EqualityComparable + Stringable](a: T, b: T) {
     if !(a == b) {
         __panic("assertion failed: expected "
             + a.to_string()
@@ -146,7 +146,7 @@ public func assert_eq[T: EqualityComparable + Stringable](a: T, b: T) -> void {
 }
 
 // Assert that two values are not equal.
-public func assert_ne[T: EqualityComparable + Stringable](a: T, b: T) -> void {
+public func assert_ne[T: EqualityComparable + Stringable](a: T, b: T) {
     if a == b {
         __panic("assertion failed: expected "
             + a.to_string()
@@ -156,7 +156,7 @@ public func assert_ne[T: EqualityComparable + Stringable](a: T, b: T) -> void {
 }
 
 // Assert that `a < b`.
-public func assert_lt[T: Comparable + Stringable](a: T, b: T) -> void {
+public func assert_lt[T: Comparable + Stringable](a: T, b: T) {
     if !(a < b) {
         __panic("assertion failed: expected "
             + a.to_string()
@@ -166,7 +166,7 @@ public func assert_lt[T: Comparable + Stringable](a: T, b: T) -> void {
 }
 
 // Assert that `a <= b`.
-public func assert_le[T: Comparable + Stringable](a: T, b: T) -> void {
+public func assert_le[T: Comparable + Stringable](a: T, b: T) {
     if !(a <= b) {
         __panic("assertion failed: expected "
             + a.to_string()

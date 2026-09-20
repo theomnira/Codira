@@ -399,14 +399,14 @@ extend SIMD[T, N] {
 
 // Store all N lanes to contiguous, aligned memory.
 extend SIMD[T, N] {
-    public func store(self, ptr: Pointer[T]) -> void {
+    public func store(self, ptr: Pointer[T]) {
         __intrinsic_simd_store(self, ptr);
     }
 }
 
 // Store to potentially unaligned memory.
 extend SIMD[T, N] {
-    public func store_unaligned(self, ptr: Pointer[T]) -> void {
+    public func store_unaligned(self, ptr: Pointer[T]) {
         __intrinsic_simd_store_unaligned(self, ptr);
     }
 }

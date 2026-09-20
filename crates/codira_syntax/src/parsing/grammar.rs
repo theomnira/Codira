@@ -160,7 +160,7 @@ fn name_ref_or_index(p: &mut Parser<'_>) {
     m.complete(p, NAME_REF);
 }
 
-fn opt_visibility(p: &mut Parser<'_>) -> bool {
+pub(super) fn opt_visibility(p: &mut Parser<'_>) -> bool {
     match p.current() {
         T![public] | T![internal] => {
             let m = p.start();

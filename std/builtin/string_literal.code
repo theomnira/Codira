@@ -1,0 +1,138 @@
+// =============================================================================
+// std/builtin/string_literal.code — The type of a `"..."` literal
+// =============================================================================
+//
+// Codira has neither string-valued generic parameters nor a runtime string
+// representation yet -- a string literal currently reaches the code
+// generator with nothing to lower to. Carrying the literal's text as a
+// compile-time parameter, so that concatenation and comparison happen
+// entirely during elaboration, is therefore not yet expressible.
+//
+// So this models the one thing that *is* representable today and that the
+// working interop path already relies on: a literal is static bytes
+// somewhere in the image, and a pointer plus a length names them. The
+// `extern "codira-intrinsic"` loads in `std/ai/tensor/raw.code` can read
+// through exactly such an address, which means the byte-level operations
+// below are real rather than placeholders.
+//
+// What is missing, precisely: the compiler does not yet *produce* one of
+// these from a `"..."` token. Until it does, a `StringLiteral` can be
+// described and passed around, but only constructed from an address a caller
+// already has.
+// =============================================================================
+
+import root.builtin.types.*;
+import root.ai.tensor.raw.*;
+
+// A string literal: static, immutable UTF-8 bytes in the program image.
+public struct StringLiteral {
+    // Address of the first byte.
+    public data: usize,
+    // Length in bytes, not in codepoints.
+    public length: usize,
+}
+
+// =============================================================================
+// Construction
+// =============================================================================
+
+// Names the bytes at `data` of length `length` as a literal.
+//
+// Unsafe in the same way the load intrinsics are: nothing checks that the
+// address is mapped or that it stays alive. It exists so a caller holding a
+// static buffer -- from the host runtime, or from an `extern` constant -- can
+// hand it to code that expects a literal.
+public func string_literal_from_raw(data: usize, length: usize) -> StringLiteral {
+    return StringLiteral { data: data, length: length };
+}
+
+// The empty literal.
+public func string_literal_empty() -> StringLiteral {
+    return StringLiteral { data: 0, length: 0 };
+}
+
+// =============================================================================
+// Queries
+// =============================================================================
+
+// Length in bytes.
+public func string_literal_len(lit: StringLiteral) -> usize {
+    return lit.length;
+}
+
+// Whether the literal has no bytes.
+public func string_literal_is_empty(lit: StringLiteral) -> bool {
+    return lit.length == 0;
+}
+
+// The byte at `index`, or 0 when `index` is past the end.
+//
+// Returning 0 rather than panicking because there is no panic to call here
+// yet: `__panic` does not resolve, and a silent out-of-bounds *read* through
+// the load intrinsic would be far worse than a defined answer. This becomes
+// a bounds-check panic once the runtime has one.
+public func string_literal_byte(lit: StringLiteral, index: usize) -> u8 {
+    if index >= lit.length {
+        return 0;
+    }
+    return load_u8(lit.data + index);
+}
+
+// =============================================================================
+// Comparison
+// =============================================================================
+//
+// Byte-wise, not collation-aware: two literals are equal when they are the
+// same bytes.
+
+// Whether two literals hold the same bytes.
+public func string_literal_eq(a: StringLiteral, b: StringLiteral) -> bool {
+    if a.length != b.length {
+        return false;
+    }
+    let mut i: usize = 0;
+    while i < a.length {
+        if load_u8(a.data + i) != load_u8(b.data + i) {
+            return false;
+        }
+        i = i + 1;
+    }
+    return true;
+}
+
+// Whether two literals differ.
+public func string_literal_ne(a: StringLiteral, b: StringLiteral) -> bool {
+    return !string_literal_eq(a, b);
+}
+
+// Lexicographic ordering by byte value: negative if `a` sorts first, zero if
+// equal, positive if `b` sorts first.
+//
+// A shorter literal that is a prefix of a longer one sorts first, which is
+// why the length comparison happens after the byte loop rather than before.
+public func string_literal_cmp(a: StringLiteral, b: StringLiteral) -> isize {
+    let mut i: usize = 0;
+    while i < a.length && i < b.length {
+        let left = load_u8(a.data + i);
+        let right = load_u8(b.data + i);
+        if left < right {
+            return -1;
+        }
+        if left > right {
+            return 1;
+        }
+        i = i + 1;
+    }
+    if a.length < b.length {
+        return -1;
+    }
+    if a.length > b.length {
+        return 1;
+    }
+    return 0;
+}
+
+// Whether `a` sorts before `b`.
+public func string_literal_lt(a: StringLiteral, b: StringLiteral) -> bool {
+    return string_literal_cmp(a, b) < 0;
+}

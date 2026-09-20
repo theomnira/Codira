@@ -1,0 +1,17 @@
+// =============================================================================
+// std/builtin/type_aliases.code — Types that name something about types
+// =============================================================================
+//
+// These are built-ins in the sense that the prelude re-exports them, so no
+// module has to import them.
+// =============================================================================
+
+// A type that can never have an instance constructed, used as the result of
+// a function that never returns.
+//
+// This is an ordinary enum with no variants: it is genuinely impossible to
+// construct, which is the property callers rely on when they write
+// `-> Never`. What the compiler does not yet do is *use* that fact -- it
+// draws no conclusion about the code following such a call being
+// unreachable. The inference is the part still missing, not the type.
+public enum Never {}

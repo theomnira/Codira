@@ -104,7 +104,7 @@ extend UnsafePointer[T] {
 // Store a value through this pointer.
 // UB if the pointer is null, dangling, or misaligned.
 extend UnsafePointer[T] {
-    public func store(self, value: T) -> void {
+    public func store(self, value: T) {
         __intrinsic_store(self._addr, value);
     }
 }
@@ -119,7 +119,7 @@ extend UnsafePointer[T] {
 
 // Store at an element offset.
 extend UnsafePointer[T] {
-    public func store_element(self, index: usize, value: T) -> void {
+    public func store_element(self, index: usize, value: T) {
         let addr = self._addr + index * __intrinsic_sizeof();
         __intrinsic_store(addr, value);
     }
@@ -134,7 +134,7 @@ extend UnsafePointer[T] {
 
 // Volatile store.
 extend UnsafePointer[T] {
-    public func volatile_store(self, value: T) -> void {
+    public func volatile_store(self, value: T) {
         __intrinsic_volatile_store(self._addr, value);
     }
 }
@@ -186,14 +186,14 @@ extend UnsafePointer[T] {
 // Initialize the memory at this pointer by moving `value` in.
 // Call this exactly once on uninitialized memory.
 extend UnsafePointer[T] {
-    public func init_pointee_move(self, value: T) -> void {
+    public func init_pointee_move(self, value: T) {
         __intrinsic_store(self._addr, value);
     }
 }
 
 // Initialize by copying from `value`.
 extend UnsafePointer[T] {
-    public func init_pointee_copy(self, value: T) -> void {
+    public func init_pointee_copy(self, value: T) {
         __intrinsic_store(self._addr, value);
     }
 }
@@ -201,7 +201,7 @@ extend UnsafePointer[T] {
 // Explicitly destroy the pointee (call its destructor if it has one).
 // After this call, the memory is considered uninitialized.
 extend UnsafePointer[T] {
-    public func destroy_pointee(self) -> void {
+    public func destroy_pointee(self) {
         __intrinsic_destroy(self._addr);
     }
 }
@@ -221,7 +221,7 @@ extend UnsafePointer[T] {
 
 // Copy `count` elements from `src` to `self`.  Regions may overlap.
 extend UnsafePointer[T] {
-    public func move_from(self, src: UnsafePointer[T], count: usize) -> void {
+    public func move_from(self, src: UnsafePointer[T], count: usize) {
         let bytes = count * __intrinsic_sizeof();
         __intrinsic_memmove(self._addr, src._addr, bytes);
     }
@@ -229,7 +229,7 @@ extend UnsafePointer[T] {
 
 // Copy `count` elements from `src` to `self`.  Regions must NOT overlap.
 extend UnsafePointer[T] {
-    public func copy_from(self, src: UnsafePointer[T], count: usize) -> void {
+    public func copy_from(self, src: UnsafePointer[T], count: usize) {
         let bytes = count * __intrinsic_sizeof();
         __intrinsic_memcpy(self._addr, src._addr, bytes);
     }
@@ -237,7 +237,7 @@ extend UnsafePointer[T] {
 
 // Set `count` elements to zero bytes.
 extend UnsafePointer[T] {
-    public func zero_memory(self, count: usize) -> void {
+    public func zero_memory(self, count: usize) {
         let bytes = count * __intrinsic_sizeof();
         __intrinsic_memset(self._addr, 0, bytes);
     }
@@ -250,7 +250,7 @@ extend UnsafePointer[T] {
 // Free the memory.  `count` must match the original allocation size.
 // After this call, the pointer is dangling.
 extend UnsafePointer[T] {
-    public func free(self, count: usize) -> void {
+    public func free(self, count: usize) {
         let size = count * __intrinsic_sizeof();
         let align = __intrinsic_alignof();
         __intrinsic_dealloc(self._addr, size, align);
@@ -259,7 +259,7 @@ extend UnsafePointer[T] {
 
 // Free a single element allocation.
 extend UnsafePointer[T] {
-    public func free_one(self) -> void {
+    public func free_one(self) {
         self.free(1);
     }
 }

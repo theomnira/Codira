@@ -150,7 +150,7 @@ extend Error {
     }
 
     // Hashable
-    func hash(self, hasher: Hasher) -> void {
+    func hash(self, hasher: Hasher) {
         hasher.write_i32(self.code)
         hasher.write_string(self.message)
     }
@@ -159,12 +159,12 @@ extend Error {
 
     // Raise this error as a panic, immediately terminating the program.
     // (See migration note above re: dropping the `!` never-return type.)
-    func panic(self) -> void {
+    func panic(self) {
         __panic(self.to_string())
     }
 
     // Raise this error as a panic with an additional context message.
-    func panic_with_context(self, context: String) -> void {
+    func panic_with_context(self, context: String) {
         __panic(context + ": " + self.to_string())
     }
 }

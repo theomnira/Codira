@@ -62,7 +62,7 @@ public trait Defaultable {
 // A type that has deterministic cleanup logic.
 public trait Destructible {
     // Called when the value goes out of scope.
-    func destroy(self) -> void;
+    func destroy(self) ;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,7 +121,7 @@ public trait Comparable: EqualityComparable {
 // A type that can produce a deterministic hash value.
 public trait Hashable {
     // Compute a hash of `self` and fold it into the given hasher state.
-    func hash(self, hasher: Hasher) -> void;
+    func hash(self, hasher: Hasher) ;
 
     // Convenience: return a standalone u64 hash.
     func hash_value(self) -> u64 {
@@ -152,13 +152,13 @@ public trait Representable {
 // A type that can write its textual form into an output stream.
 public trait Writable {
     // Write `self` into `writer`.
-    func write_to(self, writer: Writer) -> void;
+    func write_to(self, writer: Writer) ;
 }
 
 // A type that supports format-string interpolation with a format spec.
 public trait Formattable {
     // Format `self` according to `spec` and write into `formatter`.
-    func format(self, spec: StringSlice, formatter: Formatter) -> void;
+    func format(self, spec: StringSlice, formatter: Formatter) ;
 }
 
 // ---------------------------------------------------------------------------
@@ -181,7 +181,7 @@ public trait Indexable[Index, Element] {
     func get(self, index: Index) -> Element;
 
     // Set the element at the given index.
-    func set(self, index: Index, value: Element) -> void;
+    func set(self, index: Index, value: Element) ;
 }
 
 // A type that can produce an iterator over its elements.

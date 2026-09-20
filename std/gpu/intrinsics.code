@@ -119,7 +119,7 @@ public func ldg[T](x: usize) -> T {
 //
 // Hints to the system to increase per-thread registers owned by the
 // executing warp.
-public func warpgroup_reg_alloc(count: i32) -> void {
+public func warpgroup_reg_alloc(count: i32) {
     if count % 8 != 0 {
         __panic("count argument to warpgroup_reg_alloc must be a multiple of 8");
     }
@@ -135,7 +135,7 @@ public func warpgroup_reg_alloc(count: i32) -> void {
 }
 
 // Deallocates additional registers for the executing warp group.
-public func warpgroup_reg_dealloc(count: i32) -> void {
+public func warpgroup_reg_dealloc(count: i32) {
     if count % 8 != 0 {
         __panic("count argument to warpgroup_reg_dealloc must be a multiple of 8");
     }
@@ -316,7 +316,7 @@ extend Scope {
 //
 // Acts as a memory fence/barrier that ensures all memory operations issued
 // before the fence are visible to other threads within the specified scope.
-public func threadfence(scope: i32) -> void {
+public func threadfence(scope: i32) {
     if scope != SCOPE_GPU {
         if scope != SCOPE_BLOCK {
             if scope != SCOPE_SYSTEM {
@@ -408,7 +408,7 @@ extend AMDBufferResource {
         vector_offset: i32,
         scalar_offset: i32,
         val: T,
-    ) -> void {
+    ) {
         if !info.is_amd_gpu() {
             __panic("buffer_store is only applicable on AMDGPU hardware.");
         }

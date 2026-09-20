@@ -31,37 +31,37 @@
 
 extern "codira-intrinsic" {
     // Read one value of the named width at a byte address.
-    func load_u8(addr: usize) -> u8;
-    func load_u16(addr: usize) -> u16;
-    func load_u32(addr: usize) -> u32;
-    func load_u64(addr: usize) -> u64;
-    func load_i8(addr: usize) -> i8;
-    func load_i16(addr: usize) -> i16;
-    func load_i32(addr: usize) -> i32;
-    func load_i64(addr: usize) -> i64;
-    func load_f32(addr: usize) -> f32;
-    func load_f64(addr: usize) -> f64;
+    public func load_u8(addr: usize) -> u8;
+    public func load_u16(addr: usize) -> u16;
+    public func load_u32(addr: usize) -> u32;
+    public func load_u64(addr: usize) -> u64;
+    public func load_i8(addr: usize) -> i8;
+    public func load_i16(addr: usize) -> i16;
+    public func load_i32(addr: usize) -> i32;
+    public func load_i64(addr: usize) -> i64;
+    public func load_f32(addr: usize) -> f32;
+    public func load_f64(addr: usize) -> f64;
 
     // Write one value of the named width at a byte address.
-    func store_u8(addr: usize, value: u8);
-    func store_u16(addr: usize, value: u16);
-    func store_u32(addr: usize, value: u32);
-    func store_u64(addr: usize, value: u64);
-    func store_i8(addr: usize, value: i8);
-    func store_i16(addr: usize, value: i16);
-    func store_i32(addr: usize, value: i32);
-    func store_i64(addr: usize, value: i64);
-    func store_f32(addr: usize, value: f32);
-    func store_f64(addr: usize, value: f64);
+    public func store_u8(addr: usize, value: u8);
+    public func store_u16(addr: usize, value: u16);
+    public func store_u32(addr: usize, value: u32);
+    public func store_u64(addr: usize, value: u64);
+    public func store_i8(addr: usize, value: i8);
+    public func store_i16(addr: usize, value: i16);
+    public func store_i32(addr: usize, value: i32);
+    public func store_i64(addr: usize, value: i64);
+    public func store_f32(addr: usize, value: f32);
+    public func store_f64(addr: usize, value: f64);
 
     // Bit counting, each a single instruction on every target that has one.
     // `ctlz(0)` is the full width rather than undefined.
-    func ctlz_u32(value: u32) -> u32;
-    func ctlz_u64(value: u64) -> u64;
-    func cttz_u32(value: u32) -> u32;
-    func cttz_u64(value: u64) -> u64;
-    func popcount_u32(value: u32) -> u32;
-    func popcount_u64(value: u64) -> u64;
+    public func ctlz_u32(value: u32) -> u32;
+    public func ctlz_u64(value: u64) -> u64;
+    public func cttz_u32(value: u32) -> u32;
+    public func cttz_u64(value: u64) -> u64;
+    public func popcount_u32(value: u32) -> u32;
+    public func popcount_u64(value: u64) -> u64;
 }
 
 // =============================================================================

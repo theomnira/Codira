@@ -95,6 +95,19 @@ impl<T> PerNs<T> {
         }
     }
 
+    /// Like [`PerNs::or`], but only evaluates the fallback if some namespace
+    /// is still empty.
+    ///
+    /// Worth having lazily because the fallback is a prelude lookup on the
+    /// unqualified-name path, which is walked for every name in the program;
+    /// the common case is a name that already resolved in both namespaces.
+    pub fn or_else(self, f: impl FnOnce() -> PerNs<T>) -> PerNs<T> {
+        if self.types.is_some() && self.values.is_some() {
+            return self;
+        }
+        self.or(f())
+    }
+
     pub fn and_then<U>(self, f: impl Fn(T) -> Option<U>) -> PerNs<U> {
         PerNs {
             types: self.types.and_then(&f),

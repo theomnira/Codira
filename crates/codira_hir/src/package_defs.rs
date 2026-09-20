@@ -15,12 +15,30 @@ use la_arena::ArenaMap;
 
 use crate::{item_scope::ItemScope, DefDatabase, DiagnosticSink};
 
+/// The module whose public items are in scope everywhere in a package
+/// without being imported.
+///
+/// A package opts in by having a top-level module with this name; a package
+/// without one simply has no prelude. Nothing is special-cased in the
+/// compiler beyond the lookup -- the prelude is ordinary Codira, and what
+/// it contains is the standard library's decision rather than the
+/// compiler's.
+pub const PRELUDE_MODULE_NAME: &str = "prelude";
+
 /// Contains all top-level definitions for a package.
 #[derive(Debug, PartialEq, Eq)]
 pub struct PackageDefs {
     pub id: PackageId,
     pub modules: ArenaMap<PackageModuleId, ItemScope>,
     pub module_tree: Arc<ModuleTree>,
+
+    /// The package's prelude module, if it has one.
+    ///
+    /// Resolved once here rather than looked up per name: every unqualified
+    /// name that misses in its own module falls through to this, so it is on
+    /// the hottest path in name resolution.
+    pub prelude: Option<PackageModuleId>,
+
     diagnostics: Vec<diagnostics::DefDiagnostic>,
 }
 

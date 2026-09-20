@@ -107,7 +107,7 @@ extend Pointer[T] {
 // Write a value through this pointer.
 // Panics if the pointer is null.
 extend Pointer[T] {
-    public func write(self, value: T) -> void {
+    public func write(self, value: T) {
         if self._addr == 0 {
             __panic("Pointer.write: null pointer dereference");
         }
@@ -124,7 +124,7 @@ extend Pointer[T] {
 
 // Write without null check.  Caller MUST guarantee non-null.
 extend Pointer[T] {
-    public func write_unchecked(self, value: T) -> void {
+    public func write_unchecked(self, value: T) {
         __intrinsic_store(self._addr, value);
     }
 }
@@ -245,7 +245,7 @@ extend Pointer[T] {
 }
 
 extend Pointer[T] {
-    public func hash(self, hasher: &Hasher) -> void {
+    public func hash(self, hasher: &Hasher) {
         hasher.write_usize(self._addr);
     }
 }

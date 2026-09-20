@@ -27,12 +27,12 @@ import root.builtin.types.*;
 // performance (enables vectorized copy on supported targets).
 //
 //   memcpy(dest_addr, src_addr, 1024);
-public func memcpy(dest: usize, src: usize, count: usize) -> void {
+public func memcpy(dest: usize, src: usize, count: usize) {
     __intrinsic_memcpy(dest, src, count);
 }
 
 // Typed version: copy `count` elements of type T.
-public func memcpy_typed[T](dest: Pointer[T], src: Pointer[T], count: usize) -> void {
+public func memcpy_typed[T](dest: Pointer[T], src: Pointer[T], count: usize) {
     let bytes = count * __intrinsic_sizeof();
     __intrinsic_memcpy(dest.address(), src.address(), bytes);
 }
@@ -47,12 +47,12 @@ public func memcpy_typed[T](dest: Pointer[T], src: Pointer[T], count: usize) -> 
 // detecting the direction of overlap and copying accordingly.
 //
 //   memmove(dest_addr, src_addr, 512);
-public func memmove(dest: usize, src: usize, count: usize) -> void {
+public func memmove(dest: usize, src: usize, count: usize) {
     __intrinsic_memmove(dest, src, count);
 }
 
 // Typed version.
-public func memmove_typed[T](dest: Pointer[T], src: Pointer[T], count: usize) -> void {
+public func memmove_typed[T](dest: Pointer[T], src: Pointer[T], count: usize) {
     let bytes = count * __intrinsic_sizeof();
     __intrinsic_memmove(dest.address(), src.address(), bytes);
 }
@@ -65,23 +65,23 @@ public func memmove_typed[T](dest: Pointer[T], src: Pointer[T], count: usize) ->
 //
 //   memset(buffer_addr, 0, 4096);    // zero out 4 KiB
 //   memset(buffer_addr, 0xFF, 256);  // fill with 0xFF
-public func memset(dest: usize, value: u8, count: usize) -> void {
+public func memset(dest: usize, value: u8, count: usize) {
     __intrinsic_memset(dest, value, count);
 }
 
 // Zero-fill `count` bytes at `dest`.  Convenience wrapper.
-public func memzero(dest: usize, count: usize) -> void {
+public func memzero(dest: usize, count: usize) {
     __intrinsic_memset(dest, 0, count);
 }
 
 // Typed zero: zero `count` objects of type T.
-public func memzero_typed[T](dest: Pointer[T], count: usize) -> void {
+public func memzero_typed[T](dest: Pointer[T], count: usize) {
     let bytes = count * __intrinsic_sizeof();
     __intrinsic_memset(dest.address(), 0, bytes);
 }
 
 // Set count elements of type T to a byte pattern.
-public func memset_typed[T](dest: Pointer[T], value: u8, count: usize) -> void {
+public func memset_typed[T](dest: Pointer[T], value: u8, count: usize) {
     let bytes = count * __intrinsic_sizeof();
     __intrinsic_memset(dest.address(), value, bytes);
 }
@@ -153,7 +153,7 @@ public func memrchr(src: usize, value: u8, count: usize) -> isize {
 
 // Secure zero: zero `count` bytes and guarantee the compiler will not
 // optimize the write away (for clearing sensitive data like keys).
-public func secure_zero(dest: usize, count: usize) -> void {
+public func secure_zero(dest: usize, count: usize) {
     __intrinsic_volatile_memset(dest, 0, count);
     __intrinsic_compiler_fence();
 }

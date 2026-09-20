@@ -145,7 +145,7 @@ extend Bool {
     }
 
     // Hashable — fold into a hasher.
-    func hash(self, hasher: Hasher) -> void {
+    func hash(self, hasher: Hasher) {
         hasher.write_u8(self._value)
     }
 

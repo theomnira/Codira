@@ -336,7 +336,7 @@ public func has_amd_gpu_accelerator() -> bool {
 // Raise a compile-time error explaining that the current target does not
 // support the named operation.  This is best-effort: it always fails on
 // systems without a GPU accelerator.
-public func unsupported_target_error(operation: String) -> void {
+public func unsupported_target_error(operation: String) {
     __panic("unsupported target for operation: " + operation);
 }
 

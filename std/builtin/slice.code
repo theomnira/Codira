@@ -260,7 +260,7 @@ extend Slice[T] {
 // Copy elements from `src` into this (mutable) slice.
 // Panics if lengths differ.
 extend Slice[T] {
-    public func copy_from(self, src: Slice[T]) -> void {
+    public func copy_from(self, src: Slice[T]) {
         if self._len != src._len {
             __panic("Slice.copy_from: length mismatch");
         }
@@ -274,7 +274,7 @@ extend Slice[T] {
 
 // Fill every element with `value`.
 extend Slice[T] {
-    public func fill(self, value: T) -> void {
+    public func fill(self, value: T) {
         let i: usize = 0;
         while i < self._len {
             self._ptr.offset(i as isize).write(value);
@@ -285,7 +285,7 @@ extend Slice[T] {
 
 // Reverse the slice in-place.
 extend Slice[T] {
-    public func reverse(self) -> void {
+    public func reverse(self) {
         if self._len <= 1 {
             return;
         }

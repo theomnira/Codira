@@ -42,7 +42,7 @@ public func llvm_intrinsic[ReturnType, name: StringLiteral](args: ...) -> Return
 }
 
 // Variant with no return value (void intrinsics).
-public func llvm_intrinsic_void[name: StringLiteral](args: ...) -> void {
+public func llvm_intrinsic_void[name: StringLiteral](args: ...) {
     __intrinsic_llvm_call_void(args);
 }
 
@@ -60,24 +60,24 @@ public type PrefetchLocality = i32;
 // Prefetch for reading.
 //
 //   prefetch_read(ptr.address(), 3);  // prefetch to L1 for reading
-public func prefetch_read(addr: usize, locality: PrefetchLocality) -> void {
+public func prefetch_read(addr: usize, locality: PrefetchLocality) {
     __intrinsic_llvm_call_void(addr, 0, locality, 1);
 }
 
 // Prefetch for writing.
 //
 //   prefetch_write(ptr.address(), 1);  // prefetch to L3 for writing
-public func prefetch_write(addr: usize, locality: PrefetchLocality) -> void {
+public func prefetch_write(addr: usize, locality: PrefetchLocality) {
     __intrinsic_llvm_call_void(addr, 1, locality, 1);
 }
 
 // Prefetch a typed pointer for reading (convenience).
-public func prefetch[T](ptr: Pointer[T], locality: PrefetchLocality) -> void {
+public func prefetch[T](ptr: Pointer[T], locality: PrefetchLocality) {
     prefetch_read(ptr.address(), locality);
 }
 
 // Software prefetch hint for a pointer offset by `n` elements.
-public func prefetch_offset[T](ptr: Pointer[T], n: isize, locality: PrefetchLocality) -> void {
+public func prefetch_offset[T](ptr: Pointer[T], n: isize, locality: PrefetchLocality) {
     let target = ptr.offset(n);
     prefetch_read(target.address(), locality);
 }
@@ -126,7 +126,7 @@ public func scatter[T, N: usize](
     offsets: SIMD[i32, N],
     values: SIMD[T, N],
     mask: SIMD[bool, N],
-) -> void {
+) {
     __intrinsic_simd_scatter(base.address(), offsets, values, mask);
 }
 
@@ -135,7 +135,7 @@ public func scatter[T, N: usize](
     base: Pointer[T],
     offsets: SIMD[i32, N],
     values: SIMD[T, N],
-) -> void {
+) {
     let mask = SIMD.splat(true);
     scatter(base, offsets, values, mask);
 }
@@ -185,7 +185,7 @@ public func strided_store[T, N: usize](
     base: Pointer[T],
     values: SIMD[T, N],
     stride: usize,
-) -> void {
+) {
     let addr = base.address();
     let elem_stride = stride * __intrinsic_sizeof();
     let i: usize = 0;
@@ -206,7 +206,7 @@ public func atomic_load[T](addr: usize) -> T {
 }
 
 // Atomic store with sequential consistency.
-public func atomic_store[T](addr: usize, value: T) -> void {
+public func atomic_store[T](addr: usize, value: T) {
     __intrinsic_atomic_store(addr, value);
 }
 
@@ -256,23 +256,23 @@ public func atomic_exchange[T](addr: usize, value: T) -> T {
 // =============================================================================
 
 // Full memory fence (sequential consistency).
-public func fence() -> void {
+public func fence() {
     __intrinsic_fence_seq_cst();
 }
 
 // Acquire fence.
-public func fence_acquire() -> void {
+public func fence_acquire() {
     __intrinsic_fence_acquire();
 }
 
 // Release fence.
-public func fence_release() -> void {
+public func fence_release() {
     __intrinsic_fence_release();
 }
 
 // Compiler fence — prevents reordering by the compiler but emits no
 // hardware fence instruction.
-public func compiler_fence() -> void {
+public func compiler_fence() {
     __intrinsic_compiler_fence();
 }
 
@@ -446,13 +446,13 @@ public func trap() -> Never {
 }
 
 // Debug trap — break into debugger if attached, otherwise continue.
-public func debug_trap() -> void {
+public func debug_trap() {
     __intrinsic_llvm_call_void();
 }
 
 // Assume — tell the optimizer that `condition` is always true.
 // UB if it is ever false at runtime.
-public func assume(condition: bool) -> void {
+public func assume(condition: bool) {
     __intrinsic_llvm_call_void(condition);
 }
 

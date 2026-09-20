@@ -1,0 +1,93 @@
+// =============================================================================
+// std/prelude.code — the names every Codira program starts with
+// =============================================================================
+//
+// This module is implicitly in scope in every module of this package. It is
+// not magic: the compiler looks for a top-level module named `prelude` and,
+// for any unqualified name a module does not define itself and that is not a
+// built-in primitive, falls through to this module's *public* items. A
+// package without a `prelude` module simply has no prelude.
+//
+// Everything here is `public import`, which re-exports. A plain `import`
+// would bring the name into this module and no further, and since the
+// prelude is only ever consulted for its public items, a prelude written
+// with plain imports would resolve nothing at all.
+//
+// # What belongs here
+//
+// The vocabulary a program uses without thinking: `String`, `Int`, `List`,
+// `Optional`, `Pointer`. Not everything public in the standard library --
+// a name in the prelude is a name every module in the package must avoid
+// or deliberately shadow, so the bar is "would requiring an import for
+// this be a papercut in most files".
+// =============================================================================
+
+// ---- Core scalar types and aliases ------------------------------------------
+
+public import root.builtin.types.*;
+public import root.builtin.type_aliases.*;
+public import root.builtin.string_literal.*;
+public import root.builtin.bool.*;
+public import root.builtin.int.*;
+public import root.builtin.dtype.*;
+public import root.builtin.simd.*;
+
+// ---- Errors and control -----------------------------------------------------
+
+public import root.builtin.error.*;
+public import root.builtin.range.*;
+public import root.builtin.slice.*;
+
+// ---- Traits -----------------------------------------------------------------
+
+public import root.builtin.traits.*;
+
+// ---- Fundamental operations -------------------------------------------------
+
+public import root.builtin.swap.*;
+public import root.builtin.sort.*;
+public import root.builtin.tuple.*;
+
+// ---- Collections ------------------------------------------------------------
+
+public import root.collections.string.*;
+public import root.collections.list.*;
+public import root.collections.array.*;
+public import root.collections.optional.*;
+public import root.collections.span.*;
+public import root.collections.dict.*;
+public import root.collections.set.*;
+
+// ---- Memory -----------------------------------------------------------------
+
+public import root.memory.pointer.*;
+public import root.memory.unsafe_pointer.*;
+
+// ---- Hashing and formatting -------------------------------------------------
+
+public import root.hashlib.hash.*;
+public import root.hashlib.hasher.*;
+public import root.format.repr.*;
+
+// ---- Math -------------------------------------------------------------------
+
+public import root.math.math.*;
+
+// =============================================================================
+// Not here yet
+// =============================================================================
+//
+// The following belong in a complete prelude and are waiting on the modules
+// that would provide them. Each is work still to be done, not a deliberate
+// omission:
+//
+//   io          print, input, FileHandle, open
+//   iter        Iterable, Iterator, enumerate, iter, map, next, zip
+//   origin      Origin and the origin-set aliases
+//   reflection  reflect
+//   builtin     Sized/len, the bin/hex/oct integer formatters, variadics
+//
+// The string module's codepoint and slice types, and the numeric parsing
+// conversions that go with them, exist only in outline so far and join this
+// list until they do not.
+// =============================================================================

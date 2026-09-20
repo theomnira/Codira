@@ -94,7 +94,7 @@ extend Tuple2[A, B] {
         Tuple2 { _0: self._0, _1: self._1 }
     }
 
-    func hash(self, hasher: Hasher) -> void {
+    func hash(self, hasher: Hasher) {
         hasher.write(self._0)
         hasher.write(self._1)
     }

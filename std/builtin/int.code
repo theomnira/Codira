@@ -442,7 +442,7 @@ extend Int {
 
 // Hash into a Hasher.
 extend Int {
-    public func hash(self, hasher: &Hasher) -> void {
+    public func hash(self, hasher: &Hasher) {
         hasher.write_isize(self._value);
     }
 }

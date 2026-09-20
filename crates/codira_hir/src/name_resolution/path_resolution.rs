@@ -69,6 +69,13 @@ impl PackageDefs {
     }
 
     /// Resolves the specified `name` from within the specified `module`
+    ///
+    /// Three scopes, in order: the module's own items, the built-in
+    /// primitives, and the package's prelude. The prelude is last so that a
+    /// module can define a name the prelude also exports and get its own --
+    /// shadowing a prelude name is a local decision, and a prelude that
+    /// could not be shadowed would make adding a name to it a breaking
+    /// change for every module in the package.
     fn resolve_name_in_module(
         &self,
         _db: &dyn DefDatabase,
@@ -78,6 +85,33 @@ impl PackageDefs {
         self[module]
             .get(name)
             .or(BUILTIN_SCOPE.get(name).copied().unwrap_or_else(PerNs::none))
+            .or_else(|| self.resolve_name_in_prelude(module, name))
+    }
+
+    /// Resolves `name` against the package's prelude, if it has one.
+    ///
+    /// Only public items count. The prelude is in scope everywhere, so
+    /// letting a private item through would make "private" mean nothing at
+    /// all for the one module whose contents every other module can see.
+    fn resolve_name_in_prelude(
+        &self,
+        module: PackageModuleId,
+        name: &Name,
+    ) -> PerNs<(ItemDefinitionId, Visibility)> {
+        let Some(prelude) = self.prelude else {
+            return PerNs::none();
+        };
+
+        // A module inside the prelude reaches its own items through ordinary
+        // lookup; going through the prelude here as well would let the
+        // prelude's private items leak back into it under public rules.
+        if prelude == module {
+            return PerNs::none();
+        }
+
+        self[prelude]
+            .get(name)
+            .and_then(|(item, vis)| matches!(vis, Visibility::Public).then_some((item, vis)))
     }
 
     /// Resolves the specified `path` from within the specified `module`. Also

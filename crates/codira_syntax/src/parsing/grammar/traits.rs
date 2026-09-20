@@ -182,9 +182,21 @@ fn extern_item_list(p: &mut Parser<'_>) {
 
 fn extern_item(p: &mut Parser<'_>) {
     let m = p.start();
+    // An extern item takes visibility like any other declaration. Without
+    // this, a module that declares an intrinsic cannot re-export it, so
+    // every module needing `load_u8` would have to re-declare it -- and two
+    // declarations of the same intrinsic are two chances to give it
+    // different signatures.
+    let has_visibility = super::opt_visibility(p);
     if p.at(T![func]) {
         fn_def(p);
         m.complete(p, FUNCTION_DEF);
+    } else if has_visibility {
+        // `public` was consumed, so the marker has to be completed as
+        // something; ERROR keeps the tree well-formed and the diagnostic
+        // pointing at the item rather than at the visibility.
+        p.error("expected `func`");
+        m.complete(p, crate::SyntaxKind::ERROR);
     } else {
         m.abandon(p);
         p.error_and_bump("expected `func`");

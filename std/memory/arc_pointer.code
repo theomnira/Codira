@@ -229,7 +229,7 @@ extend ArcPointer[T] {
 // Decrement the strong count.  If it reaches zero, destroy the payload
 // and free the allocation.
 extend ArcPointer[T] {
-    public func destroy(self) -> void {
+    public func destroy(self) {
         if self._block.is_null() {
             return;
         }
@@ -307,7 +307,7 @@ extend ArcPointer[T] {
 
 // Hashable
 extend ArcPointer[T: Hashable] {
-    public func hash(self, hasher: &Hasher) -> void {
+    public func hash(self, hasher: &Hasher) {
         self._payload_ptr().load().hash(hasher);
     }
 }

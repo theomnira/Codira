@@ -78,7 +78,7 @@ extend ProfileBlock {
 //
 //   @ <name> <elapsed> ns
 extend ProfileBlock {
-    public func finish(self) -> void {
+    public func finish(self) {
         let elapsed = self.elapsed_ns();
         let msg = "@ " + self._name + " " + (elapsed as i64).to_string() + " ns\n";
         __intrinsic_write_stderr(msg);
@@ -87,7 +87,7 @@ extend ProfileBlock {
 
 // Convenience: print the elapsed time of `self` without consuming it.
 extend ProfileBlock {
-    public func report(self) -> void {
+    public func report(self) {
         self.finish();
     }
 }

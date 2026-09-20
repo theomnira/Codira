@@ -74,7 +74,7 @@ extend OwnedPointer[T] {
 
 // Write a new value into the pointee, destroying the old one.
 extend OwnedPointer[T] {
-    public func write(self, value: T) -> void {
+    public func write(self, value: T) {
         self._inner.destroy_pointee();
         self._inner.init_pointee_move(value);
     }
@@ -135,7 +135,7 @@ extend OwnedPointer[T] {
 
 // Swap the contents of two OwnedPointers without reallocating.
 extend OwnedPointer[T] {
-    public func swap_with(self, other: &OwnedPointer[T]) -> void {
+    public func swap_with(self, other: &OwnedPointer[T]) {
         let tmp = self._inner;
         self._inner = other._inner;
         other._inner = tmp;
@@ -148,7 +148,7 @@ extend OwnedPointer[T] {
 
 // Apply a function to the pointee in-place.
 extend OwnedPointer[T] {
-    public func map_in_place(self, f: func(T) -> T) -> void {
+    public func map_in_place(self, f: func(T) -> T) {
         let old = self._inner.load();
         let new_val = f(old);
         self._inner.store(new_val);
@@ -190,7 +190,7 @@ extend OwnedPointer[T] {
 // Destroy the pointee and free the heap allocation.
 // Called automatically when the OwnedPointer goes out of scope.
 extend OwnedPointer[T] {
-    public func destroy(self) -> void {
+    public func destroy(self) {
         if !self._inner.is_null() {
             self._inner.destroy_pointee();
             self._inner.free_one();
@@ -243,7 +243,7 @@ extend OwnedPointer[T: EqualityComparable] {
 
 // Hashable — hashes the pointee, not the address.
 extend OwnedPointer[T: Hashable] {
-    public func hash(self, hasher: &Hasher) -> void {
+    public func hash(self, hasher: &Hasher) {
         self._inner.load().hash(hasher);
     }
 }
