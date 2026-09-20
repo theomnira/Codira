@@ -1043,6 +1043,33 @@ fn string_literal() {
 }
 
 #[test]
+fn string_literal_accessors() {
+    // `str` is a compiler primitive with no fields for member access to
+    // reach, so without these a literal is a value you can hold and never
+    // use. Both must be a single `extractvalue`; `str_data` additionally
+    // becomes an integer address, matching the `usize`-addressed load and
+    // store intrinsics so the two families compose without a cast.
+    test_snapshot_unoptimized(
+        "string_literal_accessors",
+        r#"
+    extern "codira-intrinsic" {
+        func str_data(s: str) -> usize;
+        func str_len(s: str) -> usize;
+    }
+    public func address_of(s: str) -> usize {
+        str_data(s)
+    }
+    public func length_of(s: str) -> usize {
+        str_len(s)
+    }
+    public func length_of_literal() -> usize {
+        str_len("hello")
+    }
+    "#,
+    );
+}
+
+#[test]
 fn string_literal_with_embedded_nul_keeps_its_length() {
     // The length is carried, not implied by a terminator, so a literal
     // containing a NUL is still one string of the full length rather than

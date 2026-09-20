@@ -685,8 +685,8 @@ impl InferenceResultBuilder<'_> {
         let source_ty = self.infer_expr(operand, &Expectation::none());
         let target_ty = self.resolve_type(type_ref);
 
-        let source = self.normalize_for_cast(&source_ty);
-        let target = self.normalize_for_cast(&target_ty);
+        let source = self.normalize(&source_ty);
+        let target = self.normalize(&target_ty);
         let layout = self.db.target_data_layout();
 
         if let CastCheck::Illegal(reason) = check_cast(&source, &target, &layout) {
@@ -701,15 +701,27 @@ impl InferenceResultBuilder<'_> {
         target_ty
     }
 
-    /// Resolves instantiated inference variables and type aliases so that the
-    /// cast check sees the underlying primitive type of e.g. `type Byte = u8`.
+    /// Whether `ty` is the never type, seeing through aliases.
+    ///
+    /// `Ty::is_never` matches `TyKind::Never` exactly, so a function declared
+    /// `-> Never` (where `Never` is `type Never = never`) did not count as
+    /// diverging: its block fell through to `()` and then failed to match its
+    /// own return type. An alias is the same type as what it names, and
+    /// divergence is the one property where getting that wrong turns working
+    /// code into an error.
+    fn is_never(&mut self, ty: &Ty) -> bool {
+        ty.is_never() || self.normalize(ty).is_never()
+    }
+
+    /// Resolves instantiated inference variables and type aliases so that a
+    /// check sees the underlying type of e.g. `type Byte = u8`.
     ///
     /// `replace_if_possible` unwraps a single alias level per call, so this
     /// iterates; the bound keeps a cyclic alias (`type A = B; type B = A;`,
     /// already reported as `cyclic type`) from looping forever. Whatever is
-    /// left at that point is still a `TypeAlias`, which the cast check treats
-    /// as unknown rather than as an error.
-    fn normalize_for_cast(&mut self, ty: &Ty) -> Ty {
+    /// left at that point is still a `TypeAlias`, which callers treat as
+    /// unknown rather than as an error.
+    fn normalize(&mut self, ty: &Ty) -> Ty {
         let mut ty = ty.clone();
         for _ in 0..16 {
             let resolved = self.replace_if_possible(&ty).into_owned();
@@ -1385,9 +1397,10 @@ impl InferenceResultBuilder<'_> {
                     self.infer_pat(*pat, ty);
                 }
                 Statement::Expr(expr) => {
-                    if self.infer_expr(*expr, &Expectation::none()).is_never() {
+                    let ty = self.infer_expr(*expr, &Expectation::none());
+                    if self.is_never(&ty) {
                         diverges = true;
-                    };
+                    }
                 }
             }
         }
@@ -1396,7 +1409,7 @@ impl InferenceResultBuilder<'_> {
             // return type because we want the block to get the Never type in
             // that case.
             let ty = self.infer_expr_inner(expr, expected, &CheckParams::default());
-            if ty.is_never() {
+            if self.is_never(&ty) {
                 ty
             } else {
                 self.coerce_expr_ty(expr, ty, expected)

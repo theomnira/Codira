@@ -232,7 +232,60 @@ pub fn gen_intrinsic<'ink>(
         return Ok(Some(result));
     }
 
+    if let Some(result) = gen_str_accessor(name, args, context, builder)? {
+        return Ok(Some(result));
+    }
+
     Err(IntrinsicError::Unknown)
+}
+
+/// Emits `str_data(s)` and `str_len(s)`: the two halves of a string
+/// literal's `{ ptr, usize }`.
+///
+/// `str` is a compiler primitive, so it has no fields for ordinary member
+/// access to reach. Without these there is no way to hand a literal's bytes
+/// to anything -- not to a C function, not to the runtime's stderr hook --
+/// which would make `str` a type you can hold and never use.
+///
+/// `str_data` returns the address as an integer rather than a pointer,
+/// matching the `usize`-addressed load and store intrinsics above, so the
+/// two families compose without a cast in between.
+fn gen_str_accessor<'ink>(
+    name: &str,
+    args: &[BasicMetadataValueEnum<'ink>],
+    context: &'ink Context,
+    builder: &Builder<'ink>,
+) -> Result<Option<BasicValueEnum<'ink>>, IntrinsicError> {
+    let field = match name {
+        "str_data" => 0,
+        "str_len" => 1,
+        _ => return Ok(None),
+    };
+
+    if args.len() != 1 {
+        return Err(IntrinsicError::Arity {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    let value = args[0].into_struct_value();
+    let extracted = builder
+        .build_extract_value(value, field, "intrinsic.str")
+        .expect("a `str` has both of its fields");
+
+    if field == 1 {
+        return Ok(Some(extracted));
+    }
+
+    let address = builder
+        .build_ptr_to_int(
+            extracted.into_pointer_value(),
+            context.i64_type(),
+            "intrinsic.str.addr",
+        )
+        .expect("could not build address cast for a string literal");
+    Ok(Some(address.into()))
 }
 
 /// Emits `bitcast_u64_f64(bits)` and its three siblings: the same bits read

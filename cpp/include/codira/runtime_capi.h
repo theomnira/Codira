@@ -361,6 +361,53 @@ extern "C" {
 #endif // __cplusplus
 
 /**
+ * Writes `count` bytes from `buf` to standard error.
+ *
+ * # Why this is here and not in the standard library
+ *
+ * `std/sys/terminate.code` needs to print a panic message, and there is no
+ * way for Codira to reach standard error on its own. The portable C
+ * spelling is `fwrite(buf, 1, count, stderr)`, and `stderr` is a macro:
+ * there is no symbol of that name to declare `extern "C"`, so a Codira
+ * declaration cannot name it. Going around it with a file descriptor means
+ * `write` on POSIX and `_write` on Windows, which is a per-platform
+ * declaration in a standard library that otherwise has none.
+ *
+ * The runtime already owns platform I/O, so the hook lives here and is one
+ * symbol on every target.
+ *
+ * # Safety
+ *
+ * `buf` must point to at least `count` readable bytes. A null `buf` or a
+ * zero `count` writes nothing and returns, rather than being undefined:
+ * an empty panic message is not a reason to fault inside the panic handler.
+ */
+void codira_write_stderr(const uint8_t *buf, uintptr_t count);
+
+/**
+ * Terminates the process abnormally, without unwinding or flushing.
+ *
+ * Separate from `codira_write_stderr` so that a panic prints its message
+ * before the process goes away: a single combined hook would have to decide
+ * the message format, which belongs to the standard library.
+ */
+void codira_abort(void);
+
+/**
+ * Terminates the process with `code`, running the usual at-exit handling.
+ */
+void codira_exit(int32_t code);
+
+/**
+ * Whether this build has debug assertions enabled.
+ *
+ * Reported by the runtime rather than by a compiler intrinsic because it is
+ * a property of the build the program is running *in*, and the runtime is
+ * what that build produced.
+ */
+bool codira_is_debug(void);
+
+/**
  * Allocates an object in the runtime of the given `ty`. If successful, `obj`
  * is set, otherwise a non-zero error handle is returned.
  *

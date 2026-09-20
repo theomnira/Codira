@@ -34,6 +34,11 @@ public import root.builtin.simd.*;
 
 // ---- Errors and control -----------------------------------------------------
 
+// `panic`, `assert` and the rest of termination. In the prelude because a
+// failed invariant is reported from everywhere, and a module that has to
+// import something before it can give up is a module that will not bother.
+public import root.sys.terminate.*;
+
 public import root.builtin.error.*;
 public import root.builtin.range.*;
 public import root.builtin.slice.*;

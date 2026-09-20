@@ -4,7 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use codira_abi as abi;
 use codira_hir::{
@@ -61,7 +64,7 @@ pub(crate) struct BodyIrGenerator<'db, 'ink, 't> {
     pat_to_param: HashMap<PatId, inkwell::values::BasicValueEnum<'ink>>,
     pat_to_local: HashMap<PatId, inkwell::values::PointerValue<'ink>>,
     pat_to_name: HashMap<PatId, String>,
-    function_map: &'t HashMap<codira_hir::Function, FunctionValue<'ink>>,
+    function_map: &'t BTreeMap<codira_hir::Function, FunctionValue<'ink>>,
     dispatch_table: &'t DispatchTable<'ink>,
     type_table: &'t TypeTable<'ink>,
     hir_types: &'t HirTypeCache<'db, 'ink>,
@@ -78,7 +81,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         module: &'t inkwell::module::Module<'ink>,
         db: &'db dyn HirDatabase,
         function: (codira_hir::Function, FunctionValue<'ink>),
-        function_map: &'t HashMap<codira_hir::Function, FunctionValue<'ink>>,
+        function_map: &'t BTreeMap<codira_hir::Function, FunctionValue<'ink>>,
         dispatch_table: &'t DispatchTable<'ink>,
         type_table: &'t TypeTable<'ink>,
         external_globals: ExternalGlobals<'ink>,

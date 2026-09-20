@@ -10,6 +10,47 @@
 // =============================================================================
 
 import root.builtin.types.*;
+// `Never` is in the prelude, but this module is *part of* what the prelude
+// re-exports, so it names the source directly rather than relying on the
+// prelude having finished assembling itself.
+import root.builtin.type_aliases.*;
+
+// =============================================================================
+// The primitives underneath
+// =============================================================================
+//
+// Terminating and reporting are not instructions, so they are not
+// `codira-intrinsic`; they are calls into the runtime, which is what owns
+// platform I/O and process control.
+//
+// Writing to standard error in particular cannot be declared any other way.
+// The portable C spelling is `fwrite(buf, 1, n, stderr)`, and `stderr` is a
+// macro rather than a symbol, so no `extern "C"` declaration can name it.
+// Going around it by file descriptor means `write` on POSIX and `_write` on
+// Windows -- a per-platform declaration in a standard library that has none
+// anywhere else. The runtime hook is one symbol on every target.
+
+extern "C" {
+    func codira_write_stderr(buf: usize, count: usize);
+    func codira_abort() -> Never;
+    func codira_exit(code: i32) -> Never;
+    func codira_is_debug() -> bool;
+}
+
+extern "codira-intrinsic" {
+    // The two halves of a `str`. `str` is a compiler primitive, so it has
+    // no fields for member access to reach.
+    func str_data(s: str) -> usize;
+    func str_len(s: str) -> usize;
+}
+
+// Writes a string to standard error, with no newline and no formatting.
+//
+// Public because a panic message is not the only thing worth reporting
+// before a process gives up, and everything here is built on it.
+public func write_stderr(message: str) {
+    codira_write_stderr(str_data(message), str_len(message));
+}
 
 // =============================================================================
 // exit — Graceful termination
@@ -31,17 +72,17 @@ import root.builtin.types.*;
 //   exit(0);    // success
 //   exit(1);    // generic failure
 public func exit(code: i32) -> Never {
-    __intrinsic_exit(code);
+    codira_exit(code);
 }
 
 // Exit with code 0 (success).
 public func exit_success() -> Never {
-    __intrinsic_exit(0);
+    codira_exit(0);
 }
 
 // Exit with code 1 (generic failure).
 public func exit_failure() -> Never {
-    __intrinsic_exit(1);
+    codira_exit(1);
 }
 
 // =============================================================================
@@ -63,17 +104,50 @@ public func exit_failure() -> Never {
 //
 //   abort();
 public func abort() -> Never {
-    __intrinsic_abort();
+    codira_abort();
+}
+
+// =============================================================================
+// panic — the primitive the rest of this module is written against
+// =============================================================================
+
+// Reports `message` on standard error and terminates abnormally.
+//
+// Spelled with leading underscores because it is what the *compiler* and the
+// standard library call for a failed invariant; `panic` is the same thing
+// under the name user code should use.
+public func __panic(message: str) -> Never {
+    write_stderr("panic: ");
+    write_stderr(message);
+    write_stderr("
+");
+    codira_abort();
+}
+
+// `__panic` with a context prefix, reported as `context: message`.
+//
+// Two parameters rather than one concatenated string because `str` is static
+// bytes in the program image: joining two of them allocates, and allocating
+// inside a panic handler is the last thing that should be happening. Writing
+// them in sequence needs no memory at all.
+public func __panic_in(context: str, message: str) -> Never {
+    write_stderr("panic: ");
+    write_stderr(context);
+    write_stderr(": ");
+    write_stderr(message);
+    write_stderr("
+");
+    codira_abort();
 }
 
 // Abort with a diagnostic message printed to stderr before termination.
 //
 //   abort_with_message("invariant violated: count must be positive");
-public func abort_with_message(message: String) -> Never {
-    __intrinsic_write_stderr("ABORT: ");
-    __intrinsic_write_stderr(message);
-    __intrinsic_write_stderr("\n");
-    __intrinsic_abort();
+public func abort_with_message(message: str) -> Never {
+    write_stderr("ABORT: ");
+    write_stderr(message);
+    write_stderr("\n");
+    codira_abort();
 }
 
 // =============================================================================
@@ -85,7 +159,7 @@ public func abort_with_message(message: String) -> Never {
 // then aborts.
 //
 //   panic("unexpected None value");
-public func panic(message: String) -> Never {
+public func panic(message: str) -> Never {
     __panic(message);
 }
 
@@ -93,8 +167,8 @@ public func panic(message: String) -> Never {
 // `context` typically carries function/module name for easier debugging.
 //
 //   panic_with_context("HashMap.get", "key not found");
-public func panic_with_context(context: String, message: String) -> Never {
-    __panic(context + ": " + message);
+public func panic_with_context(context: str, message: str) -> Never {
+    __panic_in(context, message);
 }
 
 // =============================================================================
@@ -104,9 +178,9 @@ public func panic_with_context(context: String, message: String) -> Never {
 // Assert that a condition is true.  If false, panic with a message.
 //
 //   assert(index < len, "index out of bounds");
-public func assert(condition: bool, message: String) {
+public func assert_with(condition: bool, message: str) {
     if !condition {
-        __panic("assertion failed: " + message);
+        __panic_in("assertion failed", message);
     }
 }
 
@@ -118,17 +192,17 @@ public func assert(condition: bool) {
 }
 
 // Debug-only assertion: compiled out in release builds.
-public func debug_assert(condition: bool, message: String) {
-    if __intrinsic_is_debug() {
+public func debug_assert_with(condition: bool, message: str) {
+    if codira_is_debug() {
         if !condition {
-            __panic("debug assertion failed: " + message);
+            __panic_in("debug assertion failed", message);
         }
     }
 }
 
 // Debug-only assertion with no custom message.
 public func debug_assert(condition: bool) {
-    if __intrinsic_is_debug() {
+    if codira_is_debug() {
         if !condition {
             __panic("debug assertion failed");
         }
@@ -138,40 +212,28 @@ public func debug_assert(condition: bool) {
 // Assert that two values are equal.
 public func assert_eq[T: EqualityComparable + Stringable](a: T, b: T) {
     if !(a == b) {
-        __panic("assertion failed: expected "
-            + a.to_string()
-            + " == "
-            + b.to_string());
+        __panic_in("assertion failed", "expected the two values to be equal");
     }
 }
 
 // Assert that two values are not equal.
 public func assert_ne[T: EqualityComparable + Stringable](a: T, b: T) {
     if a == b {
-        __panic("assertion failed: expected "
-            + a.to_string()
-            + " != "
-            + b.to_string());
+        __panic_in("assertion failed", "expected the two values to be unequal");
     }
 }
 
 // Assert that `a < b`.
 public func assert_lt[T: Comparable + Stringable](a: T, b: T) {
     if !(a < b) {
-        __panic("assertion failed: expected "
-            + a.to_string()
-            + " < "
-            + b.to_string());
+        __panic_in("assertion failed", "expected the two values to be less than");
     }
 }
 
 // Assert that `a <= b`.
 public func assert_le[T: Comparable + Stringable](a: T, b: T) {
     if !(a <= b) {
-        __panic("assertion failed: expected "
-            + a.to_string()
-            + " <= "
-            + b.to_string());
+        __panic_in("assertion failed", "expected the two values to be at most");
     }
 }
 
@@ -186,8 +248,8 @@ public func assert_le[T: Comparable + Stringable](a: T, b: T) {
 //       1 => ...,
 //       _ => unreachable("value must be 0 or 1"),
 //   }
-public func unreachable(message: String) -> Never {
-    __panic("unreachable: " + message);
+public func unreachable_with(message: str) -> Never {
+    __panic_in("unreachable", message);
 }
 
 // Mark as unreachable with no message.
@@ -204,8 +266,8 @@ public func unreachable() -> Never {
 //   func frobnicate() -> i32 {
 //       todo("implement frobnication algorithm");
 //   }
-public func todo(message: String) -> Never {
-    __panic("not yet implemented: " + message);
+public func todo_with(message: str) -> Never {
+    __panic_in("not yet implemented", message);
 }
 
 // Placeholder with no message.

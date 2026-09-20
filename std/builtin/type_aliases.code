@@ -9,9 +9,15 @@
 // A type that can never have an instance constructed, used as the result of
 // a function that never returns.
 //
-// This is an ordinary enum with no variants: it is genuinely impossible to
-// construct, which is the property callers rely on when they write
-// `-> Never`. What the compiler does not yet do is *use* that fact -- it
-// draws no conclusion about the code following such a call being
-// unreachable. The inference is the part still missing, not the type.
-public enum Never {}
+// `never` is the compiler's own bottom type, and naming it here is what
+// gives it the spelling the rest of the library uses. The alias is not
+// cosmetic: the compiler knows a `never`-returning call diverges, so code
+// after one is not required to produce a value.
+//
+// This was briefly written as `public enum Never {}` -- an uninhabited enum
+// is the right shape, and it is what a language without a bottom type would
+// have to do. It is wrong here for two reasons: enums are parsed but not
+// yet lowered into the HIR at all, so the name did not resolve; and even
+// once they are, an empty enum would be a type the compiler has no reason
+// to believe is uninhabited, so `-> Never` would stop meaning "diverges".
+public type Never = never;

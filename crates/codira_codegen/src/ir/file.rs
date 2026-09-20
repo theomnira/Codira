@@ -4,7 +4,7 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use codira_hir::{HasVisibility, ModuleDef};
 use inkwell::module::Module;
@@ -39,8 +39,15 @@ pub(crate) fn gen_file_ir<'ink>(
     let hir_types = &code_gen.hir_types;
 
     // Generate all exposed function and wrapper function signatures.
-    // Use a `BTreeMap` to guarantee deterministically ordered output.ures
-    let mut functions = HashMap::new();
+    //
+    // `BTreeMap`, not `HashMap`, to guarantee deterministically ordered
+    // output. `functions` is iterated below to emit bodies, and Rust seeds
+    // `HashMap`'s hasher differently per process -- so the same source
+    // compiled twice produced the same functions in a different order, and
+    // with them the LLVM intrinsic declarations their bodies pull in. That
+    // is a reproducible-build defect, and it also makes any snapshot of the
+    // emitted IR flap between runs.
+    let mut functions = BTreeMap::new();
     let mut type_definitions = HashSet::new();
     let mut wrapper_functions = BTreeMap::new();
     // `all_functions` rather than filtering `declarations`: methods declared
