@@ -43,3 +43,20 @@ impl CompilerDatabase {
 }
 
 impl salsa::Database for CompilerDatabase {}
+
+/// Lets `Driver::write_all_assemblies` hand each module group its own
+/// read-only view of the database and compile it on its own thread.
+///
+/// Salsa's own requirement for this (`ParallelDatabase: Database + Send`,
+/// and every query's key/value types `Send` too -- see the trait's doc
+/// comment) is exactly what removing the memoized `Rc<TargetMachine>` from
+/// `CodeGenDatabase` was for: an `Rc` field anywhere in the query storage
+/// would have made this `impl` impossible to write, full stop, because it
+/// would have made `CompilerDatabase` itself not `Send`.
+impl codira_hir::salsa::ParallelDatabase for CompilerDatabase {
+    fn snapshot(&self) -> codira_hir::salsa::Snapshot<Self> {
+        codira_hir::salsa::Snapshot::new(CompilerDatabase {
+            storage: self.storage.snapshot(),
+        })
+    }
+}

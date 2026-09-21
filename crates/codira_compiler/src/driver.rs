@@ -8,7 +8,7 @@
 //! `Driver` is a stateful compiler frontend that enables incremental
 //! compilation by retaining state from previous compilation.
 
-use codira_codegen::{AssemblyIr, CodeGenDatabase, ModuleGroup, TargetAssembly};
+use codira_codegen::{AssemblyIr, CodeGenDatabase, ModuleGroup, ModuleGroupId, TargetAssembly};
 use codira_hir::{AstDatabase, DiagnosticSink, Module};
 use codira_hir_input::{FileId, PackageSet, SourceDatabase, SourceRoot, SourceRootId};
 use codira_paths::RelativePathBuf;
@@ -26,7 +26,10 @@ use std::{
     convert::TryInto,
     io::Cursor,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Duration,
 };
 
@@ -613,6 +616,16 @@ impl Driver {
     pub fn write_all_assemblies(&mut self, force: bool) -> Result<(), anyhow::Error> {
         let _lock = self.acquire_filesystem_output_lock()?;
 
+        // `build_partition` gives every module its own independent
+        // `ModuleGroup` (own LLVM context, own output file, no shared
+        // state), so their `target_assembly`/`assembly_ir` queries can be
+        // computed concurrently. Warm them all before the loop below so
+        // that loop -- which must stay serial, since it does file I/O and
+        // updates `module_to_temp_assembly_path` in a fixed order -- pays
+        // for at most one group's codegen at a time (cache hit) instead of
+        // the sum of every group's codegen (cache miss, one after another).
+        self.warm_assemblies_in_parallel();
+
         // Create a copy of all current files
         for package in codira_hir::Package::all(&self.db) {
             for module in package.modules(&self.db) {
@@ -625,6 +638,62 @@ impl Driver {
         }
 
         Ok(())
+    }
+
+    /// Pre-computes every module group's `target_assembly`/`assembly_ir`
+    /// query on a pool of worker threads, so the serial write loop in
+    /// `write_all_assemblies` finds a warm Salsa cache waiting for it.
+    ///
+    /// Each worker gets its own `db.snapshot()`: a read-only handle onto the
+    /// same revision, backed by the same underlying query storage, so a
+    /// value computed through a snapshot is visible to `self.db` afterward
+    /// exactly as if `self.db` had computed it directly. Workers claim
+    /// groups one at a time from a shared atomic counter rather than a
+    /// fixed slice per thread, because module sizes in a real package are
+    /// wildly uneven -- a static split would leave threads that drew small
+    /// modules idle while one thread is still working through the largest.
+    ///
+    /// This is sound only because nothing reachable from `CodeGenDatabase`'s
+    /// query storage is un-`Send` anymore: see `codira_codegen::db`'s
+    /// `build_target_machine`, which is what made `CompilerDatabase`
+    /// eligible for `ParallelDatabase` at all.
+    fn warm_assemblies_in_parallel(&self) {
+        use codira_hir::salsa::ParallelDatabase;
+
+        let module_partition = self.db.module_partition();
+        let group_ids: Vec<ModuleGroupId> = module_partition.iter().map(|(id, _)| id).collect();
+
+        let num_threads = std::thread::available_parallelism()
+            .map_or(1, std::num::NonZeroUsize::get)
+            .min(group_ids.len());
+
+        // Nothing to gain from spinning up threads for one group, or fewer
+        // groups than there are cores to run them on.
+        if num_threads <= 1 {
+            return;
+        }
+
+        let next_index = AtomicUsize::new(0);
+        let emit_ir = self.emit_ir;
+
+        std::thread::scope(|scope| {
+            for _ in 0..num_threads {
+                let db = self.db.snapshot();
+                let group_ids = &group_ids;
+                let next_index = &next_index;
+                scope.spawn(move || loop {
+                    let idx = next_index.fetch_add(1, Ordering::Relaxed);
+                    let Some(&group_id) = group_ids.get(idx) else {
+                        break;
+                    };
+                    if emit_ir {
+                        let _ = db.assembly_ir(group_id);
+                    } else {
+                        let _ = db.target_assembly(group_id);
+                    }
+                });
+            }
+        });
     }
 
     /// Acquires a filesystem lock on the output directory. This ensures that

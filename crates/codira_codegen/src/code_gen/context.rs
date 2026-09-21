@@ -34,7 +34,7 @@ impl<'db, 'ink> CodeGenContext<'db, 'ink> {
     /// Constructs a new `CodeGenContext` from an LLVM context and a
     /// `CodeGenDatabase`.
     pub fn new(context: &'ink Context, db: &'db dyn CodeGenDatabase) -> Self {
-        let target_machine = db.target_machine().0;
+        let target_machine = crate::db::build_target_machine(db);
         Self {
             context,
             rust_types: RefCell::new(HashMap::default()),
