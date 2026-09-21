@@ -28,13 +28,52 @@ public struct Pointer[T] {
 }
 
 // =============================================================================
+// Primitives this type is built from
+// =============================================================================
+//
+// `load`/`store` need no help resolving `T`: a store's argument already has
+// type `T`, and a load's `T` comes from the *caller's* expected type, the
+// same way `let x: Tag[i32] = Tag.null();` resolves `Tag`'s `T` from the
+// binding rather than from any argument. Neither needs a marker.
+//
+// `sizeof_of`/`alignof_of` are not so lucky: `sizeof` returns `usize`,
+// which mentions nothing about `T`, so a call with no argument of type `T`
+// gives inference nothing to unify against. `marker` exists purely to be
+// that argument -- it is never read, only its type is asked for its size.
+//
+// The methods below that have a `Pointer[T]` (in `self`) but no bare value
+// of type `T` at all -- `offset`, `distance_to` -- cannot use `sizeof_of`
+// either. Passing `self` will not do: `extern` parameters are restricted to
+// primitives, and `Pointer[T]` is rejected regardless of what it is generic
+// over. There is also no syntax in Codira today to name `T` explicitly at a
+// call site with no value at hand (no turbofish, no bracketed generic
+// arguments outside type position). Those two methods' size computations
+// are left genuinely unresolved rather than given a name that would
+// silently answer with the address's own size instead of the pointee's.
+extern "codira-intrinsic" {
+    func __intrinsic_load[T](addr: usize) -> T;
+    func __intrinsic_store[T](addr: usize, value: T);
+    func __intrinsic_sizeof_of[T](marker: T) -> usize;
+    func __intrinsic_alignof_of[T](marker: T) -> usize;
+    func __intrinsic_ref_to_addr[T](value: &T) -> usize;
+}
+
+extern "C" {
+    // Rust's global allocator, exposed directly -- see
+    // `codira_runtime_capi::alloc` for why this is raw and GC-independent.
+    func codira_alloc(size: usize, align: usize) -> usize;
+    func codira_alloc_zeroed(size: usize, align: usize) -> usize;
+    func codira_dealloc(addr: usize, size: usize, align: usize);
+}
+
+// =============================================================================
 // Construction
 // =============================================================================
 
 // Create a null pointer.
 extend Pointer[T] {
     public func null() -> Pointer[T] {
-        return Pointer[T] { _addr: 0 };
+        return Pointer { _addr: 0 };
     }
 }
 
@@ -43,22 +82,22 @@ extend Pointer[T] {
 // a valid, live object (or is null / zero).
 extend Pointer[T] {
     public func from_address(addr: usize) -> Pointer[T] {
-        return Pointer[T] { _addr: addr };
+        return Pointer { _addr: addr };
     }
 }
 
 // Take the address of a reference.
 extend Pointer[T] {
     public func address_of(ref: &T) -> Pointer[T] {
-        return Pointer[T] { _addr: __intrinsic_ref_to_addr(ref) };
+        return Pointer { _addr: __intrinsic_ref_to_addr(ref) };
     }
 }
 
 // Allocate a new value on the heap and return a pointer to it.
 extend Pointer[T] {
     public func alloc(value: T) -> Pointer[T] {
-        let addr = __intrinsic_alloc(__intrinsic_sizeof(), __intrinsic_alignof());
-        let p = Pointer[T] { _addr: addr };
+        let addr = codira_alloc(__intrinsic_sizeof_of(value), __intrinsic_alignof_of(value));
+        let p = Pointer { _addr: addr };
         p.write(value);
         return p;
     }
@@ -137,8 +176,8 @@ extend Pointer[T] {
 // Positive n moves forward, negative n moves backward.
 extend Pointer[T] {
     public func offset(self, n: isize) -> Pointer[T] {
-        let byte_offset = n * (__intrinsic_sizeof() as isize);
-        return Pointer[T] { _addr: (self._addr as isize + byte_offset) as usize };
+        let byte_offset = n * (sizeof_of_pointee() as isize);
+        return Pointer { _addr: (self._addr as isize + byte_offset) as usize };
     }
 }
 
@@ -160,7 +199,7 @@ extend Pointer[T] {
 extend Pointer[T] {
     public func distance_to(self, other: Pointer[T]) -> isize {
         let byte_diff = (self._addr as isize) - (other._addr as isize);
-        return byte_diff / (__intrinsic_sizeof() as isize);
+        return byte_diff / (sizeof_of_pointee() as isize);
     }
 }
 
@@ -172,7 +211,7 @@ extend Pointer[T] {
 // No data conversion occurs — only the type tag changes.
 extend Pointer[T] {
     public func bitcast[U](self) -> Pointer[U] {
-        return Pointer[U] { _addr: self._addr };
+        return Pointer { _addr: self._addr };
     }
 }
 
@@ -252,7 +291,7 @@ extend Pointer[T] {
 
 extend Pointer[T] {
     public func copy(self) -> Pointer[T] {
-        return Pointer[T] { _addr: self._addr };
+        return Pointer { _addr: self._addr };
     }
 }
 

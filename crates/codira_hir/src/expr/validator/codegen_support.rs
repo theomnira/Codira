@@ -45,7 +45,7 @@
 //! meant to shrink: each entry is a backend gap, not a language rule, and
 //! the diagnostics say so.
 
-use codira_syntax::{AstNode, SyntaxNodePtr};
+use codira_syntax::{ast::NameOwner, AstNode, SyntaxNodePtr};
 
 use super::ExprValidator;
 use crate::{
@@ -58,6 +58,20 @@ impl ExprValidator<'_> {
     /// Pushes a diagnostic for each construct in this function that the
     /// code generator cannot lower.
     pub fn validate_codegen_support(&self, sink: &mut DiagnosticSink<'_>) {
+        // An `extern` declaration has no body for the code generator to
+        // produce: `extern "codira-intrinsic"` items are lowered per call
+        // site, directly from that call's own already-concrete argument and
+        // return types, never by generating code for the declaration
+        // itself. A generic one -- `func sizeof_of[T](marker: T) -> usize;`
+        // -- is therefore not the same gap as a generic *function
+        // definition*, which does need a monomorphized body and does not
+        // have one. Reporting it here would decline every caller of a
+        // perfectly callable intrinsic, using this function's own signature
+        // instead of the caller's.
+        if self.func.is_extern(self.db) {
+            return;
+        }
+
         let file = self.func.source(self.db).file_id;
 
         // A generic declaration is reported once, against the function
@@ -65,9 +79,27 @@ impl ExprValidator<'_> {
         // instantiation, not any individual expression, and one diagnostic
         // naming the function is what the reader can act on.
         if let Some(ty) = self.first_type_parameter() {
+            let source = self.func.source(self.db);
+            // The function's *name*, not its whole syntax node. The whole
+            // node is often many lines -- every method here that needs this
+            // diagnostic at all has a body -- and the renderer this feeds
+            // (`annotate_snippets` with `fold: true`) can panic on a
+            // multi-line annotation range that extends past whatever window
+            // it decides to fold to: confirmed against
+            // `std/collections/binary_heap.code`'s `iter_next`, an 8-line
+            // function whose whole-node span crashed rendering with
+            // "SourceAnnotation range is beyond the end of buffer" the
+            // moment `contains_type_parameter` started looking inside a
+            // struct's substitution and so started firing on it. The name
+            // is a single short, single-line node that still points the
+            // reader at the right function.
+            let node = source.value.name().map_or_else(
+                || SyntaxNodePtr::new(source.value.syntax()),
+                |name| SyntaxNodePtr::new(name.syntax()),
+            );
             sink.push(UnsupportedByCodegen {
                 file,
-                node: SyntaxNodePtr::new(self.func.source(self.db).value.syntax()),
+                node,
                 what: format!(
                     "a generic function (`{}` is not instantiated)",
                     ty.display(self.db)
@@ -149,9 +181,14 @@ pub(crate) fn contains_type_parameter(ty: &Ty) -> bool {
     match ty.interned() {
         TyKind::TypeParam(..) => true,
         TyKind::Array(element) => contains_type_parameter(element),
-        TyKind::Tuple(_, substs) => substs.iter().any(contains_type_parameter),
-        // `TyKind::Struct` carries no substitution today (that is the same
-        // gap this diagnostic is about), so there is nothing to look inside.
+        // `Box[T]` is `TyKind::Struct` with `T` inside its substitution, not
+        // a bare `TyKind::TypeParam` itself -- a parameter of type `Box[T]`
+        // is exactly as uninstantiated as one of type `T` directly, and
+        // missing that here would let a struct-wrapped type parameter slip
+        // past this check into a codegen path that still cannot handle it.
+        TyKind::Tuple(_, substs) | TyKind::Struct(_, substs) => {
+            substs.iter().any(contains_type_parameter)
+        }
         _ => false,
     }
 }

@@ -26,48 +26,95 @@ public struct UnsafePointer[T] {
 }
 
 // =============================================================================
+// Primitives this type is built from
+// =============================================================================
+//
+// `load`/`store` need no help resolving `T`: a store's argument already has
+// type `T`, and a load's `T` comes from the *caller's* expected type. This
+// file declares its own copies rather than importing `pointer.code`'s,
+// which would create a two-way dependency (`pointer.code` converts to
+// `UnsafePointer` and this file converts back); an `extern "codira-intrinsic"`
+// declaration has no linked symbol to collide over, so declaring the same
+// primitive in both files costs nothing.
+//
+// `sizeof_of`/`alignof_of` need a value of type `T` to infer `T` from --
+// `alloc(value: T)` in `pointer.code` has one. This file's element-stride
+// methods (`offset`, `load_element`, `move_from`, the two static
+// allocators, ...) do not: they have `self: UnsafePointer[T]` or nothing at
+// all, never a bare `T`. `UnsafePointer[T]` cannot substitute for one --
+// `extern` parameters are restricted to primitives, and a struct is
+// rejected regardless of what it is generic over -- and there is no syntax
+// in Codira today to *name* `T` explicitly at a call site (no turbofish, no
+// bracketed generic arguments outside type position) to ask for its size
+// with no value at hand. Those methods' `sizeof`/`alignof` calls are left
+// genuinely unresolved below rather than given a name that would silently
+// answer with the address's own size instead of the pointee's -- a
+// generic-instantiation gap belongs on the list of things codegen cannot
+// do yet, not disguised as a working computation that happens to be wrong.
+extern "codira-intrinsic" {
+    func __intrinsic_load[T](addr: usize) -> T;
+    func __intrinsic_store[T](addr: usize, value: T);
+    func __intrinsic_volatile_load[T](addr: usize) -> T;
+    func __intrinsic_volatile_store[T](addr: usize, value: T);
+}
+
+extern "C" {
+    // Rust's global allocator, exposed directly -- see
+    // `codira_runtime_capi::alloc` for why this is raw and GC-independent.
+    func codira_alloc(size: usize, align: usize) -> usize;
+    func codira_alloc_zeroed(size: usize, align: usize) -> usize;
+    func codira_dealloc(addr: usize, size: usize, align: usize);
+}
+
+// =============================================================================
 // Construction
 // =============================================================================
 
 // Create a null UnsafePointer.
 extend UnsafePointer[T] {
     public func null() -> UnsafePointer[T] {
-        return UnsafePointer[T] { _addr: 0 };
+        return UnsafePointer { _addr: 0 };
     }
 }
 
 // Create from a raw address.
 extend UnsafePointer[T] {
     public func from_address(addr: usize) -> UnsafePointer[T] {
-        return UnsafePointer[T] { _addr: addr };
+        return UnsafePointer { _addr: addr };
     }
 }
 
 // Create from a safe Pointer[T].
 extend UnsafePointer[T] {
     public func from_pointer(ptr: Pointer[T]) -> UnsafePointer[T] {
-        return UnsafePointer[T] { _addr: ptr.address() };
+        return UnsafePointer { _addr: ptr.address() };
     }
 }
 
 // Allocate raw memory for `count` elements of type T.
 // Memory is uninitialized — reading before writing is undefined behavior.
+//
+// `sizeof_of_pointee`/`alignof_of_pointee` are not declared anywhere (see
+// the note above): there is no value of type `T` in scope here to pin `T`
+// with, and no syntax to name `T` explicitly instead. This is an honest
+// "not found in this scope", tracking a real generic-instantiation gap,
+// rather than a plausible-looking answer that would be wrong.
 extend UnsafePointer[T] {
     public func alloc(count: usize) -> UnsafePointer[T] {
-        let size = count * __intrinsic_sizeof();
-        let align = __intrinsic_alignof();
-        let addr = __intrinsic_alloc(size, align);
-        return UnsafePointer[T] { _addr: addr };
+        let size = count * sizeof_of_pointee();
+        let align = alignof_of_pointee();
+        let addr = codira_alloc(size, align);
+        return UnsafePointer { _addr: addr };
     }
 }
 
 // Allocate and zero-initialize memory for `count` elements.
 extend UnsafePointer[T] {
     public func alloc_zeroed(count: usize) -> UnsafePointer[T] {
-        let size = count * __intrinsic_sizeof();
-        let align = __intrinsic_alignof();
-        let addr = __intrinsic_alloc_zeroed(size, align);
-        return UnsafePointer[T] { _addr: addr };
+        let size = count * sizeof_of_pointee();
+        let align = alignof_of_pointee();
+        let addr = codira_alloc_zeroed(size, align);
+        return UnsafePointer { _addr: addr };
     }
 }
 
@@ -112,7 +159,7 @@ extend UnsafePointer[T] {
 // Load from an element offset (self + index * sizeof(T)).
 extend UnsafePointer[T] {
     public func load_element(self, index: usize) -> T {
-        let addr = self._addr + index * __intrinsic_sizeof();
+        let addr = self._addr + index * sizeof_of_pointee();
         return __intrinsic_load(addr);
     }
 }
@@ -120,7 +167,7 @@ extend UnsafePointer[T] {
 // Store at an element offset.
 extend UnsafePointer[T] {
     public func store_element(self, index: usize, value: T) {
-        let addr = self._addr + index * __intrinsic_sizeof();
+        let addr = self._addr + index * sizeof_of_pointee();
         __intrinsic_store(addr, value);
     }
 }
@@ -146,8 +193,8 @@ extend UnsafePointer[T] {
 // Offset by `n` elements (positive or negative).
 extend UnsafePointer[T] {
     public func offset(self, n: isize) -> UnsafePointer[T] {
-        let byte_off = n * (__intrinsic_sizeof() as isize);
-        return UnsafePointer[T] { _addr: (self._addr as isize + byte_off) as usize };
+        let byte_off = n * (sizeof_of_pointee() as isize);
+        return UnsafePointer { _addr: (self._addr as isize + byte_off) as usize };
     }
 }
 
@@ -168,14 +215,14 @@ extend UnsafePointer[T] {
 // Offset by raw bytes (not elements).
 extend UnsafePointer[T] {
     public func byte_offset(self, bytes: isize) -> UnsafePointer[T] {
-        return UnsafePointer[T] { _addr: (self._addr as isize + bytes) as usize };
+        return UnsafePointer { _addr: (self._addr as isize + bytes) as usize };
     }
 }
 
 // Distance in elements between two pointers.
 extend UnsafePointer[T] {
     public func distance(self, other: UnsafePointer[T]) -> isize {
-        return ((self._addr as isize) - (other._addr as isize)) / (__intrinsic_sizeof() as isize);
+        return ((self._addr as isize) - (other._addr as isize)) / (sizeof_of_pointee() as isize);
     }
 }
 
@@ -200,6 +247,11 @@ extend UnsafePointer[T] {
 
 // Explicitly destroy the pointee (call its destructor if it has one).
 // After this call, the memory is considered uninitialized.
+//
+// `__intrinsic_destroy` is not declared: there is no destructor/drop-glue
+// framework in the code generator yet for it to call into. Left unresolved
+// rather than turned into a no-op, which would silently skip cleanup a
+// caller is relying on this to perform.
 extend UnsafePointer[T] {
     public func destroy_pointee(self) {
         __intrinsic_destroy(self._addr);
@@ -222,7 +274,7 @@ extend UnsafePointer[T] {
 // Copy `count` elements from `src` to `self`.  Regions may overlap.
 extend UnsafePointer[T] {
     public func move_from(self, src: UnsafePointer[T], count: usize) {
-        let bytes = count * __intrinsic_sizeof();
+        let bytes = count * sizeof_of_pointee();
         __intrinsic_memmove(self._addr, src._addr, bytes);
     }
 }
@@ -230,7 +282,7 @@ extend UnsafePointer[T] {
 // Copy `count` elements from `src` to `self`.  Regions must NOT overlap.
 extend UnsafePointer[T] {
     public func copy_from(self, src: UnsafePointer[T], count: usize) {
-        let bytes = count * __intrinsic_sizeof();
+        let bytes = count * sizeof_of_pointee();
         __intrinsic_memcpy(self._addr, src._addr, bytes);
     }
 }
@@ -238,7 +290,7 @@ extend UnsafePointer[T] {
 // Set `count` elements to zero bytes.
 extend UnsafePointer[T] {
     public func zero_memory(self, count: usize) {
-        let bytes = count * __intrinsic_sizeof();
+        let bytes = count * sizeof_of_pointee();
         __intrinsic_memset(self._addr, 0, bytes);
     }
 }
@@ -251,9 +303,9 @@ extend UnsafePointer[T] {
 // After this call, the pointer is dangling.
 extend UnsafePointer[T] {
     public func free(self, count: usize) {
-        let size = count * __intrinsic_sizeof();
-        let align = __intrinsic_alignof();
-        __intrinsic_dealloc(self._addr, size, align);
+        let size = count * sizeof_of_pointee();
+        let align = alignof_of_pointee();
+        codira_dealloc(self._addr, size, align);
     }
 }
 
@@ -271,7 +323,7 @@ extend UnsafePointer[T] {
 // Bitcast to a different UnsafePointer type.
 extend UnsafePointer[T] {
     public func bitcast[U](self) -> UnsafePointer[U] {
-        return UnsafePointer[U] { _addr: self._addr };
+        return UnsafePointer { _addr: self._addr };
     }
 }
 
@@ -315,7 +367,7 @@ extend UnsafePointer[T] {
 
 extend UnsafePointer[T] {
     public func copy(self) -> UnsafePointer[T] {
-        return UnsafePointer[T] { _addr: self._addr };
+        return UnsafePointer { _addr: self._addr };
     }
 }
 

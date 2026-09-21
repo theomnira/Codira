@@ -87,6 +87,14 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
         usize::ir_type(self.context, &self.target_data)
     }
 
+    /// The target's data layout, for callers that need to size or align an
+    /// arbitrary LLVM type rather than one of the fixed cases above -- e.g.
+    /// lowering a `sizeof(T)`-shaped intrinsic for a `T` known only as an
+    /// already-generated `BasicTypeEnum`.
+    pub fn target_data(&self) -> &TargetData {
+        &self.target_data
+    }
+
     /// Returns the type of the specified integer type
     pub fn get_struct_type(&self, struct_ty: codira_hir::Struct) -> StructType<'ink> {
         // TODO: This assumes the contents of the codira_hir::Struct does not change. It

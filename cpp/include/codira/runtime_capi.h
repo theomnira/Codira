@@ -361,6 +361,48 @@ extern "C" {
 #endif // __cplusplus
 
 /**
+ * Allocates `size` bytes at `align`-byte alignment. Contents are
+ * uninitialized. Returns `0` (null) on allocation failure rather than
+ * aborting, so the standard library's own null checks are what a caller
+ * sees, not a crash inside the allocator.
+ *
+ * # Safety
+ *
+ * `size` and `align` must describe a layout `std::alloc::alloc` can
+ * satisfy (see `Layout::from_size_align`); the returned address must later
+ * be freed with `codira_dealloc` using the *same* size and alignment, or not
+ * freed at all.
+ */
+uintptr_t codira_alloc(uintptr_t size, uintptr_t align);
+
+/**
+ * Allocates `size` zero-initialized bytes at `align`-byte alignment.
+ *
+ * Same contract as `codira_alloc`.
+ *
+ * # Safety
+ *
+ * Same as `codira_alloc`: `size` and `align` must describe a layout
+ * `std::alloc::alloc_zeroed` can satisfy, and the returned address must
+ * later be freed with `codira_dealloc` using the same size and alignment,
+ * or not freed at all.
+ */
+uintptr_t codira_alloc_zeroed(uintptr_t size, uintptr_t align);
+
+/**
+ * Frees `size` bytes at `align`-byte alignment previously returned by
+ * `codira_alloc`/`codira_alloc_zeroed`. A null `addr` is a no-op.
+ *
+ * # Safety
+ *
+ * `addr`, `size` and `align` must exactly match a prior, still-live
+ * `codira_alloc`/`codira_alloc_zeroed` call; freeing the same address twice,
+ * with a mismatched size or alignment, or one this allocator did not
+ * return, is undefined behavior -- the same contract C's `free` has.
+ */
+void codira_dealloc(uintptr_t addr, uintptr_t size, uintptr_t align);
+
+/**
  * Writes `count` bytes from `buf` to standard error.
  *
  * # Why this is here and not in the standard library

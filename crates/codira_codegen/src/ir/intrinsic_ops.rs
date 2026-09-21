@@ -62,6 +62,89 @@ impl Scalar {
     }
 }
 
+/// Emits `__intrinsic_sizeof()`/`__intrinsic_alignof()`: the size and
+/// alignment, in bytes, of `usize` on the target being compiled for.
+///
+/// Zero arguments and no generic parameter, deliberately. Most of the
+/// standard library's call sites -- `Int`'s bit width, whether the target is
+/// 32- or 64-bit, a raw allocator's header stride -- want the machine word,
+/// not the size of some other type `T`; `usize` *is* the machine word by
+/// definition, so this needs nothing from the caller to answer.
+///
+/// A caller that wants the size of an arbitrary `T` cannot use this: with no
+/// argument and a `usize` return, nothing here mentions `T`, so there is
+/// nothing for type inference to unify it against. `Pointer[T]` and
+/// `UnsafePointer[T]` use `sizeof_of`/`alignof_of` below instead, which take
+/// a value to infer `T` from.
+fn gen_pointer_layout_query<'ink>(
+    name: &str,
+    args: &[BasicMetadataValueEnum<'ink>],
+    context: &'ink Context,
+    target_data: &inkwell::targets::TargetData,
+) -> Result<Option<BasicValueEnum<'ink>>, IntrinsicError> {
+    if name != "sizeof" && name != "alignof" {
+        return Ok(None);
+    }
+    if !args.is_empty() {
+        return Err(IntrinsicError::Arity {
+            expected: 0,
+            found: args.len(),
+        });
+    }
+
+    let ptr_type = context.ptr_type(AddressSpace::default());
+    let value = if name == "sizeof" {
+        target_data.get_store_size(&ptr_type)
+    } else {
+        u64::from(target_data.get_abi_alignment(&ptr_type))
+    };
+
+    // Sized to the target's actual pointer width, not a fixed 64 bits: a
+    // hardcoded `i64` here would give a 32-bit target the right numeric
+    // value packed into the wrong-width type.
+    let usize_type = context.ptr_sized_int_type(target_data, None);
+    Ok(Some(usize_type.const_int(value, false).into()))
+}
+
+/// Emits `__intrinsic_sizeof_of(marker)`/`__intrinsic_alignof_of(marker)`:
+/// the size and alignment, in bytes, of `marker`'s type.
+///
+/// `marker` is never read -- its only purpose is to give type inference an
+/// argument whose type is `T`, the same trick an ordinary generic call uses.
+/// Reading its LLVM type rather than its value is what makes this correct
+/// for a struct or a scalar alike, without evaluating anything the caller
+/// might not want evaluated.
+fn gen_sizeof_alignof_of<'ink>(
+    name: &str,
+    args: &[BasicMetadataValueEnum<'ink>],
+    context: &'ink Context,
+    target_data: &inkwell::targets::TargetData,
+) -> Result<Option<BasicValueEnum<'ink>>, IntrinsicError> {
+    if name != "sizeof_of" && name != "alignof_of" {
+        return Ok(None);
+    }
+    if args.len() != 1 {
+        return Err(IntrinsicError::Arity {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+
+    let marker: BasicValueEnum<'_> = args[0]
+        .try_into()
+        .expect("intrinsic sizeof/alignof operand must be a basic value");
+    let ty = marker.get_type();
+
+    let value = if name == "sizeof_of" {
+        target_data.get_store_size(&ty)
+    } else {
+        u64::from(target_data.get_abi_alignment(&ty))
+    };
+
+    let usize_type = context.ptr_sized_int_type(target_data, None);
+    Ok(Some(usize_type.const_int(value, false).into()))
+}
+
 /// Why an intrinsic call could not be lowered.
 pub enum IntrinsicError {
     /// The name is not one this compiler knows.
@@ -101,6 +184,7 @@ pub fn gen_intrinsic<'ink>(
     context: &'ink Context,
     module: &inkwell::module::Module<'ink>,
     builder: &Builder<'ink>,
+    target_data: &inkwell::targets::TargetData,
 ) -> Result<Option<BasicValueEnum<'ink>>, IntrinsicError> {
     let ptr_type = context.ptr_type(AddressSpace::default());
 
@@ -111,6 +195,14 @@ pub fn gen_intrinsic<'ink>(
     // public `sqrt_f32` wrapper, and without a way to spell the two apart
     // the declaration and its wrapper would collide.
     let name = name.strip_prefix("__intrinsic_").unwrap_or(name);
+
+    if let Some(result) = gen_pointer_layout_query(name, args, context, target_data)? {
+        return Ok(Some(result));
+    }
+
+    if let Some(result) = gen_sizeof_alignof_of(name, args, context, target_data)? {
+        return Ok(Some(result));
+    }
 
     if let Some(suffix) = name.strip_prefix("load_") {
         let scalar = Scalar::from_suffix(suffix).ok_or(IntrinsicError::Unknown)?;

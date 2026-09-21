@@ -1623,7 +1623,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         args: &[BasicMetadataValueEnum<'ink>],
     ) -> Option<BasicValueEnum<'ink>> {
         let name = function.name(self.db).to_string();
-        match intrinsic_ops::gen_intrinsic(&name, args, self.context, self.module, &self.builder) {
+        match intrinsic_ops::gen_intrinsic(
+            &name,
+            args,
+            self.context,
+            self.module,
+            &self.builder,
+            self.hir_types.target_data(),
+        ) {
             Ok(Some(value)) => Some(value),
             // A `store_*` yields nothing. Unit is substituted for the same
             // reason a void call does above: `None` here would be read as

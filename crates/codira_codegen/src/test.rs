@@ -1085,6 +1085,56 @@ fn string_literal_with_embedded_nul_keeps_its_length() {
 }
 
 #[test]
+fn intrinsic_pointer_width_sizeof_alignof() {
+    // Zero arguments, no generic parameter: this is `sizeof(usize)`, the
+    // machine word, not `sizeof(T)` for some other type. It must fold to a
+    // target-width constant with no runtime work at all.
+    test_snapshot_unoptimized(
+        "intrinsic_pointer_width_sizeof_alignof",
+        r#"
+    extern "codira-intrinsic" {
+        func sizeof() -> usize;
+        func alignof() -> usize;
+    }
+    public func word_size() -> usize {
+        sizeof()
+    }
+    public func word_align() -> usize {
+        alignof()
+    }
+    "#,
+    );
+}
+
+#[test]
+fn intrinsic_sizeof_of_infers_from_the_argument() {
+    // `marker` pins `T` through ordinary argument-type inference -- the
+    // same mechanism an ordinary generic call uses -- and is never read;
+    // only its LLVM type is asked for its store size and ABI alignment.
+    // `i64` and a two-field struct must report different sizes, which is
+    // what proves this reads the argument's *type*, not a fixed constant.
+    test_snapshot_unoptimized(
+        "intrinsic_sizeof_of_infers_from_the_argument",
+        r#"
+    extern "codira-intrinsic" {
+        func sizeof_of[T](marker: T) -> usize;
+        func alignof_of[T](marker: T) -> usize;
+    }
+    public struct Pair { a: i64, b: i64 }
+    public func size_of_i64(x: i64) -> usize {
+        sizeof_of(x)
+    }
+    public func size_of_pair(p: Pair) -> usize {
+        sizeof_of(p)
+    }
+    public func align_of_i64(x: i64) -> usize {
+        alignof_of(x)
+    }
+    "#,
+    );
+}
+
+#[test]
 fn intrinsic_bitcast() {
     // A bitcast is no instruction at run time, which is exactly why it is
     // the way to build a float constant with no source spelling: infinity

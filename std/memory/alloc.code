@@ -64,11 +64,18 @@ extend Layout {
 }
 
 // Create a layout for a single value of type T.
+//
+// `sizeof`/`alignof` need a value of type `T` to infer `T` from, and there
+// is none in scope here -- `of[T]()` is called precisely when the caller
+// has no `T` value yet (before allocating one). Left genuinely unresolved:
+// see `std/memory/pointer.code`'s note on why there is no honest way to
+// answer this without a language feature (explicit generic call syntax)
+// this compiler does not have yet.
 extend Layout {
     public func of[T]() -> Layout {
         return Layout {
-            size: __intrinsic_sizeof(),
-            align: __intrinsic_alignof(),
+            size: sizeof_of_pointee(),
+            align: alignof_of_pointee(),
         };
     }
 }
@@ -77,8 +84,8 @@ extend Layout {
 // Handles inter-element padding.
 extend Layout {
     public func array[T](count: usize) -> Layout {
-        let elem_size = __intrinsic_sizeof();
-        let elem_align = __intrinsic_alignof();
+        let elem_size = sizeof_of_pointee();
+        let elem_align = alignof_of_pointee();
         // Stride = size rounded up to alignment.
         let stride = (elem_size + elem_align - 1) & (0 - elem_align);
         return Layout {
