@@ -1,0 +1,19 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 2340
+expression: "infer(r\"\n    func one[T](x: T) -> T { x }\n\n    func two[T](x: T) -> T { x }\n\n    func pair_up[T, U](a: T, b: U) -> U { b }\",)"
+snapshot_kind: text
+---
+5..8: a generic function (`T` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+35..38: a generic function (`T` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+65..72: a generic function (`T` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+12..13 'x': T
+23..28 '{ x }': T
+25..26 'x': T
+42..43 'x': T
+53..58 '{ x }': T
+55..56 'x': T
+79..80 'a': T
+85..86 'b': U
+96..101 '{ b }': U
+98..99 'b': U

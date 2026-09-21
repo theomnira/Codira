@@ -1,0 +1,11 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    func main() -> i32 {\n        let (a, b, c) = (1, 2);\n        a\n    }\",)"
+---
+29..38: cannot destructure a 2-element tuple with a 3-element tuple pattern
+19..56 '{     ...   a }': i32
+29..38 '(a, b, c)': (i32, i32)
+41..47 '(1, 2)': (i32, i32)
+42..43 '1': i32
+45..46 '2': i32
+53..54 'a': {unknown}

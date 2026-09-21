@@ -1,0 +1,21 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func assign(a: bool, b: bool) -> bool {\n        a = b;\n        a\n    }\n    // TODO: Add errors\n    // a += b;\n    // a *= b;\n    // a -= b;\n    // a /= b;\n    // a %= b;\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @assign(i1 %0, i1 returned %1) local_unnamed_addr #0 {
+body:
+  ret i1 %1
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

@@ -1,0 +1,26 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern \"codira-intrinsic\" {\n        func sizeof() -> usize;\n        func alignof() -> usize;\n    }\n    public func word_size() -> usize {\n        sizeof()\n    }\n    public func word_align() -> usize {\n        alignof()\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [1 x ptr]
+
+define i64 @word_size() {
+body:
+  ret i64 8
+}
+
+define i64 @word_align() {
+body:
+  ret i64 8
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

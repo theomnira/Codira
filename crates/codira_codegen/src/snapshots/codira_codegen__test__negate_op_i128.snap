@@ -1,0 +1,22 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func negate(a: i128) -> i128 { -a }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i128 @negate(i128 %0) local_unnamed_addr #0 {
+body:
+  %neg = sub i128 0, %0
+  ret i128 %neg
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

@@ -1,0 +1,44 @@
+---
+source: crates/codira_codegen/src/test.rs
+assertion_line: 1246
+expression: "\n    extern \"codira-intrinsic\" {\n        func ctlz_u32(value: u32) -> u32;\n        func cttz_u32(value: u32) -> u32;\n        func popcount_u32(value: u32) -> u32;\n    }\n    public func counts(x: u32) -> u32 {\n        ctlz_u32(x) + cttz_u32(x) + popcount_u32(x)\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [1 x ptr]
+
+define i32 @counts(i32 %0) {
+body:
+  %x = alloca i32, align 4
+  store i32 %0, ptr %x, align 4
+  %x1 = load i32, ptr %x, align 4
+  %intrinsic.bitcount = call i32 @llvm.ctlz.i32(i32 %x1, i1 false)
+  %x2 = load i32, ptr %x, align 4
+  %intrinsic.bitcount3 = call i32 @llvm.cttz.i32(i32 %x2, i1 false)
+  %add = add i32 %intrinsic.bitcount, %intrinsic.bitcount3
+  %x4 = load i32, ptr %x, align 4
+  %intrinsic.bitcount5 = call i32 @llvm.ctpop.i32(i32 %x4)
+  %add6 = add i32 %add, %intrinsic.bitcount5
+  ret i32 %add6
+}
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare i32 @llvm.ctlz.i32(i32, i1 immarg) #0
+
+; Function Attrs: nocallback nofree nosync nounwind speculatable willreturn memory(none)
+declare i32 @llvm.cttz.i32(i32, i1 immarg) #0
+
+; Function Attrs: nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none)
+declare i32 @llvm.ctpop.i32(i32) #1
+
+attributes #0 = { nocallback nofree nosync nounwind speculatable willreturn memory(none) }
+attributes #1 = { nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

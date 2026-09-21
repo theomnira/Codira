@@ -1,0 +1,12 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    struct Box[T] { v: T }\n\n    func main() -> i64 {\n        let b = Box { v: 7 };\n        b.v\n    }\",)"
+snapshot_kind: text
+---
+0..22: a generic struct (`T` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so the struct has no concrete                       layout to generate
+43..80 '{     ... b.v }': i64
+53..54 'b': Box[i64]
+57..69 'Box { v: 7 }': Box[i64]
+66..67 '7': i64
+75..76 'b': Box[i64]
+75..78 'b.v': i64

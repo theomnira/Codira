@@ -1,0 +1,12 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 749
+expression: "infer(r#\"\n    @strict\n    func take(consuming buf: i32) -> i32 {\n        buf + buf\n    }\n    \"#)"
+snapshot_kind: text
+---
+57..60: use of `buf` after it was consumed -- `consuming` parameters may only be used once in an `@strict` function
+28..31 'buf': i32
+45..62 '{     ... buf }': i32
+51..54 'buf': i32
+51..60 'buf + buf': i32
+57..60 'buf': i32

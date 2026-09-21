@@ -1,0 +1,20 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    func wrong_shape(x: i64, y: i64) -> i64 { x + y }\n    func right_shape() -> i64 { 1 }\n\n    @heal(on: [Timeout], strategies: [SubstituteAlternate(wrong_shape)])\n    func mismatched() -> i64 { 0 }\n\n    @heal(on: [Timeout], strategies: [SubstituteAlternate(itself)])\n    func itself() -> i64 { 0 }\n\n    @heal(on: [Timeout], strategies: [SubstituteAlternate(right_shape)])\n    func ok() -> i64 { 0 }\",)"
+---
+117..149: `SubstituteAlternate` is not usable here: `wrong_shape` does not have the same signature as this function, so it cannot stand in for it
+218..245: `SubstituteAlternate` is not usable here: `itself` is the guarded function itself, so substituting it would re-run the call that just faulted
+17..18 'x': i64
+25..26 'y': i64
+40..49 '{ x + y }': i64
+42..43 'x': i64
+42..47 'x + y': i64
+46..47 'y': i64
+76..81 '{ 1 }': i64
+78..79 '1': i64
+177..182 '{ 0 }': i64
+179..180 '0': i64
+269..274 '{ 0 }': i64
+271..272 '0': i64
+362..367 '{ 0 }': i64
+364..365 '0': i64

@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r#\"\n    @heal(\n        on: [Timeout],\n        strategies: [ReturnDefault(0)],\n        postcondition: result > 0 && result < 0\n    )\n    func risky() -> i32 {\n        1\n    }\n    \"#)"
+---
+0..137: unsatisfiable healing-contract postcondition: no return value can ever satisfy it (proven by SMT solver, not just a heuristic)
+128..137 '{     1 }': i32
+134..135 '1': i32

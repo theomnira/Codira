@@ -1,0 +1,41 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    struct Counter { value: i32 };\n\n    extend Counter {\n        func make(start: i32) -> Counter {\n            Counter { value: start }\n        }\n        func get(self) -> i32 {\n            self.value\n        }\n    }\n\n    public func main() -> i32 {\n        Counter.make(7).get()\n    }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%Counter = type { i32 }
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define noundef i32 @main() local_unnamed_addr #0 {
+body:
+  ret i32 7
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define %Counter @make(i32 %0) local_unnamed_addr #0 {
+body:
+  %init = insertvalue %Counter undef, i32 %0, 0
+  ret %Counter %init
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @get(%Counter %0) local_unnamed_addr #0 {
+body:
+  %.fca.0.extract = extractvalue %Counter %0, 0
+  ret i32 %.fca.0.extract
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [2 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

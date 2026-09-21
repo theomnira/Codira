@@ -1,0 +1,26 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func foo(n:i32) -> i32 {\n        loop {\n            if n > 5 {\n                break n;\n            }\n            if n > 10 {\n                break 10;\n            }\n            n += 1;\n        }\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define range(i32 6, -2147483648) i32 @foo(i32 %0) local_unnamed_addr #0 {
+body:
+  %smax = tail call i32 @llvm.smax.i32(i32 %0, i32 6)
+  ret i32 %smax
+}
+
+; Function Attrs: nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none)
+declare i32 @llvm.smax.i32(i32, i32) #1
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+attributes #1 = { nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

@@ -1,0 +1,29 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func and(a: bool, b: bool) -> bool {\n        a && b\n    }\n    public func or(a: bool, b: bool) -> bool {\n        a || b\n    }    \n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @and(i1 %0, i1 %1) local_unnamed_addr #0 {
+body:
+  %and = and i1 %0, %1
+  ret i1 %and
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @or(i1 %0, i1 %1) local_unnamed_addr #0 {
+body:
+  %or = or i1 %0, %1
+  ret i1 %or
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

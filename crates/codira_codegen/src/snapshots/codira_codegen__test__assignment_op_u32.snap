@@ -1,0 +1,56 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func assign(a: u32, b: u32) -> u32 {\n        a = b;\n        a\n    }\n    public func assign_add(a: u32, b: u32) -> u32 {\n        a += b;\n        a\n    }\n    public func assign_subtract(a: u32, b: u32) -> u32 {\n        a -= b;\n        a\n    }\n    public func assign_multiply(a: u32, b: u32) -> u32 {\n        a *= b;\n        a\n    }\n    public func assign_divide(a: u32, b: u32) -> u32 {\n        a /= b;\n        a\n    }\n    public func assign_remainder(a: u32, b: u32) -> u32 {\n        a %= b;\n        a\n    }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @assign(i32 %0, i32 returned %1) local_unnamed_addr #0 {
+body:
+  ret i32 %1
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @assign_add(i32 %0, i32 %1) local_unnamed_addr #0 {
+body:
+  %add = add i32 %1, %0
+  ret i32 %add
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @assign_subtract(i32 %0, i32 %1) local_unnamed_addr #0 {
+body:
+  %sub = sub i32 %0, %1
+  ret i32 %sub
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @assign_multiply(i32 %0, i32 %1) local_unnamed_addr #0 {
+body:
+  %mul = mul i32 %1, %0
+  ret i32 %mul
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @assign_divide(i32 %0, i32 %1) local_unnamed_addr #0 {
+body:
+  %div = udiv i32 %0, %1
+  ret i32 %div
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define range(i32 0, -1) i32 @assign_remainder(i32 %0, i32 %1) local_unnamed_addr #0 {
+body:
+  %rem = urem i32 %0, %1
+  ret i32 %rem
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

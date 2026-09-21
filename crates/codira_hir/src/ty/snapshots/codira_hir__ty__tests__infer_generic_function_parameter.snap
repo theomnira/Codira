@@ -1,0 +1,15 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 2273
+expression: "infer(r\"\n    func id[T](x: T) -> T {\n        x\n    }\n\n    func second[A, B](a: A, b: B) -> B {\n        b\n    }\",)"
+snapshot_kind: text
+---
+5..7: a generic function (`T` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+38..44: a generic function (`A` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+11..12 'x': T
+22..31 '{     x }': T
+28..29 'x': T
+51..52 'a': A
+57..58 'b': B
+68..77 '{     b }': B
+74..75 'b': B

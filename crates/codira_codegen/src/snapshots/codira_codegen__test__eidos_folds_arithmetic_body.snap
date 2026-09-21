@@ -1,0 +1,20 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func answer() -> i64 {\n        40 + 2\n    }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [1 x ptr]
+
+define i64 @answer() {
+body:
+  ret i64 42
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

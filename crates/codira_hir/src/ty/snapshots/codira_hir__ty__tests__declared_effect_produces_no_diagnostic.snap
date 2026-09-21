@@ -1,0 +1,11 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 673
+expression: "infer(r#\"\n    effect Logger {\n        func log(message: String)\n    }\n\n    func risky() uses Logger -> i32 {\n        42\n    }\n\n    func caller() uses Logger -> i32 {\n        risky()\n    }\n    \"#)"
+snapshot_kind: text
+---
+81..91 '{     42 }': i32
+87..89 '42': i32
+126..141 '{     risky() }': i32
+132..137 'risky': function risky() -> i32
+132..139 'risky()': i32

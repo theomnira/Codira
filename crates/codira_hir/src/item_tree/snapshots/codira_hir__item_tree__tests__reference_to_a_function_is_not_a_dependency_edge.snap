@@ -1,0 +1,6 @@
+---
+source: crates/codira_hir/src/item_tree/tests.rs
+expression: "print_item_tree(r#\"\n    func helper() -> i32 { 1 }\n    let VALUE: i32 = helper();\n    \"#,).unwrap()"
+---
+fn helper() -> i32;
+let VALUE: i32 = <expr>  // refs: helper;

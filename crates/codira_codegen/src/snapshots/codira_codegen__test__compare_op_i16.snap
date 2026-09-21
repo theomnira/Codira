@@ -1,0 +1,57 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func equals(a: i16, b: i16) -> bool { a == b }\n    public func not_equal(a: i16, b: i16) -> bool { a != b}\n    public func less(a: i16, b: i16) -> bool { a < b }\n    public func less_equal(a: i16, b: i16) -> bool { a <= b }\n    public func greater(a: i16, b: i16) -> bool { a > b }\n    public func greater_equal(a: i16, b: i16) -> bool { a >= b }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @equals(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %eq = icmp eq i16 %0, %1
+  ret i1 %eq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @not_equal(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %neq = icmp ne i16 %0, %1
+  ret i1 %neq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @less(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %less = icmp slt i16 %0, %1
+  ret i1 %less
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @less_equal(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %lesseq = icmp sle i16 %0, %1
+  ret i1 %lesseq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @greater(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %greater = icmp sgt i16 %0, %1
+  ret i1 %greater
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @greater_equal(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %greatereq = icmp sge i16 %0, %1
+  ret i1 %greatereq
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [2 x ptr] zeroinitializer

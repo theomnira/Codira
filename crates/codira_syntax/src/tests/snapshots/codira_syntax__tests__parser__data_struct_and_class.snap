@@ -1,0 +1,174 @@
+---
+source: crates/codira_syntax/src/tests/parser.rs
+assertion_line: 681
+expression: "SourceFile::parse(r#\"\n    data struct Point {\n        x: f64,\n        y: f64,\n    }\n    data class Actor {\n        var health: i32,\n    }\n    public data struct Pair[T] {\n        first: T,\n        second: T,\n    }\n    func use_data_as_ident() {\n        let data = 5;\n        data\n    }\n    struct HasDataField {\n        data: i32,\n    }\n    \"#,).debug_dump()"
+snapshot_kind: text
+---
+SOURCE_FILE@0..320
+  WHITESPACE@0..5 "\n    "
+  STRUCT_DEF@5..62
+    DATA_KW@5..9 "data"
+    WHITESPACE@9..10 " "
+    STRUCT_KW@10..16 "struct"
+    WHITESPACE@16..17 " "
+    NAME@17..22
+      IDENT@17..22 "Point"
+    WHITESPACE@22..23 " "
+    RECORD_FIELD_DEF_LIST@23..62
+      L_CURLY@23..24 "{"
+      WHITESPACE@24..33 "\n        "
+      RECORD_FIELD_DEF@33..39
+        NAME@33..34
+          IDENT@33..34 "x"
+        COLON@34..35 ":"
+        WHITESPACE@35..36 " "
+        PATH_TYPE@36..39
+          PATH@36..39
+            PATH_SEGMENT@36..39
+              NAME_REF@36..39
+                IDENT@36..39 "f64"
+      COMMA@39..40 ","
+      WHITESPACE@40..49 "\n        "
+      RECORD_FIELD_DEF@49..55
+        NAME@49..50
+          IDENT@49..50 "y"
+        COLON@50..51 ":"
+        WHITESPACE@51..52 " "
+        PATH_TYPE@52..55
+          PATH@52..55
+            PATH_SEGMENT@52..55
+              NAME_REF@52..55
+                IDENT@52..55 "f64"
+      COMMA@55..56 ","
+      WHITESPACE@56..61 "\n    "
+      R_CURLY@61..62 "}"
+  WHITESPACE@62..67 "\n    "
+  STRUCT_DEF@67..116
+    DATA_KW@67..71 "data"
+    WHITESPACE@71..72 " "
+    CLASS_KW@72..77 "class"
+    WHITESPACE@77..78 " "
+    NAME@78..83
+      IDENT@78..83 "Actor"
+    WHITESPACE@83..84 " "
+    RECORD_FIELD_DEF_LIST@84..116
+      L_CURLY@84..85 "{"
+      WHITESPACE@85..94 "\n        "
+      RECORD_FIELD_DEF@94..109
+        VAR_KW@94..97 "var"
+        WHITESPACE@97..98 " "
+        NAME@98..104
+          IDENT@98..104 "health"
+        COLON@104..105 ":"
+        WHITESPACE@105..106 " "
+        PATH_TYPE@106..109
+          PATH@106..109
+            PATH_SEGMENT@106..109
+              NAME_REF@106..109
+                IDENT@106..109 "i32"
+      COMMA@109..110 ","
+      WHITESPACE@110..115 "\n    "
+      R_CURLY@115..116 "}"
+  WHITESPACE@116..121 "\n    "
+  STRUCT_DEF@121..192
+    VISIBILITY@121..127
+      PUBLIC_KW@121..127 "public"
+    WHITESPACE@127..128 " "
+    DATA_KW@128..132 "data"
+    WHITESPACE@132..133 " "
+    STRUCT_KW@133..139 "struct"
+    WHITESPACE@139..140 " "
+    NAME@140..144
+      IDENT@140..144 "Pair"
+    GENERIC_PARAM_LIST@144..147
+      L_BRACKET@144..145 "["
+      GENERIC_PARAM@145..146
+        NAME@145..146
+          IDENT@145..146 "T"
+      R_BRACKET@146..147 "]"
+    WHITESPACE@147..148 " "
+    RECORD_FIELD_DEF_LIST@148..192
+      L_CURLY@148..149 "{"
+      WHITESPACE@149..158 "\n        "
+      RECORD_FIELD_DEF@158..166
+        NAME@158..163
+          IDENT@158..163 "first"
+        COLON@163..164 ":"
+        WHITESPACE@164..165 " "
+        PATH_TYPE@165..166
+          PATH@165..166
+            PATH_SEGMENT@165..166
+              NAME_REF@165..166
+                IDENT@165..166 "T"
+      COMMA@166..167 ","
+      WHITESPACE@167..176 "\n        "
+      RECORD_FIELD_DEF@176..185
+        NAME@176..182
+          IDENT@176..182 "second"
+        COLON@182..183 ":"
+        WHITESPACE@183..184 " "
+        PATH_TYPE@184..185
+          PATH@184..185
+            PATH_SEGMENT@184..185
+              NAME_REF@184..185
+                IDENT@184..185 "T"
+      COMMA@185..186 ","
+      WHITESPACE@186..191 "\n    "
+      R_CURLY@191..192 "}"
+  FUNCTION_DEF@192..264
+    WHITESPACE@192..197 "\n    "
+    FUNC_KW@197..201 "func"
+    WHITESPACE@201..202 " "
+    NAME@202..219
+      IDENT@202..219 "use_data_as_ident"
+    PARAM_LIST@219..221
+      L_PAREN@219..220 "("
+      R_PAREN@220..221 ")"
+    WHITESPACE@221..222 " "
+    BLOCK_EXPR@222..264
+      L_CURLY@222..223 "{"
+      WHITESPACE@223..232 "\n        "
+      LET_STMT@232..245
+        LET_KW@232..235 "let"
+        WHITESPACE@235..236 " "
+        BIND_PAT@236..240
+          NAME@236..240
+            IDENT@236..240 "data"
+        WHITESPACE@240..241 " "
+        EQ@241..242 "="
+        WHITESPACE@242..243 " "
+        LITERAL@243..244
+          INT_NUMBER@243..244 "5"
+        SEMI@244..245 ";"
+      WHITESPACE@245..254 "\n        "
+      PATH_EXPR@254..258
+        PATH@254..258
+          PATH_SEGMENT@254..258
+            NAME_REF@254..258
+              IDENT@254..258 "data"
+      WHITESPACE@258..263 "\n    "
+      R_CURLY@263..264 "}"
+  WHITESPACE@264..269 "\n    "
+  STRUCT_DEF@269..315
+    STRUCT_KW@269..275 "struct"
+    WHITESPACE@275..276 " "
+    NAME@276..288
+      IDENT@276..288 "HasDataField"
+    WHITESPACE@288..289 " "
+    RECORD_FIELD_DEF_LIST@289..315
+      L_CURLY@289..290 "{"
+      WHITESPACE@290..299 "\n        "
+      RECORD_FIELD_DEF@299..308
+        NAME@299..303
+          IDENT@299..303 "data"
+        COLON@303..304 ":"
+        WHITESPACE@304..305 " "
+        PATH_TYPE@305..308
+          PATH@305..308
+            PATH_SEGMENT@305..308
+              NAME_REF@305..308
+                IDENT@305..308 "i32"
+      COMMA@308..309 ","
+      WHITESPACE@309..314 "\n    "
+      R_CURLY@314..315 "}"
+  WHITESPACE@315..320 "\n    "

@@ -1,0 +1,17 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 2319
+expression: "infer(r\"\n    struct Tuple3[A, B, C] { a: A, b: B, c: C }\n\n    extend Tuple3[A, B, C] {\n        func first(self) -> A { self.a }\n        func third(self) -> C { self.c }\n    }\",)"
+snapshot_kind: text
+---
+0..43: a generic struct (`A` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so the struct has no concrete                       layout to generate
+79..84: a generic function (`Tuple3[A, B, C]` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+116..121: a generic function (`Tuple3[A, B, C]` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+85..89 'self': Tuple3[A, B, C]
+96..106 '{ self.a }': A
+98..102 'self': Tuple3[A, B, C]
+98..104 'self.a': A
+122..126 'self': Tuple3[A, B, C]
+133..143 '{ self.c }': C
+135..139 'self': Tuple3[A, B, C]
+135..141 'self.c': C

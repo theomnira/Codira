@@ -1,0 +1,24 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func issue() -> i32 {\n        loop {\n        }\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: nofree norecurse noreturn nosync nounwind memory(none)
+define noundef i32 @issue() local_unnamed_addr #0 {
+body:
+  br label %loop
+
+loop:                                             ; preds = %loop, %body
+  br label %loop
+}
+
+attributes #0 = { nofree norecurse noreturn nosync nounwind memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

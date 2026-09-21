@@ -1,0 +1,43 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    struct Bar(f64, i32, bool, Foo);\n    struct Foo { a: i32 };\n    struct Baz;\n    public func foo() {\n        let a: Foo = Foo { a: 5 };\n        let b: Bar = Bar(1.23, a.a, true, a);\n        let c: Baz = Baz;\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+%Baz = type {}
+%Bar = type { double, i32, i1, %Foo }
+%Foo = type { i32 }
+
+@allocatorHandle = external global ptr
+@dispatchTable = external global %DispatchTable
+@global_type_lookup_table = external global [6 x ptr]
+
+define void @foo() {
+body:
+  %c = alloca %Baz, align 8
+  %b = alloca %Bar, align 8
+  %a = alloca %Foo, align 8
+  store %Foo { i32 5 }, ptr %a, align 4
+  %"Foo->a" = getelementptr inbounds nuw %Foo, ptr %a, i32 0, i32 0
+  %Foo.a = load i32, ptr %"Foo->a", align 4
+  %a1 = load %Foo, ptr %a, align 4
+  %init = insertvalue %Bar { double 1.230000e+00, i32 undef, i1 undef, %Foo undef }, i32 %Foo.a, 1
+  %init2 = insertvalue %Bar %init, i1 true, 2
+  %init3 = insertvalue %Bar %init2, %Foo %a1, 3
+  store %Bar %init3, ptr %b, align 8
+  store %Baz undef, ptr %c, align 1
+  ret void
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [6 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

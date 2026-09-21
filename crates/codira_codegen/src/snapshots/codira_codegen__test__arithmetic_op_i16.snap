@@ -1,0 +1,50 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func add(a: i16, b: i16) -> i16 { a + b }\n    public func subtract(a: i16, b: i16) -> i16 { a - b }\n    public func multiply(a: i16, b: i16) -> i16 { a * b }\n    public func divide(a: i16, b: i16) -> i16 { a / b }\n    public func remainder(a: i16, b: i16) -> i16 { a % b }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i16 @add(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %add = add i16 %1, %0
+  ret i16 %add
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i16 @subtract(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %sub = sub i16 %0, %1
+  ret i16 %sub
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i16 @multiply(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %mul = mul i16 %1, %0
+  ret i16 %mul
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i16 @divide(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %div = sdiv i16 %0, %1
+  ret i16 %div
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define range(i16 -32767, -32768) i16 @remainder(i16 %0, i16 %1) local_unnamed_addr #0 {
+body:
+  %rem = srem i16 %0, %1
+  ret i16 %rem
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

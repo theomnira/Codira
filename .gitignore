@@ -51,16 +51,24 @@ cmake-build-*/
 /.claude
 /tools
 /modular
-*.snap
-/crates/codira_codegen/src/snapshots
-/.claude-flow
 /.claude-flow
 /.cache
-*.snap
-*.snap
-*.new
-/crates/codira_hir/src/ty/snapshots
-*.snap
+
+# `insta`'s own pending-review file. The `.snap` baseline it is a diff
+# against is a checked-in test fixture -- committing it is the entire point
+# of a ratchet test (`stdlib_ratchet.rs`, `stdlib_check_ratchet.rs`: "the
+# review step is the point, and the ratchet is only meaningful if the diff
+# is actually read"). A `.snap.new` is the opposite: uncommitted work in
+# progress, exactly like a `.orig` from a patch that failed to apply clean.
+#
+# This used to also ignore `*.snap` itself, four times over, plus two
+# directory-specific rules for the same pattern -- which meant every
+# snapshot test's baseline silently never reached git. `cargo test` on a
+# fresh clone failed immediately, on every one of them, because the
+# baseline they compare against did not exist: confirmed directly by
+# removing one and rerunning it. Fixed here, not worked around, because a
+# gitignored ratchet is not a ratchet.
+*.snap.new
 
 # Built artifacts from the interop example's C caller.
 examples/interop/c/main

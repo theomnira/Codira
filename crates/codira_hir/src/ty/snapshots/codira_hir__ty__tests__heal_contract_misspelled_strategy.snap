@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    @heal(on: [Timeout], strategies: [ReturnDefualt])\n    func risky() -> i64 { 0 }\",)"
+---
+34..47: unknown recovery strategy `ReturnDefualt` -- did you mean `ReturnDefault`?
+70..75 '{ 0 }': i64
+72..73 '0': i64

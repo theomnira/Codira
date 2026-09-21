@@ -1,0 +1,60 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public struct Bar(f64, Foo);\n    public struct Foo { a: i32 };\n\n    func bar_1(bar: Bar) -> Foo {\n        bar.1\n    }\n\n    func foo_a(foo: Foo) -> i32 {\n        foo.a\n    }\n\n    public func bar_1_foo_a(bar: Bar) -> i32 {\n        foo_a(bar_1(bar))\n    }\n\n    public func main() -> i32 {\n        let a: Foo = Foo { a: 5 };\n        let b: Bar = Bar(1.23, a);\n        let aa_lhs = a.a + 2;\n        let aa_rhs = 2 + a.a;\n        aa_lhs + aa_rhs\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%Foo = type { i32 }
+%Bar = type { double, %Foo }
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define %Foo @bar_1(%Bar %0) local_unnamed_addr #0 {
+body:
+  %.fca.1.0.extract = extractvalue %Bar %0, 1, 0
+  %Bar.1.fca.0.insert = insertvalue %Foo poison, i32 %.fca.1.0.extract, 0
+  ret %Foo %Bar.1.fca.0.insert
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @foo_a(%Foo %0) local_unnamed_addr #0 {
+body:
+  %.fca.0.extract = extractvalue %Foo %0, 0
+  ret i32 %.fca.0.extract
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @bar_1_foo_a(%Bar %0) local_unnamed_addr #0 {
+body:
+  %.fca.1.0.extract.i = extractvalue %Bar %0, 1, 0
+  ret i32 %.fca.1.0.extract.i
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(read, inaccessiblemem: none, target_mem0: none, target_mem1: none)
+define i32 @bar_1_foo_a_wrapper(ptr readonly captures(none) %0) local_unnamed_addr #1 {
+body:
+  %"->data" = load ptr, ptr %0, align 8
+  %1 = getelementptr inbounds nuw i8, ptr %"->data", i64 8
+  %.fca.1.0.extract.i.i = load i32, ptr %1, align 4
+  ret i32 %.fca.1.0.extract.i.i
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define noundef i32 @main() local_unnamed_addr #0 {
+body:
+  ret i32 14
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+attributes #1 = { mustprogress nofree norecurse nosync nounwind willreturn memory(read, inaccessiblemem: none, target_mem0: none, target_mem1: none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [4 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

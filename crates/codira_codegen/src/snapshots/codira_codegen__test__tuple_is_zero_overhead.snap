@@ -1,0 +1,31 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    func divmod(a: i32, b: i32) -> (i32, i32) {\n        (a / b, a % b)\n    }\n\n    public func main() -> i32 {\n        let qr = divmod(17, 5);\n        qr.0 * 100 + qr.1\n    }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define { i32, i32 } @divmod(i32 %0, i32 %1) local_unnamed_addr #0 {
+body:
+  %div = sdiv i32 %0, %1
+  %tuple_init = insertvalue { i32, i32 } undef, i32 %div, 0
+  %rem = srem i32 %0, %1
+  %tuple_init5 = insertvalue { i32, i32 } %tuple_init, i32 %rem, 1
+  ret { i32, i32 } %tuple_init5
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define noundef i32 @main() local_unnamed_addr #0 {
+body:
+  ret i32 302
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

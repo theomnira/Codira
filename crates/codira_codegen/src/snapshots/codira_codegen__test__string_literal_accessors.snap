@@ -1,0 +1,41 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern \"codira-intrinsic\" {\n        func str_data(s: str) -> usize;\n        func str_len(s: str) -> usize;\n    }\n    public func address_of(s: str) -> usize {\n        str_data(s)\n    }\n    public func length_of(s: str) -> usize {\n        str_len(s)\n    }\n    public func length_of_literal() -> usize {\n        str_len(\"hello\")\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [2 x ptr]
+@codira.str = private unnamed_addr constant [6 x i8] c"hello\00"
+
+define i64 @address_of({ ptr, i64 } %0) {
+body:
+  %s = alloca { ptr, i64 }, align 8
+  store { ptr, i64 } %0, ptr %s, align 8
+  %s1 = load { ptr, i64 }, ptr %s, align 8
+  %intrinsic.str = extractvalue { ptr, i64 } %s1, 0
+  %intrinsic.str.addr = ptrtoint ptr %intrinsic.str to i64
+  ret i64 %intrinsic.str.addr
+}
+
+define i64 @length_of({ ptr, i64 } %0) {
+body:
+  %s = alloca { ptr, i64 }, align 8
+  store { ptr, i64 } %0, ptr %s, align 8
+  %s1 = load { ptr, i64 }, ptr %s, align 8
+  %intrinsic.str = extractvalue { ptr, i64 } %s1, 1
+  ret i64 %intrinsic.str
+}
+
+define i64 @length_of_literal() {
+body:
+  ret i64 5
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [2 x ptr] zeroinitializer

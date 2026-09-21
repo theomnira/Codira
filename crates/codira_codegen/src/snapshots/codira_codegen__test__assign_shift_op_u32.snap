@@ -1,0 +1,29 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func assign_leftshift(a: u32, b: u32) -> u32 {\n        a <<= b;\n        a\n    }\n    public func assign_rightshift(a: u32, b: u32) -> u32 {\n        a >>= b;\n        a\n    }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @assign_leftshift(i32 %0, i32 %1) local_unnamed_addr #0 {
+body:
+  %left_shift = shl i32 %0, %1
+  ret i32 %left_shift
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @assign_rightshift(i32 %0, i32 %1) local_unnamed_addr #0 {
+body:
+  %right_shift = lshr i32 %0, %1
+  ret i32 %right_shift
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

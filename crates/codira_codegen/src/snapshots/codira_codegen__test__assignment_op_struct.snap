@@ -1,0 +1,51 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public struct Value(i32, i32);\n    public class Heap(f64, f64);\n\n    public func assign_value(a: Value, b: Value) -> Value {\n        a = b;\n        a\n    }\n\n    public func assign_heap(a: Heap, b: Heap) -> Heap {\n        a = b;\n        a\n    }\n    // TODO: Add errors\n    // a += b;\n    // a *= b;\n    // a -= b;\n    // a /= b;\n    // a %= b;\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+%Value = type { i32, i32 }
+
+@allocatorHandle = external local_unnamed_addr global ptr
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+@global_type_lookup_table = external local_unnamed_addr global [4 x ptr]
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define %Value @assign_value(%Value %0, %Value returned %1) local_unnamed_addr #0 {
+body:
+  ret %Value %1
+}
+
+define noundef ptr @assign_value_wrapper(ptr readonly captures(none) %0, ptr readonly captures(none) %1) local_unnamed_addr {
+body:
+  %"->data1" = load ptr, ptr %1, align 8
+  %new_ptr = load ptr, ptr @dispatchTable, align 8
+  %Value_ptr = load ptr, ptr getelementptr inbounds nuw (i8, ptr @global_type_lookup_table, i64 8), align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %2 = load <2 x i32>, ptr %"->data1", align 4
+  %ref = tail call ptr %new_ptr(ptr %Value_ptr, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  store <2 x i32> %2, ptr %"ref->data", align 4
+  ret ptr %ref
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define ptr @assign_heap(ptr readnone captures(none) %0, ptr readnone returned captures(ret: address, provenance) %1) local_unnamed_addr #0 {
+body:
+  ret ptr %1
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [4 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

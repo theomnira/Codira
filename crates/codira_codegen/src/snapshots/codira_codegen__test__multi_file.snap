@@ -1,0 +1,45 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    //- /mod.code\n    import foo.get_value\n\n    public func main() -> i32 {\n        get_value()\n    }\n\n    //- /foo.code\n    internal func get_value() -> i32 {\n        3\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+
+define i32 @main() local_unnamed_addr {
+body:
+  %get_value_ptr = load ptr, ptr @dispatchTable, align 8
+  %get_value = tail call i32 %get_value_ptr()
+  ret i32 %get_value
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [1 x ptr] zeroinitializer
+
+; == FILE IR (foo) =====================================
+; ModuleID = 'foo'
+source_filename = "foo"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define noundef i32 @get_value() local_unnamed_addr #0 {
+body:
+  ret i32 3
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (foo) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

@@ -1,0 +1,52 @@
+---
+source: crates/codira_codegen/src/test.rs
+assertion_line: 1246
+expression: "\n    extern \"codira-intrinsic\" {\n        func load_u8(addr: usize) -> u8;\n        func load_u16(addr: usize) -> u16;\n        func load_u64(addr: usize) -> u64;\n        func load_f32(addr: usize) -> f32;\n        func load_f64(addr: usize) -> f64;\n    }\n    public func widths(p: usize) -> f64 {\n        load_f64(p) + load_f32(p) as f64\n    }\n    public func ints(p: usize) -> u64 {\n        load_u64(p) + load_u16(p) as u64 + load_u8(p) as u64\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [2 x ptr]
+
+define double @widths(i64 %0) {
+body:
+  %p = alloca i64, align 8
+  store i64 %0, ptr %p, align 4
+  %p1 = load i64, ptr %p, align 4
+  %intrinsic.addr = inttoptr i64 %p1 to ptr
+  %intrinsic.load = load double, ptr %intrinsic.addr, align 8
+  %p2 = load i64, ptr %p, align 4
+  %intrinsic.addr3 = inttoptr i64 %p2 to ptr
+  %intrinsic.load4 = load float, ptr %intrinsic.addr3, align 4
+  %fpext = fpext float %intrinsic.load4 to double
+  %add = fadd double %intrinsic.load, %fpext
+  ret double %add
+}
+
+define i64 @ints(i64 %0) {
+body:
+  %p = alloca i64, align 8
+  store i64 %0, ptr %p, align 4
+  %p1 = load i64, ptr %p, align 4
+  %intrinsic.addr = inttoptr i64 %p1 to ptr
+  %intrinsic.load = load i64, ptr %intrinsic.addr, align 8
+  %p2 = load i64, ptr %p, align 4
+  %intrinsic.addr3 = inttoptr i64 %p2 to ptr
+  %intrinsic.load4 = load i16, ptr %intrinsic.addr3, align 2
+  %zext = zext i16 %intrinsic.load4 to i64
+  %add = add i64 %intrinsic.load, %zext
+  %p5 = load i64, ptr %p, align 4
+  %intrinsic.addr6 = inttoptr i64 %p5 to ptr
+  %intrinsic.load7 = load i8, ptr %intrinsic.addr6, align 1
+  %zext8 = zext i8 %intrinsic.load7 to i64
+  %add9 = add i64 %add, %zext8
+  ret i64 %add9
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [2 x ptr] zeroinitializer

@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    @heal(on: [Timeut], strategies: [ReturnDefault])\n    func risky() -> i64 { 0 }\",)"
+---
+11..17: unknown fault class `Timeut` -- did you mean `Timeout`?
+69..74 '{ 0 }': i64
+71..72 '0': i64

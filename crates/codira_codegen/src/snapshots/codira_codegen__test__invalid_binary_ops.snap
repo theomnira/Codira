@@ -1,0 +1,6 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func main() {\n      let a = 3+3.0;\n      let b = 3.0+3;\n    }\n    "
+---
+mod.code (2:13): error: mismatched type
+mod.code (3:15): error: mismatched type

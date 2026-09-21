@@ -1,0 +1,24 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func add_one(a: i64) -> i64 {\n        a + 1\n    }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [1 x ptr]
+
+define i64 @add_one(i64 %0) {
+body:
+  %a = alloca i64, align 8
+  store i64 %0, ptr %a, align 4
+  %a1 = load i64, ptr %a, align 4
+  %add = add i64 %a1, 1
+  ret i64 %add
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

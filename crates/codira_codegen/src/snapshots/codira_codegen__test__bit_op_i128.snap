@@ -1,0 +1,43 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func not(a: i128) -> i128 { !a }\n    public func bitand(a: i128, b: i128) -> i128 { a & b }\n    public func bitor(a: i128, b: i128) -> i128 { a | b }\n    public func bitxor(a: i128, b: i128) -> i128 { a ^ b }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i128 @not(i128 %0) local_unnamed_addr #0 {
+body:
+  %not = xor i128 %0, -1
+  ret i128 %not
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i128 @bitand(i128 %0, i128 %1) local_unnamed_addr #0 {
+body:
+  %bit_and = and i128 %1, %0
+  ret i128 %bit_and
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i128 @bitor(i128 %0, i128 %1) local_unnamed_addr #0 {
+body:
+  %bit_or = or i128 %1, %0
+  ret i128 %bit_or
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i128 @bitxor(i128 %0, i128 %1) local_unnamed_addr #0 {
+body:
+  %bit_xor = xor i128 %1, %0
+  ret i128 %bit_xor
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

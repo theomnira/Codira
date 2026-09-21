@@ -1,0 +1,45 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    class Num {\n        value: i64,\n    }\n\n    public func foo(b: i64) {\n        Num { value: b }.value;\n    }\n\n    public func bar(b: i64) {\n        { let a = Num { value: b }; a}.value;\n    }\n        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+
+@allocatorHandle = external local_unnamed_addr global ptr
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+@global_type_lookup_table = external local_unnamed_addr global [2 x ptr]
+
+define void @foo(i64 %0) local_unnamed_addr {
+body:
+  %new_ptr = load ptr, ptr @dispatchTable, align 8
+  %Num_ptr = load ptr, ptr @global_type_lookup_table, align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %ref = tail call ptr %new_ptr(ptr %Num_ptr, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  store i64 %0, ptr %"ref->data", align 4
+  ret void
+}
+
+define void @bar(i64 %0) local_unnamed_addr {
+body:
+  %new_ptr = load ptr, ptr @dispatchTable, align 8
+  %Num_ptr = load ptr, ptr @global_type_lookup_table, align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %ref = tail call ptr %new_ptr(ptr %Num_ptr, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  store i64 %0, ptr %"ref->data", align 4
+  ret void
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [2 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

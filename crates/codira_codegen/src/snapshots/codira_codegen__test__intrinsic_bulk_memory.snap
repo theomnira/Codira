@@ -1,0 +1,55 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern \"codira-intrinsic\" {\n        func memcpy(dst: usize, src: usize, len: usize);\n        func memmove(dst: usize, src: usize, len: usize);\n        func memset(dst: usize, byte: u8, len: usize);\n    }\n    public func bulk(dst: usize, src: usize, len: usize) {\n        memcpy(dst, src, len);\n        memmove(dst, src, len);\n        memset(dst, 0, len);\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [1 x ptr]
+
+define void @bulk(i64 %0, i64 %1, i64 %2) {
+body:
+  %len = alloca i64, align 8
+  store i64 %2, ptr %len, align 4
+  %src = alloca i64, align 8
+  store i64 %1, ptr %src, align 4
+  %dst = alloca i64, align 8
+  store i64 %0, ptr %dst, align 4
+  %dst1 = load i64, ptr %dst, align 4
+  %src2 = load i64, ptr %src, align 4
+  %len3 = load i64, ptr %len, align 4
+  %intrinsic.dst = inttoptr i64 %dst1 to ptr
+  %intrinsic.src = inttoptr i64 %src2 to ptr
+  call void @llvm.memcpy.p0.p0.i64(ptr align 1 %intrinsic.dst, ptr align 1 %intrinsic.src, i64 %len3, i1 false)
+  %dst4 = load i64, ptr %dst, align 4
+  %src5 = load i64, ptr %src, align 4
+  %len6 = load i64, ptr %len, align 4
+  %intrinsic.dst7 = inttoptr i64 %dst4 to ptr
+  %intrinsic.src8 = inttoptr i64 %src5 to ptr
+  call void @llvm.memmove.p0.p0.i64(ptr align 1 %intrinsic.dst7, ptr align 1 %intrinsic.src8, i64 %len6, i1 false)
+  %dst9 = load i64, ptr %dst, align 4
+  %len10 = load i64, ptr %len, align 4
+  %intrinsic.dst11 = inttoptr i64 %dst9 to ptr
+  call void @llvm.memset.p0.i64(ptr align 1 %intrinsic.dst11, i8 0, i64 %len10, i1 false)
+  ret void
+}
+
+; Function Attrs: nocallback nofree nounwind willreturn memory(argmem: readwrite)
+declare void @llvm.memcpy.p0.p0.i64(ptr noalias writeonly captures(none), ptr noalias readonly captures(none), i64, i1 immarg) #0
+
+; Function Attrs: nocallback nofree nounwind willreturn memory(argmem: readwrite)
+declare void @llvm.memmove.p0.p0.i64(ptr writeonly captures(none), ptr readonly captures(none), i64, i1 immarg) #0
+
+; Function Attrs: nocallback nofree nounwind willreturn memory(argmem: write)
+declare void @llvm.memset.p0.i64(ptr writeonly captures(none), i8, i64, i1 immarg) #1
+
+attributes #0 = { nocallback nofree nounwind willreturn memory(argmem: readwrite) }
+attributes #1 = { nocallback nofree nounwind willreturn memory(argmem: write) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

@@ -1,0 +1,32 @@
+---
+source: crates/codira_codegen/src/test.rs
+assertion_line: 1246
+expression: "\n    extern \"codira-intrinsic\" {\n        func load_u32(addr: usize) -> u32;\n        func store_u32(addr: usize, value: u32);\n    }\n    public func copy_one(src: usize, dst: usize) {\n        store_u32(dst, load_u32(src));\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [1 x ptr]
+
+define void @copy_one(i64 %0, i64 %1) {
+body:
+  %dst = alloca i64, align 8
+  store i64 %1, ptr %dst, align 4
+  %src = alloca i64, align 8
+  store i64 %0, ptr %src, align 4
+  %dst1 = load i64, ptr %dst, align 4
+  %src2 = load i64, ptr %src, align 4
+  %intrinsic.addr = inttoptr i64 %src2 to ptr
+  %intrinsic.load = load i32, ptr %intrinsic.addr, align 4
+  %intrinsic.addr3 = inttoptr i64 %dst1 to ptr
+  store i32 %intrinsic.load, ptr %intrinsic.addr3, align 4
+  ret void
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

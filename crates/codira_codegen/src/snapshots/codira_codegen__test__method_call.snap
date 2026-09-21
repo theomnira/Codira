@@ -1,0 +1,70 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public struct Counter { value: i32 };\n\n    extend Counter {\n        func get(self) -> i32 {\n            self.value\n        }\n\n        func bumped(self, by: i32) -> Counter {\n            Counter { value: self.value + by }\n        }\n\n        func make(start: i32) -> Counter {\n            Counter { value: start }\n        }\n    }\n\n    public func chained(start: i32, by: i32) -> i32 {\n        Counter.make(start).bumped(by).get()\n    }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+%Counter = type { i32 }
+
+@allocatorHandle = external global ptr
+@dispatchTable = external global %DispatchTable
+@global_type_lookup_table = external global [2 x ptr]
+
+define i32 @chained(i32 %0, i32 %1) {
+body:
+  %by = alloca i32, align 4
+  store i32 %1, ptr %by, align 4
+  %start = alloca i32, align 4
+  store i32 %0, ptr %start, align 4
+  %start1 = load i32, ptr %start, align 4
+  %make = call %Counter @make(i32 %start1)
+  %by2 = load i32, ptr %by, align 4
+  %bumped = call %Counter @bumped(%Counter %make, i32 %by2)
+  %get = call i32 @get(%Counter %bumped)
+  ret i32 %get
+}
+
+define i32 @get(%Counter %0) {
+body:
+  %self = alloca %Counter, align 8
+  store %Counter %0, ptr %self, align 4
+  %"Counter->value" = getelementptr inbounds nuw %Counter, ptr %self, i32 0, i32 0
+  %Counter.value = load i32, ptr %"Counter->value", align 4
+  ret i32 %Counter.value
+}
+
+define %Counter @bumped(%Counter %0, i32 %1) {
+body:
+  %by = alloca i32, align 4
+  store i32 %1, ptr %by, align 4
+  %self = alloca %Counter, align 8
+  store %Counter %0, ptr %self, align 4
+  %"Counter->value" = getelementptr inbounds nuw %Counter, ptr %self, i32 0, i32 0
+  %Counter.value = load i32, ptr %"Counter->value", align 4
+  %by1 = load i32, ptr %by, align 4
+  %add = add i32 %Counter.value, %by1
+  %init = insertvalue %Counter undef, i32 %add, 0
+  ret %Counter %init
+}
+
+define %Counter @make(i32 %0) {
+body:
+  %start = alloca i32, align 4
+  store i32 %0, ptr %start, align 4
+  %start1 = load i32, ptr %start, align 4
+  %init = insertvalue %Counter undef, i32 %start1, 0
+  ret %Counter %init
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [2 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

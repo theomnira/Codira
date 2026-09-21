@@ -1,0 +1,62 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func equals(a: bool, b: bool) -> bool { a == b }\n    public func not_equal(a: bool, b: bool) -> bool { a != b}\n    public func less(a: bool, b: bool) -> bool { a < b }\n    public func less_equal(a: bool, b: bool) -> bool { a <= b }\n    public func greater(a: bool, b: bool) -> bool { a > b }\n    public func greater_equal(a: bool, b: bool) -> bool { a >= b }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @equals(i1 %0, i1 %1) local_unnamed_addr #0 {
+body:
+  %2 = xor i1 %0, %1
+  %eq = xor i1 %2, true
+  ret i1 %eq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @not_equal(i1 %0, i1 %1) local_unnamed_addr #0 {
+body:
+  %neq = xor i1 %0, %1
+  ret i1 %neq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @less(i1 %0, i1 %1) local_unnamed_addr #0 {
+body:
+  %2 = xor i1 %0, true
+  %less = and i1 %1, %2
+  ret i1 %less
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @less_equal(i1 %0, i1 %1) local_unnamed_addr #0 {
+body:
+  %2 = xor i1 %0, true
+  %lesseq = or i1 %1, %2
+  ret i1 %lesseq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @greater(i1 %0, i1 %1) local_unnamed_addr #0 {
+body:
+  %2 = xor i1 %1, true
+  %greater = and i1 %0, %2
+  ret i1 %greater
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @greater_equal(i1 %0, i1 %1) local_unnamed_addr #0 {
+body:
+  %2 = xor i1 %1, true
+  %greatereq = or i1 %0, %2
+  ret i1 %greatereq
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

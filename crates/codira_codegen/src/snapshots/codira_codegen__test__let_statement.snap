@@ -1,0 +1,22 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func main(a:i32) -> i32 {\n      let b = a+1\n      b\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i32 @main(i32 %0) local_unnamed_addr #0 {
+body:
+  %add = add i32 %0, 1
+  ret i32 %add
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

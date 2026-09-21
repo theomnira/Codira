@@ -1,0 +1,9 @@
+---
+source: crates/codira_hir/src/item_tree/tests.rs
+expression: "print_item_tree(r#\"\n    let A: i32 = B;\n    let B: i32 = A;\n    \"#,).unwrap()"
+---
+let A: i32 = <expr>  // refs: B;
+let B: i32 = <expr>  // refs: A;
+
+0..15: module-level bindings form a dependency cycle: A -> B
+16..31: module-level bindings form a dependency cycle: A -> B

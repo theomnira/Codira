@@ -1,0 +1,12 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 651
+expression: "infer(r#\"\n    effect Logger {\n        func log(message: String)\n    }\n\n    func risky() uses Logger -> i32 {\n        42\n    }\n\n    func caller() -> i32 {\n        risky()\n    }\n    \"#)"
+snapshot_kind: text
+---
+120..127: call to `risky` requires effect `Logger`, which is not declared in this function's `uses` clause
+81..91 '{     42 }': i32
+87..89 '42': i32
+114..129 '{     risky() }': i32
+120..125 'risky': function risky() -> i32
+120..127 'risky()': i32

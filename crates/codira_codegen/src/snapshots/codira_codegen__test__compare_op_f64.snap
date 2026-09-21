@@ -1,0 +1,57 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func equals(a: f64, b: f64) -> bool { a == b }\n    public func not_equal(a: f64, b: f64) -> bool { a != b}\n    public func less(a: f64, b: f64) -> bool { a < b }\n    public func less_equal(a: f64, b: f64) -> bool { a <= b }\n    public func greater(a: f64, b: f64) -> bool { a > b }\n    public func greater_equal(a: f64, b: f64) -> bool { a >= b }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @equals(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %eq = fcmp oeq double %0, %1
+  ret i1 %eq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @not_equal(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %neq = fcmp one double %0, %1
+  ret i1 %neq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @less(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %less = fcmp olt double %0, %1
+  ret i1 %less
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @less_equal(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %lesseq = fcmp ole double %0, %1
+  ret i1 %lesseq
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @greater(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %greater = fcmp ogt double %0, %1
+  ret i1 %greater
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define i1 @greater_equal(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %greatereq = fcmp oge double %0, %1
+  ret i1 %greatereq
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [2 x ptr] zeroinitializer

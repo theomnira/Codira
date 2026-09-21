@@ -1,0 +1,14 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    @heal(on: [Timeout], strategies: [ReturnCached])\n    func not_memoizable() -> i64 { 0 }\n\n    @memoizable\n    @heal(on: [Timeout], strategies: [ReturnCached])\n    func memoizable() -> i64 { 0 }\n\n    @heal(on: [Timeout], strategies: [IsolateAndRestart])\n    func no_snapshot() -> i64 { 0 }\n\n    @snapshot\n    @heal(on: [Timeout], strategies: [IsolateAndRestart])\n    func snapshotted() -> i64 { 0 }\",)"
+---
+34..46: `ReturnCached` is not usable here: caching the last good result needs `@memoizable` on this function, so the compiler knows the result may be reused
+212..229: `IsolateAndRestart` is not usable here: restarting needs `@snapshot` on this function, so there is committed state to restore from
+78..83 '{ 0 }': i64
+80..81 '0': i64
+171..176 '{ 0 }': i64
+173..174 '0': i64
+258..263 '{ 0 }': i64
+260..261 '0': i64
+355..360 '{ 0 }': i64
+357..358 '0': i64

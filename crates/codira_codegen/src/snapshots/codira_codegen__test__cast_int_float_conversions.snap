@@ -1,0 +1,47 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func to_float(a: i32) -> f64 { a as f64 }\n    public func from_float(a: f64) -> i32 { a as i32 }\n    public func narrow_float(a: f64) -> f32 { a as f32 }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [3 x ptr]
+
+define double @to_float(i32 %0) {
+body:
+  %a = alloca i32, align 4
+  store i32 %0, ptr %a, align 4
+  %a1 = load i32, ptr %a, align 4
+  %sitofp = sitofp i32 %a1 to double
+  ret double %sitofp
+}
+
+define i32 @from_float(double %0) {
+body:
+  %a = alloca double, align 8
+  store double %0, ptr %a, align 8
+  %a1 = load double, ptr %a, align 8
+  %fptoint_sat = call i32 @llvm.fptosi.sat.i32.f64(double %a1)
+  ret i32 %fptoint_sat
+}
+
+define float @narrow_float(double %0) {
+body:
+  %a = alloca double, align 8
+  store double %0, ptr %a, align 8
+  %a1 = load double, ptr %a, align 8
+  %fptrunc = fptrunc double %a1 to float
+  ret float %fptrunc
+}
+
+; Function Attrs: nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none)
+declare i32 @llvm.fptosi.sat.i32.f64(double) #0
+
+attributes #0 = { nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [3 x ptr] zeroinitializer

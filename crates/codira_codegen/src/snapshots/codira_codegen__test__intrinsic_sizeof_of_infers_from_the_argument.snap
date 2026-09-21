@@ -1,0 +1,57 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern \"codira-intrinsic\" {\n        func sizeof_of[T](marker: T) -> usize;\n        func alignof_of[T](marker: T) -> usize;\n    }\n    public struct Pair { a: i64, b: i64 }\n    public func size_of_i64(x: i64) -> usize {\n        sizeof_of(x)\n    }\n    public func size_of_pair(p: Pair) -> usize {\n        sizeof_of(p)\n    }\n    public func align_of_i64(x: i64) -> usize {\n        alignof_of(x)\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+%Pair = type { i64, i64 }
+
+@allocatorHandle = external global ptr
+@dispatchTable = external global %DispatchTable
+@global_type_lookup_table = external global [3 x ptr]
+
+define i64 @size_of_i64(i64 %0) {
+body:
+  %x = alloca i64, align 8
+  store i64 %0, ptr %x, align 4
+  %x1 = load i64, ptr %x, align 4
+  ret i64 8
+}
+
+define i64 @size_of_pair(%Pair %0) {
+body:
+  %p = alloca %Pair, align 8
+  store %Pair %0, ptr %p, align 4
+  %p1 = load %Pair, ptr %p, align 4
+  ret i64 16
+}
+
+define i64 @size_of_pair_wrapper(ptr %0) {
+body:
+  %"->data" = load ptr, ptr %0, align 8
+  %deref = load %Pair, ptr %"->data", align 4
+  %size_of_pair = call i64 @size_of_pair(%Pair %deref)
+  ret i64 %size_of_pair
+}
+
+define i64 @align_of_i64(i64 %0) {
+body:
+  %x = alloca i64, align 8
+  store i64 %0, ptr %x, align 4
+  %x1 = load i64, ptr %x, align 4
+  ret i64 8
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [3 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

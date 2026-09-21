@@ -1,0 +1,32 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern \"codira-intrinsic\" {\n        func bswap_u32(value: u32) -> u32;\n        func bitreverse_u64(value: u64) -> u64;\n    }\n    public func reverse(x: u32, y: u64) -> u64 {\n        bitreverse_u64(y)\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [2 x ptr]
+
+define i64 @reverse(i32 %0, i64 %1) {
+body:
+  %y = alloca i64, align 8
+  store i64 %1, ptr %y, align 4
+  %x = alloca i32, align 4
+  store i32 %0, ptr %x, align 4
+  %y1 = load i64, ptr %y, align 4
+  %intrinsic.bits = call i64 @llvm.bitreverse.i64(i64 %y1)
+  ret i64 %intrinsic.bits
+}
+
+; Function Attrs: nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none)
+declare i64 @llvm.bitreverse.i64(i64) #0
+
+attributes #0 = { nocallback nocreateundeforpoison nofree nosync nounwind speculatable willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [2 x ptr] zeroinitializer

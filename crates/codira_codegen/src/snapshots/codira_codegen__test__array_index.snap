@@ -1,0 +1,40 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func main() -> i8 {\n        let a = [1,2,3,4,]\n        a[3]\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+
+@allocatorHandle = external local_unnamed_addr global ptr
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+@global_type_lookup_table = external local_unnamed_addr global [2 x ptr]
+
+define i8 @main() local_unnamed_addr {
+body:
+  %new_array_ptr = load ptr, ptr @dispatchTable, align 8
+  %"[core::i8]_ptr" = load ptr, ptr @global_type_lookup_table, align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %ref = tail call ptr %new_array_ptr(ptr %"[core::i8]_ptr", i64 4, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  %"ref->data->elements" = getelementptr inbounds nuw i8, ptr %"ref->data", i64 16
+  store <4 x i8> <i8 1, i8 2, i8 3, i8 4>, ptr %"ref->data->elements", align 1
+  %"ref->data1" = load ptr, ptr %ref, align 8
+  store i64 4, ptr %"ref->data1", align 4
+  %"a2->data" = load ptr, ptr %ref, align 8
+  %"a2->data->elements+index" = getelementptr i8, ptr %"a2->data", i64 19
+  %0 = load i8, ptr %"a2->data->elements+index", align 1
+  ret i8 %0
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [2 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

@@ -1,0 +1,19 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    func private_main() {\n        let a = 1;\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define void @private_main() local_unnamed_addr #0 {
+body:
+  ret void
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"

@@ -1,0 +1,70 @@
+---
+source: crates/codira_syntax/src/tests/parser.rs
+expression: "SourceFile::parse(\"func main() -> i64 {\n    let x = f()\n    (x) + g(2)\n}\").debug_dump()"
+---
+SOURCE_FILE@0..53
+  FUNCTION_DEF@0..53
+    FUNC_KW@0..4 "func"
+    WHITESPACE@4..5 " "
+    NAME@5..9
+      IDENT@5..9 "main"
+    PARAM_LIST@9..11
+      L_PAREN@9..10 "("
+      R_PAREN@10..11 ")"
+    WHITESPACE@11..12 " "
+    RET_TYPE@12..18
+      THIN_ARROW@12..14 "->"
+      WHITESPACE@14..15 " "
+      PATH_TYPE@15..18
+        PATH@15..18
+          PATH_SEGMENT@15..18
+            NAME_REF@15..18
+              IDENT@15..18 "i64"
+    WHITESPACE@18..19 " "
+    BLOCK_EXPR@19..53
+      L_CURLY@19..20 "{"
+      WHITESPACE@20..25 "\n    "
+      LET_STMT@25..36
+        LET_KW@25..28 "let"
+        WHITESPACE@28..29 " "
+        BIND_PAT@29..30
+          NAME@29..30
+            IDENT@29..30 "x"
+        WHITESPACE@30..31 " "
+        EQ@31..32 "="
+        WHITESPACE@32..33 " "
+        CALL_EXPR@33..36
+          PATH_EXPR@33..34
+            PATH@33..34
+              PATH_SEGMENT@33..34
+                NAME_REF@33..34
+                  IDENT@33..34 "f"
+          ARG_LIST@34..36
+            L_PAREN@34..35 "("
+            R_PAREN@35..36 ")"
+      WHITESPACE@36..41 "\n    "
+      BIN_EXPR@41..51
+        PAREN_EXPR@41..44
+          L_PAREN@41..42 "("
+          PATH_EXPR@42..43
+            PATH@42..43
+              PATH_SEGMENT@42..43
+                NAME_REF@42..43
+                  IDENT@42..43 "x"
+          R_PAREN@43..44 ")"
+        WHITESPACE@44..45 " "
+        PLUS@45..46 "+"
+        WHITESPACE@46..47 " "
+        CALL_EXPR@47..51
+          PATH_EXPR@47..48
+            PATH@47..48
+              PATH_SEGMENT@47..48
+                NAME_REF@47..48
+                  IDENT@47..48 "g"
+          ARG_LIST@48..51
+            L_PAREN@48..49 "("
+            LITERAL@49..50
+              INT_NUMBER@49..50 "2"
+            R_PAREN@50..51 ")"
+      WHITESPACE@51..52 "\n"
+      R_CURLY@52..53 "}"

@@ -1,0 +1,9 @@
+---
+source: crates/codira_hir/src/item_tree/tests.rs
+expression: "print_item_tree(r#\"\n    let A: i32 = 1;\n    let B: i32 = A;\n    let C: i32 = B;\n    let D: i32 = C;\n    let E: i32 = D;\n    \"#,).unwrap()"
+---
+let A: i32 = <expr>;
+let B: i32 = <expr>  // refs: A;
+let C: i32 = <expr>  // refs: B;
+let D: i32 = <expr>  // refs: C;
+let E: i32 = <expr>  // refs: D;

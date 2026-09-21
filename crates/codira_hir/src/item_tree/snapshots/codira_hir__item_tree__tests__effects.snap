@@ -1,0 +1,8 @@
+---
+source: crates/codira_hir/src/item_tree/tests.rs
+assertion_line: 129
+expression: "print_item_tree(r#\"\n    effect Logger {\n        func log(message: String)\n    }\n    func risky() uses Logger -> i32 {\n        42\n    }\n    func pure_fn() -> i32 {\n        1\n    }\n    \"#).unwrap()"
+snapshot_kind: text
+---
+fn risky() uses Logger -> i32;
+fn pure_fn() -> i32;

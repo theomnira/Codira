@@ -1,0 +1,10 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    @heal(\n        on: [ArithmeticFault, Timeout],\n        strategies: [ReturnDefault, PropagateToParent],\n        postcondition: result >= 0\n    )\n    func safe_div(a: i64, b: i64) -> i64 {\n        a / b\n    }\n\n    supervisor app {\n        restart_policy: 3,\n    }\",)"
+---
+142..143 'a': i64
+150..151 'b': i64
+165..178 '{     a / b }': i64
+171..172 'a': i64
+171..176 'a / b': i64
+175..176 'b': i64

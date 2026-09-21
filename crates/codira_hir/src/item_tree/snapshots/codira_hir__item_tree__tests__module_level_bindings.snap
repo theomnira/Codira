@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/item_tree/tests.rs
+expression: "print_item_tree(r#\"\n    public let RELAXED: i32 = 0;\n    let DERIVED: i32 = RELAXED;\n    let COMPUTED: i64 = 1 + 2;\n    \"#,).unwrap()"
+---
+pub let RELAXED: i32 = <expr>;
+let DERIVED: i32 = <expr>  // refs: RELAXED;
+let COMPUTED: i64 = <expr>;

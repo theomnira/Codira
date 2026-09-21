@@ -1,0 +1,27 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func foo(a:i32) -> i32 {\n        let b = if a > 3 {\n            let c = if a > 4 {\n                a+1\n            } else {\n                a+3\n            }\n            c\n        } else {\n            a-1\n        }\n        b\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define range(i32 5, 3) i32 @foo(i32 %0) local_unnamed_addr #0 {
+body:
+  %greater = icmp sgt i32 %0, 3
+  %greater3.not = icmp eq i32 %0, 4
+  %add = add nuw i32 %0, 1
+  %iftmp = select i1 %greater3.not, i32 7, i32 %add
+  %sub = add i32 %0, -1
+  %iftmp12 = select i1 %greater, i32 %iftmp, i32 %sub
+  ret i32 %iftmp12
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

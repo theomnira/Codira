@@ -1,0 +1,38 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func fibonacci(n:i32) -> i32 {\n        if n <= 1 {\n            n\n        } else {\n            fibonacci(n-1) + fibonacci(n-2)\n        }\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: nofree nosync nounwind memory(none)
+define i32 @fibonacci(i32 %0) local_unnamed_addr #0 {
+body:
+  %lesseq10 = icmp slt i32 %0, 2
+  br i1 %lesseq10, label %if_merge, label %else
+
+else:                                             ; preds = %body, %else
+  %.tr12 = phi i32 [ %sub5, %else ], [ %0, %body ]
+  %accumulator.tr11 = phi i32 [ %add, %else ], [ 0, %body ]
+  %sub = add nsw i32 %.tr12, -1
+  %fibonacci = tail call i32 @fibonacci(i32 %sub)
+  %sub5 = add nsw i32 %.tr12, -2
+  %add = add i32 %fibonacci, %accumulator.tr11
+  %lesseq = icmp samesign ult i32 %.tr12, 4
+  br i1 %lesseq, label %if_merge, label %else
+
+if_merge:                                         ; preds = %else, %body
+  %accumulator.tr.lcssa = phi i32 [ 0, %body ], [ %add, %else ]
+  %.tr.lcssa = phi i32 [ %0, %body ], [ %sub5, %else ]
+  %accumulator.ret.tr = add i32 %.tr.lcssa, %accumulator.tr.lcssa
+  ret i32 %accumulator.ret.tr
+}
+
+attributes #0 = { nofree nosync nounwind memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

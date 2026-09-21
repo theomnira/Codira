@@ -1,0 +1,6 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r#\"\n    @heal(on: [Timeout], strategies: [ReturnDefault(0)], postcondition: result >= 0)\n    func risky() -> i32 {\n        1\n    }\n    \"#)"
+---
+101..110 '{     1 }': i32
+107..108 '1': i32

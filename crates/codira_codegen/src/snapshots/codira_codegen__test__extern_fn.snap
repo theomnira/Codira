@@ -1,0 +1,27 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern func add(a:i32, b:i32) -> i32;\n    public func main() {\n        add(3,4);\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+
+define void @main() local_unnamed_addr {
+body:
+  %add_ptr = load ptr, ptr @dispatchTable, align 8
+  %add = tail call i32 %add_ptr(i32 3, i32 4)
+  ret void
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

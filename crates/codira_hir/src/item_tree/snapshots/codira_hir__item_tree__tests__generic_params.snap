@@ -1,0 +1,15 @@
+---
+source: crates/codira_hir/src/item_tree/tests.rs
+assertion_line: 93
+expression: "print_item_tree(r#\"\n    struct Box[T] {\n        value: T,\n    }\n    struct SIMD[T, N: usize] {\n        data: T,\n    }\n    func first[T](items: T) -> T {}\n    \"#).unwrap()"
+snapshot_kind: text
+---
+struct Box[T] {
+  value: T,
+}
+struct SIMD[T, N: usize] {
+  data: T,
+}
+fn first[T](
+  T,
+) -> T;

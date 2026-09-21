@@ -1,0 +1,23 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func same(a: i32) -> i32 { a as i32 }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [1 x ptr]
+
+define i32 @same(i32 %0) {
+body:
+  %a = alloca i32, align 4
+  store i32 %0, ptr %a, align 4
+  %a1 = load i32, ptr %a, align 4
+  ret i32 %a1
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

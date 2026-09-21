@@ -1,0 +1,33 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    func private_fn() -> f32 {\n        private_fn()\n    }\n\n    public func main() -> f32 {\n        private_fn()\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: nofree norecurse noreturn nosync nounwind memory(none)
+define noundef float @private_fn() local_unnamed_addr #0 {
+body:
+  br label %tailrecurse
+
+tailrecurse:                                      ; preds = %tailrecurse, %body
+  br label %tailrecurse
+}
+
+; Function Attrs: nofree norecurse noreturn nosync nounwind memory(none)
+define noundef float @main() local_unnamed_addr #0 {
+body:
+  br label %tailrecurse.i
+
+tailrecurse.i:                                    ; preds = %tailrecurse.i, %body
+  br label %tailrecurse.i
+}
+
+attributes #0 = { nofree norecurse noreturn nosync nounwind memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

@@ -1,0 +1,11 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 764
+expression: "infer(r#\"\n    func take(consuming buf: i32) -> i32 {\n        buf + buf\n    }\n    \"#)"
+snapshot_kind: text
+---
+20..23 'buf': i32
+37..54 '{     ... buf }': i32
+43..46 'buf': i32
+43..52 'buf + buf': i32
+49..52 'buf': i32

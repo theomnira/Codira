@@ -1,0 +1,34 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func greeting() -> str {\n        \"hello\"\n    }\n    public func same_again() -> str {\n        \"hello\"\n    }\n    public func empty() -> str {\n        \"\"\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [1 x ptr]
+@codira.str = private unnamed_addr constant [6 x i8] c"hello\00"
+@codira.str.1 = private unnamed_addr constant [6 x i8] c"hello\00"
+@codira.str.2 = private unnamed_addr constant [1 x i8] zeroinitializer
+
+define { ptr, i64 } @greeting() {
+body:
+  ret { ptr, i64 } { ptr @codira.str, i64 5 }
+}
+
+define { ptr, i64 } @same_again() {
+body:
+  ret { ptr, i64 } { ptr @codira.str.1, i64 5 }
+}
+
+define { ptr, i64 } @empty() {
+body:
+  ret { ptr, i64 } { ptr @codira.str.2, i64 0 }
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

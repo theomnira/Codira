@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    @heal(on: [Timeout], strategies: [PropagateToParent])\n    func orphan() -> i64 { 0 }\",)"
+---
+34..51: `PropagateToParent` is not usable here: there is no `supervisor` block in this file to escalate to, so this contract is the root and has no parent
+75..80 '{ 0 }': i64
+77..78 '0': i64

@@ -1,0 +1,42 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func widen_signed(a: i32) -> i64 { a as i64 }\n    public func widen_unsigned(a: u32) -> i64 { a as i64 }\n    public func narrow(a: i64) -> i32 { a as i32 }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [3 x ptr]
+
+define i64 @widen_signed(i32 %0) {
+body:
+  %a = alloca i32, align 4
+  store i32 %0, ptr %a, align 4
+  %a1 = load i32, ptr %a, align 4
+  %sext = sext i32 %a1 to i64
+  ret i64 %sext
+}
+
+define i64 @widen_unsigned(i32 %0) {
+body:
+  %a = alloca i32, align 4
+  store i32 %0, ptr %a, align 4
+  %a1 = load i32, ptr %a, align 4
+  %zext = zext i32 %a1 to i64
+  ret i64 %zext
+}
+
+define i32 @narrow(i64 %0) {
+body:
+  %a = alloca i64, align 8
+  store i64 %0, ptr %a, align 4
+  %a1 = load i64, ptr %a, align 4
+  %trunc = trunc i64 %a1 to i32
+  ret i32 %trunc
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [3 x ptr] zeroinitializer

@@ -1,0 +1,43 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern func other() -> i32;\n\n    func private_fn(a: i32) -> f32 {\n        private_fn(a)\n    }\n\n    public func main() -> f32 {\n        private_fn(other())\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+
+; Function Attrs: nofree norecurse noreturn nosync nounwind memory(none)
+define noundef float @private_fn(i32 %0) local_unnamed_addr #0 {
+body:
+  br label %tailrecurse
+
+tailrecurse:                                      ; preds = %tailrecurse, %body
+  br label %tailrecurse
+}
+
+; Function Attrs: noreturn
+define noundef float @main() local_unnamed_addr #1 {
+body:
+  %other_ptr = load ptr, ptr @dispatchTable, align 8
+  %other = tail call i32 %other_ptr()
+  br label %tailrecurse.i
+
+tailrecurse.i:                                    ; preds = %tailrecurse.i, %body
+  br label %tailrecurse.i
+}
+
+attributes #0 = { nofree norecurse noreturn nosync nounwind memory(none) }
+attributes #1 = { noreturn }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [2 x ptr] zeroinitializer

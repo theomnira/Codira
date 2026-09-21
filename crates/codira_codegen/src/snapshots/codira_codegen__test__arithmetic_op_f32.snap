@@ -1,0 +1,50 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func add(a: f32, b: f32) -> f32 { a + b }\n    public func subtract(a: f32, b: f32) -> f32 { a - b }\n    public func multiply(a: f32, b: f32) -> f32 { a * b }\n    public func divide(a: f32, b: f32) -> f32 { a / b }\n    public func remainder(a: f32, b: f32) -> f32 { a % b }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define float @add(float %0, float %1) local_unnamed_addr #0 {
+body:
+  %add = fadd float %0, %1
+  ret float %add
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define float @subtract(float %0, float %1) local_unnamed_addr #0 {
+body:
+  %sub = fsub float %0, %1
+  ret float %sub
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define float @multiply(float %0, float %1) local_unnamed_addr #0 {
+body:
+  %mul = fmul float %0, %1
+  ret float %mul
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define float @divide(float %0, float %1) local_unnamed_addr #0 {
+body:
+  %div = fdiv float %0, %1
+  ret float %div
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define float @remainder(float %0, float %1) local_unnamed_addr #0 {
+body:
+  %rem = frem float %0, %1
+  ret float %rem
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

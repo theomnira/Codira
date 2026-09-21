@@ -1,0 +1,32 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 628
+expression: "infer(r#\"\n    data struct Point {\n        x: f64,\n        y: f64,\n    }\n\n    func main() {\n        let a = Point { x: 1.0, y: 2.0 };\n        let b = Point { x: 1.0, y: 2.0 };\n        a.eq(b);\n    }\n    \"#)"
+snapshot_kind: text
+---
+59..151 '{     ...(b); }': ()
+69..70 'a': Point
+73..97 'Point ... 2.0 }': Point
+84..87 '1.0': f64
+92..95 '2.0': f64
+107..108 'b': Point
+111..135 'Point ... 2.0 }': Point
+122..125 '1.0': f64
+130..133 '2.0': f64
+141..142 'a': Point
+141..148 'a.eq(b)': bool
+146..147 'b': Point
+180..184 'self': Point
+186..191 'other': Point
+208..262 '{     ...     }': bool
+218..222 'self': Point
+218..224 'self.x': f64
+218..235 'self.x...ther.x': bool
+218..256 'self.x...ther.y': bool
+228..233 'other': Point
+228..235 'other.x': f64
+239..243 'self': Point
+239..245 'self.y': f64
+239..256 'self.y...ther.y': bool
+249..254 'other': Point
+249..256 'other.y': f64

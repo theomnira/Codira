@@ -1,0 +1,9 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    func main() -> i32 {\n        let (a, b) = 5;\n        a\n    }\",)"
+---
+29..35: cannot destructure a value that is not a tuple
+19..48 '{     ...   a }': i32
+29..35 '(a, b)': i32
+38..39 '5': i32
+45..46 'a': {unknown}

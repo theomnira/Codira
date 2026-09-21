@@ -1,0 +1,56 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func assign(a: f64, b: f64) -> f64 {\n        a = b;\n        a\n    }\n    public func assign_add(a: f64, b: f64) -> f64 {\n        a += b;\n        a\n    }\n    public func assign_subtract(a: f64, b: f64) -> f64 {\n        a -= b;\n        a\n    }\n    public func assign_multiply(a: f64, b: f64) -> f64 {\n        a *= b;\n        a\n    }\n    public func assign_divide(a: f64, b: f64) -> f64 {\n        a /= b;\n        a\n    }\n    public func assign_remainder(a: f64, b: f64) -> f64 {\n        a %= b;\n        a\n    }\n                        "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define double @assign(double %0, double returned %1) local_unnamed_addr #0 {
+body:
+  ret double %1
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define double @assign_add(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %add = fadd double %0, %1
+  ret double %add
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define double @assign_subtract(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %sub = fsub double %0, %1
+  ret double %sub
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define double @assign_multiply(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %mul = fmul double %0, %1
+  ret double %mul
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define double @assign_divide(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %div = fdiv double %0, %1
+  ret double %div
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define double @assign_remainder(double %0, double %1) local_unnamed_addr #0 {
+body:
+  %rem = frem double %0, %1
+  ret double %rem
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

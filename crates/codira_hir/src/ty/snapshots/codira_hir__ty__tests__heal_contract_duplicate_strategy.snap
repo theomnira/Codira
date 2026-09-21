@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    @heal(on: [Timeout], strategies: [ReturnDefault, ReturnDefault])\n    func risky() -> i64 { 0 }\",)"
+---
+49..62: `ReturnDefault` is not usable here: `ReturnDefault` is already listed earlier in this contract
+85..90 '{ 0 }': i64
+87..88 '0': i64

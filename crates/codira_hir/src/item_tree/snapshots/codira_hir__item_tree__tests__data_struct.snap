@@ -1,0 +1,23 @@
+---
+source: crates/codira_hir/src/item_tree/tests.rs
+assertion_line: 109
+expression: "print_item_tree(r#\"\n    data struct Point {\n        x: f64,\n        y: f64,\n    }\n    struct Plain {\n        x: f64,\n    }\n    data struct Pair[T] {\n        first: T,\n        second: T,\n    }\n    \"#).unwrap()"
+snapshot_kind: text
+---
+data struct Point {
+  x: f64,
+  y: f64,
+}
+struct Plain {
+  x: f64,
+}
+data struct Pair[T] {
+  first: T,
+  second: T,
+}
+impl Point {
+  fn eq(
+    self,
+    Point,
+  ) -> bool;
+}

@@ -1,0 +1,19 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    func foo() -> i32 {\n        let bar = {\n            let b = 3;\n            return b + 3;\n        };\n\n        // This code will never be executed\n        let a = 3 + 4;\n        a\n    }"
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define noundef i32 @foo() local_unnamed_addr #0 {
+body:
+  ret i32 6
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"

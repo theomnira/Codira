@@ -1,0 +1,30 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern \"codira-intrinsic\" {\n        func bitcast_u64_f64(bits: u64) -> f64;\n        func bitcast_f64_u64(value: f64) -> u64;\n    }\n    public func infinity() -> f64 {\n        bitcast_u64_f64(9218868437227405312)\n    }\n    public func bits_of(x: f64) -> u64 {\n        bitcast_f64_u64(x)\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [2 x ptr]
+
+define double @infinity() {
+body:
+  ret double 0x7FF0000000000000
+}
+
+define i64 @bits_of(double %0) {
+body:
+  %x = alloca double, align 8
+  store double %0, ptr %x, align 8
+  %x1 = load double, ptr %x, align 8
+  %intrinsic.bitcast = bitcast double %x1 to i64
+  ret i64 %intrinsic.bitcast
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [2 x ptr] zeroinitializer

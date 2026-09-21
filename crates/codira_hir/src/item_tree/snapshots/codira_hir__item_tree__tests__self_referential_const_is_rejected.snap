@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/item_tree/tests.rs
+expression: "print_item_tree(r#\"\n    let LOOP: i32 = LOOP;\n    \"#,).unwrap()"
+---
+let LOOP: i32 = <expr>  // refs: LOOP;
+
+0..21: module-level bindings form a dependency cycle: LOOP

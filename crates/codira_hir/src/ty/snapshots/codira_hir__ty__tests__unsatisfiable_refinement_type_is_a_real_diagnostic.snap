@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 697
+expression: "infer(r#\"\n    type Impossible = i32 { x | x > 0 && x < 0 };\n    \"#)"
+snapshot_kind: text
+---
+18..44: unsatisfiable refinement type: no value can ever satisfy `x > 0 && x < 0` (proven by SMT solver, not just a heuristic)

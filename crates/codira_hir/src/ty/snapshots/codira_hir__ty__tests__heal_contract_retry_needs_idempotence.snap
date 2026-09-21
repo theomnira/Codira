@@ -1,0 +1,12 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+expression: "infer(r\"\n    @heal(on: [Timeout], strategies: [RetryWithBackoff(3)])\n    func no_declaration() -> i64 { 0 }\n\n    @idempotent(2)\n    @heal(on: [Timeout], strategies: [RetryWithBackoff(5)])\n    func bound_too_low() -> i64 { 0 }\n\n    @idempotent(5)\n    @heal(on: [Timeout], strategies: [RetryWithBackoff(5)])\n    func bound_sufficient() -> i64 { 0 }\",)"
+---
+34..53: `RetryWithBackoff` is not usable here: retrying re-runs this function's effects, so it needs `@idempotent(3)` to declare that calling it 3 times is equivalent to calling it once
+141..160: `RetryWithBackoff` is not usable here: this function declares `@idempotent(2)`, which is fewer than the 5 attempts `RetryWithBackoff(5)` would make
+85..90 '{ 0 }': i64
+87..88 '0': i64
+191..196 '{ 0 }': i64
+193..194 '0': i64
+300..305 '{ 0 }': i64
+302..303 '0': i64

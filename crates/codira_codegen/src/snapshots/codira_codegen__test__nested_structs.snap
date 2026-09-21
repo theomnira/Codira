@@ -1,0 +1,116 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public class GcStruct(f32, f32);\n    public struct ValueStruct(f32, f32);\n\n    public class GcWrapper(GcStruct, ValueStruct)\n    public struct ValueWrapper(GcStruct, ValueStruct);\n\n    public func new_gc_struct(a: f32, b: f32) -> GcStruct {\n        GcStruct(a, b)\n    }\n\n    public func new_value_struct(a: f32, b: f32) -> ValueStruct {\n        ValueStruct(a, b)\n    }\n\n    public func new_gc_wrapper(a: GcStruct, b: ValueStruct) -> GcWrapper {\n        GcWrapper(a, b)\n    }\n\n    public func new_value_wrapper(a: GcStruct, b: ValueStruct) -> ValueWrapper {\n        ValueWrapper(a, b)\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+%ValueStruct = type { float, float }
+%ValueWrapper = type { ptr, %ValueStruct }
+
+@allocatorHandle = external local_unnamed_addr global ptr
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+@global_type_lookup_table = external local_unnamed_addr global [5 x ptr]
+
+define noundef ptr @new_gc_struct(float %0, float %1) local_unnamed_addr {
+body:
+  %new_ptr = load ptr, ptr @dispatchTable, align 8
+  %GcStruct_ptr = load ptr, ptr @global_type_lookup_table, align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %ref = tail call ptr %new_ptr(ptr %GcStruct_ptr, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  store float %0, ptr %"ref->data", align 4
+  %"ref->data.repack4" = getelementptr inbounds nuw i8, ptr %"ref->data", i64 4
+  store float %1, ptr %"ref->data.repack4", align 4
+  ret ptr %ref
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define %ValueStruct @new_value_struct(float %0, float %1) local_unnamed_addr #0 {
+body:
+  %init = insertvalue %ValueStruct undef, float %0, 0
+  %init3 = insertvalue %ValueStruct %init, float %1, 1
+  ret %ValueStruct %init3
+}
+
+define noundef ptr @new_value_struct_wrapper(float %0, float %1) local_unnamed_addr {
+body:
+  %new_ptr = load ptr, ptr @dispatchTable, align 8
+  %ValueStruct_ptr = load ptr, ptr getelementptr inbounds nuw (i8, ptr @global_type_lookup_table, i64 16), align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %ref = tail call ptr %new_ptr(ptr %ValueStruct_ptr, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  store float %0, ptr %"ref->data", align 4
+  %"ref->data.repack1" = getelementptr inbounds nuw i8, ptr %"ref->data", i64 4
+  store float %1, ptr %"ref->data.repack1", align 4
+  ret ptr %ref
+}
+
+define noundef ptr @new_gc_wrapper(ptr %0, %ValueStruct %1) local_unnamed_addr {
+body:
+  %new_ptr = load ptr, ptr @dispatchTable, align 8
+  %GcWrapper_ptr = load ptr, ptr getelementptr inbounds nuw (i8, ptr @global_type_lookup_table, i64 8), align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %ref = tail call ptr %new_ptr(ptr %GcWrapper_ptr, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  store ptr %0, ptr %"ref->data", align 8
+  %"ref->data.repack4" = getelementptr inbounds nuw i8, ptr %"ref->data", i64 8
+  %.elt = extractvalue %ValueStruct %1, 0
+  store float %.elt, ptr %"ref->data.repack4", align 8
+  %"ref->data.repack4.repack6" = getelementptr inbounds nuw i8, ptr %"ref->data", i64 12
+  %.elt7 = extractvalue %ValueStruct %1, 1
+  store float %.elt7, ptr %"ref->data.repack4.repack6", align 4
+  ret ptr %ref
+}
+
+define noundef ptr @new_gc_wrapper_wrapper(ptr %0, ptr readonly captures(none) %1) local_unnamed_addr {
+body:
+  %"->data" = load ptr, ptr %1, align 8
+  %new_ptr.i = load ptr, ptr @dispatchTable, align 8
+  %GcWrapper_ptr.i = load ptr, ptr getelementptr inbounds nuw (i8, ptr @global_type_lookup_table, i64 8), align 8
+  %allocator_handle.i = load ptr, ptr @allocatorHandle, align 8
+  %2 = load <2 x float>, ptr %"->data", align 4
+  %ref.i = tail call ptr %new_ptr.i(ptr %GcWrapper_ptr.i, ptr %allocator_handle.i)
+  %"ref->data.i" = load ptr, ptr %ref.i, align 8
+  store ptr %0, ptr %"ref->data.i", align 8
+  %"ref->data.repack4.i" = getelementptr inbounds nuw i8, ptr %"ref->data.i", i64 8
+  store <2 x float> %2, ptr %"ref->data.repack4.i", align 8
+  ret ptr %ref.i
+}
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define %ValueWrapper @new_value_wrapper(ptr %0, %ValueStruct %1) local_unnamed_addr #0 {
+body:
+  %init = insertvalue %ValueWrapper undef, ptr %0, 0
+  %init3 = insertvalue %ValueWrapper %init, %ValueStruct %1, 1
+  ret %ValueWrapper %init3
+}
+
+define noundef ptr @new_value_wrapper_wrapper(ptr %0, ptr readonly captures(none) %1) local_unnamed_addr {
+body:
+  %"->data" = load ptr, ptr %1, align 8
+  %new_ptr = load ptr, ptr @dispatchTable, align 8
+  %ValueWrapper_ptr = load ptr, ptr getelementptr inbounds nuw (i8, ptr @global_type_lookup_table, i64 24), align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %2 = load <2 x float>, ptr %"->data", align 4
+  %ref = tail call ptr %new_ptr(ptr %ValueWrapper_ptr, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  store ptr %0, ptr %"ref->data", align 8
+  %"ref->data.repack4" = getelementptr inbounds nuw i8, ptr %"ref->data", i64 8
+  store <2 x float> %2, ptr %"ref->data.repack4", align 8
+  ret ptr %ref
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [5 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null

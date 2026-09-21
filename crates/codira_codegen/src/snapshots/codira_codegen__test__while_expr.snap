@@ -1,0 +1,21 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func foo(n:i32) {\n        while n<3 {\n            n += 1;\n        };\n\n        // This will be completely optimized out\n        while n<4 {\n            break;\n        };\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
+define void @foo(i32 %0) local_unnamed_addr #0 {
+body:
+  ret void
+}
+
+attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memory(none) }
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [1 x ptr] zeroinitializer

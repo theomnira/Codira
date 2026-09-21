@@ -1,0 +1,18 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 2295
+expression: "infer(r\"\n    struct Box[T] { v: T }\n    struct Pair[K, V] { k: K, v: V }\n\n    extend Box[T] {\n        func unwrap(self) -> T { self.v }\n    }\n\n    extend Pair[K, V] {\n        func key(self) -> K { self.k }\n    }\",)"
+snapshot_kind: text
+---
+0..22: a generic struct (`T` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so the struct has no concrete                       layout to generate
+23..55: a generic struct (`K` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so the struct has no concrete                       layout to generate
+82..88: a generic function (`Box[T]` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+143..146: a generic function (`Pair[K, V]` is not instantiated) is not supported by the code generator yet: monomorphisation is not implemented yet, so there is no concrete type to generate code for
+89..93 'self': Box[T]
+100..110 '{ self.v }': T
+102..106 'self': Box[T]
+102..108 'self.v': T
+147..151 'self': Pair[K, V]
+158..168 '{ self.k }': K
+160..164 'self': Pair[K, V]
+160..166 'self.k': K

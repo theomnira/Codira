@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/ty/tests.rs
+assertion_line: 708
+expression: "infer(r#\"\n    type Positive = i32 { x | x > 0 };\n    \"#)"
+snapshot_kind: text
+---
+

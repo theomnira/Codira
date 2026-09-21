@@ -1,0 +1,49 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    class Foo { a: i32, b: i32 };\n\n    public func foo() {\n        let a = Foo { a: 3, b: 4 };\n        a.b += 3;\n        let b = a;\n    }\n    "
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr }
+%Foo = type { i32, i32 }
+
+@allocatorHandle = external global ptr
+@dispatchTable = external global %DispatchTable
+@global_type_lookup_table = external global [2 x ptr]
+
+define void @foo() {
+body:
+  %b = alloca ptr, align 8
+  %a = alloca ptr, align 8
+  %new_ptr = load ptr, ptr @dispatchTable, align 8
+  %Foo_ptr = load ptr, ptr @global_type_lookup_table, align 8
+  %allocator_handle = load ptr, ptr @allocatorHandle, align 8
+  %ref = call ptr %new_ptr(ptr %Foo_ptr, ptr %allocator_handle)
+  %"ref->data" = load ptr, ptr %ref, align 8
+  store %Foo { i32 3, i32 4 }, ptr %"ref->data", align 4
+  store ptr %ref, ptr %a, align 8
+  %handle = load ptr, ptr %a, align 8
+  %"handle->data" = load ptr, ptr %handle, align 8
+  %"Foo->b" = getelementptr inbounds nuw %Foo, ptr %"handle->data", i32 0, i32 1
+  %Foo.b = load i32, ptr %"Foo->b", align 4
+  %add = add i32 %Foo.b, 3
+  %handle1 = load ptr, ptr %a, align 8
+  %"handle1->data" = load ptr, ptr %handle1, align 8
+  %"Foo->b2" = getelementptr inbounds nuw %Foo, ptr %"handle1->data", i32 0, i32 1
+  store i32 %add, ptr %"Foo->b2", align 4
+  %a3 = load ptr, ptr %a, align 8
+  store ptr %a3, ptr %b, align 8
+  ret void
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [2 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null
