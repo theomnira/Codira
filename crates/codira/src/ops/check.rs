@@ -8,7 +8,7 @@
 
 use std::{io::stderr, path::PathBuf};
 
-use codira_compiler::{Config, DiagnosticKind, DisplayColor, Driver, Target};
+use codira_compiler::{Config, DiagnosticCounts, DiagnosticKind, DisplayColor, Driver, Target};
 
 use crate::{ops::build::find_manifest, ExitStatus};
 
@@ -89,26 +89,49 @@ pub fn check(args: Args) -> Result<ExitStatus, anyhow::Error> {
         (driver, package.name().to_string())
     };
 
-    let per_file = driver.collect_diagnostics();
+    // Exactly one walk of every module's diagnostics, however the result is
+    // reported. `collect_diagnostics` and `emit_diagnostics` each perform
+    // that whole walk independently -- `infer()` itself is salsa-memoized,
+    // but the validators that turn its result into diagnostics are not, so
+    // calling both here used to mean doing it twice. Measured on this
+    // repository's own standard library (77 files, ~3000 diagnostics), that
+    // second pass was the single largest phase in this command, ahead of
+    // type inference itself.
+    //
+    // `--gaps` and `--summary` both want the diagnostic *text* -- to bucket
+    // by message shape, or to print per-file counts -- so they need the
+    // structured pass. Neither wants annotated source snippets, so this is
+    // also a behavior change for `--summary`: it no longer additionally
+    // renders every diagnostic to the terminal, matching what `--gaps`
+    // already did. The plain default path keeps the rendered snippets, and
+    // gets its summary counts from the same pass that produces them instead
+    // of a second one.
+    let (per_file, counts) = if args.gaps || args.summary {
+        let per_file = driver.collect_diagnostics();
+        let counts = DiagnosticCounts {
+            total_files: per_file.len(),
+            clean_files: per_file.iter().filter(|f| f.is_clean()).count(),
+            syntax: per_file
+                .iter()
+                .map(|f| f.count_of(DiagnosticKind::Syntax))
+                .sum(),
+            semantic: per_file
+                .iter()
+                .map(|f| f.count_of(DiagnosticKind::Semantic))
+                .sum(),
+        };
+        (per_file, counts)
+    } else {
+        let counts = driver.emit_diagnostics_with_counts(&mut stderr(), display_colors)?;
+        (Vec::new(), counts)
+    };
 
-    // The rendered snippets are what a human actually reads, so they are
-    // still emitted; the structured pass below is what turns the result into
-    // a number you can track. In `--gaps` mode they are noise: the point of
-    // that mode is to collapse thousands of sites into a handful of causes.
-    if !args.gaps {
-        driver.emit_diagnostics(&mut stderr(), display_colors)?;
-    }
-
-    let total_files = per_file.len();
-    let clean_files = per_file.iter().filter(|f| f.is_clean()).count();
-    let syntax: usize = per_file
-        .iter()
-        .map(|f| f.count_of(DiagnosticKind::Syntax))
-        .sum();
-    let semantic: usize = per_file
-        .iter()
-        .map(|f| f.count_of(DiagnosticKind::Semantic))
-        .sum();
+    let DiagnosticCounts {
+        total_files,
+        clean_files,
+        syntax,
+        semantic,
+    } = counts;
 
     if args.gaps {
         // Two messages that differ only in which identifier they name are

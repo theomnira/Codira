@@ -79,6 +79,19 @@ pub struct CheckDiagnostic {
     pub message: String,
 }
 
+/// Aggregate counts produced by a single diagnostic pass.
+///
+/// Exists so a caller that wants both a human-rendered report and the
+/// summary counts derived from it does not have to walk every module's
+/// diagnostics twice to get them -- see `Driver::emit_diagnostics_with_counts`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DiagnosticCounts {
+    pub total_files: usize,
+    pub clean_files: usize,
+    pub syntax: usize,
+    pub semantic: usize,
+}
+
 /// Every diagnostic belonging to one source file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileDiagnostics {
@@ -396,6 +409,79 @@ impl Driver {
         }
 
         Ok(has_error)
+    }
+
+    /// Renders every diagnostic like `emit_diagnostics`, and additionally
+    /// returns the counts a summary line needs.
+    ///
+    /// A caller that wants both pretty output and a "N of M files clean"
+    /// summary previously got that by calling `collect_diagnostics` (a full
+    /// structured pass) *and* `emit_diagnostics` (a full rendering pass) --
+    /// each one independently re-running every module's diagnostic
+    /// validators, since only `infer()` itself is salsa-memoized and the
+    /// validators that turn its result into diagnostics are not. On this
+    /// repository's own standard library (77 files, ~3000 diagnostics) that
+    /// second pass measured as the single largest phase in `codira check`,
+    /// ahead of type inference. This does the walk once.
+    pub fn emit_diagnostics_with_counts(
+        &self,
+        writer: &mut dyn std::io::Write,
+        display_color: DisplayColor,
+    ) -> Result<DiagnosticCounts, anyhow::Error> {
+        let emit_colors = display_color.should_enable();
+        let mut counts = DiagnosticCounts::default();
+
+        for package in codira_hir::Package::all(&self.db) {
+            for module in package.modules(&self.db) {
+                let Some(file_id) = module.file_id(&self.db) else {
+                    continue;
+                };
+                counts.total_files += 1;
+
+                let parse = self.db.parse(file_id);
+                let source_code = self.db.file_text(file_id);
+                let relative_file_path = self.db.file_relative_path(file_id);
+                let line_index = self.db.line_index(file_id);
+
+                let mut file_has_diagnostic = false;
+
+                for syntax_error in parse.errors().iter() {
+                    emit_syntax_error(
+                        syntax_error,
+                        relative_file_path.as_str(),
+                        &source_code,
+                        &line_index,
+                        emit_colors,
+                        writer,
+                    )?;
+                    counts.syntax += 1;
+                    file_has_diagnostic = true;
+                }
+
+                let mut error = None;
+                module.diagnostics(
+                    &self.db,
+                    &mut DiagnosticSink::new(|d| {
+                        counts.semantic += 1;
+                        file_has_diagnostic = true;
+                        if let Err(e) =
+                            emit_hir_diagnostic(d, &self.db, file_id, emit_colors, writer)
+                        {
+                            error = Some(e);
+                        }
+                    }),
+                );
+                if let Some(e) = error {
+                    return Err(e.into());
+                }
+
+                if !file_has_diagnostic {
+                    counts.clean_files += 1;
+                }
+            }
+        }
+
+        Ok(counts)
     }
 
     /// Collects every diagnostic in the database as structured data, one
