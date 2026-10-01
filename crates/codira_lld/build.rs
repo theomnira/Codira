@@ -256,7 +256,16 @@ fn main() {
 
     println!("cargo:rerun-if-changed=wrapper/lld-c.cpp");
 
-    if cfg!(feature = "no-llvm-linking") {
+    // Skip linking LLVM/LLD libraries -- for doc builds and tooling that
+    // only needs the crate to typecheck.
+    //
+    // This is an environment variable rather than a cargo feature on
+    // purpose. `codira_codegen` links in-process through this crate, and
+    // the workspace is checked and tested with `--all-features`: a feature
+    // that removes the libraries would be switched on by exactly the
+    // builds that need them, and every binary would fail to link.
+    println!("cargo:rerun-if-env-changed=CODIRA_LLD_NO_LINKING");
+    if env::var_os("CODIRA_LLD_NO_LINKING").is_some() {
         return;
     }
 

@@ -20,7 +20,9 @@ use std::{
 };
 
 pub use annotate_snippets::AnnotationType;
-pub use codira_codegen::OptimizationLevel;
+pub use codira_codegen::{
+    in_process_lld_available, link_mode, LinkMode, OptimizationLevel, LINK_MODE_ENV,
+};
 pub use codira_hir_input::FileId;
 pub use codira_paths::{RelativePath, RelativePathBuf};
 use codira_project::Package;

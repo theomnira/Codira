@@ -13,6 +13,7 @@ use std::{
 #[repr(C)]
 struct LldInvokeResult {
     success: bool,
+    can_run_again: bool,
     messages: *const c_char,
 }
 
@@ -39,10 +40,23 @@ pub enum LldError {
 
 pub struct LldResult {
     success: bool,
+    can_run_again: bool,
     messages: String,
 }
 
 impl LldResult {
+    /// Whether LLD may be invoked again in this process.
+    ///
+    /// LLD's drivers keep global state, which `lld::lldMain` tears down after
+    /// every link. When that teardown cannot be trusted -- LLD caught a crash
+    /// in its recovery context, say -- it reports so here, and any further
+    /// in-process link would run on corrupted state. A long-lived caller must
+    /// check this after *every* call, successful or not, and stop calling
+    /// `link` for the rest of the process once it is `false`.
+    pub fn can_run_again(&self) -> bool {
+        self.can_run_again
+    }
+
     pub fn ok(self) -> Result<(), String> {
         if self.success {
             Ok(())
@@ -53,12 +67,23 @@ impl LldResult {
 }
 
 /// Invokes LLD of the given flavor with the specified arguments.
+///
+/// Calls are serialized: LLD is not thread-safe, so concurrent callers queue
+/// behind a process-wide mutex inside the wrapper.
 pub fn link(target: LldFlavor, args: &[String]) -> LldResult {
-    // Prepare arguments
-    let c_args = args
+    // Prepare arguments. An argument with an interior NUL cannot be passed
+    // to LLD at all; LLD was not run, so it is safe to run again.
+    let Ok(c_args) = args
         .iter()
-        .map(|arg| CString::new(arg.as_bytes()).unwrap())
-        .collect::<Vec<CString>>();
+        .map(|arg| CString::new(arg.as_bytes()))
+        .collect::<Result<Vec<CString>, _>>()
+    else {
+        return LldResult {
+            success: false,
+            can_run_again: true,
+            messages: String::from("linker argument contains an interior NUL byte"),
+        };
+    };
     let args: Vec<*const c_char> = c_args.iter().map(|arg| arg.as_ptr()).collect();
 
     // Invoke LLD
@@ -78,6 +103,7 @@ pub fn link(target: LldFlavor, args: &[String]) -> LldResult {
     // Construct the result
     let result = LldResult {
         success: lld_result.success,
+        can_run_again: lld_result.can_run_again,
         messages,
     };
 

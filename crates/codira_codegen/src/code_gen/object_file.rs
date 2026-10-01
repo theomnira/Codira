@@ -31,7 +31,7 @@ impl ObjectFile {
         let mut obj_file = tempfile::NamedTempFile::new()
             .map_err(CodeGenerationError::CouldNotCreateObjectFile)?;
         obj_file
-            .write(obj.as_slice())
+            .write_all(obj.as_slice())
             .map_err(CodeGenerationError::CouldNotCreateObjectFile)?;
 
         Ok(Self {

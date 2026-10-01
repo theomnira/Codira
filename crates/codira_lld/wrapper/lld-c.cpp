@@ -45,6 +45,10 @@ enum LldFlavor {
 
 struct LldInvokeResult {
     bool success;
+    // False once LLD has left its global state in a condition it cannot
+    // recover from (a crash caught by its recovery context, for instance).
+    // The caller must not invoke LLD in this process again after that.
+    bool canRunAgain;
     const char *messages;
 };
 
@@ -90,6 +94,7 @@ LldInvokeResult codira_lld_link(LldFlavor flavor, int argc, const char *const *a
     std::unique_lock<std::mutex> lock(concurrencyMutex);
     lld::Result linkResult = lld::lldMain(args, outputStream, errorStream, LLD_ALL_DRIVERS);
     result.success = linkResult.retCode == 0;
+    result.canRunAgain = linkResult.canRunAgain;
 
     std::string resultMessage = errorStream.str() + outputStream.str();
     result.messages = codira_alloc_str(resultMessage);

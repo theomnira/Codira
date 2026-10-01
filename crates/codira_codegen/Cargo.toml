@@ -13,7 +13,7 @@ repository.workspace = true
 license.workspace = true
 
 [features]
-default = ["target-x86", "target-aarch64"]
+default = ["target-x86", "target-aarch64", "in-process-lld"]
 # Each `target-*` feature forwards to the matching inkwell/LLVM target
 # backend and gates that target's `Target::initialize_*` call in `db.rs`.
 # Compiling standalone LLVM target-backend static libraries (e.g. an
@@ -24,6 +24,14 @@ default = ["target-x86", "target-aarch64"]
 # link, regardless of which target is actually being compiled for.
 target-x86 = ["inkwell/target-x86"]
 target-aarch64 = ["inkwell/target-aarch64"]
+# Links LLD into the compiler so the final link is a function call instead of
+# a spawned `lld-link`/`ld.lld`/`ld64.lld` -- see `linker::run_lld` for what
+# that is worth. This needs LLD's headers and
+# static libraries next to the LLVM build, which a from-source LLVM built
+# with `-DLLVM_ENABLE_PROJECTS=lld` has and most prebuilt distributions do
+# not. Disable it to build against one of those; every link then spawns the
+# linker, exactly as before.
+in-process-lld = ["dep:codira_lld"]
 
 [dependencies]
 codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
@@ -40,6 +48,7 @@ codira_comptime = { version = "0.6.0-dev", path = "../codira_comptime" }
 inkwell = { workspace = true, features = ["llvm22-1"], default-features = false }
 itertools = { workspace = true }
 codira_codegen_macros = { version = "0.6.0-dev", path = "../codira_codegen_macros" }
+codira_lld = { version = "220.0.0", path = "../codira_lld", optional = true }
 codira_target = { version = "0.6.0-dev", path = "../codira_target" }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }

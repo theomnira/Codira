@@ -10,6 +10,7 @@ pub use crate::{
     assembly::{AssemblyIr, TargetAssembly},
     code_gen::AssemblyBuilder,
     db::{CodeGenDatabase, CodeGenDatabaseStorage},
+    linker::{in_process_lld_available, link_mode, LinkMode, LINK_MODE_ENV},
     module_group::ModuleGroup,
     module_partition::{ModuleGroupId, ModulePartition},
 };

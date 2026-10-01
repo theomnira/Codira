@@ -702,6 +702,7 @@ dependencies = [
  "codira_hir",
  "codira_hir_input",
  "codira_libloader",
+ "codira_lld",
  "codira_mir",
  "codira_paths",
  "codira_runtime",
