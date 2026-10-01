@@ -1,6 +1,6 @@
 [package]
 name = "codira_compiler_daemon"
-description = "Functionality for continuously monitoring Codira source files for changes and triggering recompilation"
+description = "Long-lived Codira compilers: watch mode, and the build daemon that keeps a compiler warm between builds"
 keywords = ["game", "hot-reloading", "language", "codira", "scripting"]
 categories.workspace = true
 version.workspace = true
@@ -15,9 +15,17 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 ctrlc = { workspace = true }
+getrandom = { workspace = true }
 log = { workspace = true }
 codira_codegen = { version = "0.6.0-dev", path = "../codira_codegen" }
 codira_compiler = { version = "0.6.0-dev", path = "../codira_compiler" }
 codira_project = { version = "0.6.0-dev", path = "../codira_project" }
 codira_hir = { version = "0.6.0-dev", path = "../codira_hir" }
 notify = { workspace = true }
+serde = { workspace = true, features = ["std"] }
+serde_derive = { workspace = true }
+serde_json = { workspace = true, features = ["std"] }
+
+[dev-dependencies]
+codira_runtime = { version = "0.6.0-dev", path = "../codira_runtime" }
+tempfile = { workspace = true }

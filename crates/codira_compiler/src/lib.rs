@@ -32,7 +32,7 @@ pub use crate::{
     db::CompilerDatabase,
     driver::{
         CheckDiagnostic, Config, DiagnosticCounts, DiagnosticKind, DisplayColor, Driver,
-        FileDiagnostics,
+        FileDiagnostics, SyncSummary,
     },
 };
 

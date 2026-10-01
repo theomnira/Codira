@@ -3,7 +3,21 @@
 //! Date: August 6, 2026
 //!
 //! Functionality:
-//! - Part of the Codira compiler and runtime toolchain.
+//! - Compilers that stay alive between builds.
+//!
+//! Two of them live here. Watch mode (`compile_and_watch_manifest`) owns one
+//! package and rebuilds it whenever a source file changes. The build daemon
+//! (`server`, `client`) serves any number of packages to any number of
+//! `codira build --daemon` invocations over a loopback socket.
+//!
+//! Both exist for the same reason: most of what a one-shot build costs is
+//! not compiling. It is starting a process, initializing LLVM, and rebuilding
+//! a salsa database that the previous build had already filled in.
+pub mod client;
+pub mod protocol;
+pub mod server;
+pub mod state;
+
 use std::{
     io::stderr,
     path::Path,

@@ -9,7 +9,7 @@ mod ops;
 use std::ffi::OsString;
 
 use clap::{Parser, Subcommand};
-use ops::{bindgen, build, check, init, language_server, new, start};
+use ops::{bindgen, build, check, daemon, init, language_server, new, start};
 
 #[derive(Parser)]
 #[clap(author, version, about, long_about = None)]
@@ -29,6 +29,10 @@ enum Command {
 
     /// Type-checks Codira sources and reports diagnostics, emitting nothing
     Check(check::Args),
+
+    /// Run or control the build daemon, which keeps a compiler warm between
+    /// builds
+    Daemon(daemon::Args),
 
     /// Generate FFI bindings for this project's `@export("C")` functions
     Bindgen(bindgen::Args),
@@ -68,6 +72,7 @@ where
     match args.command {
         Command::Build(args) => build::build(args),
         Command::Check(args) => check::check(args),
+        Command::Daemon(args) => daemon::daemon(args),
         Command::Bindgen(args) => bindgen::bindgen(args),
         Command::LanguageServer(args) => language_server::language_server(args),
         Command::New(args) => new::new(args),

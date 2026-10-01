@@ -22,7 +22,7 @@ mod config;
 mod display_color;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     convert::TryInto,
     io::Cursor,
     path::{Path, PathBuf},
@@ -93,6 +93,29 @@ pub struct DiagnosticCounts {
     pub clean_files: usize,
     pub syntax: usize,
     pub semantic: usize,
+}
+
+/// What `Driver::sync_source_directory` found to be different on disk.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SyncSummary {
+    /// Files on disk the driver did not know about.
+    pub added: usize,
+    /// Files whose contents differ from what the driver last saw.
+    pub updated: usize,
+    /// Files the driver knew about that are no longer on disk.
+    pub removed: usize,
+}
+
+impl SyncSummary {
+    /// The number of files that changed in any way.
+    pub fn total(&self) -> usize {
+        self.added + self.updated + self.removed
+    }
+
+    /// Whether the driver already matched the disk.
+    pub fn is_unchanged(&self) -> bool {
+        self.total() == 0
+    }
 }
 
 /// Every diagnostic belonging to one source file.
@@ -896,7 +919,13 @@ impl Driver {
 
         self.file_id_to_path
             .insert(file_id, to.as_ref().to_relative_path_buf());
-        self.path_to_file_id.remove(from.as_ref()); // FileId now belongs to to
+        // The `FileId` now belongs to `to`. Both halves of that have to be
+        // recorded: forgetting the old path alone leaves the file with no
+        // path that leads to it, and the next edit to it under its new
+        // name panics in `update_file` as "not part of the source root".
+        self.path_to_file_id.remove(from.as_ref());
+        self.path_to_file_id
+            .insert(to.as_ref().to_relative_path_buf(), file_id);
 
         self.source_root.remove_file(file_id);
         self.source_root
@@ -905,6 +934,96 @@ impl Driver {
             .set_source_root(WORKSPACE, Arc::new(self.source_root.clone()));
 
         file_id
+    }
+}
+
+impl Driver {
+    /// Brings the driver in line with the source files under
+    /// `source_directory` as they are on disk right now: files that
+    /// appeared are added, files whose contents differ are updated, and
+    /// files that are gone are removed.
+    ///
+    /// This is what lets a driver outlive a single build without a file
+    /// watcher. A watcher reports changes eventually; a build that runs
+    /// before the event for the latest save arrives compiles the previous
+    /// contents and reports success. Reading the directory is the only
+    /// way to *know* what is in it, so that is what this does, every
+    /// time -- and afterwards the driver is in exactly the state a driver
+    /// freshly created from the directory would be in.
+    ///
+    /// Contents are compared, not timestamps. Modification times have
+    /// coarse and filesystem-dependent resolution, so two saves in quick
+    /// succession can share one, and tools that restore files restore
+    /// their times with them. A file is only handed to salsa when its
+    /// bytes actually differ, which keeps every query that depends on an
+    /// untouched file cached.
+    pub fn sync_source_directory(
+        &mut self,
+        source_directory: &Path,
+    ) -> Result<SyncSummary, anyhow::Error> {
+        let mut summary = SyncSummary::default();
+
+        // Files the driver currently considers part of the package. A
+        // path the driver has seen before but since removed still has a
+        // `FileId` reserved in `path_to_file_id`, so being known is not
+        // the same as being live.
+        let live: HashSet<FileId> = self.source_root.files().collect();
+        let mut on_disk: HashSet<FileId> = HashSet::with_capacity(live.len());
+
+        for source_file_path in iter_source_files(source_directory) {
+            let relative_path = compute_source_relative_path(source_directory, &source_file_path)?;
+
+            let contents = match std::fs::read_to_string(&source_file_path) {
+                Ok(contents) => contents,
+                // Deleted between listing the directory and reading the
+                // file: it is not on disk, which is all that matters.
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(e) => {
+                    return Err(anyhow::anyhow!(
+                        "could not read contents of '{}': {}",
+                        source_file_path.display(),
+                        e
+                    ))
+                }
+            };
+
+            let live_file_id = self
+                .path_to_file_id
+                .get(&relative_path)
+                .copied()
+                .filter(|file_id| live.contains(file_id));
+
+            let file_id = if let Some(file_id) = live_file_id {
+                if *self.db.file_text(file_id) != *contents {
+                    self.db.set_file_text(file_id, Arc::from(contents));
+                    summary.updated += 1;
+                }
+                file_id
+            } else {
+                let file_id = self.alloc_file_id(&relative_path)?;
+                self.db.set_file_text(file_id, Arc::from(contents));
+                self.db.set_file_source_root(file_id, WORKSPACE);
+                self.source_root.insert_file(file_id, relative_path);
+                summary.added += 1;
+                file_id
+            };
+            on_disk.insert(file_id);
+        }
+
+        for file_id in live.difference(&on_disk) {
+            self.source_root.remove_file(*file_id);
+            summary.removed += 1;
+        }
+
+        // The set of files is itself a salsa input. Setting it bumps the
+        // revision even when the value is identical, so it is only set
+        // when the set really changed.
+        if summary.added + summary.removed > 0 {
+            self.db
+                .set_source_root(WORKSPACE, Arc::new(self.source_root.clone()));
+        }
+
+        Ok(summary)
     }
 }
 

@@ -762,9 +762,15 @@ dependencies = [
  "codira_compiler",
  "codira_hir",
  "codira_project",
+ "codira_runtime",
  "ctrlc",
+ "getrandom",
  "log",
  "notify",
+ "serde",
+ "serde_derive",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

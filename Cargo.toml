@@ -34,6 +34,7 @@ drop_bomb = { version = "0.1.5", default-features = false }
 either = { version = "1.13.0", default-features = false }
 ena = { version = "0.14", default-features = false }
 extendhash = { version = "1.0.10", default-features = false }
+getrandom = { version = "0.2.15", default-features = false }
 heck = "0.4.1"
 inkwell = { version = "0.10.0", default-features = false }
 insta = { version = "1.41.1", default-features = false }

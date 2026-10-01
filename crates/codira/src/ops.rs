@@ -7,6 +7,7 @@
 pub mod bindgen;
 pub mod build;
 pub mod check;
+pub mod daemon;
 pub mod init;
 pub mod language_server;
 pub mod new;

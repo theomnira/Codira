@@ -11,9 +11,10 @@ use std::{
 
 use anyhow::anyhow;
 use codira_compiler::{Config, DisplayColor, Target};
+use codira_compiler_daemon::protocol::BuildRequest;
 use codira_project::MANIFEST_FILENAME;
 
-use crate::ExitStatus;
+use crate::{ops::daemon::build_via_daemon, ExitStatus};
 
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
 pub enum UseColor {
@@ -45,13 +46,32 @@ pub struct Args {
     #[clap(long)]
     watch: bool,
 
+    /// Build through the build daemon, starting it if it is not running.
+    /// The daemon keeps the compiler warm, so every build after the first
+    /// skips process and LLVM startup and recompiles only what changed.
+    #[clap(long, conflicts_with = "watch")]
+    daemon: bool,
+
     /// Target for machine code
     #[clap(long, value_parser=parse_target_triple)]
-    target: Option<Target>,
+    target: Option<TargetArg>,
 }
 
-fn parse_target_triple(target_triple: &str) -> Result<Target, String> {
+/// A `--target` value: the target it resolved to, and the triple as the
+/// user wrote it. The triple is kept because it is what a build daemon is
+/// sent -- it resolves the name itself, with its own target table.
+#[derive(Clone)]
+struct TargetArg {
+    triple: String,
+    target: Target,
+}
+
+fn parse_target_triple(target_triple: &str) -> Result<TargetArg, String> {
     Target::search(target_triple)
+        .map(|target| TargetArg {
+            triple: target_triple.to_owned(),
+            target,
+        })
         .ok_or_else(|| format!("could not find target for '{target_triple}'"))
 }
 
@@ -110,10 +130,35 @@ pub fn build(args: Args) -> Result<ExitStatus, anyhow::Error> {
 
     log::info!("located build manifest at: {}", manifest_path.display());
 
+    if args.daemon {
+        let request = BuildRequest {
+            manifest_path: manifest_path.clone(),
+            opt_level: args.opt_level,
+            target: args.target.as_ref().map(|target| target.triple.clone()),
+            emit_ir: args.emit_ir,
+            // Decided here, not by the daemon: this process is the one
+            // attached to the terminal the diagnostics will be shown on.
+            color: display_colors.should_enable(),
+        };
+        match build_via_daemon(request) {
+            Ok(status) => return Ok(status),
+            // The daemon is an optimization. Whatever went wrong with it
+            // -- it would not start, it died, it reported an internal
+            // error -- the package can still be built right here, and a
+            // fresh process gives the answer that does not depend on any
+            // cached state.
+            Err(error) => eprintln!(
+                "warning: could not build through the daemon ({error:#}); building in this \
+                 process instead"
+            ),
+        }
+    }
+
     let compiler_options = Config {
-        target: args
-            .target
-            .unwrap_or_else(|| Target::host_target().expect("unable to determine host target")),
+        target: args.target.map_or_else(
+            || Target::host_target().expect("unable to determine host target"),
+            |target| target.target,
+        ),
         optimization_lvl,
         out_dir: None,
         emit_ir: args.emit_ir,
