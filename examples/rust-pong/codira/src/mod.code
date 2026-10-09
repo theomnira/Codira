@@ -1,59 +1,59 @@
-extern fn rand_f32() -> f32;
+extern func rand_f32() -> f32;
 
-pub struct(value) Vec2 {
+public struct Vec2 {
     x: f32,
     y: f32,
 }
 
-struct Ball {
+class Ball {
     pos: Vec2,
     vel: Vec2,
     colliding: bool,
 }
 
-pub struct Paddle {
+public class Paddle {
     pos: Vec2,
     score: u32,
     move_up: bool,
     move_down: bool,
 }
 
-pub struct PongState {
+public class PongState {
     ball: Ball,
     paddle_left: Paddle,
     paddle_right: Paddle,
     token: u32,
 }
 
-pub fn ball_radius() -> f32 { 10.0 }
-pub fn ball_tolerance() -> f32 { 0.01 }
-fn ball_hit_modifier() -> f32 { 1.1 }
+public func ball_radius() -> f32 { 10.0 }
+public func ball_tolerance() -> f32 { 0.01 }
+func ball_hit_modifier() -> f32 { 1.1 }
 
-pub fn paddle_width() -> f32 { 10.0 }
-pub fn paddle_height() -> f32 { 100.0 }
-fn paddle_inset() -> f32 { 30.0 }
-fn paddle_speed() -> f32 { 6.0 }
+public func paddle_width() -> f32 { 10.0 }
+public func paddle_height() -> f32 { 100.0 }
+func paddle_inset() -> f32 { 30.0 }
+func paddle_speed() -> f32 { 6.0 }
 
-fn screen_width() -> f32 { 800.0 }
-fn screen_height() -> f32 { 600.0 }
+func screen_width() -> f32 { 800.0 }
+func screen_height() -> f32 { 600.0 }
 
-fn score_inset() -> f32 { 10.0 }
+func score_inset() -> f32 { 10.0 }
 
-pub fn left_score_pos() -> Vec2 {
+public func left_score_pos() -> Vec2 {
     Vec2 {
         x: screen_width() / 4.0,
         y: score_inset(),
     }
 }
 
-pub fn right_score_pos() -> Vec2 {
+public func right_score_pos() -> Vec2 {
     Vec2 {
         x: screen_width() / 4.0 * 3.0,
         y: score_inset(),
     }
 }
 
-fn new_ball() -> Ball {
+func new_ball() -> Ball {
     let vel_x = rand_f32() * 2.0 + 3.0;
     let vel_y = rand_f32() * 2.0 + 1.5;
     let signed = rand_f32() < 0.5;
@@ -71,7 +71,7 @@ fn new_ball() -> Ball {
     }
 }
 
-fn new_paddle(pos: Vec2) -> Paddle {
+func new_paddle(pos: Vec2) -> Paddle {
     Paddle {
         pos,
         score: 0,
@@ -81,7 +81,7 @@ fn new_paddle(pos: Vec2) -> Paddle {
 }
 
 
-pub fn new_state() -> PongState {
+public func new_state() -> PongState {
     let pos_y = (screen_height() - paddle_height()) / 2.0;
     PongState {
         ball: new_ball(),
@@ -97,14 +97,14 @@ pub fn new_state() -> PongState {
     }
 }
 
-fn reset(state: PongState) {
+func reset(state: PongState) {
     let new = new_state();
     state.ball = new.ball;
     state.paddle_left.pos = new.paddle_left.pos;
     state.paddle_right.pos = new.paddle_right.pos;
 }
 
-fn intersects(ball: Ball, paddle: Paddle) -> bool {
+func intersects(ball: Ball, paddle: Paddle) -> bool {
     if ball.pos.y + ball_radius() < paddle.pos.y {
         return false;
     }
@@ -124,7 +124,7 @@ fn intersects(ball: Ball, paddle: Paddle) -> bool {
     true
 }
 
-fn handle_ball(state: PongState) {
+func handle_ball(state: PongState) {
     let ball = state.ball;
     let left = state.paddle_left;
     let right = state.paddle_right;
@@ -164,21 +164,21 @@ fn handle_ball(state: PongState) {
     ball.pos.y += ball.vel.y;
 }
 
-fn move_paddle_up(paddle: Paddle) {
+func move_paddle_up(paddle: Paddle) {
     paddle.pos.y -= paddle_speed();
     if paddle.pos.y < 0.0 {
         paddle.pos.y = 0.0;
     }
 }
 
-fn move_paddle_down(paddle: Paddle) {
+func move_paddle_down(paddle: Paddle) {
     paddle.pos.y += paddle_speed();
     if paddle.pos.y > screen_height() - paddle_height() {
         paddle.pos.y = screen_height() - paddle_height();
     }
 }
 
-fn handle_paddle(paddle: Paddle) {
+func handle_paddle(paddle: Paddle) {
     if paddle.move_up && !paddle.move_down {
         move_paddle_up(paddle);
     } else if !paddle.move_up && paddle.move_down {
@@ -186,7 +186,7 @@ fn handle_paddle(paddle: Paddle) {
     }
 }
 
-pub fn update(state: PongState) {
+public func update(state: PongState) {
     handle_ball(state);
     handle_paddle(state.paddle_left);
     handle_paddle(state.paddle_right);

@@ -47,12 +47,14 @@
 //! what to do next (retry with different inputs, fall back to another
 //! implementation, or propagate the failure), it doesn't undo the fault.
 
+use std::fmt;
+#[cfg(windows)]
 use std::{
     cell::Cell,
-    fmt,
     sync::atomic::{AtomicBool, Ordering},
 };
 
+#[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::EXCEPTION_ACCESS_VIOLATION,
     System::Diagnostics::Debug::{
@@ -65,7 +67,9 @@ use windows_sys::Win32::{
 // part of any Win32 API surface `windows-sys` generates bindings for --
 // they're preprocessor `#define`s in `excpt.h` -- so they're declared
 // directly; their values are stable and documented.
+#[cfg(windows)]
 const EXCEPTION_CONTINUE_EXECUTION: i32 = -1;
+#[cfg(windows)]
 const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 
 // `CONTEXT_AMD64`/`CONTEXT_FULL` (`winnt.h`): which register groups
@@ -73,10 +77,15 @@ const EXCEPTION_CONTINUE_SEARCH: i32 = 0;
 // below) and any code that copies a `CONTEXT` around should treat as
 // meaningful. Not exposed by `windows-sys`'s generated bindings, so
 // declared directly like the exception codes above.
+#[cfg(windows)]
 const CONTEXT_AMD64: u32 = 0x0010_0000;
+#[cfg(windows)]
 const CONTEXT_CONTROL: u32 = CONTEXT_AMD64 | 0x1;
+#[cfg(windows)]
 const CONTEXT_INTEGER: u32 = CONTEXT_AMD64 | 0x2;
+#[cfg(windows)]
 const CONTEXT_FLOATING_POINT: u32 = CONTEXT_AMD64 | 0x8;
+#[cfg(windows)]
 const CONTEXT_FULL: u32 = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_POINT;
 
 // EXCEPTION_INT_DIVIDE_BY_ZERO / EXCEPTION_FLT_DIVIDE_BY_ZERO and friends
@@ -86,9 +95,13 @@ const CONTEXT_FULL: u32 = CONTEXT_CONTROL | CONTEXT_INTEGER | CONTEXT_FLOATING_P
 // directly rather than pulling in the much larger `Wdk` feature surface
 // for a handful of integers. `EXCEPTION_RECORD::ExceptionCode` is `NTSTATUS`
 // (`i32`), matching `EXCEPTION_ACCESS_VIOLATION`'s own type above.
+#[cfg(windows)]
 const EXCEPTION_INT_DIVIDE_BY_ZERO: i32 = 0xC000_0094u32 as i32;
+#[cfg(windows)]
 const EXCEPTION_FLT_DIVIDE_BY_ZERO: i32 = 0xC000_008Eu32 as i32;
+#[cfg(windows)]
 const EXCEPTION_FLT_INVALID_OPERATION: i32 = 0xC000_0090u32 as i32;
+#[cfg(windows)]
 const EXCEPTION_ILLEGAL_INSTRUCTION: i32 = 0xC000_001Du32 as i32;
 
 /// The kind of hardware fault that was intercepted.
@@ -135,6 +148,7 @@ pub struct FaultInfo {
     pub faulting_address: Option<usize>,
 }
 
+#[cfg(windows)]
 fn classify(code: i32) -> Option<FaultKind> {
     match code {
         EXCEPTION_ACCESS_VIOLATION => Some(FaultKind::AccessViolation),
@@ -156,9 +170,11 @@ fn classify(code: i32) -> Option<FaultKind> {
 /// that's the documented, forward-compatible way to call it and because
 /// the exception dispatch mechanism that later reads a *restored* context
 /// does consult `ContextFlags` to decide which groups to actually apply.
+#[cfg(windows)]
 #[repr(C, align(16))]
 struct Checkpoint(CONTEXT);
 
+#[cfg(windows)]
 thread_local! {
     // The active checkpoint for `protected` on this thread, if any is
     // currently in scope, plus a slot the exception handler fills in with
@@ -167,8 +183,10 @@ thread_local! {
     static LAST_FAULT: Cell<Option<FaultInfo>> = const { Cell::new(None) };
 }
 
+#[cfg(windows)]
 static HANDLER_INSTALLED: AtomicBool = AtomicBool::new(false);
 
+#[cfg(windows)]
 unsafe extern "system" fn vectored_handler(info: *mut EXCEPTION_POINTERS) -> i32 {
     let record: &EXCEPTION_RECORD = &*(*info).ExceptionRecord;
     let Some(kind) = classify(record.ExceptionCode) else {
@@ -220,6 +238,7 @@ unsafe extern "system" fn vectored_handler(info: *mut EXCEPTION_POINTERS) -> i32
 /// before [`protected`] can catch anything -- without it, faults are
 /// handled however the process would handle them anyway (crashing, in
 /// most cases).
+#[cfg(windows)]
 pub fn install() {
     if HANDLER_INSTALLED.swap(true, Ordering::SeqCst) {
         return;
@@ -251,6 +270,7 @@ pub fn install() {
 /// captured via `RtlCaptureContext`), with the fault's details available
 /// in the returned `Err`. Anything `f` was in the middle of doing is
 /// abandoned, not completed or undone.
+#[cfg(windows)]
 pub fn protected<T>(f: impl FnOnce() -> T) -> Result<T, FaultInfo> {
     let mut checkpoint = Checkpoint(unsafe { std::mem::zeroed() });
     checkpoint.0.ContextFlags = CONTEXT_FULL;
@@ -271,7 +291,20 @@ pub fn protected<T>(f: impl FnOnce() -> T) -> Result<T, FaultInfo> {
     Ok(result)
 }
 
-#[cfg(test)]
+/// Fault interception is only implemented for Windows (vectored exception
+/// handlers). On other platforms this is a no-op.
+#[cfg(not(windows))]
+pub fn install() {}
+
+/// Fault interception is only implemented for Windows. On other platforms
+/// this calls `f` directly: a hardware fault during it terminates the
+/// process exactly as it would without this module.
+#[cfg(not(windows))]
+pub fn protected<T>(f: impl FnOnce() -> T) -> Result<T, FaultInfo> {
+    Ok(f())
+}
+
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
 
