@@ -1,13 +1,13 @@
-pub fn fibonacci_n() -> i64 {
+public func fibonacci_n() -> i64 {
     let n = nth();
     fibonacci(n)
 }
 
-pub fn nth() -> i64 {
+public func nth() -> i64 {
     10
 }
 
-pub fn fibonacci(n: i64) -> i64 {
+public func fibonacci(n: i64) -> i64 {
     if n <= 1 {
         n
     } else {

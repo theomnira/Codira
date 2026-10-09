@@ -1,34 +1,34 @@
 // Extern functions
 
-extern fn sin(number: f32) -> f32;
+extern func sin(number: f32) -> f32;
 
-extern fn cos(number: f32) -> f32;
+extern func cos(number: f32) -> f32;
 
-extern fn dbg(number: f32);
+extern func dbg(number: f32);
 
-extern fn degrees_to_radians(degrees: f32) -> f32;
+extern func degrees_to_radians(degrees: f32) -> f32;
 
-extern fn sqrt(value: f32) -> f32;
+extern func sqrt(value: f32) -> f32;
 
-extern fn game_area_width() -> f32;
+extern func game_area_width() -> f32;
 
-extern fn game_area_height() -> f32;
+extern func game_area_height() -> f32;
 
 // Globals
 
-fn spaceship_speed_max() -> f32 { 3.0 }
+func spaceship_speed_max() -> f32 { 3.0 }
 
-fn spaceship_speed_increase() -> f32 { 0.5 }
+func spaceship_speed_increase() -> f32 { 0.5 }
 
-fn spaceship_speed_decrease() -> f32 { 0.05 }
+func spaceship_speed_decrease() -> f32 { 0.05 }
 
-fn spaceship_radius() -> f32 { 6.0 }
+func spaceship_radius() -> f32 { 6.0 }
 
-fn rotating_speed() -> f32 { 5.0 }
+func rotating_speed() -> f32 { 5.0 }
 
-fn hot_reload_token() -> u8 { 2 }
+func hot_reload_token() -> u8 { 2 }
 
-fn asteroid_speed(size: u8) -> f32 {
+func asteroid_speed(size: u8) -> f32 {
     if size == 3 {
         1.0
     }
@@ -40,7 +40,7 @@ fn asteroid_speed(size: u8) -> f32 {
     }
 }
 
-fn asteroid_radius(size: u8) -> f32 {
+func asteroid_radius(size: u8) -> f32 {
     if size == 3 {
         15.0
     }
@@ -52,54 +52,54 @@ fn asteroid_radius(size: u8) -> f32 {
     }
 }
 
-fn rocket_radius() -> f32 { 2.0 }
+func rocket_radius() -> f32 { 2.0 }
 
-fn rocket_speed() -> f32 { 5.0 }
+func rocket_speed() -> f32 { 5.0 }
 
-fn rocket_spawn_time() -> u8 { 10 }
+func rocket_spawn_time() -> u8 { 10 }
 
-fn rocket_life_time() -> u8 { 100 }
+func rocket_life_time() -> u8 { 100 }
 
-pub fn initial_asteroids_amount() -> i32 { 4 }
+public func initial_asteroids_amount() -> i32 { 4 }
 
-pub fn max_rockets_amount() -> usize { 5 }
+public func max_rockets_amount() -> usize { 5 }
 
 // Helper functions
 
-fn sqr(value: f32) -> f32 {
+func sqr(value: f32) -> f32 {
     value * value
 }
 
 // Structs and their functions
 
-pub struct Vec2 {
+public class Vec2 {
     x: f32,
     y: f32,
 }
 
-pub fn new_vec2(x: f32, y: f32) -> Vec2 {
+public func new_vec2(x: f32, y: f32) -> Vec2 {
     Vec2 {x: x, y: y}
 }
 
-fn rotate_vec2(vec2: Vec2, degrees: f32) -> Vec2 {
+func rotate_vec2(vec2: Vec2, degrees: f32) -> Vec2 {
     Vec2 {
         x: vec2.x * cos(degrees) - vec2.y * sin(degrees),
         y: vec2.x * sin(degrees) + vec2.y * cos(degrees)
     }
 }
 
-pub struct Object {
+public class Object {
     position: Vec2,
     angle: f32,
     speed: f32,
     radius: f32
 }
 
-fn new_object(position: Vec2, angle: f32, speed: f32, radius: f32) -> Object {
+func new_object(position: Vec2, angle: f32, speed: f32, radius: f32) -> Object {
     Object {position: position, angle: angle, speed: speed, radius: radius}
 }
 
-fn move_object(object: Object){
+func move_object(object: Object){
     let moving_vector = rotate_vec2(Vec2 {x: 0.0, y: -object.speed}, degrees_to_radians(object.angle));
 
     object.position = Vec2 {x: object.position.x + moving_vector.x, y: object.position.y + moving_vector.y};
@@ -117,7 +117,7 @@ fn move_object(object: Object){
     }
 }
 
-pub fn object_collide(first_object: Object, second_object: Object) -> bool {
+public func object_collide(first_object: Object, second_object: Object) -> bool {
     if (sqrt(sqr(first_object.position.x - second_object.position.x) + sqr(first_object.position.y - second_object.position.y)) - first_object.radius - second_object.radius) > 0.0 {
         false
     } else {
@@ -125,13 +125,13 @@ pub fn object_collide(first_object: Object, second_object: Object) -> bool {
     }
 }
 
-pub struct Asteroid {
+public class Asteroid {
     object: Object,
     size: u8,
     need_to_destroy: bool
 }
 
-pub fn new_asteroid(position: Vec2, angle: f32, size: u8) -> Asteroid {
+public func new_asteroid(position: Vec2, angle: f32, size: u8) -> Asteroid {
     Asteroid {
         object: new_object(position, angle, asteroid_speed(size), asteroid_radius(size)),
         size: size,
@@ -139,7 +139,7 @@ pub fn new_asteroid(position: Vec2, angle: f32, size: u8) -> Asteroid {
     }
 }
 
-pub fn update_asteroids(asteroids: [Asteroid], num_asteroids: usize) {
+public func update_asteroids(asteroids: [Asteroid], num_asteroids: usize) {
     let i = 0;
     while(i < num_asteroids) {
         move_object(asteroids[i].object);
@@ -147,13 +147,13 @@ pub fn update_asteroids(asteroids: [Asteroid], num_asteroids: usize) {
     }
 }
 
-pub struct Rocket {
+public class Rocket {
     object: Object,
     life_timer: u8,
     need_to_destroy: bool,
 }
 
-pub fn new_rocket(position: Vec2, angle: f32) -> Rocket {
+public func new_rocket(position: Vec2, angle: f32) -> Rocket {
     Rocket {
         object: new_object(position, angle, rocket_speed(), rocket_radius()),
         life_timer: 0,
@@ -161,7 +161,7 @@ pub fn new_rocket(position: Vec2, angle: f32) -> Rocket {
     }
 }
 
-pub fn update_rockets(rockets: [Rocket], num_rockets: usize) {
+public func update_rockets(rockets: [Rocket], num_rockets: usize) {
     let i = 0;
     while(i < num_rockets) {
         let rocket = rockets[i]
@@ -177,17 +177,17 @@ pub fn update_rockets(rockets: [Rocket], num_rockets: usize) {
     }
 }
 
-pub struct Spaceship {
+public class Spaceship {
     object: Object,
 }
 
-pub fn new_spaceship(position: Vec2, angle: f32) -> Spaceship {
+public func new_spaceship(position: Vec2, angle: f32) -> Spaceship {
     Spaceship {
         object: new_object(position, angle, spaceship_speed_max(), spaceship_radius()),
     }
 }
 
-pub struct GameStruct {
+public class GameStruct {
     spaceship: Spaceship,
     spawn_new_rocket: bool,
     spawn_rocket_timer: u8,
@@ -195,7 +195,7 @@ pub struct GameStruct {
     token: u8
 }
 
-pub fn new_game_struct() -> GameStruct {
+public func new_game_struct() -> GameStruct {
     GameStruct {
         spaceship: new_spaceship( Vec2 {x: game_area_width() / 2.0 , y: game_area_height()}, 0.0 ),
         spawn_new_rocket: false,
@@ -205,14 +205,14 @@ pub fn new_game_struct() -> GameStruct {
     }
 }
 
-pub struct PlayerInput {
+public class PlayerInput {
     up: bool,
     left: bool,
     right: bool,
     shoot: bool,
 }
 
-pub fn new_player_input() -> PlayerInput {
+public func new_player_input() -> PlayerInput {
     PlayerInput {
         up: false,
         left: false,
@@ -221,7 +221,7 @@ pub fn new_player_input() -> PlayerInput {
     }
 }
 
-pub fn update(game_struct: GameStruct, player_input: PlayerInput) {
+public func update(game_struct: GameStruct, player_input: PlayerInput) {
     if game_struct.token != hot_reload_token() {
         // We can't just use here new_game_struct() or new_player_input()
         // because of hotreload constrains
