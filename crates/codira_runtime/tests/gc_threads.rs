@@ -16,7 +16,10 @@
 //! thread's roots shows up as a mismatch (or as a crash on a reused cell).
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
-use codira_test::CompileAndRunTestDriver;
+use std::time::{Duration, Instant};
+
+use codira_runtime::Runtime;
+use codira_test::{CompileAndRunTestDriver, CompileTestDriver};
 
 const BLOCK: usize = 64 * 1024;
 
@@ -207,4 +210,51 @@ fn concurrent_host_calls_and_collections() {
             assert_eq!(caller.join().unwrap(), 0);
         }
     });
+}
+
+/// A reload migrates the heap and swaps the code, so it must not happen
+/// while any thread is inside Codira code: it is deferred, and the first
+/// update after that thread leaves performs it -- without a new file event.
+#[test]
+fn a_reload_waits_until_no_thread_runs_codira_code() {
+    let mut compiler = CompileTestDriver::from_file("public func value() -> i64 { 1 }");
+    // Safety: we compiled the library ourselves.
+    let mut runtime =
+        unsafe { Runtime::builder(compiler.lib_path()).finish() }.expect("Failed to build runtime");
+
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (entered, has_entered) = std::sync::mpsc::channel::<()>();
+    let holder = std::thread::spawn(move || {
+        // Like a host thread in a call through a raw function pointer,
+        // waiting in a host function.
+        let _guard = codira_runtime::enter_codira();
+        entered.send(()).unwrap();
+        codira_runtime::blocking(|| released.recv().unwrap());
+    });
+    has_entered.recv().unwrap();
+
+    compiler.update_file("mod.code", "public func value() -> i64 { 2 }");
+    // Long enough for the file events to arrive and be drained.
+    let until = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < until {
+        // Safety: we compiled the library ourselves.
+        assert!(
+            !unsafe { runtime.update() },
+            "reloaded while a thread was inside Codira code"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let value: i64 = runtime.invoke("value", ()).unwrap();
+    assert_eq!(value, 1);
+
+    release.send(()).unwrap();
+    holder.join().unwrap();
+    let until = Instant::now() + Duration::from_secs(60);
+    // Safety: we compiled the library ourselves.
+    while !unsafe { runtime.update() } {
+        assert!(Instant::now() < until, "the deferred reload never happened");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let value: i64 = runtime.invoke("value", ()).unwrap();
+    assert_eq!(value, 2);
 }
