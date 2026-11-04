@@ -139,6 +139,39 @@ unsafe extern "C" fn codira_jit_print_str(data: *const u8, len: usize) {
     print!("{}", String::from_utf8_lossy(bytes));
 }
 
+/// The host side of a failed run-time check (an integer division by zero,
+/// say): reports `message` at `file:line:column` and ends the process with
+/// status 101, exactly as the LLVM backend's runtime does (`report_panic` in
+/// `codira_runtime`'s `builtins.rs`). What was printed so far is flushed
+/// first, so the report comes after it.
+///
+/// # Safety
+/// `message` and `file` point at `message_len` and `file_len` bytes of string
+/// data the JIT emitted.
+unsafe extern "C" fn codira_jit_panic(
+    message: *const u8,
+    message_len: usize,
+    file: *const u8,
+    file_len: usize,
+    line: u32,
+    column: u32,
+) {
+    // SAFETY: see the function's contract.
+    let (message, file) = unsafe {
+        (
+            std::slice::from_raw_parts(message, message_len),
+            std::slice::from_raw_parts(file, file_len),
+        )
+    };
+    let _ = std::io::stdout().flush();
+    eprintln!(
+        "panic at {}:{line}:{column}: {}",
+        String::from_utf8_lossy(file),
+        String::from_utf8_lossy(message)
+    );
+    std::process::exit(101)
+}
+
 /// Compiles the program in `db` whose entry point is the function named
 /// `entry`, and every function it can reach.
 pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported> {
@@ -165,6 +198,7 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
     jit.symbol("codira_jit_print_i64", codira_jit_print_i64 as *const u8);
     jit.symbol("codira_jit_print_u64", codira_jit_print_u64 as *const u8);
     jit.symbol("codira_jit_print_f64", codira_jit_print_f64 as *const u8);
+    jit.symbol("codira_jit_panic", codira_jit_panic as *const u8);
     jit.symbol("codira_jit_print_bool", codira_jit_print_bool as *const u8);
     jit.symbol("codira_jit_print_str", codira_jit_print_str as *const u8);
     let mut module = JITModule::new(jit);
@@ -175,6 +209,17 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
         ("codira_jit_print_i64", vec![AbiParam::new(types::I64)]),
         ("codira_jit_print_u64", vec![AbiParam::new(types::I64)]),
         ("codira_jit_print_f64", vec![AbiParam::new(types::F64)]),
+        (
+            "codira_jit_panic",
+            vec![
+                AbiParam::new(pointer),
+                AbiParam::new(pointer),
+                AbiParam::new(pointer),
+                AbiParam::new(pointer),
+                AbiParam::new(types::I32),
+                AbiParam::new(types::I32),
+            ],
+        ),
         // A Rust `u8` parameter: the caller zero-extends it (see
         // `ScalarTy::abi_param`).
         ("codira_jit_print_bool", vec![ScalarTy::Bool.abi_param()]),
@@ -627,7 +672,7 @@ impl<'a, 'db> Translator<'a, 'db> {
                 lhs,
                 rhs,
                 op: Some(op),
-            } => self.binary(*lhs, *rhs, *op),
+            } => self.binary(id, *lhs, *rhs, *op),
             Expr::If {
                 condition,
                 then_branch,
@@ -753,7 +798,7 @@ impl<'a, 'db> Translator<'a, 'db> {
         }))
     }
 
-    fn binary(&mut self, lhs: ExprId, rhs: ExprId, op: BinaryOp) -> Lowered {
+    fn binary(&mut self, id: ExprId, lhs: ExprId, rhs: ExprId, op: BinaryOp) -> Lowered {
         match op {
             BinaryOp::Assignment { op } => {
                 let Some((var, ty)) = self.local(lhs) else {
@@ -764,6 +809,7 @@ impl<'a, 'db> Translator<'a, 'db> {
                     None => value,
                     Some(arith) => {
                         let old = self.builder.use_var(var);
+                        self.division_check(id, arith, ty, old, value)?;
                         self.arith(arith, ty, old, value)?
                     }
                 };
@@ -799,6 +845,7 @@ impl<'a, 'db> Translator<'a, 'db> {
                 };
                 let left = self.operand(lhs)?;
                 let right = self.operand(rhs)?;
+                self.division_check(id, arith, ty, left, right)?;
                 Ok(Some(self.arith(arith, ty, left, right)?))
             }
             BinaryOp::CmpOp(cmp) => {
@@ -810,6 +857,92 @@ impl<'a, 'db> Translator<'a, 'db> {
                 Ok(Some(self.compare(cmp, ty, left, right)))
             }
         }
+    }
+
+    /// Checks the divisor of the integer division or remainder `id` (`a / b`,
+    /// `a % b`, or the compound assignment), as the LLVM backend does: a zero
+    /// divisor, and for a signed type `MIN / -1` or `MIN % -1`, panic with
+    /// the location of `id` instead of reaching `sdiv`/`udiv`/`srem`/`urem`
+    /// (which trap). The effect analysis decides which divisions need it
+    /// (`codira_hir::realtime::division_needs_check`); the others get none.
+    fn division_check(
+        &mut self,
+        id: ExprId,
+        op: ArithOp,
+        ty: ScalarTy,
+        a: Value,
+        b: Value,
+    ) -> Result<(), Unsupported> {
+        let ScalarTy::Int { bits, signed } = ty else {
+            return Ok(());
+        };
+        if !codira_hir::realtime::division_needs_check(self.state.db, &self.body, &self.infer, id) {
+            return Ok(());
+        }
+        let divide = op == ArithOp::Divide;
+        let is_zero = self.builder.ins().icmp_imm_u(IntCC::Equal, b, 0);
+        self.panic_if(
+            is_zero,
+            id,
+            if divide {
+                "attempt to divide by zero"
+            } else {
+                "attempt to calculate the remainder with a divisor of zero"
+            },
+        )?;
+        if signed {
+            // The immediates are the bit patterns at the operand's width:
+            // `MIN` is the top bit alone, `-1` every bit.
+            let all_ones = if bits == 64 { -1 } else { (1i64 << bits) - 1 };
+            let min = 1i64 << (bits - 1);
+            let a_min = self.builder.ins().icmp_imm_u(IntCC::Equal, a, min);
+            let b_minus_one = self.builder.ins().icmp_imm_u(IntCC::Equal, b, all_ones);
+            let overflow = self.builder.ins().band(a_min, b_minus_one);
+            self.panic_if(
+                overflow,
+                id,
+                if divide {
+                    "attempt to divide with overflow"
+                } else {
+                    "attempt to calculate the remainder with overflow"
+                },
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Branches to a cold block that panics with `message` at `id`'s source
+    /// location when `condition` holds, and continues in a new block when it
+    /// does not.
+    fn panic_if(&mut self, condition: Value, id: ExprId, message: &str) -> Result<(), Unsupported> {
+        let fail = self.builder.create_block();
+        let ok = self.builder.create_block();
+        self.builder.set_cold_block(fail);
+        self.builder.ins().brif(condition, fail, &[], ok, &[]);
+        self.switch_to(fail);
+        let (file, line, column) = match self.function.expr_source_range(self.state.db, id) {
+            Some((file_id, range)) => {
+                let line_col = self.state.db.line_index(file_id).line_col(range.start());
+                (
+                    self.state.db.file_relative_path(file_id).to_string(),
+                    line_col.line + 1,
+                    line_col.col_utf16 + 1,
+                )
+            }
+            None => ("<unknown>".to_owned(), 0, 0),
+        };
+        let mut args = Vec::with_capacity(6);
+        for text in [message, file.as_str()] {
+            let (address, len) = self.string_value(text)?;
+            args.extend([address, len]);
+        }
+        for value in [line, column] {
+            args.push(self.builder.ins().iconst(types::I32, i64::from(value)));
+        }
+        self.call_print("codira_jit_panic", &args);
+        self.builder.ins().trap(TrapCode::unwrap_user(1));
+        self.switch_to(ok);
+        Ok(())
     }
 
     fn arith(
@@ -989,7 +1122,8 @@ impl<'a, 'db> Translator<'a, 'db> {
         self.builder.ins().call(print, args);
     }
 
-    fn print_text(&mut self, text: &str) -> Result<(), Unsupported> {
+    /// The address and length of `text`'s bytes, emitted once per program.
+    fn string_value(&mut self, text: &str) -> Result<(Value, Value), Unsupported> {
         let data = self
             .state
             .string(text)
@@ -1004,6 +1138,11 @@ impl<'a, 'db> Translator<'a, 'db> {
             .builder
             .ins()
             .iconst(pointer, i64::try_from(text.len()).unwrap_or(i64::MAX));
+        Ok((address, len))
+    }
+
+    fn print_text(&mut self, text: &str) -> Result<(), Unsupported> {
+        let (address, len) = self.string_value(text)?;
         self.call_print("codira_jit_print_str", &[address, len]);
         Ok(())
     }
