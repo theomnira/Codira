@@ -1,0 +1,20 @@
+[package]
+name = "codira_db"
+description = "Native storage engine for Codira: write-ahead log, MVCC snapshot-isolation transactions, checkpoints and typed tables"
+keywords = ["database", "storage", "wal", "mvcc", "codira"]
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme = "README.md"
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+crc32fast = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+

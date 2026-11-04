@@ -1103,6 +1103,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "codira_db"
+version = "0.6.0-dev"
+dependencies = [
+ "crc32fast",
+ "tempfile",
+]
+
+[[package]]
 name = "codira_diagnostics"
 version = "0.6.0-dev"
 dependencies = [
