@@ -141,10 +141,7 @@ fn run(storage: &Arc<FaultStorage>, opts: &Options, w: &[WTxn]) -> Outcome {
 }
 
 fn contents(db: &Db) -> State {
-    db.begin()
-        .scan::<std::ops::RangeFull>(..)
-        .into_iter()
-        .collect()
+    db.begin().scan_all().into_iter().collect()
 }
 
 fn options(policy: FsyncPolicy) -> Options {

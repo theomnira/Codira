@@ -21,7 +21,7 @@
 
 use std::{
     collections::BTreeMap,
-    ops::{Bound, RangeBounds},
+    ops::Bound,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc, Mutex, MutexGuard, RwLock, RwLockReadGuard, RwLockWriteGuard,
@@ -475,12 +475,12 @@ impl Db {
         }
         {
             let mut st = write(&self.state);
+            // The oldest snapshot any other open transaction reads at; the
+            // committing transaction's own snapshot no longer counts.
             let horizon = lock(&self.active)
-                .keys()
-                .next()
-                .copied()
-                .unwrap_or(ts)
-                .min(ts);
+                .iter()
+                .find(|(s, n)| **n > usize::from(**s == snapshot))
+                .map_or(ts, |(s, _)| *s);
             for (k, value) in writes {
                 let chain = st.versions.entry(k.clone()).or_default();
                 chain.push(Version { ts, value });
@@ -633,11 +633,11 @@ impl<'db> Txn<'db> {
         Ok(())
     }
 
-    /// Every key-value pair in `range`, in key order, in this transaction's
-    /// view. The result is materialised: it is a consistent copy, and does
-    /// not hold any lock after it returns.
-    pub fn scan<R: RangeBounds<[u8]>>(&self, range: R) -> Vec<(Vec<u8>, Vec<u8>)> {
-        let (start, end) = (range.start_bound(), range.end_bound());
+    /// Every key-value pair with a key between `start` and `end`, in key
+    /// order, in this transaction's view. The result is materialised: it is
+    /// a consistent copy, and holds no lock after it returns. An empty or
+    /// inverted range yields nothing.
+    pub fn scan(&self, start: Bound<&[u8]>, end: Bound<&[u8]>) -> Vec<(Vec<u8>, Vec<u8>)> {
         if !valid_range(start, end) {
             return Vec::new();
         }
@@ -663,15 +663,21 @@ impl<'db> Txn<'db> {
         out.into_iter().collect()
     }
 
+    /// Every key-value pair with `from <= key < to`, in key order.
+    pub fn range(&self, from: &[u8], to: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.scan(Bound::Included(from), Bound::Excluded(to))
+    }
+
+    /// Every key-value pair, in key order.
+    pub fn scan_all(&self) -> Vec<(Vec<u8>, Vec<u8>)> {
+        self.scan(Bound::Unbounded, Bound::Unbounded)
+    }
+
     /// Every key-value pair whose key starts with `prefix`, in key order.
     pub fn scan_prefix(&self, prefix: &[u8]) -> Vec<(Vec<u8>, Vec<u8>)> {
         match prefix_end(prefix) {
-            Some(end) => self.scan::<(Bound<&[u8]>, Bound<&[u8]>)>((
-                Bound::Included(prefix),
-                Bound::Excluded(&end),
-            )),
-            None => self
-                .scan::<(Bound<&[u8]>, Bound<&[u8]>)>((Bound::Included(prefix), Bound::Unbounded)),
+            Some(end) => self.scan(Bound::Included(prefix), Bound::Excluded(&end)),
+            None => self.scan(Bound::Included(prefix), Bound::Unbounded),
         }
     }
 
