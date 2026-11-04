@@ -115,7 +115,14 @@ fn a_thousand_links_leave_nothing_behind() {
             samples.push(usage());
         }
     }
-    let end = *samples.last().unwrap();
+    let mut end = *samples.last().unwrap();
+    // A worker thread that has done its work can still be exiting when the threads are counted
+    // (CI saw 3 against 2 once in several runs); one that leaked stays, so a second is enough.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while end.threads > start.threads && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        end = usage();
+    }
     eprintln!("usage after warm-up: {start:?}");
     for (n, s) in samples.iter().enumerate().skip(1) {
         eprintln!("usage after {:4} links: {s:?}", n * 250);
