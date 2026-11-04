@@ -1076,7 +1076,38 @@ impl<'a, 'db> Translator<'a, 'db> {
             (ScalarTy::Int { signed: false, .. }, ScalarTy::Float { .. }) => {
                 ins.fcvt_from_uint(target, value)
             }
-            // Float to integer saturates, as the language defines it.
+            // Float to integer saturates, NaN giving 0, as the language
+            // defines it (and LLVM's `llvm.fpto{s,u}i.sat` implements).
+            // Cranelift's x86-64 backend encodes the saturating conversions
+            // only to 32 and 64 bits (an 8- or 16-bit result reaches an
+            // `unreachable!` in its emitter), so a narrower target converts
+            // to `i32` first -- saturating there, NaN already 0 -- then
+            // clamps to the target's range, which lies inside `i32`'s, and
+            // narrows: the same value for every input.
+            (
+                ScalarTy::Float { .. },
+                ScalarTy::Int {
+                    bits: bits @ (8 | 16),
+                    signed,
+                },
+            ) => {
+                let half = 1i64 << (bits - 1);
+                let wide = if signed {
+                    ins.fcvt_to_sint_sat(types::I32, value)
+                } else {
+                    ins.fcvt_to_uint_sat(types::I32, value)
+                };
+                let clamped = if signed {
+                    let min = self.builder.ins().iconst(types::I32, -half);
+                    let max = self.builder.ins().iconst(types::I32, half - 1);
+                    let low = self.builder.ins().smax(wide, min);
+                    self.builder.ins().smin(low, max)
+                } else {
+                    let max = self.builder.ins().iconst(types::I32, 2 * half - 1);
+                    self.builder.ins().umin(wide, max)
+                };
+                self.builder.ins().ireduce(target, clamped)
+            }
             (ScalarTy::Float { .. }, ScalarTy::Int { signed: true, .. }) => {
                 ins.fcvt_to_sint_sat(target, value)
             }
