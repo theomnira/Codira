@@ -73,3 +73,6 @@ cmake-build-*/
 # Built artifacts from the interop example's C caller.
 examples/interop/c/main
 examples/interop/c/main.exe
+
+# Extra cargo build directories (e.g. CARGO_TARGET_DIR=target-check)
+/target-*/
