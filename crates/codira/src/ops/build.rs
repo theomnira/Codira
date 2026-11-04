@@ -171,6 +171,14 @@ pub fn build(args: Args) -> Result<ExitStatus, anyhow::Error> {
 
     log::info!("located build manifest at: {}", manifest_path.display());
 
+    // A package that declares an `[envelope]` in its manifest is built only
+    // when every public function fits it. Checked once, here, so it holds
+    // for the daemon and the first build of `--watch` as well (a rebuild
+    // under `--watch` does not re-check it).
+    if !crate::ops::envelope::check_package_envelope_before_build(&manifest_path)? {
+        return Ok(ExitStatus::Error);
+    }
+
     if args.daemon {
         let request = BuildRequest {
             manifest_path: manifest_path.clone(),

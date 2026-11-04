@@ -580,7 +580,11 @@ pub fn package_envelope_violations(
             .clauses
             .iter()
             .filter(|c| c.forbids && hit.contains(c.effect))
-            .map(|c| format!("{} = \"{}\"", c.key, c.value))
+            .map(|c| match c.value.as_str() {
+                // As TOML writes them.
+                "true" | "false" => format!("{} = {}", c.key, c.value),
+                _ => format!("{} = \"{}\"", c.key, c.value),
+            })
             .collect();
         // One explanation per distinct cause, naming every effect it
         // explains, as the attribute diagnostics do.
