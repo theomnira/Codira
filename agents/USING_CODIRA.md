@@ -1755,6 +1755,42 @@ Runtime (hosts embedding `codira_runtime`):
   (`codira_region_*`), OS pages with W^X protection, huge pages and icache
   flushing (`codira_page_*`, `codira_icache_flush`), and aligned allocation.
   Addresses are `usize`; failures return 0/false. Region memory is untraced.
+- Files and hashes (Linux tested; macOS and Windows built but never run):
+  the runtime provides file and hash services that a program reaches with
+  `extern "C"` declarations, wrapped in `std/fs/fs.code` and
+  `std/crypto/hash.code`. Since `std` cannot be imported yet, a program
+  declares them itself.
+  - **Opening:** `codira_fs_open(path_addr: usize, path_len: usize, flags:
+    u32) -> i64`. The flags are READ 1, WRITE 2, APPEND 4, CREATE 8,
+    TRUNCATE 16 and CREATE_NEW 32; pass the path with `str_data`/`str_len`.
+  - **Reading and writing:** `codira_fs_read` and `codira_fs_write(fd: i64,
+    buf: usize, len: usize) -> i64` are single calls that may return a short
+    count; a read returns 0 at the end of the file.
+  - **Other file calls:** `codira_fs_seek(fd, offset: i64, whence: u32) ->
+    i64` and `codira_fs_size(fd) -> i64`. `codira_fs_fsync`,
+    `codira_fs_close`, `codira_fs_remove`, `codira_fs_rename` and
+    `codira_fs_sync_dir` return `i32`.
+  - **Results:** a value >= 0, or a negative `FS_ERR_*` code: -2 not found,
+    -5 invalid argument, -6 bad handle, -7 path too long, -8 path not UTF-8,
+    -18 wrong mode, and so on. `codira_fs_last_os_error()` gives the raw
+    errno.
+  - **Handles** are generation-checked runtime handles, not OS descriptors,
+    so a closed or forged handle is refused.
+  - **Durability:** a new or renamed name is durable only after
+    `codira_fs_sync_dir` on its directory. That call is unsupported on
+    Windows, where renames are not made durable. On Linux, do not retry
+    after an fsync error.
+  - **Hashes:** `codira_hash_sha256`, `codira_hash_sha512` and
+    `codira_hash_blake3(data_addr, len, out_addr) -> bool` write 32, 64 and
+    32 bytes. They use the RustCrypto `sha2` and the `blake3` crates and are
+    checked against the NIST and BLAKE3 known answers. They may be declared
+    `@noalloc @nopanic @noblock` (a trusted assertion, as
+    `std/crypto/hash.code` does).
+  - **Effects:** file services are ordinary externs, so they count as
+    blocking.
+  - **Not cryptographic:** `std/hashlib` (FNV-1a).
+  - Tests: `crates/codira/tests/fs_and_hash.rs`. Limits:
+    `lab/rfcs/0004-runtime-io-and-hashing.md`.
 - Experimental hardware safety: `codira build --sanitize=memtag` tags
   `stack_alloc` slots, region memory and OS pages with ARM MTE on aarch64
   Linux targets with `+mte` (built and inspected, never run: see
