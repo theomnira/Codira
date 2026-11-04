@@ -16,7 +16,10 @@ use codira_compiler::{
     image_link_stats, Config, Driver, Target, DIRECT_ELF_ENV, DIRECT_LINK_ENV, LINK_MODE_ENV,
     LINK_VERIFY_ENV,
 };
-use codira_image::{elfinfo, peinfo};
+use codira_image::elfinfo;
+// The PE checks run only on Windows hosts, where PE is the default output.
+#[cfg(windows)]
+use codira_image::peinfo;
 use tempfile::TempDir;
 
 static ENVIRONMENT: Mutex<()> = Mutex::new(());
