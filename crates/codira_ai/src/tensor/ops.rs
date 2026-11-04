@@ -85,7 +85,13 @@ impl<T: Float> Tensor<T> {
 
     /// Reduces one axis with `fold`, starting from `init`, visiting the
     /// axis in increasing order. The axis is kept with extent 1 if `keepdim`.
-    pub fn reduce_axis(&self, axis: usize, keepdim: bool, init: T, fold: impl Fn(T, T) -> T) -> Result<Self> {
+    pub fn reduce_axis(
+        &self,
+        axis: usize,
+        keepdim: bool,
+        init: T,
+        fold: impl Fn(T, T) -> T,
+    ) -> Result<Self> {
         if axis >= self.rank() {
             return Err(TensorError::AxisOutOfRange {
                 axis,
@@ -122,7 +128,9 @@ impl<T: Float> Tensor<T> {
             axis,
             rank: self.rank(),
         })?;
-        Ok(self.sum_axis(axis, keepdim)?.scale(T::ONE / T::from_usize(n)))
+        Ok(self
+            .sum_axis(axis, keepdim)?
+            .scale(T::ONE / T::from_usize(n)))
     }
 
     /// Maximum along an axis (`-inf` for an empty axis; NaN propagates).
@@ -148,7 +156,9 @@ impl<T: Float> Tensor<T> {
 
     /// The maximum element (`-inf` if empty).
     pub fn max_all(&self) -> T {
-        self.to_vec().into_iter().fold(T::NEG_INFINITY, |a, b| a.max(b))
+        self.to_vec()
+            .into_iter()
+            .fold(T::NEG_INFINITY, super::super::float::Float::max)
     }
 
     /// Sums a gradient of broadcast shape back to `target`, the shape of
@@ -233,7 +243,9 @@ mod tests {
     fn reductions_respect_views() {
         let a = Tensor::<f64>::from_fn(&[2, 3], |i| i as f64).t().unwrap(); // [3,2]
         assert_eq!(a.sum_axis(1, false).unwrap().to_vec(), vec![3., 5., 7.]);
-        let s = Tensor::<f64>::from_fn(&[4, 4], |i| i as f64).slice(1, 1, 3).unwrap();
+        let s = Tensor::<f64>::from_fn(&[4, 4], |i| i as f64)
+            .slice(1, 1, 3)
+            .unwrap();
         assert_eq!(s.sum_axis(0, false).unwrap().to_vec(), vec![28., 32.]);
     }
 
@@ -264,7 +276,10 @@ mod tests {
         assert!(ls.to_vec().iter().all(|x| x.is_finite()));
         // log_softmax == ln(softmax) where softmax does not underflow
         let r = t(&[0.3, -1.2, 2.0], &[3]);
-        assert!(r.log_softmax(0).unwrap().allclose(&r.softmax(0).unwrap().ln(), 1e-12, 1e-12));
+        assert!(r
+            .log_softmax(0)
+            .unwrap()
+            .allclose(&r.softmax(0).unwrap().ln(), 1e-12, 1e-12));
     }
 
     #[test]

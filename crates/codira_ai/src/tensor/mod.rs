@@ -153,10 +153,7 @@ impl<T: Float> Tensor<T> {
         let mut off = self.offset;
         for (ax, (&i, &d)) in index.iter().zip(&self.shape).enumerate() {
             if i >= d {
-                return Err(TensorError::IndexOutOfRange {
-                    index: i,
-                    bound: d,
-                });
+                return Err(TensorError::IndexOutOfRange { index: i, bound: d });
             }
             off += i * self.strides[ax];
         }
@@ -182,7 +179,7 @@ impl<T: Float> Tensor<T> {
         }
         let mut out = Vec::with_capacity(self.numel());
         for_each_offset(&self.shape, &self.strides, self.offset, |o| {
-            out.push(self.data[o])
+            out.push(self.data[o]);
         });
         out
     }
@@ -218,7 +215,10 @@ impl<T: Float> Tensor<T> {
     /// Converts every element to another scalar type.
     pub fn cast<U: Float>(&self) -> Tensor<U> {
         Tensor::from_vec(
-            self.to_vec().into_iter().map(|x| U::from_f64(x.to_f64())).collect(),
+            self.to_vec()
+                .into_iter()
+                .map(|x| U::from_f64(x.to_f64()))
+                .collect(),
             &self.shape,
         )
         .expect("same element count")
@@ -228,14 +228,10 @@ impl<T: Float> Tensor<T> {
     /// `|a - b| <= atol + rtol * |b|`.
     pub fn allclose(&self, other: &Self, rtol: f64, atol: f64) -> bool {
         self.shape == other.shape
-            && self
-                .to_vec()
-                .iter()
-                .zip(other.to_vec())
-                .all(|(a, b)| {
-                    let (a, b) = (a.to_f64(), b.to_f64());
-                    (a - b).abs() <= atol + rtol * b.abs()
-                })
+            && self.to_vec().iter().zip(other.to_vec()).all(|(a, b)| {
+                let (a, b) = (a.to_f64(), b.to_f64());
+                (a - b).abs() <= atol + rtol * b.abs()
+            })
     }
 
     /// The largest `|a - b|` over corresponding elements (shapes must match).
@@ -272,7 +268,11 @@ impl<T: Float> Tensor<T> {
     pub fn permute(&self, perm: &[usize]) -> Result<Self> {
         let rank = self.rank();
         let mut seen = vec![false; rank];
-        if perm.len() != rank || perm.iter().any(|&p| p >= rank || std::mem::replace(&mut seen[p], true)) {
+        if perm.len() != rank
+            || perm
+                .iter()
+                .any(|&p| p >= rank || std::mem::replace(&mut seen[p], true))
+        {
             return Err(TensorError::InvalidPermutation {
                 perm: perm.to_vec(),
                 rank,
@@ -404,16 +404,24 @@ impl<T: Float> Tensor<T> {
         let sa = broadcast_strides(&self.shape, &self.strides, &out_shape);
         let sb = broadcast_strides(&other.shape, &other.strides, &out_shape);
         let mut data = Vec::with_capacity(numel(&out_shape));
-        for_each_offset2(&out_shape, (&sa, self.offset), (&sb, other.offset), |i, j| {
-            data.push(f(self.data[i], other.data[j]))
-        });
+        for_each_offset2(
+            &out_shape,
+            (&sa, self.offset),
+            (&sb, other.offset),
+            |i, j| data.push(f(self.data[i], other.data[j])),
+        );
         Self::from_vec(data, &out_shape)
     }
 }
 
 impl<T: Float> fmt::Debug for Tensor<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Tensor(shape={:?}, data={:?})", self.shape, self.to_vec())
+        write!(
+            f,
+            "Tensor(shape={:?}, data={:?})",
+            self.shape,
+            self.to_vec()
+        )
     }
 }
 
@@ -466,19 +474,28 @@ mod tests {
             a.slice(0, 2, 4),
             Err(TensorError::SliceOutOfRange { .. })
         ));
-        assert!(matches!(a.slice(2, 0, 1), Err(TensorError::AxisOutOfRange { .. })));
+        assert!(matches!(
+            a.slice(2, 0, 1),
+            Err(TensorError::AxisOutOfRange { .. })
+        ));
     }
 
     #[test]
     fn reshape_errors_instead_of_panicking() {
         let a = Tensor::<f64>::zeros(&[2, 3]);
-        assert!(matches!(a.reshape(&[4, 2]), Err(TensorError::ReshapeCount { .. })));
+        assert!(matches!(
+            a.reshape(&[4, 2]),
+            Err(TensorError::ReshapeCount { .. })
+        ));
         // a transposed matrix cannot be flattened without a copy
         let at = a.t().unwrap();
         assert!(matches!(at.view(&[6]), Err(TensorError::NotAView { .. })));
         // reshape copies in that case and keeps logical order
         let b = Tensor::<f64>::from_fn(&[2, 3], |i| i as f64).t().unwrap();
-        assert_eq!(b.reshape(&[6]).unwrap().to_vec(), vec![0., 3., 1., 4., 2., 5.]);
+        assert_eq!(
+            b.reshape(&[6]).unwrap().to_vec(),
+            vec![0., 3., 1., 4., 2., 5.]
+        );
     }
 
     #[test]

@@ -102,7 +102,7 @@ macro_rules! impl_float {
             }
             #[inline]
             fn to_f64(self) -> f64 {
-                self as f64
+                f64::from(self)
             }
             #[inline]
             fn exp(self) -> Self {

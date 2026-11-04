@@ -56,9 +56,18 @@ fn unsqueeze_if<T: Float>(g: &Tensor<T>, axis: usize, keepdim: bool) -> Result<T
     g.reshape(&s)
 }
 
+// `add`, `sub`, `mul`, `div` and `neg` are methods rather than operator
+// impls because the binary ones can fail (broadcast mismatch, operands from
+// different graphs) and return a `Result`.
+#[allow(clippy::should_implement_trait)]
 impl<'g, T: Float> Var<'g, T> {
-    fn unary(self, value: Tensor<T>, rule: impl Fn(&Tensor<T>) -> Result<Tensor<T>> + 'static) -> Var<'g, T> {
-        self.graph.record(value, &[self], Box::new(move |g| Ok(vec![rule(g)?])))
+    fn unary(
+        self,
+        value: Tensor<T>,
+        rule: impl Fn(&Tensor<T>) -> Result<Tensor<T>> + 'static,
+    ) -> Var<'g, T> {
+        self.graph
+            .record(value, &[self], Box::new(move |g| Ok(vec![rule(g)?])))
     }
 
     // -------------------------------------------------------- element-wise
@@ -206,7 +215,9 @@ impl<'g, T: Float> Var<'g, T> {
     pub fn sum(self) -> Var<'g, T> {
         let x = self.value();
         let shape = x.shape().to_vec();
-        self.unary(Tensor::scalar(x.sum_all()), move |g| Ok(g.broadcast_to(&shape)?.contiguous()))
+        self.unary(Tensor::scalar(x.sum_all()), move |g| {
+            Ok(g.broadcast_to(&shape)?.contiguous())
+        })
     }
 
     /// The mean of every element (a rank-0 result).
@@ -220,7 +231,11 @@ impl<'g, T: Float> Var<'g, T> {
         let x = self.value();
         let y = x.sum_axis(axis, keepdim)?;
         let shape = x.shape().to_vec();
-        Ok(self.unary(y, move |g| Ok(unsqueeze_if(g, axis, keepdim)?.broadcast_to(&shape)?.contiguous())))
+        Ok(self.unary(y, move |g| {
+            Ok(unsqueeze_if(g, axis, keepdim)?
+                .broadcast_to(&shape)?
+                .contiguous())
+        }))
     }
 
     /// Mean along `axis`.
@@ -304,7 +319,10 @@ impl<'g, T: Float> Var<'g, T> {
         let mut out = Vec::with_capacity(ids.len() * d);
         for &id in ids {
             if id >= v {
-                return Err(TensorError::IndexOutOfRange { index: id, bound: v });
+                return Err(TensorError::IndexOutOfRange {
+                    index: id,
+                    bound: v,
+                });
             }
             out.extend_from_slice(&src[id * d..(id + 1) * d]);
         }
@@ -380,8 +398,14 @@ mod tests {
     fn gather_errors() {
         let g = Graph::<f64>::new();
         let x = g.param(Tensor::ones(&[3, 2]));
-        assert!(matches!(x.index_rows(&[3]), Err(TensorError::IndexOutOfRange { .. })));
-        assert!(matches!(x.pick(&[0, 2, 1]), Err(TensorError::IndexOutOfRange { .. })));
+        assert!(matches!(
+            x.index_rows(&[3]),
+            Err(TensorError::IndexOutOfRange { .. })
+        ));
+        assert!(matches!(
+            x.pick(&[0, 2, 1]),
+            Err(TensorError::IndexOutOfRange { .. })
+        ));
         assert!(x.pick(&[0, 1]).is_err());
     }
 

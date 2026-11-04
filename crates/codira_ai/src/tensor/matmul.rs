@@ -3,7 +3,7 @@
 //! Date: November 4, 2026
 //!
 //! Functionality:
-//! - Matrix multiplication of rank >= 2 tensors with NumPy `matmul`
+//! - Matrix multiplication of rank >= 2 tensors with `NumPy` `matmul`
 //!   semantics for the batch axes (all axes but the last two broadcast).
 //! - [`gemm_blocked`]: a cache-blocked kernel with a 4x8 register tile.
 //! - [`gemm_naive`] and [`Tensor::matmul_naive`]: the triple loop, kept as
@@ -112,7 +112,17 @@ fn block<T: Float>(
 /// The register tile: a 4x8 block of C held in locals across one k-panel.
 #[allow(clippy::too_many_arguments)]
 #[inline(always)]
-fn micro_4x8<T: Float>(i: usize, j: usize, pc: usize, kb: usize, k: usize, n: usize, a: &[T], b: &[T], c: &mut [T]) {
+fn micro_4x8<T: Float>(
+    i: usize,
+    j: usize,
+    pc: usize,
+    kb: usize,
+    k: usize,
+    n: usize,
+    a: &[T],
+    b: &[T],
+    c: &mut [T],
+) {
     let mut acc = [[T::ZERO; NR]; MR];
     for (r, row) in acc.iter_mut().enumerate() {
         row.copy_from_slice(&c[(i + r) * n + j..(i + r) * n + j + NR]);
@@ -154,8 +164,11 @@ fn matmul_dims(a: &[usize], b: &[usize]) -> Result<(Vec<usize>, usize, usize, us
     Ok((batch, m, k, n))
 }
 
+/// A kernel computing `c[m x n] += a[m x k] * b[k x n]`.
+type Kernel<T> = fn(usize, usize, usize, &[T], &[T], &mut [T]);
+
 impl<T: Float> Tensor<T> {
-    fn matmul_with(&self, other: &Self, kernel: fn(usize, usize, usize, &[T], &[T], &mut [T])) -> Result<Self> {
+    fn matmul_with(&self, other: &Self, kernel: Kernel<T>) -> Result<Self> {
         let (batch, m, k, n) = matmul_dims(&self.shape, &other.shape)?;
         let mut a_shape = batch.clone();
         a_shape.extend([m, k]);
@@ -165,7 +178,10 @@ impl<T: Float> Tensor<T> {
         // matrix; for the common rank-2 case this is free.
         let a = self.broadcast_to(&a_shape)?.contiguous();
         let b = other.broadcast_to(&b_shape)?.contiguous();
-        let (a, b) = (a.as_slice().expect("contiguous"), b.as_slice().expect("contiguous"));
+        let (a, b) = (
+            a.as_slice().expect("contiguous"),
+            b.as_slice().expect("contiguous"),
+        );
         let count: usize = batch.iter().product();
         let mut out = vec![T::ZERO; count * m * n];
         for e in 0..count {
@@ -203,12 +219,23 @@ mod tests {
     #[test]
     fn blocked_matches_naive_bit_for_bit_over_awkward_shapes() {
         let mut rng = Rng::new(11);
-        for &(m, k, n) in &[(1, 1, 1), (3, 5, 7), (4, 8, 8), (17, 300, 9), (70, 513, 33), (5, 2, 600)] {
+        for &(m, k, n) in &[
+            (1, 1, 1),
+            (3, 5, 7),
+            (4, 8, 8),
+            (17, 300, 9),
+            (70, 513, 33),
+            (5, 2, 600),
+        ] {
             let a = Tensor::<f32>::randn(&[m, k], 1.0, &mut rng);
             let b = Tensor::<f32>::randn(&[k, n], 1.0, &mut rng);
             let fast = a.matmul(&b).unwrap();
             let slow = a.matmul_naive(&b).unwrap();
-            assert_eq!(fast.to_vec(), slow.to_vec(), "bit-identical for {m}x{k}x{n}");
+            assert_eq!(
+                fast.to_vec(),
+                slow.to_vec(),
+                "bit-identical for {m}x{k}x{n}"
+            );
             // and within a documented tolerance of the f64 product
             let exact = a.cast::<f64>().matmul_naive(&b.cast::<f64>()).unwrap();
             let tol = 1e-6 * k as f64 * 4.0; // ~ k * eps_f32 * typical |a||b|
@@ -225,14 +252,27 @@ mod tests {
         // [.., 4, 3] @ [4, 5]: inner 3 vs 4
         assert!(a.matmul(&b).is_err());
         // a transposed, sliced operand: [3, 4] view @ [4, 5] view
-        let lhs = Tensor::<f64>::randn(&[4, 6], 1.0, &mut rng).slice(1, 1, 4).unwrap().t().unwrap();
-        assert_eq!(lhs.matmul(&b).unwrap(), lhs.contiguous().matmul_naive(&b.contiguous()).unwrap());
+        let lhs = Tensor::<f64>::randn(&[4, 6], 1.0, &mut rng)
+            .slice(1, 1, 4)
+            .unwrap()
+            .t()
+            .unwrap();
+        assert_eq!(
+            lhs.matmul(&b).unwrap(),
+            lhs.contiguous().matmul_naive(&b.contiguous()).unwrap()
+        );
         let x = a.matmul(&w).unwrap();
         assert_eq!(x.shape(), &[2, 3, 4, 5]);
         // entry (1, 2) equals the plain 2-D product of its slices
         let a12 = a.slice(0, 1, 2).unwrap().reshape(&[4, 3]).unwrap();
         let w2 = w.slice(0, 2, 3).unwrap().reshape(&[3, 5]).unwrap();
-        let x12 = x.slice(0, 1, 2).unwrap().slice(1, 2, 3).unwrap().reshape(&[4, 5]).unwrap();
+        let x12 = x
+            .slice(0, 1, 2)
+            .unwrap()
+            .slice(1, 2, 3)
+            .unwrap()
+            .reshape(&[4, 5])
+            .unwrap();
         assert_eq!(x12, a12.matmul_naive(&w2).unwrap());
     }
 

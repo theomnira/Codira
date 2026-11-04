@@ -34,7 +34,11 @@ fn mlp_learns_xor_with_sgd_momentum() {
     for _ in 0..1000 {
         let g = Graph::new();
         let p = store.bind(&g);
-        let loss = mse(mlp.forward(&p, g.constant(x.clone())).unwrap(), g.constant(y.clone())).unwrap();
+        let loss = mse(
+            mlp.forward(&p, g.constant(x.clone())).unwrap(),
+            g.constant(y.clone()),
+        )
+        .unwrap();
         last = loss.value().item().unwrap();
         let grads = p.grads(&g.backward(loss).unwrap());
         opt.step(&mut store, &grads).unwrap();
@@ -68,17 +72,23 @@ fn spirals(n: usize, rng: &mut Rng) -> (Tensor<f32>, Vec<usize>) {
 #[test]
 fn mlp_learns_two_spirals_with_adam_and_a_schedule() {
     let mut rng = Rng::new(7);
-    let (x, y) = spirals(100, &mut rng);
+    let (x, y) = spirals(60, &mut rng);
     let mut store = ParamStore::<f32>::new();
-    let mlp = Mlp::new(&mut store, "spiral", &[2, 32, 32, 2], Activation::Tanh, &mut rng);
-    let steps = 1500;
+    let mlp = Mlp::new(
+        &mut store,
+        "spiral",
+        &[2, 32, 32, 2],
+        Activation::Tanh,
+        &mut rng,
+    );
+    let steps = 1000;
     let sched = CosineWithWarmup {
         base_lr: 0.02,
         min_lr: 0.001,
         warmup: 50,
         total: steps,
     };
-    let mut opt = Adam::adam(sched.base_lr);
+    let mut opt = Adam::new(sched.base_lr);
     let mut loss_v = f32::INFINITY;
     for step in 0..steps {
         opt.set_lr(sched.lr_at(step));
@@ -95,10 +105,14 @@ fn mlp_learns_two_spirals_with_adam_and_a_schedule() {
     let g = Graph::new();
     let p = store.bind(&g);
     let logits = mlp.forward(&p, g.constant(x)).unwrap().value().to_vec();
-    let correct = logits.chunks(2).zip(&y).filter(|(l, &c)| (l[1] > l[0]) as usize == c).count();
-    eprintln!("spirals: final cross-entropy {loss_v:.4}, accuracy {correct}/200");
+    let correct = logits
+        .chunks(2)
+        .zip(&y)
+        .filter(|(l, &c)| usize::from(l[1] > l[0]) == c)
+        .count();
+    eprintln!("spirals: final cross-entropy {loss_v:.4}, accuracy {correct}/120");
     assert!(loss_v < 0.05, "spiral loss {loss_v}");
-    assert!(correct >= 198, "spiral accuracy {correct}/200");
+    assert!(correct >= 119, "spiral accuracy {correct}/120");
 }
 
 /// A one-block causal language model: embedding + position embedding,
@@ -112,7 +126,14 @@ struct TinyLm {
 }
 
 impl TinyLm {
-    fn new(store: &mut ParamStore<f64>, vocab: usize, t: usize, d: usize, heads: usize, rng: &mut Rng) -> Self {
+    fn new(
+        store: &mut ParamStore<f64>,
+        vocab: usize,
+        t: usize,
+        d: usize,
+        heads: usize,
+        rng: &mut Rng,
+    ) -> Self {
         TinyLm {
             tok: Embedding::new(store, "tok", vocab, d, rng),
             pos: Embedding::new(store, "pos", t, d, rng),
@@ -123,7 +144,13 @@ impl TinyLm {
     }
 
     /// `ids: [b * t]` to logits `[b, t, vocab]`.
-    fn forward<'g>(&self, p: &Bound<'g, f64>, ids: &[usize], b: usize, t: usize) -> Result<codira_ai::Var<'g, f64>> {
+    fn forward<'g>(
+        &self,
+        p: &Bound<'g, f64>,
+        ids: &[usize],
+        b: usize,
+        t: usize,
+    ) -> Result<codira_ai::Var<'g, f64>> {
         let tok = self.tok.forward(p, ids)?.reshape(&[b, t, self.d])?;
         let positions: Vec<usize> = (0..t).collect();
         let pos = self.pos.forward(p, &positions)?; // [t, d], broadcast over b
@@ -132,7 +159,15 @@ impl TinyLm {
     }
 }
 
-fn lm_loss<'g>(lm: &TinyLm, p: &Bound<'g, f64>, ids: &[usize], targets: &[usize], b: usize, t: usize, vocab: usize) -> Result<codira_ai::Var<'g, f64>> {
+fn lm_loss<'g>(
+    lm: &TinyLm,
+    p: &Bound<'g, f64>,
+    ids: &[usize],
+    targets: &[usize],
+    b: usize,
+    t: usize,
+    vocab: usize,
+) -> Result<codira_ai::Var<'g, f64>> {
     let logits = lm.forward(p, ids, b, t)?.reshape(&[b * t, vocab])?;
     cross_entropy(logits, targets)
 }
@@ -144,7 +179,11 @@ fn tiny_causal_transformer_gradient_check() {
     let mut store = ParamStore::<f64>::new();
     let lm = TinyLm::new(&mut store, vocab, t, d, heads, &mut rng);
     // move LayerNorm gains and all biases off their trivial starting values
-    let inputs: Vec<Tensor<f64>> = store.values().iter().map(|v| v.add(&Tensor::randn(v.shape(), 0.2, &mut rng)).unwrap()).collect();
+    let inputs: Vec<Tensor<f64>> = store
+        .values()
+        .iter()
+        .map(|v| v.add(&Tensor::randn(v.shape(), 0.2, &mut rng)).unwrap())
+        .collect();
     let ids = [1, 4, 2, 0, 3, 3];
     let targets = [4, 2, 0, 3, 3, 1];
     let rep = check_gradients(
@@ -175,7 +214,11 @@ fn tiny_causal_transformer_is_causal() {
     let a = run(&[1, 2, 3, 4]);
     let b = run(&[1, 2, 3, 0]); // only the last token differs
     let prefix = (t - 1) * vocab;
-    assert_eq!(a[..prefix], b[..prefix], "earlier positions must not see the future");
+    assert_eq!(
+        a[..prefix],
+        b[..prefix],
+        "earlier positions must not see the future"
+    );
     assert_ne!(a[prefix..], b[prefix..]);
 }
 

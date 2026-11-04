@@ -78,7 +78,10 @@ impl Bpe {
         for c in chunks(corpus) {
             *counts.entry(c).or_insert(0) += 1;
         }
-        let mut words: Vec<(Vec<u32>, u64)> = counts.into_iter().map(|(w, c)| (w.iter().map(|&b| b as u32).collect(), c)).collect();
+        let mut words: Vec<(Vec<u32>, u64)> = counts
+            .into_iter()
+            .map(|(w, c)| (w.iter().map(|&b| u32::from(b)).collect(), c))
+            .collect();
         words.sort();
 
         let mut bpe = Bpe {
@@ -93,7 +96,10 @@ impl Bpe {
                     *pairs.entry((p[0], p[1])).or_insert(0) += c;
                 }
             }
-            let Some((&best, &n)) = pairs.iter().max_by(|(pa, ca), (pb, cb)| ca.cmp(cb).then(pb.cmp(pa))) else {
+            let Some((&best, &n)) = pairs
+                .iter()
+                .max_by(|(pa, ca), (pb, cb)| ca.cmp(cb).then(pb.cmp(pa)))
+            else {
                 break;
             };
             if n < 2 {
@@ -134,7 +140,7 @@ impl Bpe {
     pub fn encode(&self, text: &[u8]) -> Vec<u32> {
         let mut out = Vec::new();
         for c in chunks(text) {
-            let mut ids: Vec<u32> = c.iter().map(|&b| b as u32).collect();
+            let mut ids: Vec<u32> = c.iter().map(|&b| u32::from(b)).collect();
             while ids.len() > 1 {
                 let best = ids
                     .windows(2)
@@ -174,8 +180,16 @@ mod tests {
     #[test]
     fn round_trips_corpus_unseen_text_and_arbitrary_bytes() {
         let bpe = Bpe::train(CORPUS.as_bytes(), 300).unwrap();
-        for text in [CORPUS, "the cathedral's rat-catcher", "naïve café — 日本語 🙂\t\n", ""] {
-            assert_eq!(bpe.decode(&bpe.encode(text.as_bytes())).unwrap(), text.as_bytes());
+        for text in [
+            CORPUS,
+            "the cathedral's rat-catcher",
+            "naïve café — 日本語 🙂\t\n",
+            "",
+        ] {
+            assert_eq!(
+                bpe.decode(&bpe.encode(text.as_bytes())).unwrap(),
+                text.as_bytes()
+            );
         }
         let mut rng = Rng::new(4);
         for len in [1, 7, 64, 500] {
@@ -189,7 +203,11 @@ mod tests {
         let bpe = Bpe::train(CORPUS.as_bytes(), 320).unwrap();
         assert!(bpe.vocab_size() > 256 && bpe.vocab_size() <= 320);
         let n = bpe.encode(CORPUS.as_bytes()).len();
-        assert!(n * 2 < CORPUS.len(), "{n} tokens for {} bytes", CORPUS.len());
+        assert!(
+            n * 2 < CORPUS.len(),
+            "{n} tokens for {} bytes",
+            CORPUS.len()
+        );
         // the most frequent word becomes a single token
         let the = bpe.encode(b" the");
         assert_eq!(the.len(), 1);
@@ -203,7 +221,7 @@ mod tests {
         assert_eq!(a.merges(), b.merges());
         // a tiny corpus runs out of repeated pairs long before 1000 tokens
         let small = Bpe::train(b"abab", 1000).unwrap();
-        assert_eq!(small.merges(), &[(b'a' as u32, b'b' as u32)]);
+        assert_eq!(small.merges(), &[(u32::from(b'a'), u32::from(b'b'))]);
     }
 
     #[test]

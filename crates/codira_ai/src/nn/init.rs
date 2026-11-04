@@ -5,7 +5,7 @@
 //! Functionality:
 //! - Weight initialisers. Xavier/Glorot (Glorot and Bengio, AISTATS 2010)
 //!   keeps activation variance roughly constant for `tanh`-like layers;
-//!   Kaiming/He (He et al., ICCV 2015) compensates for ReLU zeroing half
+//!   Kaiming/He (He et al., ICCV 2015) compensates for `ReLU` zeroing half
 //!   its inputs. Both take an explicit [`Rng`], so a model initialised from
 //!   a seed is reproducible.
 
@@ -21,7 +21,12 @@ pub enum Init {
 }
 
 /// Uniform in `[-a, a)` with `a = sqrt(6 / (fan_in + fan_out))`.
-pub fn xavier_uniform<T: Float>(shape: &[usize], fan_in: usize, fan_out: usize, rng: &mut Rng) -> Tensor<T> {
+pub fn xavier_uniform<T: Float>(
+    shape: &[usize],
+    fan_in: usize,
+    fan_out: usize,
+    rng: &mut Rng,
+) -> Tensor<T> {
     let a = (6.0 / (fan_in + fan_out) as f64).sqrt();
     Tensor::rand_uniform(shape, -a, a, rng)
 }
@@ -33,7 +38,13 @@ pub fn kaiming_normal<T: Float>(shape: &[usize], fan_in: usize, rng: &mut Rng) -
 
 impl Init {
     /// A weight of `shape` for a layer with the given fans.
-    pub fn sample<T: Float>(self, shape: &[usize], fan_in: usize, fan_out: usize, rng: &mut Rng) -> Tensor<T> {
+    pub fn sample<T: Float>(
+        self,
+        shape: &[usize],
+        fan_in: usize,
+        fan_out: usize,
+        rng: &mut Rng,
+    ) -> Tensor<T> {
         match self {
             Init::Xavier => xavier_uniform(shape, fan_in, fan_out, rng),
             Init::Kaiming => kaiming_normal(shape, fan_in, rng),

@@ -68,7 +68,10 @@ impl Mul for Dual {
 impl Div for Dual {
     type Output = Dual;
     fn div(self, o: Dual) -> Dual {
-        Dual::new(self.re / o.re, (self.du * o.re - self.re * o.du) / (o.re * o.re))
+        Dual::new(
+            self.re / o.re,
+            (self.du * o.re - self.re * o.du) / (o.re * o.re),
+        )
     }
 }
 impl Neg for Dual {
@@ -146,7 +149,11 @@ pub fn derivative(f: impl Fn(Dual) -> Dual, x: f64) -> (f64, f64) {
 }
 
 /// The Jacobian-vector product of a tensor function: `(f(x), J_f(x) v)`.
-pub fn jvp(f: impl Fn(&Tensor<Dual>) -> Result<Tensor<Dual>>, x: &Tensor<f64>, v: &Tensor<f64>) -> Result<(Tensor<f64>, Tensor<f64>)> {
+pub fn jvp(
+    f: impl Fn(&Tensor<Dual>) -> Result<Tensor<Dual>>,
+    x: &Tensor<f64>,
+    v: &Tensor<f64>,
+) -> Result<(Tensor<f64>, Tensor<f64>)> {
     if x.shape() != v.shape() {
         return Err(crate::TensorError::ShapeMismatch {
             op: "jvp",
@@ -154,7 +161,12 @@ pub fn jvp(f: impl Fn(&Tensor<Dual>) -> Result<Tensor<Dual>>, x: &Tensor<f64>, v
             got: v.shape().to_vec(),
         });
     }
-    let duals: Vec<Dual> = x.to_vec().into_iter().zip(v.to_vec()).map(|(a, b)| Dual::new(a, b)).collect();
+    let duals: Vec<Dual> = x
+        .to_vec()
+        .into_iter()
+        .zip(v.to_vec())
+        .map(|(a, b)| Dual::new(a, b))
+        .collect();
     let y = f(&Tensor::from_vec(duals, x.shape())?)?;
     let parts = y.to_vec();
     Ok((

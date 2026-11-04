@@ -34,7 +34,11 @@ mod tests {
         assert!((l.value().item().unwrap() - 4f64.ln()).abs() < 1e-14);
         // huge logits stay finite
         let big = Tensor::from_vec(vec![1000.0, -1000.0], &[1, 2]).unwrap();
-        let l = cross_entropy(g.constant(big), &[1]).unwrap().value().item().unwrap();
+        let l = cross_entropy(g.constant(big), &[1])
+            .unwrap()
+            .value()
+            .item()
+            .unwrap();
         assert!((l - 2000.0).abs() < 1e-9);
         assert!(cross_entropy(g.constant(Tensor::zeros(&[2, 2])), &[0, 2]).is_err());
     }
@@ -43,7 +47,12 @@ mod tests {
     fn losses_gradient_check() {
         let mut rng = Rng::new(5);
         let logits = Tensor::randn(&[5, 3], 2.0, &mut rng);
-        let rep = check_gradients(|_, v| cross_entropy(v[0], &[0, 2, 1, 1, 0]), &[logits], 1e-5).unwrap();
+        let rep = check_gradients(
+            |_, v| cross_entropy(v[0], &[0, 2, 1, 1, 0]),
+            &[logits],
+            1e-5,
+        )
+        .unwrap();
         assert!(rep.max_scaled_err < 1e-6, "{rep:?}");
         let a = Tensor::randn(&[4, 2], 1.0, &mut rng);
         let b = Tensor::randn(&[4, 2], 1.0, &mut rng);

@@ -34,7 +34,11 @@ pub enum TensorError {
     /// A reshape changes the number of elements.
     ReshapeCount { from: Vec<usize>, to: Vec<usize> },
     /// A zero-copy view was asked of a layout that cannot provide one.
-    NotAView { shape: Vec<usize>, strides: Vec<usize>, to: Vec<usize> },
+    NotAView {
+        shape: Vec<usize>,
+        strides: Vec<usize>,
+        to: Vec<usize>,
+    },
     /// An axis argument is not less than the rank.
     AxisOutOfRange { axis: usize, rank: usize },
     /// A permutation is not a permutation of `0..rank`.
@@ -49,7 +53,11 @@ pub enum TensorError {
     /// An index (multi-index, class id, token id) is out of range.
     IndexOutOfRange { index: usize, bound: usize },
     /// The operation needs at least `needed` dimensions.
-    RankTooLow { op: &'static str, needed: usize, got: usize },
+    RankTooLow {
+        op: &'static str,
+        needed: usize,
+        got: usize,
+    },
     /// Matrix multiplication with inner dimensions that differ.
     MatmulInner { lhs: Vec<usize>, rhs: Vec<usize> },
     /// `backward` was called on a tensor that is not a single element.
@@ -62,7 +70,11 @@ pub enum TensorError {
 
 impl fmt::Display for TensorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use TensorError::*;
+        use TensorError::{
+            AxisOutOfRange, BadCustomGradient, Broadcast, DataLength, IndexOutOfRange,
+            InvalidArgument, InvalidPermutation, MatmulInner, NonScalarLoss, NotAView, RankTooLow,
+            ReshapeCount, ShapeMismatch, SliceOutOfRange,
+        };
         match self {
             DataLength { expected, got } => {
                 write!(f, "data has {got} elements but the shape needs {expected}")
@@ -112,10 +124,9 @@ impl fmt::Display for TensorError {
             RankTooLow { op, needed, got } => {
                 write!(f, "{op} needs rank >= {needed}, got rank {got}")
             }
-            MatmulInner { lhs, rhs } => write!(
-                f,
-                "matmul: inner dimensions differ for {lhs:?} @ {rhs:?}"
-            ),
+            MatmulInner { lhs, rhs } => {
+                write!(f, "matmul: inner dimensions differ for {lhs:?} @ {rhs:?}")
+            }
             NonScalarLoss { shape } => write!(
                 f,
                 "backward needs a single-element loss, got shape {shape:?}"

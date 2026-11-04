@@ -56,17 +56,11 @@ pub struct Graph<T: Float> {
 }
 
 /// A handle to a node of a [`Graph`]. Cheap to copy.
+#[derive(Clone, Copy)]
 pub struct Var<'g, T: Float> {
     graph: &'g Graph<T>,
     id: usize,
 }
-
-impl<T: Float> Clone for Var<'_, T> {
-    fn clone(&self) -> Self {
-        *self
-    }
-}
-impl<T: Float> Copy for Var<'_, T> {}
 
 impl<T: Float> std::fmt::Debug for Var<'_, T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -98,7 +92,13 @@ impl<T: Float> Graph<T> {
         self.len() == 0
     }
 
-    fn push_node(&self, value: Tensor<T>, parents: Vec<usize>, backward: Option<BackwardFn<T>>, requires_grad: bool) -> Var<'_, T> {
+    fn push_node(
+        &self,
+        value: Tensor<T>,
+        parents: Vec<usize>,
+        backward: Option<BackwardFn<T>>,
+        requires_grad: bool,
+    ) -> Var<'_, T> {
         let mut nodes = self.nodes.borrow_mut();
         let id = nodes.len();
         nodes.push(Node {
@@ -123,12 +123,22 @@ impl<T: Float> Graph<T> {
 
     /// Records a node computed from `parents`, with gradient rule `rule`.
     /// The rule is dropped (never called) when no parent needs a gradient.
-    pub(crate) fn record(&self, value: Tensor<T>, parents: &[Var<'_, T>], rule: BackwardFn<T>) -> Var<'_, T> {
+    pub(crate) fn record(
+        &self,
+        value: Tensor<T>,
+        parents: &[Var<'_, T>],
+        rule: BackwardFn<T>,
+    ) -> Var<'_, T> {
         let requires = {
             let nodes = self.nodes.borrow();
             parents.iter().any(|p| nodes[p.id].requires_grad)
         };
-        self.push_node(value, parents.iter().map(|p| p.id).collect(), Some(rule), requires)
+        self.push_node(
+            value,
+            parents.iter().map(|p| p.id).collect(),
+            Some(rule),
+            requires,
+        )
     }
 
     /// The custom-gradient hook: records `value` as a function of `inputs`
@@ -142,7 +152,7 @@ impl<T: Float> Graph<T> {
         value: Tensor<T>,
         rule: impl Fn(&Tensor<T>, &[Tensor<T>]) -> Result<Vec<Tensor<T>>> + 'static,
     ) -> Var<'g, T> {
-        let values: Vec<Tensor<T>> = inputs.iter().map(|v| v.value()).collect();
+        let values: Vec<Tensor<T>> = inputs.iter().map(Var::value).collect();
         self.record(value, inputs, Box::new(move |g| rule(g, &values)))
     }
 
@@ -211,7 +221,9 @@ impl<T: Float> Gradients<T> {
     /// The gradient with respect to `v`, or zeros if the loss does not
     /// depend on it.
     pub fn wrt(&self, v: Var<'_, T>) -> Tensor<T> {
-        self.get(v).cloned().unwrap_or_else(|| Tensor::zeros(v.value().shape()))
+        self.get(v)
+            .cloned()
+            .unwrap_or_else(|| Tensor::zeros(v.value().shape()))
     }
 }
 
@@ -245,7 +257,10 @@ mod tests {
     fn non_scalar_loss_is_rejected() {
         let g = Graph::<f64>::new();
         let x = g.param(Tensor::ones(&[2]));
-        assert!(matches!(g.backward(x), Err(TensorError::NonScalarLoss { .. })));
+        assert!(matches!(
+            g.backward(x),
+            Err(TensorError::NonScalarLoss { .. })
+        ));
     }
 
     #[test]
@@ -274,7 +289,7 @@ mod tests {
         // A straight-through estimator: forward rounds, backward is identity.
         let g = Graph::<f64>::new();
         let x = g.param(Tensor::from_vec(vec![0.4, 1.6], &[2]).unwrap());
-        let rounded = x.value().map(|v| v.round());
+        let rounded = x.value().map(f64::round);
         let y = g.custom(&[x], rounded, |grad, _| Ok(vec![grad.clone()]));
         assert_eq!(y.value().to_vec(), vec![0.0, 2.0]);
         let loss = y.scale(3.0).sum();
@@ -284,10 +299,16 @@ mod tests {
         let g = Graph::<f64>::new();
         let x = g.param(Tensor::ones(&[2]));
         let y = g.custom(&[x], x.value(), |_, _| Ok(vec![Tensor::ones(&[3])]));
-        assert!(matches!(g.backward(y.sum()), Err(TensorError::BadCustomGradient { .. })));
+        assert!(matches!(
+            g.backward(y.sum()),
+            Err(TensorError::BadCustomGradient { .. })
+        ));
         let g = Graph::<f64>::new();
         let x = g.param(Tensor::ones(&[2]));
         let y = g.custom(&[x], x.value(), |_, _| Ok(vec![]));
-        assert!(matches!(g.backward(y.sum()), Err(TensorError::BadCustomGradient { .. })));
+        assert!(matches!(
+            g.backward(y.sum()),
+            Err(TensorError::BadCustomGradient { .. })
+        ));
     }
 }

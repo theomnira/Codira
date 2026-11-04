@@ -50,7 +50,9 @@ where
     let vars: Vec<_> = inputs.iter().map(|x| g.param(x.clone())).collect();
     let loss = f(&g, &vars)?;
     if loss.value().numel() != 1 {
-        return Err(TensorError::NonScalarLoss { shape: loss.shape() });
+        return Err(TensorError::NonScalarLoss {
+            shape: loss.shape(),
+        });
     }
     let grads = g.backward(loss)?;
 
@@ -59,7 +61,10 @@ where
         max_scaled_err: 0.0,
         checked: 0,
     };
-    let mut xs: Vec<Tensor<f64>> = inputs.iter().map(|t| t.contiguous()).collect();
+    let mut xs: Vec<Tensor<f64>> = inputs
+        .iter()
+        .map(super::super::tensor::Tensor::contiguous)
+        .collect();
     for (i, var) in vars.iter().enumerate() {
         let analytic = grads.wrt(*var).to_vec();
         for (j, &a) in analytic.iter().enumerate() {
@@ -91,9 +96,12 @@ mod tests {
         let bad = check_gradients(
             |g, v| {
                 let val = v[0].value().map(|t| t * t * t);
-                Ok(g.custom(&[v[0]], val, |gr, xs| gr.mul(&xs[0].map(|t| 2.0 * t * t)).map(|t| vec![t])).sum())
+                Ok(g.custom(&[v[0]], val, |gr, xs| {
+                    gr.mul(&xs[0].map(|t| 2.0 * t * t)).map(|t| vec![t])
+                })
+                .sum())
             },
-            &[x.clone()],
+            std::slice::from_ref(&x),
             1e-5,
         )
         .unwrap();
@@ -101,7 +109,10 @@ mod tests {
         let good = check_gradients(
             |g, v| {
                 let val = v[0].value().map(|t| t * t * t);
-                Ok(g.custom(&[v[0]], val, |gr, xs| gr.mul(&xs[0].map(|t| 3.0 * t * t)).map(|t| vec![t])).sum())
+                Ok(g.custom(&[v[0]], val, |gr, xs| {
+                    gr.mul(&xs[0].map(|t| 3.0 * t * t)).map(|t| vec![t])
+                })
+                .sum())
             },
             &[x],
             1e-5,

@@ -14,8 +14,8 @@
 //! |--------|----------|
 //! | [`tensor`] | strided N-d tensors, views, broadcasting, reductions, blocked matmul |
 //! | [`autograd`] | tape-based reverse mode, custom gradients, gradient checking, dual numbers |
-//! | [`nn`] | parameters, initialisers, Linear, Embedding, LayerNorm, MLP, attention, losses |
-//! | [`optim`] | SGD with momentum, Adam, AdamW, cosine schedule with warmup, gradient clipping |
+//! | [`nn`] | parameters, initialisers, Linear, Embedding, `LayerNorm`, MLP, attention, losses |
+//! | [`optim`] | SGD with momentum, Adam, `AdamW`, cosine schedule with warmup, gradient clipping |
 //! | [`quant`] | symmetric per-channel INT8 weights, INT8 matmul with i32 accumulation, measured error |
 //! | [`tokenizer`] | byte-level BPE training, encoding and decoding |
 //!

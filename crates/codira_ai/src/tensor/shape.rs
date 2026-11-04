@@ -25,7 +25,7 @@ pub fn contiguous_strides(shape: &[usize]) -> Vec<usize> {
     strides
 }
 
-/// The broadcast of two shapes under NumPy's rules: align from the right;
+/// The broadcast of two shapes under `NumPy`'s rules: align from the right;
 /// each pair of extents must be equal or contain a 1.
 pub fn broadcast_shapes(op: &'static str, a: &[usize], b: &[usize]) -> Result<Vec<usize>> {
     let rank = a.len().max(b.len());
@@ -67,7 +67,7 @@ pub fn broadcast_strides(shape: &[usize], strides: &[usize], out_shape: &[usize]
 
 /// Strides for viewing `shape`/`strides` as `new_shape` without copying,
 /// or `None` if the memory layout does not allow it. This is the algorithm
-/// of NumPy's `_attempt_nocopy_reshape`: group old and new axes into runs
+/// of `NumPy`'s `_attempt_nocopy_reshape`: group old and new axes into runs
 /// of equal element count, and require each old run to be contiguous
 /// within itself.
 pub fn view_strides(shape: &[usize], strides: &[usize], new_shape: &[usize]) -> Option<Vec<usize>> {
@@ -114,7 +114,12 @@ pub fn view_strides(shape: &[usize], strides: &[usize], new_shape: &[usize]) -> 
 
 /// Calls `f(offset)` for every element of a strided layout, in row-major
 /// order of the logical index.
-pub fn for_each_offset(shape: &[usize], strides: &[usize], offset: usize, mut f: impl FnMut(usize)) {
+pub fn for_each_offset(
+    shape: &[usize],
+    strides: &[usize],
+    offset: usize,
+    mut f: impl FnMut(usize),
+) {
     let n = numel(shape);
     if n == 0 {
         return;
@@ -174,7 +179,10 @@ mod tests {
     #[test]
     fn broadcast_infers_numpy_shapes() {
         assert_eq!(broadcast_shapes("t", &[3, 1], &[4]).unwrap(), vec![3, 4]);
-        assert_eq!(broadcast_shapes("t", &[2, 1, 5], &[3, 1]).unwrap(), vec![2, 3, 5]);
+        assert_eq!(
+            broadcast_shapes("t", &[2, 1, 5], &[3, 1]).unwrap(),
+            vec![2, 3, 5]
+        );
         assert_eq!(broadcast_shapes("t", &[], &[2, 2]).unwrap(), vec![2, 2]);
         assert_eq!(broadcast_shapes("t", &[0, 1], &[1, 3]).unwrap(), vec![0, 3]);
     }
@@ -197,15 +205,24 @@ mod tests {
     #[test]
     fn view_strides_follows_numpy() {
         // contiguous: any regrouping is a view
-        assert_eq!(view_strides(&[2, 3, 4], &[12, 4, 1], &[6, 4]), Some(vec![4, 1]));
-        assert_eq!(view_strides(&[2, 3, 4], &[12, 4, 1], &[2, 12]), Some(vec![12, 1]));
+        assert_eq!(
+            view_strides(&[2, 3, 4], &[12, 4, 1], &[6, 4]),
+            Some(vec![4, 1])
+        );
+        assert_eq!(
+            view_strides(&[2, 3, 4], &[12, 4, 1], &[2, 12]),
+            Some(vec![12, 1])
+        );
         // strides of extent-1 axes are irrelevant; the others must be exact
         let s = view_strides(&[6], &[1], &[1, 2, 1, 3]).unwrap();
         assert_eq!((s[1], s[3]), (3, 1));
         // transpose of a 3x4 (strides 1, 4): merging both axes is not a view
         assert_eq!(view_strides(&[4, 3], &[1, 4], &[12]), None);
         // but splitting one axis is
-        assert_eq!(view_strides(&[4, 3], &[1, 4], &[2, 2, 3]), Some(vec![2, 1, 4]));
+        assert_eq!(
+            view_strides(&[4, 3], &[1, 4], &[2, 2, 3]),
+            Some(vec![2, 1, 4])
+        );
     }
 
     #[test]

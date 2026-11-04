@@ -4,7 +4,7 @@
 //!
 //! Functionality:
 //! - [`Rng`]: a small deterministic pseudo-random generator
-//!   (xoshiro256**, seeded through SplitMix64) for initialisers, synthetic
+//!   (xoshiro256**, seeded through `SplitMix64`) for initialisers, synthetic
 //!   data and property tests.
 //!
 //! Determinism is the point: the same seed gives the same stream on every
@@ -111,7 +111,7 @@ mod tests {
             sn += z;
             sn2 += z * z;
         }
-        let n = n as f64;
+        let n = f64::from(n);
         assert!((su / n - 0.5).abs() < 0.01);
         assert!((sn / n).abs() < 0.03);
         assert!((sn2 / n - 1.0).abs() < 0.05);

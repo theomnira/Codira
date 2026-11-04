@@ -81,14 +81,23 @@ pub fn quantize_per_channel(w: &Tensor<f32>) -> Result<QuantizedWeight> {
         let absmax = (0..k).map(|i| data[i * n + j].abs()).fold(0f32, f32::max);
         *s = absmax / QMAX as f32;
     }
-    let q = data.iter().enumerate().map(|(idx, &x)| quantize_value(x, scales[idx % n])).collect();
+    let q = data
+        .iter()
+        .enumerate()
+        .map(|(idx, &x)| quantize_value(x, scales[idx % n]))
+        .collect();
     Ok(QuantizedWeight { q, scales, k, n })
 }
 
 impl QuantizedWeight {
     /// `q * scale` back in `f32`.
     pub fn dequantize(&self) -> Tensor<f32> {
-        let data = self.q.iter().enumerate().map(|(i, &q)| q as f32 * self.scales[i % self.n]).collect();
+        let data = self
+            .q
+            .iter()
+            .enumerate()
+            .map(|(i, &q)| f32::from(q) * self.scales[i % self.n])
+            .collect();
         Tensor::from_vec(data, &[self.k, self.n]).expect("k * n elements")
     }
 }
@@ -117,7 +126,10 @@ pub fn int8_matmul_i32(x: &QuantizedRows, w: &QuantizedWeight) -> Result<Vec<i32
     }
     if x.k > MAX_K {
         return Err(TensorError::InvalidArgument {
-            detail: format!("inner dimension {} exceeds {MAX_K}, the i32 accumulator could overflow", x.k),
+            detail: format!(
+                "inner dimension {} exceeds {MAX_K}, the i32 accumulator could overflow",
+                x.k
+            ),
         });
     }
     let (m, k, n) = (x.m, x.k, w.n);
@@ -125,12 +137,12 @@ pub fn int8_matmul_i32(x: &QuantizedRows, w: &QuantizedWeight) -> Result<Vec<i32
     for i in 0..m {
         let row = &mut acc[i * n..(i + 1) * n];
         for p in 0..k {
-            let a = x.q[i * k + p] as i32;
+            let a = i32::from(x.q[i * k + p]);
             if a == 0 {
                 continue;
             }
             for (c, &b) in row.iter_mut().zip(&w.q[p * n..(p + 1) * n]) {
-                *c += a * b as i32;
+                *c += a * i32::from(b);
             }
         }
     }
@@ -182,14 +194,18 @@ pub fn evaluate(x: &Tensor<f32>, w: &Tensor<f32>) -> Result<QuantReport> {
     let (mut max_e, mut sum_e, mut max_ref, mut worst) = (0f64, 0f64, 0f64, 0f64);
     for i in 0..m {
         for j in 0..n {
-            let e = (rv[i * n + j] as f64 - qv[i * n + j] as f64).abs();
-            let (r, s) = (xr.scales[i] as f64, qw.scales[j] as f64);
+            let e = (f64::from(rv[i * n + j]) - f64::from(qv[i * n + j])).abs();
+            let (r, s) = (f64::from(xr.scales[i]), f64::from(qw.scales[j]));
             let bound: f64 = (0..k)
-                .map(|p| (xv[i * k + p] as f64).abs() * s / 2.0 + (wv[p * n + j] as f64).abs() * r / 2.0 + r * s / 4.0)
+                .map(|p| {
+                    f64::from(xv[i * k + p]).abs() * s / 2.0
+                        + f64::from(wv[p * n + j]).abs() * r / 2.0
+                        + r * s / 4.0
+                })
                 .sum();
             max_e = max_e.max(e);
             sum_e += e;
-            max_ref = max_ref.max((rv[i * n + j] as f64).abs());
+            max_ref = max_ref.max(f64::from(rv[i * n + j]).abs());
             if bound > 0.0 {
                 worst = worst.max(e / bound);
             }
@@ -213,7 +229,9 @@ mod tests {
     fn per_channel_round_trip_is_within_half_a_step() {
         let mut rng = Rng::new(1);
         // columns with very different ranges: per-channel scales matter
-        let w = Tensor::<f32>::from_fn(&[64, 8], |i| (rng.normal() * 10f64.powi((i % 8) as i32 - 4)) as f32);
+        let w = Tensor::<f32>::from_fn(&[64, 8], |i| {
+            (rng.normal() * 10f64.powi((i % 8) as i32 - 4)) as f32
+        });
         let q = quantize_per_channel(&w).unwrap();
         let d = q.dequantize();
         let (wv, dv) = (w.to_vec(), d.to_vec());
@@ -241,12 +259,17 @@ mod tests {
         let mut rng = Rng::new(2);
         let x = Tensor::<f32>::randn(&[5, 300], 1.0, &mut rng);
         let w = Tensor::<f32>::randn(&[300, 7], 1.0, &mut rng);
-        let (xq, wq) = (quantize_rows(&x).unwrap(), quantize_per_channel(&w).unwrap());
+        let (xq, wq) = (
+            quantize_rows(&x).unwrap(),
+            quantize_per_channel(&w).unwrap(),
+        );
         let acc = int8_matmul_i32(&xq, &wq).unwrap();
         for i in 0..5 {
             for j in 0..7 {
-                let exact: i64 = (0..300).map(|p| xq.q[i * 300 + p] as i64 * wq.q[p * 7 + j] as i64).sum();
-                assert_eq!(acc[i * 7 + j] as i64, exact);
+                let exact: i64 = (0..300)
+                    .map(|p| i64::from(xq.q[i * 300 + p]) * i64::from(wq.q[p * 7 + j]))
+                    .sum();
+                assert_eq!(i64::from(acc[i * 7 + j]), exact);
             }
         }
     }
@@ -282,6 +305,9 @@ mod tests {
             k: MAX_K + 1,
             n: 0,
         };
-        assert!(matches!(int8_matmul_i32(&big, &bigw), Err(TensorError::InvalidArgument { .. })));
+        assert!(matches!(
+            int8_matmul_i32(&big, &bigw),
+            Err(TensorError::InvalidArgument { .. })
+        ));
     }
 }

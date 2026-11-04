@@ -83,12 +83,28 @@ fn binary_ops_with_broadcasting() {
         let a = normal(sa, &mut rng);
         let b = normal(sb, &mut rng);
         let d = away_from_zero(sb, &mut rng);
-        assert_grad("add", |g, v| weighted(g, v[0].add(v[1])?), &[a.clone(), b.clone()]);
-        assert_grad("sub", |g, v| weighted(g, v[0].sub(v[1])?), &[a.clone(), b.clone()]);
-        assert_grad("mul", |g, v| weighted(g, v[0].mul(v[1])?), &[a.clone(), b.clone()]);
+        assert_grad(
+            "add",
+            |g, v| weighted(g, v[0].add(v[1])?),
+            &[a.clone(), b.clone()],
+        );
+        assert_grad(
+            "sub",
+            |g, v| weighted(g, v[0].sub(v[1])?),
+            &[a.clone(), b.clone()],
+        );
+        assert_grad(
+            "mul",
+            |g, v| weighted(g, v[0].mul(v[1])?),
+            &[a.clone(), b.clone()],
+        );
         assert_grad("div", |g, v| weighted(g, v[0].div(v[1])?), &[a.clone(), d]);
         // and with the operands swapped, so the broadcast side is the left one
-        assert_grad("mul swapped", |g, v| weighted(g, v[1].mul(v[0])?), &[a.clone(), b.clone()]);
+        assert_grad(
+            "mul swapped",
+            |g, v| weighted(g, v[1].mul(v[0])?),
+            &[a.clone(), b.clone()],
+        );
     }
 }
 
@@ -99,17 +115,57 @@ fn unary_ops() {
         let x = normal(s, &mut rng);
         let p = positive(s, &mut rng);
         let z = away_from_zero(s, &mut rng);
-        assert_grad("neg", |g, v| weighted(g, v[0].neg()), &[x.clone()]);
-        assert_grad("scale", |g, v| weighted(g, v[0].scale(-2.5)), &[x.clone()]);
-        assert_grad("add_scalar", |g, v| weighted(g, v[0].add_scalar(0.7)), &[x.clone()]);
-        assert_grad("exp", |g, v| weighted(g, v[0].exp()), &[x.clone()]);
-        assert_grad("tanh", |g, v| weighted(g, v[0].tanh()), &[x.clone()]);
-        assert_grad("sigmoid", |g, v| weighted(g, v[0].sigmoid()), &[x.clone()]);
-        assert_grad("ln", |g, v| weighted(g, v[0].ln()), &[p.clone()]);
-        assert_grad("sqrt", |g, v| weighted(g, v[0].sqrt()), &[p.clone()]);
-        assert_grad("relu", |g, v| weighted(g, v[0].relu()), &[z.clone()]);
+        assert_grad(
+            "neg",
+            |g, v| weighted(g, v[0].neg()),
+            std::slice::from_ref(&x),
+        );
+        assert_grad(
+            "scale",
+            |g, v| weighted(g, v[0].scale(-2.5)),
+            std::slice::from_ref(&x),
+        );
+        assert_grad(
+            "add_scalar",
+            |g, v| weighted(g, v[0].add_scalar(0.7)),
+            std::slice::from_ref(&x),
+        );
+        assert_grad(
+            "exp",
+            |g, v| weighted(g, v[0].exp()),
+            std::slice::from_ref(&x),
+        );
+        assert_grad(
+            "tanh",
+            |g, v| weighted(g, v[0].tanh()),
+            std::slice::from_ref(&x),
+        );
+        assert_grad(
+            "sigmoid",
+            |g, v| weighted(g, v[0].sigmoid()),
+            std::slice::from_ref(&x),
+        );
+        assert_grad(
+            "ln",
+            |g, v| weighted(g, v[0].ln()),
+            std::slice::from_ref(&p),
+        );
+        assert_grad(
+            "sqrt",
+            |g, v| weighted(g, v[0].sqrt()),
+            std::slice::from_ref(&p),
+        );
+        assert_grad(
+            "relu",
+            |g, v| weighted(g, v[0].relu()),
+            std::slice::from_ref(&z),
+        );
         // reuse of one input in two places
-        assert_grad("x*tanh(x)", |g, v| weighted(g, v[0].mul(v[0].tanh())?), &[x.clone()]);
+        assert_grad(
+            "x*tanh(x)",
+            |g, v| weighted(g, v[0].mul(v[0].tanh())?),
+            std::slice::from_ref(&x),
+        );
     }
 }
 
@@ -130,7 +186,11 @@ fn matmul_including_batch_broadcast_and_views() {
     }
     // through a transposed view: x^T @ x
     let x = normal(&[4, 3], &mut rng);
-    assert_grad("xT@x", |g, v| weighted(g, v[0].transpose(0, 1)?.matmul(v[0])?), &[x]);
+    assert_grad(
+        "xT@x",
+        |g, v| weighted(g, v[0].transpose(0, 1)?.matmul(v[0])?),
+        &[x],
+    );
 }
 
 #[test]
@@ -138,12 +198,24 @@ fn reductions() {
     let mut rng = Rng::new(4);
     for &s in SHAPES {
         let x = normal(s, &mut rng);
-        assert_grad("sum", |_, v| Ok(v[0].exp().sum()), &[x.clone()]);
-        assert_grad("mean", |_, v| Ok(v[0].tanh().mean()), &[x.clone()]);
+        assert_grad("sum", |_, v| Ok(v[0].exp().sum()), std::slice::from_ref(&x));
+        assert_grad(
+            "mean",
+            |_, v| Ok(v[0].tanh().mean()),
+            std::slice::from_ref(&x),
+        );
         for axis in 0..s.len() {
             for keepdim in [false, true] {
-                assert_grad("sum_axis", |g, v| weighted(g, v[0].sum_axis(axis, keepdim)?), &[x.clone()]);
-                assert_grad("mean_axis", |g, v| weighted(g, v[0].mean_axis(axis, keepdim)?), &[x.clone()]);
+                assert_grad(
+                    "sum_axis",
+                    |g, v| weighted(g, v[0].sum_axis(axis, keepdim)?),
+                    std::slice::from_ref(&x),
+                );
+                assert_grad(
+                    "mean_axis",
+                    |g, v| weighted(g, v[0].mean_axis(axis, keepdim)?),
+                    std::slice::from_ref(&x),
+                );
             }
         }
     }
@@ -155,30 +227,58 @@ fn softmax_and_log_softmax_on_every_axis() {
     for &s in &[&[5][..], &[2, 3], &[2, 3, 4]] {
         let x = normal(s, &mut rng).scale(3.0);
         for axis in 0..s.len() {
-            assert_grad("softmax", |g, v| weighted(g, v[0].softmax(axis)?), &[x.clone()]);
-            assert_grad("log_softmax", |g, v| weighted(g, v[0].log_softmax(axis)?), &[x.clone()]);
+            assert_grad(
+                "softmax",
+                |g, v| weighted(g, v[0].softmax(axis)?),
+                std::slice::from_ref(&x),
+            );
+            assert_grad(
+                "log_softmax",
+                |g, v| weighted(g, v[0].log_softmax(axis)?),
+                std::slice::from_ref(&x),
+            );
         }
     }
     // large logits: the stable forms keep the gradient finite and right
     let big = normal(&[2, 4], &mut rng).scale(300.0);
-    assert_grad("log_softmax big", |g, v| weighted(g, v[0].log_softmax(1)?), &[big]);
+    assert_grad(
+        "log_softmax big",
+        |g, v| weighted(g, v[0].log_softmax(1)?),
+        &[big],
+    );
 }
 
 #[test]
 fn shape_ops_and_gathers() {
     let mut rng = Rng::new(6);
     let x = normal(&[2, 3, 4], &mut rng);
-    assert_grad("reshape", |g, v| weighted(g, v[0].reshape(&[6, 4])?.tanh()), &[x.clone()]);
-    assert_grad("permute", |g, v| weighted(g, v[0].permute(&[2, 0, 1])?.tanh()), &[x.clone()]);
+    assert_grad(
+        "reshape",
+        |g, v| weighted(g, v[0].reshape(&[6, 4])?.tanh()),
+        std::slice::from_ref(&x),
+    );
+    assert_grad(
+        "permute",
+        |g, v| weighted(g, v[0].permute(&[2, 0, 1])?.tanh()),
+        std::slice::from_ref(&x),
+    );
     assert_grad(
         "permute then reshape (copying)",
         |g, v| weighted(g, v[0].permute(&[2, 0, 1])?.reshape(&[4, 6])?.sigmoid()),
-        &[x.clone()],
+        std::slice::from_ref(&x),
     );
     let table = normal(&[5, 3], &mut rng);
-    assert_grad("index_rows (repeated ids)", |g, v| weighted(g, v[0].index_rows(&[4, 0, 4, 2])?.tanh()), &[table]);
+    assert_grad(
+        "index_rows (repeated ids)",
+        |g, v| weighted(g, v[0].index_rows(&[4, 0, 4, 2])?.tanh()),
+        &[table],
+    );
     let logits = normal(&[4, 3], &mut rng);
-    assert_grad("pick", |g, v| weighted(g, v[0].log_softmax(1)?.pick(&[2, 0, 1, 2])?), &[logits]);
+    assert_grad(
+        "pick",
+        |g, v| weighted(g, v[0].log_softmax(1)?.pick(&[2, 0, 1, 2])?),
+        &[logits],
+    );
 }
 
 #[test]

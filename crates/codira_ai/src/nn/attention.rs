@@ -4,7 +4,7 @@
 //!
 //! Functionality:
 //! - [`scaled_dot_product_attention`]: `softmax(Q K^T / sqrt(d) + M) V`
-//!   (Vaswani et al., NeurIPS 2017), with `M` the causal mask when asked.
+//!   (Vaswani et al., `NeurIPS` 2017), with `M` the causal mask when asked.
 //! - [`MultiHeadAttention`]: projections, head split, attention, merge.
 //! - [`TransformerBlock`]: the pre-norm block
 //!   `x + MHA(LN(x))`, then `h + MLP(LN(h))`.
@@ -47,7 +47,12 @@ pub fn causal_mask<T: Float>(tq: usize, tk: usize) -> Result<Tensor<T>> {
 }
 
 /// `q: [..., tq, d]`, `k: [..., tk, d]`, `v: [..., tk, dv]` to `[..., tq, dv]`.
-pub fn scaled_dot_product_attention<'g, T: Float>(q: Var<'g, T>, k: Var<'g, T>, v: Var<'g, T>, causal: bool) -> Result<Var<'g, T>> {
+pub fn scaled_dot_product_attention<'g, T: Float>(
+    q: Var<'g, T>,
+    k: Var<'g, T>,
+    v: Var<'g, T>,
+    causal: bool,
+) -> Result<Var<'g, T>> {
     let qs = q.shape();
     let ks = k.shape();
     if qs.len() < 2 || ks.len() < 2 {
@@ -59,7 +64,9 @@ pub fn scaled_dot_product_attention<'g, T: Float>(q: Var<'g, T>, k: Var<'g, T>, 
     }
     let d = qs[qs.len() - 1];
     let rank = ks.len();
-    let mut scores = q.matmul(k.transpose(rank - 2, rank - 1)?)?.scale(1.0 / (d as f64).sqrt());
+    let mut scores = q
+        .matmul(k.transpose(rank - 2, rank - 1)?)?
+        .scale(1.0 / (d as f64).sqrt());
     if causal {
         let mask = causal_mask(qs[qs.len() - 2], ks[ks.len() - 2])?;
         scores = scores.add(q.graph().constant(mask))?;
@@ -81,13 +88,28 @@ pub struct MultiHeadAttention {
 
 impl MultiHeadAttention {
     /// `d_model` must be a multiple of `heads`.
-    pub fn new<T: Float>(store: &mut ParamStore<T>, name: &str, d_model: usize, heads: usize, rng: &mut Rng) -> Result<Self> {
-        if heads == 0 || d_model % heads != 0 {
+    pub fn new<T: Float>(
+        store: &mut ParamStore<T>,
+        name: &str,
+        d_model: usize,
+        heads: usize,
+        rng: &mut Rng,
+    ) -> Result<Self> {
+        if heads == 0 || !d_model.is_multiple_of(heads) {
             return Err(TensorError::InvalidArgument {
                 detail: format!("d_model {d_model} is not a multiple of {heads} heads"),
             });
         }
-        let mut lin = |s: &str| Linear::new(store, &format!("{name}.{s}"), d_model, d_model, Init::Xavier, rng);
+        let mut lin = |s: &str| {
+            Linear::new(
+                store,
+                &format!("{name}.{s}"),
+                d_model,
+                d_model,
+                Init::Xavier,
+                rng,
+            )
+        };
         Ok(MultiHeadAttention {
             wq: lin("q"),
             wk: lin("k"),
@@ -99,7 +121,12 @@ impl MultiHeadAttention {
     }
 
     /// `x: [b, t, d_model] -> [b, t, d_model]`.
-    pub fn forward<'g, T: Float>(&self, p: &Bound<'g, T>, x: Var<'g, T>, causal: bool) -> Result<Var<'g, T>> {
+    pub fn forward<'g, T: Float>(
+        &self,
+        p: &Bound<'g, T>,
+        x: Var<'g, T>,
+        causal: bool,
+    ) -> Result<Var<'g, T>> {
         let s = x.shape();
         if s.len() != 3 || s[2] != self.d_model {
             return Err(TensorError::ShapeMismatch {
@@ -121,7 +148,7 @@ impl MultiHeadAttention {
     }
 }
 
-/// A pre-norm transformer block with a two-layer ReLU MLP of width
+/// A pre-norm transformer block with a two-layer `ReLU` MLP of width
 /// `4 * d_model`.
 #[derive(Clone, Debug)]
 pub struct TransformerBlock {
@@ -133,17 +160,34 @@ pub struct TransformerBlock {
 
 impl TransformerBlock {
     /// A block for `d_model` with `heads` heads.
-    pub fn new<T: Float>(store: &mut ParamStore<T>, name: &str, d_model: usize, heads: usize, rng: &mut Rng) -> Result<Self> {
+    pub fn new<T: Float>(
+        store: &mut ParamStore<T>,
+        name: &str,
+        d_model: usize,
+        heads: usize,
+        rng: &mut Rng,
+    ) -> Result<Self> {
         Ok(TransformerBlock {
             ln1: LayerNorm::new(store, &format!("{name}.ln1"), d_model, 1e-5),
             attn: MultiHeadAttention::new(store, &format!("{name}.attn"), d_model, heads, rng)?,
             ln2: LayerNorm::new(store, &format!("{name}.ln2"), d_model, 1e-5),
-            mlp: Mlp::new(store, &format!("{name}.mlp"), &[d_model, 4 * d_model, d_model], Activation::Relu, rng),
+            mlp: Mlp::new(
+                store,
+                &format!("{name}.mlp"),
+                &[d_model, 4 * d_model, d_model],
+                Activation::Relu,
+                rng,
+            ),
         })
     }
 
     /// `x: [b, t, d_model] -> [b, t, d_model]`.
-    pub fn forward<'g, T: Float>(&self, p: &Bound<'g, T>, x: Var<'g, T>, causal: bool) -> Result<Var<'g, T>> {
+    pub fn forward<'g, T: Float>(
+        &self,
+        p: &Bound<'g, T>,
+        x: Var<'g, T>,
+        causal: bool,
+    ) -> Result<Var<'g, T>> {
         let h = x.add(self.attn.forward(p, self.ln1.forward(p, x)?, causal)?)?;
         h.add(self.mlp.forward(p, self.ln2.forward(p, h)?)?)
     }
@@ -169,7 +213,10 @@ mod tests {
         let q = g.constant(Tensor::randn(&[4, 3], 1.0, &mut rng));
         let k = g.constant(Tensor::randn(&[4, 3], 1.0, &mut rng));
         let v = g.constant(Tensor::from_fn(&[4, 1], |i| (i * 10) as f64));
-        let o = scaled_dot_product_attention(q, k, v, true).unwrap().value().to_vec();
+        let o = scaled_dot_product_attention(q, k, v, true)
+            .unwrap()
+            .value()
+            .to_vec();
         assert_eq!(o[0], 0.0); // the first query sees only key 0
         for (i, &x) in o.iter().enumerate() {
             assert!((0.0..=(i * 10) as f64 + 1e-12).contains(&x));
@@ -187,7 +234,11 @@ mod tests {
         let r = Tensor::<f64>::randn(&[2, 3, 2], 1.0, &mut rng);
         for causal in [false, true] {
             let rep = check_gradients(
-                |g, v| Ok(scaled_dot_product_attention(v[0], v[1], v[2], causal)?.mul(g.constant(r.clone()))?.sum()),
+                |g, v| {
+                    Ok(scaled_dot_product_attention(v[0], v[1], v[2], causal)?
+                        .mul(g.constant(r.clone()))?
+                        .sum())
+                },
                 &inputs,
                 1e-5,
             )

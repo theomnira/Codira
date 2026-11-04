@@ -22,16 +22,46 @@ pub struct Linear {
 
 impl Linear {
     /// A layer with a bias initialised to zero.
-    pub fn new<T: Float>(store: &mut ParamStore<T>, name: &str, in_dim: usize, out_dim: usize, init: Init, rng: &mut Rng) -> Self {
-        let w = store.add(format!("{name}.w"), init.sample(&[in_dim, out_dim], in_dim, out_dim, rng));
+    pub fn new<T: Float>(
+        store: &mut ParamStore<T>,
+        name: &str,
+        in_dim: usize,
+        out_dim: usize,
+        init: Init,
+        rng: &mut Rng,
+    ) -> Self {
+        let w = store.add(
+            format!("{name}.w"),
+            init.sample(&[in_dim, out_dim], in_dim, out_dim, rng),
+        );
         let b = Some(store.add(format!("{name}.b"), Tensor::zeros(&[out_dim])));
-        Linear { w, b, in_dim, out_dim }
+        Linear {
+            w,
+            b,
+            in_dim,
+            out_dim,
+        }
     }
 
     /// A layer without a bias.
-    pub fn new_no_bias<T: Float>(store: &mut ParamStore<T>, name: &str, in_dim: usize, out_dim: usize, init: Init, rng: &mut Rng) -> Self {
-        let w = store.add(format!("{name}.w"), init.sample(&[in_dim, out_dim], in_dim, out_dim, rng));
-        Linear { w, b: None, in_dim, out_dim }
+    pub fn new_no_bias<T: Float>(
+        store: &mut ParamStore<T>,
+        name: &str,
+        in_dim: usize,
+        out_dim: usize,
+        init: Init,
+        rng: &mut Rng,
+    ) -> Self {
+        let w = store.add(
+            format!("{name}.w"),
+            init.sample(&[in_dim, out_dim], in_dim, out_dim, rng),
+        );
+        Linear {
+            w,
+            b: None,
+            in_dim,
+            out_dim,
+        }
     }
 
     /// `x: [..., in] -> [..., out]`.
@@ -54,8 +84,17 @@ pub struct Embedding {
 
 impl Embedding {
     /// Entries drawn from `N(0, 1)`.
-    pub fn new<T: Float>(store: &mut ParamStore<T>, name: &str, vocab: usize, dim: usize, rng: &mut Rng) -> Self {
-        let table = store.add(format!("{name}.table"), Tensor::randn(&[vocab, dim], 1.0, rng));
+    pub fn new<T: Float>(
+        store: &mut ParamStore<T>,
+        name: &str,
+        vocab: usize,
+        dim: usize,
+        rng: &mut Rng,
+    ) -> Self {
+        let table = store.add(
+            format!("{name}.table"),
+            Tensor::randn(&[vocab, dim], 1.0, rng),
+        );
         Embedding { table, vocab, dim }
     }
 
@@ -80,7 +119,12 @@ impl LayerNorm {
     pub fn new<T: Float>(store: &mut ParamStore<T>, name: &str, dim: usize, eps: f64) -> Self {
         let gamma = store.add(format!("{name}.gamma"), Tensor::ones(&[dim]));
         let beta = store.add(format!("{name}.beta"), Tensor::zeros(&[dim]));
-        LayerNorm { gamma, beta, dim, eps }
+        LayerNorm {
+            gamma,
+            beta,
+            dim,
+            eps,
+        }
     }
 
     /// `x: [..., dim] -> [..., dim]`.
@@ -128,9 +172,15 @@ pub struct Mlp {
 }
 
 impl Mlp {
-    /// `dims = [in, hidden.., out]`. Weights use Kaiming for ReLU and
+    /// `dims = [in, hidden.., out]`. Weights use Kaiming for `ReLU` and
     /// Xavier for tanh.
-    pub fn new<T: Float>(store: &mut ParamStore<T>, name: &str, dims: &[usize], activation: Activation, rng: &mut Rng) -> Self {
+    pub fn new<T: Float>(
+        store: &mut ParamStore<T>,
+        name: &str,
+        dims: &[usize],
+        activation: Activation,
+        rng: &mut Rng,
+    ) -> Self {
         let init = match activation {
             Activation::Relu => Init::Kaiming,
             Activation::Tanh => Init::Xavier,
@@ -186,14 +236,20 @@ mod tests {
         let ln = LayerNorm::new(&mut store, "ln", 2, 1e-5);
         let emb = Embedding::new(&mut store, "emb", 6, 3, &mut rng);
         // perturb gamma/beta/biases away from their trivial initial values
-        let mut inputs: Vec<Tensor<f64>> = store.values().iter().map(|t| t.add(&Tensor::randn(t.shape(), 0.3, &mut rng)).unwrap()).collect();
+        let mut inputs: Vec<Tensor<f64>> = store
+            .values()
+            .iter()
+            .map(|t| t.add(&Tensor::randn(t.shape(), 0.3, &mut rng)).unwrap())
+            .collect();
         let n = inputs.len();
         inputs.push(Tensor::randn(&[2, 4, 3], 1.0, &mut rng));
         let r = Tensor::<f64>::randn(&[2, 4, 2], 1.0, &mut rng);
         let rep = check_gradients(
             |g, v| {
                 let p = Bound::from_vars(v[..n].to_vec());
-                let tok = emb.forward(&p, &[1, 5, 5, 0, 2, 3, 4, 1])?.reshape(&[2, 4, 3])?;
+                let tok = emb
+                    .forward(&p, &[1, 5, 5, 0, 2, 3, 4, 1])?
+                    .reshape(&[2, 4, 3])?;
                 let x = v[n].add(tok)?;
                 let y = ln.forward(&p, mlp.forward(&p, x)?)?;
                 Ok(y.mul(g.constant(r.clone()))?.sum())
@@ -216,6 +272,11 @@ mod tests {
         let g = Graph::new();
         let p = store.bind(&g);
         let x = g.constant(Tensor::ones(&[5, 4]));
-        assert_eq!(lin.forward(&p, mlp.forward(&p, x).unwrap()).unwrap().shape(), vec![5, 2]);
+        assert_eq!(
+            lin.forward(&p, mlp.forward(&p, x).unwrap())
+                .unwrap()
+                .shape(),
+            vec![5, 2]
+        );
     }
 }

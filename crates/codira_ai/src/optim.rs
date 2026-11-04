@@ -3,10 +3,10 @@
 //! Date: November 4, 2026
 //!
 //! Functionality:
-//! - [`Sgd`] with momentum and (coupled) weight decay, in the PyTorch
+//! - [`Sgd`] with momentum and (coupled) weight decay, in the `PyTorch`
 //!   convention `v = mu v + (g + wd p)`, `p -= lr v`.
 //! - [`Adam`] (Kingma and Ba, ICLR 2015) with bias correction, and its
-//!   decoupled-weight-decay form AdamW (Loshchilov and Hutter, ICLR 2019).
+//!   decoupled-weight-decay form `AdamW` (Loshchilov and Hutter, ICLR 2019).
 //! - [`CosineWithWarmup`]: linear warmup, then cosine decay to a floor.
 //! - [`clip_grad_norm`]: rescales all gradients together so their global
 //!   L2 norm is at most a bound.
@@ -47,7 +47,11 @@ fn check_grads<T: Float>(params: &ParamStore<T>, grads: &[Tensor<T>]) -> Result<
 }
 
 fn zeros_like<T: Float>(params: &ParamStore<T>) -> Vec<Vec<T>> {
-    params.values().iter().map(|p| vec![T::ZERO; p.numel()]).collect()
+    params
+        .values()
+        .iter()
+        .map(|p| vec![T::ZERO; p.numel()])
+        .collect()
 }
 
 /// Stochastic gradient descent with optional momentum and weight decay.
@@ -77,8 +81,17 @@ impl<T: Float> Optimizer<T> for Sgd<T> {
         if self.velocity.is_empty() {
             self.velocity = zeros_like(params);
         }
-        let (lr, mu, wd) = (T::from_f64(self.lr), T::from_f64(self.momentum), T::from_f64(self.weight_decay));
-        for ((p, g), v) in params.values_mut().iter_mut().zip(grads).zip(&mut self.velocity) {
+        let (lr, mu, wd) = (
+            T::from_f64(self.lr),
+            T::from_f64(self.momentum),
+            T::from_f64(self.weight_decay),
+        );
+        for ((p, g), v) in params
+            .values_mut()
+            .iter_mut()
+            .zip(grads)
+            .zip(&mut self.velocity)
+        {
             let g = g.to_vec();
             let pd = p.data_mut();
             for i in 0..pd.len() {
@@ -97,7 +110,7 @@ impl<T: Float> Optimizer<T> for Sgd<T> {
     }
 }
 
-/// Adam, or AdamW when `decoupled` is set.
+/// Adam, or `AdamW` when `decoupled` is set.
 #[derive(Clone, Debug)]
 pub struct Adam<T: Float> {
     pub lr: f64,
@@ -106,7 +119,7 @@ pub struct Adam<T: Float> {
     pub eps: f64,
     pub weight_decay: f64,
     /// `false`: L2 penalty added to the gradient (Adam). `true`: the
-    /// parameter is shrunk by `lr * wd` directly (AdamW).
+    /// parameter is shrunk by `lr * wd` directly (`AdamW`).
     pub decoupled: bool,
     m: Vec<Vec<T>>,
     v: Vec<Vec<T>>,
@@ -115,7 +128,7 @@ pub struct Adam<T: Float> {
 
 impl<T: Float> Adam<T> {
     /// Adam with the usual defaults `beta = (0.9, 0.999)`, `eps = 1e-8`.
-    pub fn adam(lr: f64) -> Self {
+    pub fn new(lr: f64) -> Self {
         Adam {
             lr,
             beta1: 0.9,
@@ -129,12 +142,12 @@ impl<T: Float> Adam<T> {
         }
     }
 
-    /// AdamW with decoupled weight decay `wd`.
+    /// `AdamW` with decoupled weight decay `wd`.
     pub fn adamw(lr: f64, wd: f64) -> Self {
         Adam {
             weight_decay: wd,
             decoupled: true,
-            ..Self::adam(lr)
+            ..Self::new(lr)
         }
     }
 
@@ -156,9 +169,19 @@ impl<T: Float> Optimizer<T> for Adam<T> {
         let (b1, b2) = (self.beta1, self.beta2);
         let c1 = T::from_f64(1.0 - b1.powi(t));
         let c2 = T::from_f64(1.0 - b2.powi(t));
-        let (lr, eps, wd) = (T::from_f64(self.lr), T::from_f64(self.eps), T::from_f64(self.weight_decay));
+        let (lr, eps, wd) = (
+            T::from_f64(self.lr),
+            T::from_f64(self.eps),
+            T::from_f64(self.weight_decay),
+        );
         let (b1, b2) = (T::from_f64(b1), T::from_f64(b2));
-        for (((p, g), m), v) in params.values_mut().iter_mut().zip(grads).zip(&mut self.m).zip(&mut self.v) {
+        for (((p, g), m), v) in params
+            .values_mut()
+            .iter_mut()
+            .zip(grads)
+            .zip(&mut self.m)
+            .zip(&mut self.v)
+        {
             let g = g.to_vec();
             let pd = p.data_mut();
             for i in 0..pd.len() {
@@ -203,7 +226,8 @@ impl CosineWithWarmup {
         }
         let span = self.total.saturating_sub(self.warmup).max(1);
         let progress = ((step - self.warmup) as f64 / span as f64).min(1.0);
-        self.min_lr + 0.5 * (self.base_lr - self.min_lr) * (1.0 + (std::f64::consts::PI * progress).cos())
+        self.min_lr
+            + 0.5 * (self.base_lr - self.min_lr) * (1.0 + (std::f64::consts::PI * progress).cos())
     }
 }
 
@@ -212,7 +236,7 @@ impl CosineWithWarmup {
 pub fn clip_grad_norm<T: Float>(grads: &mut [Tensor<T>], max_norm: f64) -> f64 {
     let norm = grads
         .iter()
-        .flat_map(|g| g.to_vec())
+        .flat_map(super::tensor::Tensor::to_vec)
         .map(|x| {
             let x = x.to_f64();
             x * x
@@ -254,7 +278,7 @@ mod tests {
     #[test]
     fn adam_first_step_is_lr_times_sign() {
         let mut s = store(&[1.0, -1.0]);
-        let mut opt = Adam::adam(0.01);
+        let mut opt = Adam::new(0.01);
         opt.step(&mut s, &g(&[3.0, -0.002])).unwrap();
         let x = s.values()[0].to_vec();
         assert!((x[0] - 0.99).abs() < 1e-9);
@@ -268,7 +292,10 @@ mod tests {
         // AdamW shrinks by exactly lr*wd*x and takes no adaptive step.
         let mut a = store(&[2.0]);
         let mut w = store(&[2.0]);
-        let mut adam = Adam { weight_decay: 0.1, ..Adam::adam(0.01) };
+        let mut adam = Adam {
+            weight_decay: 0.1,
+            ..Adam::new(0.01)
+        };
         let mut adamw = Adam::adamw(0.01, 0.1);
         adam.step(&mut a, &g(&[0.0])).unwrap();
         adamw.step(&mut w, &g(&[0.0])).unwrap();
@@ -283,7 +310,7 @@ mod tests {
         let opts: Vec<Box<dyn Optimizer<f64>>> = vec![
             Box::new(Sgd::new(0.1, 0.0, 0.0)),
             Box::new(Sgd::new(0.05, 0.9, 0.0)),
-            Box::new(Adam::adam(0.1)),
+            Box::new(Adam::new(0.1)),
             Box::new(Adam::adamw(0.1, 0.0)),
         ];
         for mut opt in opts {
@@ -304,7 +331,7 @@ mod tests {
     fn step_validates_gradients() {
         let mut s = store(&[1.0]);
         assert!(Sgd::new(0.1, 0.0, 0.0).step(&mut s, &[]).is_err());
-        assert!(Adam::adam(0.1).step(&mut s, &g(&[1.0, 2.0])).is_err());
+        assert!(Adam::new(0.1).step(&mut s, &g(&[1.0, 2.0])).is_err());
     }
 
     #[test]
