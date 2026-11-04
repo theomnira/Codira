@@ -250,6 +250,15 @@ impl ast::LetStmt {
             .children_with_tokens()
             .any(|it| it.kind() == T![ghost])
     }
+
+    /// Whether the binding may be assigned to after its initialisation:
+    /// `var x` (or `let mut x`, the Rust-style spelling of it). A plain
+    /// `let x` binds once.
+    pub fn is_mutable(&self) -> bool {
+        self.syntax()
+            .children_with_tokens()
+            .any(|it| it.kind() == T![var] || it.kind() == T![mut])
+    }
 }
 
 pub enum VisibilityKind {

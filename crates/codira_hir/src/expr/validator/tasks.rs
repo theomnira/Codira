@@ -436,7 +436,7 @@ mod tests {
         assert_clean(
             r"
     func produce(dest: Channel[i64], n: i64) {
-        let i = 0;
+        var i = 0;
         while i < n {
             dest <- i;
             i += 1;
@@ -530,7 +530,7 @@ mod tests {
         assert_clean(
             r"
     func pump(a: Channel[i64], b: Channel[i64], flags: Channel[bool]) -> i64 {
-        let total = 0;
+        var total = 0;
         let x = 3;
         select {
             v = <-a -> total += v,

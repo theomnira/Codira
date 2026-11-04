@@ -789,6 +789,7 @@ impl InferenceResultBuilder<'_> {
                             });
                         }
                         self.check_captured_assignment(tgt_expr, *lhs);
+                        self.check_immutable_assignment(tgt_expr, *lhs);
                     };
                     let rhs_expected = op::binary_op_rhs_expectation(*op, lhs_ty.clone());
                     if matches!(lhs_ty.interned(), TyKind::TypeParam(..))

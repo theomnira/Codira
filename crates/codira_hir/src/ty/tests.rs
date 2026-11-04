@@ -20,7 +20,7 @@ fn issue_354() {
     func value() -> i64 { 6 }
 
     public func main() {
-        let t = 2;
+        var t = 2;
         t = loop { break value(); };
     }"#),
     @"
@@ -69,7 +69,7 @@ fn array_is_place_expr() {
     insta::assert_snapshot!(infer(
         r"
     func main() {
-        let a = [1,2,3,4,5]
+        var a = [1,2,3,4,5]
         a = [5,6,7]
         a[0] = 0;
         [1,2,3][0] = 4
@@ -1269,7 +1269,7 @@ fn infer_while() {
     insta::assert_snapshot!(infer(
         r#"
     func foo() {
-        let n = 0;
+        var n = 0;
         while n < 3 { n += 1; };
         while n < 3 { n += 1; break; };
         while n < 3 { break 3; };   // error: break with value can only appear in a loop

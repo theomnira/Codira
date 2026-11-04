@@ -79,6 +79,11 @@ pub struct Body {
     /// Verification-only parts of the body: contract clauses, loop
     /// invariants and ghost bindings. See [`BodyContracts`].
     contracts: BodyContracts,
+
+    /// Every pattern bound by a `let` statement (not `var`, not `let mut`),
+    /// nested patterns included: the bindings an assignment may not change
+    /// (see `InferenceResultBuilder::check_immutable_assignment`).
+    immutable_pats: FxHashSet<PatId>,
 }
 
 /// The verification-only half of a [`Body`].
@@ -206,6 +211,12 @@ impl Body {
     /// ghost bindings). See [`BodyContracts`].
     pub fn contracts(&self) -> &BodyContracts {
         &self.contracts
+    }
+
+    /// Whether `pat` was bound by a `let` statement, and so cannot be
+    /// assigned to.
+    pub fn is_immutable_binding(&self, pat: PatId) -> bool {
+        self.immutable_pats.contains(&pat)
     }
 
     /// Adds all the `InferenceDiagnostic`s of the result to the
@@ -847,6 +858,7 @@ pub(crate) struct ExprCollector<'a> {
     current_file_id: FileId,
     diagnostics: Vec<ExprDiagnostic>,
     contracts: BodyContracts,
+    immutable_pats: FxHashSet<PatId>,
 }
 
 impl<'a> ExprCollector<'a> {
@@ -865,6 +877,7 @@ impl<'a> ExprCollector<'a> {
             current_file_id: file_id,
             diagnostics: Vec::new(),
             contracts: BodyContracts::default(),
+            immutable_pats: FxHashSet::default(),
         }
     }
 
@@ -993,6 +1006,9 @@ impl<'a> ExprCollector<'a> {
                     let pat = self.collect_pat_opt(stmt.pat());
                     let mut bound = Vec::new();
                     self.collect_bound_pats(pat, &mut bound);
+                    if !stmt.is_mutable() {
+                        self.immutable_pats.extend(bound.iter().copied());
+                    }
                     self.contracts.ghost_pats.extend(bound);
                     let type_ref = stmt
                         .ascribed_type()
@@ -1009,6 +1025,11 @@ impl<'a> ExprCollector<'a> {
                 }
                 ast::StmtKind::LetStmt(stmt) => {
                     let pat = self.collect_pat_opt(stmt.pat());
+                    if !stmt.is_mutable() {
+                        let mut bound = Vec::new();
+                        self.collect_bound_pats(pat, &mut bound);
+                        self.immutable_pats.extend(bound);
+                    }
                     let type_ref = stmt
                         .ascribed_type()
                         .map(|t| self.type_ref_builder.alloc_from_node(&t));
@@ -1722,6 +1743,7 @@ impl<'a> ExprCollector<'a> {
                 .expect("A body should have return type collected"),
             diagnostics: self.diagnostics,
             contracts: self.contracts,
+            immutable_pats: self.immutable_pats,
         };
         self.source_map.type_refs = type_ref_source_map;
         (body, self.source_map)
