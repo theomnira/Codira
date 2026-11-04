@@ -120,6 +120,9 @@ thread_local! {
     /// This thread's record, registered on first use and unregistered when
     /// the thread exits.
     static HOLDER: RefCell<Option<Holder>> = const { RefCell::new(None) };
+    /// The record `HOLDER` owns, for access without borrowing or reference
+    /// counting; null until registration and once `HOLDER` is dropped.
+    static CURRENT: Cell<*const Record> = const { Cell::new(std::ptr::null()) };
 }
 
 /// Owns a thread's registration.
@@ -127,6 +130,7 @@ struct Holder(Arc<Record>);
 
 impl Drop for Holder {
     fn drop(&mut self) {
+        CURRENT.with(|current| current.set(std::ptr::null()));
         REGISTRY
             .lock()
             .records
@@ -136,7 +140,31 @@ impl Drop for Holder {
 
 /// Returns the current thread's record, registering the thread on first
 /// use. `None` while the thread is shutting down.
-fn record() -> Option<Arc<Record>> {
+///
+/// The reference is only used on this thread, which keeps the record alive
+/// (through `HOLDER`) until its thread-local storage is destroyed.
+#[inline]
+fn record() -> Option<&'static Record> {
+    let current = CURRENT.with(Cell::get);
+    if current.is_null() {
+        register()
+    } else {
+        // Safety: `CURRENT` points to the record `HOLDER` owns and is reset
+        // before `HOLDER` releases it.
+        Some(unsafe { &*current })
+    }
+}
+
+#[cold]
+fn register() -> Option<&'static Record> {
+    let record = registered_or_new()?;
+    let pointer = Arc::as_ptr(&record);
+    CURRENT.with(|current| current.set(pointer));
+    // Safety: as in `record`; `HOLDER` holds another reference.
+    Some(unsafe { &*pointer })
+}
+
+fn registered_or_new() -> Option<Arc<Record>> {
     HOLDER
         .try_with(|holder| {
             let mut holder = holder.try_borrow_mut().ok()?;
@@ -150,18 +178,6 @@ fn record() -> Option<Arc<Record>> {
                 REGISTRY.lock().records.push(record.clone());
                 *holder = Some(Holder(record));
             }
-            holder.as_ref().map(|holder| holder.0.clone())
-        })
-        .ok()
-        .flatten()
-}
-
-/// Returns the current thread's record if it has one, without registering
-/// the thread.
-fn registered_record() -> Option<Arc<Record>> {
-    HOLDER
-        .try_with(|holder| {
-            let holder = holder.try_borrow().ok()?;
             holder.as_ref().map(|holder| holder.0.clone())
         })
         .ok()
@@ -316,7 +332,7 @@ pub fn blocking<R>(f: impl FnOnce() -> R) -> R {
         UNSCANNABLE
     };
     let previous = record.low.swap(low, Ordering::Relaxed);
-    make_idle(&record);
+    make_idle(record);
 
     /// Resumes the thread even when `f` unwinds.
     struct Resume<'a> {
@@ -355,7 +371,7 @@ impl World {
     fn snapshot(registry: &Registry) -> Self {
         // Called with the registry locked: look at the current thread's
         // record without registering it.
-        let current = registered_record();
+        let current = CURRENT.with(Cell::get);
         let mut world = World {
             stacks: Vec::new(),
             unscannable: false,
@@ -363,7 +379,7 @@ impl World {
             self_in_codira: false,
         };
         for record in &registry.records {
-            let is_self = current.as_ref().is_some_and(|c| Arc::ptr_eq(c, record));
+            let is_self = std::ptr::eq(current, Arc::as_ptr(record));
             let active = record.active.load(Ordering::Relaxed);
             if active {
                 if is_self {
@@ -528,8 +544,8 @@ pub unsafe fn restore(checkpoint: ThreadCheckpoint) {
     }
     let mode = MODE.with(Cell::get);
     match (mode, checkpoint.mode) {
-        (RUNNING, IDLE) => make_idle(&record),
-        (IDLE, RUNNING) => make_running(&record),
+        (RUNNING, IDLE) => make_idle(record),
+        (IDLE, RUNNING) => make_running(record),
         _ => {}
     }
     DEPTH.with(|depth| depth.set(checkpoint.depth));
@@ -563,20 +579,20 @@ pub(crate) fn with_allocation_section<R>(f: impl FnOnce() -> R) -> R {
 /// A brief running section for an allocation by a non-mutator thread. Does
 /// not mark the thread as having Codira frames.
 struct AllocationSection {
-    record: Arc<Record>,
+    record: &'static Record,
 }
 
 impl AllocationSection {
     fn begin() -> Self {
         let record = record().expect("checked by the caller");
-        make_running(&record);
+        make_running(record);
         Self { record }
     }
 }
 
 impl Drop for AllocationSection {
     fn drop(&mut self) {
-        make_idle(&self.record);
+        make_idle(self.record);
     }
 }
 
