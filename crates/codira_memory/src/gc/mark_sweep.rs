@@ -267,12 +267,29 @@ where
                 // Retry while the world is still stopped: otherwise the
                 // other threads, resumed first, could use up what the
                 // collection freed before this thread gets any of it.
-                self.collect_stopped_then(|| self.heap.alloc(ty, layout))
-                    .map_err(|CollectRefused| err)
-                    .and_then(|(_, result)| {
-                        self.emergency_collections.fetch_add(1, Ordering::Relaxed);
+                //
+                // The new object is rooted until this thread runs again: on
+                // the way out of the stop it is held in frames below the
+                // part of the stack a collection would scan, and another
+                // thread may collect before this one resumes.
+                let (_, result) = self
+                    .collect_stopped_then(|| {
+                        let result = self.heap.alloc(ty, layout);
+                        if let Ok(header) = result {
+                            unsafe { header.as_ref() }
+                                .roots
+                                .fetch_add(1, Ordering::AcqRel);
+                        }
                         result
                     })
+                    .map_err(|CollectRefused| err)?;
+                self.emergency_collections.fetch_add(1, Ordering::Relaxed);
+                if let Ok(header) = result {
+                    unsafe { header.as_ref() }
+                        .roots
+                        .fetch_sub(1, Ordering::AcqRel);
+                }
+                result
             }
             result => result,
         }
