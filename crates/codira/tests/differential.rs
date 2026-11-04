@@ -745,6 +745,38 @@ fn eidos_fold_keeps_output() {
     assert_eq!(jit.stdout, "side effect\n7\n");
     for backend in [Backend::LlvmDefault, Backend::LlvmO0] {
         let llvm = run(source, backend);
-        assert_eq!(llvm.stdout, jit.stdout, "{}\n{}", backend.name(), llvm.stderr);
+        assert_eq!(
+            llvm.stdout,
+            jit.stdout,
+            "{}\n{}",
+            backend.name(),
+            llvm.stderr
+        );
     }
+}
+
+/// Regression: a `bool` or 8/16-bit integer crossing a call boundary is
+/// extended to a full register on the Cranelift backend.
+///
+/// The Rust side of the JIT (`codira_jit_print_bool`, and the host reading
+/// the entry point's result) assumes the C convention that LLVM implements:
+/// the caller zero- or sign-extends such a value. Cranelift left the upper
+/// bits as the computation had left them, so with an optimised build of the
+/// compiler `(672u32 + 7u32) == 515u32` printed `true` (seed `0xc0d17a23`
+/// and five others of the default run). A debug build of the compiler reads
+/// only the low byte and hides the bug, so this test only fails when the
+/// test itself is built with optimisations (`cargo test --release`).
+#[test]
+fn narrow_values_cross_calls_extended() {
+    let source = "func small(x: i8, y: u16, z: bool) -> i16 {\n    \
+                  if z { (x as i16) - (y as i16) } else { 0i16 }\n}\n\
+                  public func main() {\n    \
+                  println(\"a \", ((672u32 + 7u32) == (if true { 515u32 } else { 9u32 })))\n    \
+                  println(\"b \", small(-5i8, 300u16, (3u32 + 4u32) == 7u32))\n    \
+                  println(\"c \", (1000u32 * 3u32) < (if false { 1u32 } else { 2999u32 }))\n}\n";
+    let jit = run(source, Backend::Cranelift);
+    assert!(ran_on_cranelift(&jit), "{}", jit.stderr);
+    assert_eq!(jit.stdout, "a false\nb -305\nc false\n");
+    let llvm = run(source, Backend::LlvmDefault);
+    assert_eq!(llvm.stdout, jit.stdout, "{}", llvm.stderr);
 }
