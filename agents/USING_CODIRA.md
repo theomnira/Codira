@@ -1128,20 +1128,69 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   and there is **no implicit prelude**: `std/prelude.code` is not in scope
   in programs (it would pull in all of `std/`, most of which does not check
   yet). Import what you use, explicitly.
-- **Only modules that check clean can be used.** Most of `std/` still has
-  errors (`crates/codira_compiler/tests/snapshots/stdlib_check_ratchet__stdlib_check_status.snap`).
-  Importing such a module, or one that imports such a module, fails the
-  build with the module's own diagnostics, shown against its file
-  (`--> std/math/fast.code:12:5`), and a line naming it: ``error: the
-  standard-library module `std.math.fast` (std/math/fast.code) has 2
-  errors; ...``. A file clean in the ratchet can still fail here when a
-  module it imports is not clean (`std.ai.algorithm.functional` imports
-  `std.ai.tensor.raw`), or when it relies on names of the standard
-  library's prelude, which imported modules do not get either
-  (`std.math.math` calls `push`, `std.time.time` calls `panic`).
-  Importable today: `std.crypto.hash`, `std.fs.fs` and `std.memory.region`
-  (each tested from a program) and `std.memory.page` (checks clean when
-  imported; not run).
+- **Standard-library modules do not use the prelude either.** Each one
+  imports what it uses (`import root.sys.terminate.{panic};`), exactly as
+  a program does, so that it means the same whether it is imported by a
+  program or checked as part of `std/`.
+- **Only modules that check, build and load can be used.** Importing a
+  module with errors, or one that imports such a module, fails the build
+  with the module's own diagnostics, shown against its file
+  (`--> std/collections/list.code:10:10`), and a line naming it:
+  ``error: the standard-library module `std.collections.list`
+  (std/collections/list.code) has 55 errors; ...``. Which modules can be
+  imported, and for each one that cannot, the first error and what it is
+  waiting for, is recorded in
+  `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
+  (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
+  which is not what a program sees).
+- **Importable today** (12 of 89 modules), each run from a program in
+  `crates/codira/tests/std_imports.rs` against independently computed
+  values, except `std.memory.page` and `std.builtin.type_aliases` (check,
+  build and load; not run):
+  - `std.crypto.hash` (SHA-256, SHA-512, BLAKE3), `std.fs.fs`,
+    `std.memory.region`, `std.memory.page`.
+  - `std.bit.bit`, `std.bit.mask`: bit counts, reversal, byte swaps,
+    rotations, masks and fields on `u64`/`u32`. Exact. `bit_ceil` needs a
+    result that fits (`value` at most 2^63).
+  - `std.math.constants` (`PI()`, `E()`, `INF()`, `NAN()`, `F64_MAX()`,
+    integer limits...: niladic functions, since there are no module-level
+    constants) and `std.math.fast` (f32 approximations: `fast_sin`/`fast_cos`
+    within 7e-5 absolute, `fast_exp` 0.01 % relative, `fast_log` 5.4e-4
+    absolute, `fast_sqrt`/`fast_rsqrt` 0.175 % relative; `fast_pow` and
+    `fast_tan` have no stated bound).
+  - `std.hashlib.hash`: FNV-1a 64 over `[u8]`, integers, floats and bools,
+    hash combiners, and `hash[T: Hashable]`. **Not cryptographic**: for
+    hash tables and fingerprints of trusted data only.
+  - `std.base64.base64`: base64, base32 and base16 encode and decode over
+    `[u8]` (encoded text is its ASCII bytes), standard alphabets with `=`
+    padding; decoding skips bytes outside the alphabet and returns an empty
+    array for invalid input.
+  - `std.random.rng`: xoshiro256** with the state in a `Rng` the caller
+    holds, seeded by SplitMix64 (`rng_seeded(seed)`, `rng_next_u64`,
+    `rng_next_f64`, `rng_range_i64`, `rng_next_bool`). **Not
+    cryptographic**: predictable from its output, and seeded only by the
+    caller.
+  - `std.builtin.type_aliases` (`Never`).
+- **Check when imported, but cannot be built yet**: `std.sys.terminate`
+  (`panic`, `exit`, `abort`, `assert`), and what calls `panic`:
+  `std.math.math` (libm-backed `sin`...`atan2`, rounding, `gcd`,
+  `factorial`, classification), `std.time.time` (durations, monotonic
+  instants, wall clock, sleep), `std.complex.complex`,
+  `std.collections.optional`. The code generator panics on a function
+  returning `Never` ("could not convert return value"), and `panic` is
+  one. Their end-to-end tests are written and ignored until it does not.
+- **Waiting for the language**: what is written against `String` (most of
+  `std.format`, `std.os`, `std.pathlib`, `std.testing`, `std.sys.info`, and
+  the `*_string` halves split off from the modules above:
+  `std.base64.base64_string`, `std.hashlib.string_hash`,
+  `std.complex.complex_string`); everything built on `Pointer[T]` (every
+  collection but `optional`, and through `List`, `std.math.sequence` and
+  `std.math.polynomial`); `std.builtin.traits` (generic traits);
+  `std.sys.assert_compare` (`assert_eq` and friends: operators on a type
+  parameter); `std.random.random` (a global generator: there is no
+  module-level state); `std.hashlib.hasher` and `std.atomic.atomic` (they
+  update a struct passed as a `mut` parameter, which the compiler accepts
+  but passes by copy, so the caller would see no change).
 - **Linking**: each imported standard-library module is compiled with the
   program into a library of its own in the program's `target/` directory
   (`target/hash$crypto$std.codiralib`), exactly like the program's own
@@ -1904,10 +1953,14 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   per instantiation (see "Traits and bounds" for the limits: no generic
   traits, associated types, trait objects or operators on a `T`)
 - imports and visibility (`public`/`internal`/`private`)
-- importing standard-library modules that check clean, explicitly, with
-  no prelude: `import std.crypto.hash.{sha256_str}`, `std.fs.fs`,
-  `std.memory.region` (see "Importing the standard library" for what is
-  loaded, how it is linked and which modules qualify)
+- importing standard-library modules, explicitly, with no prelude:
+  `std.crypto.hash`, `std.fs.fs`, `std.memory.region`, `std.bit`,
+  `std.math.constants`, `std.math.fast`, `std.hashlib.hash`,
+  `std.base64.base64`, `std.random.rng` (see "Importing the standard
+  library" for what is loaded, how it is linked, which modules qualify and
+  why the others do not yet; `std.math.math`, `std.time.time` and
+  `std.sys.terminate` check but wait for the code generator to compile
+  `Never`)
 - `public` functions that take and return value structs, called from
   other modules and from the host
 - algebraic effects and structured concurrency (see below)
@@ -1978,7 +2031,14 @@ Runtime (hosts embedding `codira_runtime`):
     `std/crypto/hash.code` does).
   - **Effects:** file services are ordinary externs, so they count as
     blocking.
-  - **Not cryptographic:** `std/hashlib` (FNV-1a).
+  - **Not cryptographic:** `std.hashlib` (FNV-1a) and `std.random`
+    (xoshiro256**).
+  - **Clocks and termination:** `codira_time_now() -> f64` (seconds since
+    the Unix epoch), `codira_time_monotonic_ns() -> u64` (from the first
+    call in the process), `codira_time_sleep_ns(u64)`, and the hooks
+    `panic` is written on (`codira_write_stderr(addr, len)`,
+    `codira_abort`, `codira_exit(code)`, `codira_is_debug`), for
+    `std/time/time.code` and `std/sys/terminate.code`.
   - Tests: `crates/codira/tests/fs_and_hash.rs`. Durability is claimed for Linux
     only; macOS and Windows are built but not run.
 - Database and tensors (experimental, x86-64 Linux tested): the
@@ -2047,9 +2107,11 @@ types").
 Parsed but **not yet lowered** -- the compiler stops with "... is not
 supported by the code generator yet" naming the construct: postfix `^`. Not available at
 all yet: generic enums, generic traits, trait objects (dynamic dispatch),
-`String`, the standard library's prelude in programs, and every
-standard-library module that does not check clean on its own (most of
-`std/`: see "Importing the standard library").
+`String`, module-level `let` (a top-level `let` is accepted and dropped
+without a diagnostic), in-place parameters (`mut`/`inout` on a parameter
+is accepted and the argument is passed by copy), the standard library's
+prelude in programs, and the standard-library modules that are not
+importable (most of `std/`: see "Importing the standard library").
 
 ---
 
