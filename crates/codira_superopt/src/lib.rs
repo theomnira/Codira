@@ -717,7 +717,7 @@ fn lower<I: SynthIsa>(
 }
 
 // ---------------------------------------------------------------------------
-// Measurement-based selection (Tier 5)
+// Measurement-based selection
 
 /// Measures the original and up to `n` verified candidates on the host
 /// (x86-64 only) and returns `(index, measurement)` for each, `None` being
