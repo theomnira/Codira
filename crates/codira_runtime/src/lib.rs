@@ -29,6 +29,8 @@ pub mod native_fs;
 mod native_handles;
 pub mod native_hash;
 pub mod native_memory;
+mod native_process;
+pub mod native_time;
 mod reflection;
 mod tasks;
 mod utils;
@@ -344,6 +346,11 @@ impl Runtime {
         // File services for `std/fs/fs.code`, hashing for `std/crypto/hash.code`
         options.user_functions.extend(native_fs::functions());
         options.user_functions.extend(native_hash::functions());
+
+        // Termination for `std/sys/terminate.code`, clocks and sleeping for
+        // `std/time/time.code`
+        options.user_functions.extend(native_process::functions());
+        options.user_functions.extend(native_time::functions());
 
         // The storage engine for `std/db/db.code`, tensors for
         // `std/ai/runtime.code`

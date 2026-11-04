@@ -9,11 +9,12 @@
 // main() when possible — import these only for truly unrecoverable situations.
 // =============================================================================
 
-import root.builtin.types.*;
 // `Never` is in the prelude, but this module is *part of* what the prelude
 // re-exports, so it names the source directly rather than relying on the
-// prelude having finished assembling itself.
-import root.builtin.type_aliases.*;
+// prelude having finished assembling itself. (No standard-library module
+// relies on the prelude: each imports what it uses, so that it can be
+// imported by a program, which has no prelude.)
+import root.builtin.type_aliases.{Never};
 
 // =============================================================================
 // The primitives underneath
@@ -209,33 +210,10 @@ public func debug_assert(condition: bool) {
     }
 }
 
-// Assert that two values are equal.
-public func assert_eq[T: EqualityComparable + Stringable](a: T, b: T) {
-    if !(a == b) {
-        __panic_in("assertion failed", "expected the two values to be equal");
-    }
-}
-
-// Assert that two values are not equal.
-public func assert_ne[T: EqualityComparable + Stringable](a: T, b: T) {
-    if a == b {
-        __panic_in("assertion failed", "expected the two values to be unequal");
-    }
-}
-
-// Assert that `a < b`.
-public func assert_lt[T: Comparable + Stringable](a: T, b: T) {
-    if !(a < b) {
-        __panic_in("assertion failed", "expected the two values to be less than");
-    }
-}
-
-// Assert that `a <= b`.
-public func assert_le[T: Comparable + Stringable](a: T, b: T) {
-    if !(a <= b) {
-        __panic_in("assertion failed", "expected the two values to be at most");
-    }
-}
+// `assert_eq`, `assert_ne`, `assert_lt` and `assert_le` compare two values
+// of a type parameter, so they are in `std.sys.assert_compare`, which needs
+// what the compiler does not have yet; everything in this module is usable
+// on its own.
 
 // =============================================================================
 // Unreachable

@@ -1,0 +1,44 @@
+// =============================================================================
+// std/sys/assert_compare.code — assertions that compare two values
+// =============================================================================
+//
+// `assert_eq`, `assert_ne`, `assert_lt` and `assert_le`: the assertions of
+// `std.sys.terminate` that compare two values of any comparable type.
+//
+// Not importable yet. They are written against what the compiler does not
+// have: `==` and `<` on a type parameter (operators are not resolved through
+// traits), and the `Stringable` bound, whose `to_string` returns `String`,
+// which does not check. They are kept apart from `std.sys.terminate` so
+// that `panic`, `exit` and `assert` can be imported meanwhile.
+// =============================================================================
+
+import root.sys.terminate.{__panic_in};
+import root.builtin.traits.{EqualityComparable, Comparable, Stringable};
+
+// Assert that two values are equal.
+public func assert_eq[T: EqualityComparable + Stringable](a: T, b: T) {
+    if !(a == b) {
+        __panic_in("assertion failed", "expected the two values to be equal");
+    }
+}
+
+// Assert that two values are not equal.
+public func assert_ne[T: EqualityComparable + Stringable](a: T, b: T) {
+    if a == b {
+        __panic_in("assertion failed", "expected the two values to be unequal");
+    }
+}
+
+// Assert that `a < b`.
+public func assert_lt[T: Comparable + Stringable](a: T, b: T) {
+    if !(a < b) {
+        __panic_in("assertion failed", "expected the two values to be less than");
+    }
+}
+
+// Assert that `a <= b`.
+public func assert_le[T: Comparable + Stringable](a: T, b: T) {
+    if !(a <= b) {
+        __panic_in("assertion failed", "expected the two values to be at most");
+    }
+}
