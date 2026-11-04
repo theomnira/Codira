@@ -935,6 +935,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "codira_ai"
+version = "0.6.0-dev"
+
+[[package]]
 name = "codira_capi_utils"
 version = "0.6.0-dev"
 dependencies = [

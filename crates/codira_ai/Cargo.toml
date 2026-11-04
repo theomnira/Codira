@@ -1,0 +1,15 @@
+[package]
+name = "codira_ai"
+description = "Native tensor and reverse-mode autodiff engine for std.ai: strided N-d tensors with broadcasting, a tape-based autograd checked against central differences, layers, optimisers, INT8 quantisation and a byte-level BPE tokenizer. Pure Rust, std only."
+keywords = ["codira", "tensor", "autodiff", "machine-learning"]
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme = "README.md"
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
