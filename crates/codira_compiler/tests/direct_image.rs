@@ -13,7 +13,8 @@
 use std::sync::Mutex;
 
 use codira_compiler::{
-    image_link_stats, Config, Driver, Target, DIRECT_ELF_ENV, DIRECT_LINK_ENV, LINK_VERIFY_ENV,
+    image_link_stats, Config, Driver, Target, DIRECT_ELF_ENV, DIRECT_LINK_ENV, LINK_MODE_ENV,
+    LINK_VERIFY_ENV,
 };
 use codira_image::{elfinfo, peinfo};
 use tempfile::TempDir;
@@ -127,6 +128,9 @@ fn the_escape_hatch_links_with_lld_alone() {
 fn a_linux_build_with_the_elf_writer_gives_a_library_the_loader_accepts() {
     with_environment(
         &[
+            // Direct mode is the default only on Windows hosts; ask for it so
+            // the test means the same on every host.
+            (LINK_MODE_ENV, Some("direct")),
             (DIRECT_LINK_ENV, Some("1")),
             (DIRECT_ELF_ENV, Some("1")),
             (LINK_VERIFY_ENV, Some("1")),
@@ -155,7 +159,11 @@ fn a_linux_build_with_the_elf_writer_gives_a_library_the_loader_accepts() {
 #[test]
 fn without_the_opt_in_a_linux_build_goes_to_lld() {
     with_environment(
-        &[(DIRECT_LINK_ENV, Some("1")), (DIRECT_ELF_ENV, None)],
+        &[
+            (LINK_MODE_ENV, Some("direct")),
+            (DIRECT_LINK_ENV, Some("1")),
+            (DIRECT_ELF_ENV, None),
+        ],
         || {
             let dir = package(SOURCE);
             let before = image_link_stats();
