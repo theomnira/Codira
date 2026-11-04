@@ -23,6 +23,8 @@ mod fuel;
 mod function_info;
 mod marshal;
 pub mod memtag;
+pub mod native_fs;
+pub mod native_hash;
 pub mod native_memory;
 mod reflection;
 mod tasks;
@@ -335,6 +337,10 @@ impl Runtime {
 
         // Raw memory services for `std/memory/{region,page}.code`
         options.user_functions.extend(native_memory::functions());
+
+        // File services for `std/fs/fs.code`, hashing for `std/crypto/hash.code`
+        options.user_functions.extend(native_fs::functions());
+        options.user_functions.extend(native_hash::functions());
 
         // What fuel-instrumented code calls when its budget runs out
         options.user_functions.push(IntoFunctionDefinition::into(

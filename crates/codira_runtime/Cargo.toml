@@ -28,6 +28,13 @@ parking_lot = { workspace = true }
 rustc-hash = { workspace = true }
 seq-macro = { workspace = true }
 thiserror = { workspace = true }
+# The hash services (`native_hash`): reviewed implementations, never our own.
+sha2 = { workspace = true }
+blake3 = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+# `close(2)` with its error and `F_FULLFSYNC` (`native_fs`).
+libc = { workspace = true }
 
 [build-dependencies]
 cc = "1.2.2"

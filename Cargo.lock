@@ -1316,6 +1316,7 @@ dependencies = [
 name = "codira_runtime"
 version = "0.6.0-dev"
 dependencies = [
+ "blake3",
  "cc",
  "codira_abi",
  "codira_capi_utils",
@@ -1325,6 +1326,7 @@ dependencies = [
  "codira_project",
  "codira_test",
  "itertools 0.12.1",
+ "libc",
  "libloading",
  "log",
  "notify",
@@ -1332,6 +1334,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "rustc-hash 1.1.0",
  "seq-macro",
+ "sha2 0.11.1",
  "tempfile",
  "termcolor",
  "thiserror 1.0.69",
