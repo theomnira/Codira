@@ -9,9 +9,28 @@ use std::{collections::HashMap, sync::Arc};
 use annotate_snippets::{Annotation, AnnotationType, Renderer, Slice, Snippet, SourceAnnotation};
 use codira_diagnostics::DiagnosticForWith;
 use codira_hir::HirDatabase;
-use codira_hir_input::{FileId, LineIndex};
+use codira_hir_input::{FileId, LineIndex, SourceDatabase};
 use codira_paths::RelativePathBuf;
 use codira_syntax::SyntaxError;
+
+/// The path a diagnostic names a file by: relative to its package's source
+/// directory, and for a file of a named package (the standard library)
+/// prefixed with the package's name, `std/crypto/hash.code`, so an error in
+/// a standard-library module a program imports is never mistaken for one in
+/// the program's own file of the same relative path.
+pub(crate) fn display_path(db: &dyn SourceDatabase, file_id: FileId) -> RelativePathBuf {
+    let relative = db.file_relative_path(file_id);
+    let source_root = db.file_source_root(file_id);
+    let packages = db.packages();
+    let name = packages
+        .iter()
+        .find(|package| packages[*package].source_root == source_root)
+        .and_then(|package| packages[package].name.clone());
+    match name {
+        Some(name) => RelativePathBuf::from(name).join(relative),
+        None => relative,
+    }
+}
 
 /// Writes the specified syntax error to the output stream.
 pub(crate) fn emit_syntax_error(
@@ -98,7 +117,7 @@ fn emit_diagnostic(
 
         // Add primary annotations
         annotations.push(AnnotationFile {
-            relative_file_path: db.file_relative_path(file_id).to_relative_path_buf(),
+            relative_file_path: display_path(db, file_id),
             source_code: db.file_text(file_id),
             line_index: db.line_index(file_id),
             annotations: vec![match diagnostic.primary_annotation() {
@@ -120,7 +139,7 @@ fn emit_diagnostic(
                 None => {
                     // Doesn't exist yet, add it
                     annotations.push(AnnotationFile {
-                        relative_file_path: db.file_relative_path(file_id),
+                        relative_file_path: display_path(db, file_id),
                         source_code: db.file_text(file_id),
                         line_index: db.line_index(file_id),
                         annotations: Vec::new(),

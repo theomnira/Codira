@@ -36,7 +36,6 @@
 // to the length; the digests are not secret-typed values.
 // =============================================================================
 
-import root.builtin.types.*;
 
 extern "C" {
     @noalloc @nopanic @noblock

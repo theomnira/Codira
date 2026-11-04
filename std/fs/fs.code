@@ -44,7 +44,6 @@
 // no assertion is made.
 // =============================================================================
 
-import root.builtin.types.*;
 
 extern "C" {
     func codira_fs_open(path_addr: usize, path_len: usize, flags: u32) -> i64;
