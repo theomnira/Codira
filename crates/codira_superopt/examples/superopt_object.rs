@@ -19,12 +19,12 @@ use codira_mcode::measure::Mode;
 use codira_mcode::profile::{Objective, Profile};
 use codira_mcode::x86::{Reg, X86_64};
 use codira_mcode::{Block, Isa};
-use codira_superopt::{select_by_measurement, superoptimize, Config};
+use codira_superopt::{select_by_measurement, superoptimize, Config, ConstantTime, Origin};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.len() < 2 {
-        eprintln!("usage: superopt_object <object> <profile> [latency|throughput] [--measure]");
+        eprintln!("usage: superopt_object <object> <profile> [latency|throughput] [--measure] [--no-constant-time-code]");
         std::process::exit(2);
     }
     let (obj, profile) = (&args[0], &args[1]);
@@ -34,6 +34,11 @@ fn main() {
         Objective::Latency
     };
     let measure = args.iter().any(|a| a == "--measure");
+    let constant_time = if args.iter().any(|a| a == "--no-constant-time-code") {
+        ConstantTime::NotRequired
+    } else {
+        ConstantTime::Unknown
+    };
     let profile = Profile::parse(&std::fs::read_to_string(profile).expect("read profile"))
         .expect("parse profile");
     let objdump = std::env::var("LLVM_OBJDUMP").ok().unwrap_or_else(|| {
@@ -142,7 +147,12 @@ fn main() {
                 objective,
                 ..Config::default()
             };
-            match superoptimize(&block, &profile, &config) {
+            match superoptimize(
+                &Origin::new(name.clone(), constant_time),
+                &block,
+                &profile,
+                &config,
+            ) {
                 Ok(d) => {
                     println!("{d}");
                     if d.improvement().is_some() {

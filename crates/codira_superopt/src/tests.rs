@@ -3,7 +3,11 @@ use codira_mcode::profile::{Objective, Profile};
 use codira_mcode::x86::{Reg, X86_64};
 use codira_mcode::{prove_equivalent, Block};
 
-use crate::{cache_key, superoptimize, superoptimize_cached, Config};
+use crate::{cache_key, superoptimize, superoptimize_cached, Config, ConstantTime, Origin};
+
+fn plain() -> Origin {
+    Origin::new("f", ConstantTime::NotRequired)
+}
 
 /// Unit-test profile with round numbers; the shipped profiles are in
 /// `crates/codira_mcode/profiles/`.
@@ -59,7 +63,7 @@ fn multiply_by_constant_becomes_cheaper_and_is_proven() {
         &[Reg::Rdi, Reg::Rsi],
         Reg::Rax,
     );
-    let d = superoptimize(&b, &p, &Config::default()).unwrap();
+    let d = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     let c = d.improvement().expect("a cheaper sequence exists");
     assert!(c.cost.latency < d.original_cost.latency, "{d}");
     assert!(prove_equivalent(&b, &c.block).is_proven());
@@ -71,7 +75,7 @@ fn multiply_by_constant_becomes_cheaper_and_is_proven() {
 fn optimal_code_is_left_alone() {
     let p = Profile::parse(X86).unwrap();
     let b = x86("lea rax, [rdi + rsi]", &[Reg::Rdi, Reg::Rsi], Reg::Rax);
-    let d = superoptimize(&b, &p, &Config::default()).unwrap();
+    let d = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     assert!(d.improvement().is_none(), "{d}");
 }
 
@@ -84,7 +88,7 @@ fn redundant_sequence_collapses() {
         &[Reg::Rdi, Reg::Rsi],
         Reg::Rax,
     );
-    let d = superoptimize(&b, &p, &Config::default()).unwrap();
+    let d = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     let c = d.improvement().unwrap();
     assert_eq!(c.block.insts.len(), 1, "{d}");
     assert_eq!(c.block.to_string(), "mov rax, rdi\n");
@@ -100,7 +104,7 @@ fn preserved_registers_are_never_written() {
         &[Reg::Rdi],
         Reg::Rax,
     );
-    let d = superoptimize(&b, &p, &Config::default()).unwrap();
+    let d = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     for c in &d.candidates {
         assert!(!c.block.written().contains(&Reg::Rdi), "{}", c.block);
         assert!(prove_equivalent(&b, &c.block).is_proven());
@@ -119,7 +123,7 @@ fn signedness_corner_needs_the_solver() {
         &[Reg::Rdi],
         Reg::Rax,
     );
-    let d = superoptimize(&b, &p, &Config::default()).unwrap();
+    let d = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     let c = d.improvement().unwrap();
     assert!(c.block.to_string().contains("sar"), "{d}");
 }
@@ -132,7 +136,7 @@ fn features_the_target_lacks_are_not_used() {
         &[Reg::Rdi, Reg::Rsi],
         Reg::Rax,
     );
-    let with = superoptimize(&b, &p, &Config::default()).unwrap();
+    let with = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     assert!(
         with.improvement()
             .unwrap()
@@ -142,7 +146,7 @@ fn features_the_target_lacks_are_not_used() {
         "{with}"
     );
     p.features.clear();
-    let without = superoptimize(&b, &p, &Config::default()).unwrap();
+    let without = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     for c in &without.candidates {
         assert!(!c.block.to_string().contains("andn"));
     }
@@ -157,7 +161,7 @@ fn multiple_live_outs_are_refused() {
         vec![Reg::Rax, Reg::Rcx],
     )
     .unwrap();
-    assert!(superoptimize(&b, &p, &Config::default()).is_err());
+    assert!(superoptimize(&plain(), &b, &p, &Config::default()).is_err());
 }
 
 #[test]
@@ -170,7 +174,7 @@ fn aarch64_uses_shifted_operands_and_madd() {
         vec![A(0)],
     )
     .unwrap();
-    let d = superoptimize(&b, &p, &Config::default()).unwrap();
+    let d = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     let c = d.improvement().unwrap();
     assert!(c.cost.latency <= 2.0, "{d}");
     assert!(prove_equivalent(&b, &c.block).is_proven());
@@ -192,13 +196,13 @@ fn cache_key_binds_profile_and_config_and_hits_revalidate() {
 
     let dir = std::env::temp_dir().join(format!("codira_superopt_cache_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
-    let (first, hit1) = superoptimize_cached(&b, &p, &Config::default(), &dir).unwrap();
-    let (second, hit2) = superoptimize_cached(&b, &p, &Config::default(), &dir).unwrap();
+    let (first, hit1) = superoptimize_cached(&plain(), &b, &p, &Config::default(), &dir).unwrap();
+    let (second, hit2) = superoptimize_cached(&plain(), &b, &p, &Config::default(), &dir).unwrap();
     assert!(!hit1 && hit2);
     assert_eq!(first, second);
     // A tampered entry is detected (revalidation fails) and recomputed.
     std::fs::write(dir.join(format!("{k1}.mcode")), "lea rax, [rdi + 4*rdi]\n").unwrap();
-    let (third, hit3) = superoptimize_cached(&b, &p, &Config::default(), &dir).unwrap();
+    let (third, hit3) = superoptimize_cached(&plain(), &b, &p, &Config::default(), &dir).unwrap();
     assert!(!hit3);
     assert_eq!(third, first);
     let _ = std::fs::remove_dir_all(&dir);
@@ -212,8 +216,8 @@ fn search_is_deterministic() {
         &[Reg::Rdi, Reg::Rsi],
         Reg::Rax,
     );
-    let a = superoptimize(&b, &p, &Config::default()).unwrap();
-    let c = superoptimize(&b, &p, &Config::default()).unwrap();
+    let a = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
+    let c = superoptimize(&plain(), &b, &p, &Config::default()).unwrap();
     let blocks = |d: &crate::Decision<X86_64>| {
         d.candidates
             .iter()
@@ -248,4 +252,32 @@ fn shipped_profiles_parse_and_cost_the_mandate_example() {
     );
     // Measured on this core: imul 3 cycles, scaled lea 2 cycles.
     assert!(x.cost(&lea).unwrap().latency < x.cost(&imul).unwrap().latency);
+}
+
+#[test]
+fn constant_time_and_unknown_origins_are_refused_with_a_diagnostic() {
+    let p = Profile::parse(X86).unwrap();
+    // A block the search would otherwise improve.
+    let b = x86(
+        "mov rax, rdi\nxor rax, rsi\nxor rax, rsi",
+        &[Reg::Rdi, Reg::Rsi],
+        Reg::Rax,
+    );
+    assert!(superoptimize(&plain(), &b, &p, &Config::default())
+        .unwrap()
+        .improvement()
+        .is_some());
+    let ct = Origin::new("compare_tags", ConstantTime::Required);
+    let e = superoptimize(&ct, &b, &p, &Config::default()).unwrap_err();
+    assert!(
+        e.contains("compare_tags") && e.contains("constant time"),
+        "{e}"
+    );
+    let unknown = Origin::new("g", ConstantTime::Unknown);
+    let e = superoptimize(&unknown, &b, &p, &Config::default()).unwrap_err();
+    assert!(e.contains("unknown"), "{e}");
+    // The cached entry point refuses before looking at the cache.
+    let dir = std::env::temp_dir().join(format!("codira_superopt_ct_{}", std::process::id()));
+    assert!(superoptimize_cached(&ct, &b, &p, &Config::default(), &dir).is_err());
+    assert!(!dir.exists());
 }

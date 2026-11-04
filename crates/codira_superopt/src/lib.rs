@@ -42,7 +42,8 @@
 //! calls, stack operations or frame setup, and a rewrite keeps the block's
 //! boundaries.
 //!
-//! Limits (refused, not approximated): one live-out; flags dead at the end
+//! Limits (refused, not approximated): code that must run in constant time,
+//! or whose status is unknown ([`Origin`]); one live-out; flags dead at the end
 //! of the block (all modelled flag-writing instructions overwrite them); no
 //! memory; the original's registers that it does not write are preserved.
 
@@ -335,12 +336,68 @@ fn immediate_pool<I: Isa>(block: &Block<I>) -> Vec<i64> {
     pool
 }
 
-/// Superoptimises `block` under `profile`.
+/// Whether the code a block comes from must run in constant time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ConstantTime {
+    /// The function is not `oblivious` (or otherwise constant-time), and
+    /// the block is reachable from at least one function that is not.
+    NotRequired,
+    /// The function is `oblivious`, or the block is reachable only from
+    /// constant-time functions.
+    Required,
+    /// The caller cannot tell (for example, an object file without the
+    /// source's annotations).
+    Unknown,
+}
+
+/// Where a block comes from. Every entry point takes one, so that code with
+/// timing obligations is refused explicitly rather than rewritten.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct Origin {
+    pub function: String,
+    pub constant_time: ConstantTime,
+}
+
+impl Origin {
+    pub fn new(function: impl Into<String>, constant_time: ConstantTime) -> Origin {
+        Origin {
+            function: function.into(),
+            constant_time,
+        }
+    }
+
+    /// Refuses code whose timing must not change, or whose status is
+    /// unknown. A rewrite proven equivalent in value can still change which
+    /// instructions run and how long they take (an `imul` replaced by a
+    /// data-independent shift sequence is harmless; the reverse direction,
+    /// or a `cmov` turned into arithmetic, need not be), and no machine-code
+    /// constant-time check rechecks the result yet.
+    pub fn check(&self) -> Result<(), String> {
+        match self.constant_time {
+            ConstantTime::NotRequired => Ok(()),
+            ConstantTime::Required => Err(format!(
+                "refusing to superoptimise `{}`: it must run in constant time, a rewrite may change its \
+                 timing, and no machine-code constant-time check can recheck the result yet",
+                self.function
+            )),
+            ConstantTime::Unknown => Err(format!(
+                "refusing to superoptimise `{}`: whether it must run in constant time is unknown \
+                 (pass `ConstantTime::NotRequired` only when the source says so)",
+                self.function
+            )),
+        }
+    }
+}
+
+/// Superoptimises `block`, which comes from `origin`, under `profile`.
+/// Refuses constant-time and unknown origins ([`Origin::check`]).
 pub fn superoptimize<I: SynthIsa>(
+    origin: &Origin,
     block: &Block<I>,
     profile: &Profile,
     config: &Config,
 ) -> Result<Decision<I>, String> {
+    origin.check()?;
     block.check()?;
     profile.supports(block)?;
     if block.live_out.len() != 1 {
@@ -771,11 +828,13 @@ pub fn cache_key<I: Isa>(block: &Block<I>, profile: &Profile, config: &Config) -
 /// the result. The cache stores only the chosen sequence (or that the
 /// original was kept); evidence is always recomputed, never trusted.
 pub fn superoptimize_cached<I: SynthIsa>(
+    origin: &Origin,
     block: &Block<I>,
     profile: &Profile,
     config: &Config,
     dir: &Path,
 ) -> Result<(Option<Block<I>>, bool), String> {
+    origin.check()?;
     let key = cache_key(block, profile, config);
     let path = dir.join(format!("{key}.mcode"));
     if let Ok(text) = std::fs::read_to_string(&path) {
@@ -789,7 +848,7 @@ pub fn superoptimize_cached<I: SynthIsa>(
         }
         // Stale or corrupt entry: fall through and recompute.
     }
-    let d = superoptimize(block, profile, config)?;
+    let d = superoptimize(origin, block, profile, config)?;
     let chosen = d.improvement().map(|c| c.block.clone());
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let body = match &chosen {
