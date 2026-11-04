@@ -1374,7 +1374,10 @@ mod tests {
         // "Z3 4.13.0.0"; either way it carries the release's numbers.
         let version = z3_version();
         let numbers = version.trim_start_matches("Z3 ");
-        assert!(numbers.starts_with(|c: char| c.is_ascii_digit()), "{version}");
+        assert!(
+            numbers.starts_with(|c: char| c.is_ascii_digit()),
+            "{version}"
+        );
     }
 
     #[test]

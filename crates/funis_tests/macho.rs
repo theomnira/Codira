@@ -9,8 +9,7 @@ use std::process::{Command, ExitCode, Stdio};
 use crate::simulator::{self, Device, Runtime, Simulator};
 use crate::{
     Listed, Mode, Options, Target, fail, make_jobs, parse_options, prepare_work_dir,
-    print_inventory, print_summary, print_test_list, run_exact, run_jobs, selected_scripts,
-    usage,
+    print_inventory, print_summary, print_test_list, run_exact, run_jobs, selected_scripts, usage,
 };
 
 /// The simulator triples a run adds to the host's targets by default, and

@@ -244,18 +244,7 @@ fn parse_options() -> Options {
         cpu = var("CPU").map(|s| s.to_string_lossy().into_owned());
     }
 
-    Options {
-        jobs,
-        mode,
-        cpu,
-        patterns,
-        timeout,
-        list,
-        terse,
-        ignored,
-        include_ignored,
-        exact,
-    }
+    Options { jobs, mode, cpu, patterns, timeout, list, terse, ignored, include_ignored, exact }
 }
 
 fn matches_target(name: &str, target: &Target) -> bool {

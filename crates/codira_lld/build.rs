@@ -288,7 +288,10 @@ fn main() {
     // Link LLVM libraries
     println!("cargo:rustc-link-search=native={libdir}");
     if let Some(prefix) = &lld_prefix {
-        println!("cargo:rustc-link-search=native={}", prefix.join("lib").display());
+        println!(
+            "cargo:rustc-link-search=native={}",
+            prefix.join("lib").display()
+        );
     }
     let blacklist = ["LLVMLineEditor"];
     for name in get_link_libraries()
@@ -320,7 +323,14 @@ fn main() {
         .chain(lld_prefix.iter().map(|prefix| prefix.join("lib")))
         .collect();
     let has = |file: &str| lib_dirs.iter().any(|dir| dir.join(file).is_file());
-    for name in ["lldCOFF", "lldCommon", "lldELF", "lldMachO", "lldMinGW", "lldWasm"] {
+    for name in [
+        "lldCOFF",
+        "lldCommon",
+        "lldELF",
+        "lldMachO",
+        "lldMinGW",
+        "lldWasm",
+    ] {
         let kind = if target_env_is("msvc") {
             "static"
         } else if has(&format!("lib{name}.a")) {
