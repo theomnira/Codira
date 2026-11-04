@@ -889,3 +889,134 @@ fn envelope_report_infers_every_function() {
         .unwrap();
     assert!(because.contains("`println` formats"), "{because}");
 }
+
+// ---- package envelopes, values and comparisons (version 1) ---------------
+
+#[test]
+fn envelope_from_manifest_pairs_takes_the_attribute_keys_and_rejects_the_rest() {
+    let envelope = super::Envelope::from_pairs([
+        ("allocation", "none"),
+        ("blocking", "false"),
+        ("foreign", "any"),
+    ]);
+    assert!(envelope.errors.is_empty(), "{:?}", envelope.errors);
+    assert_eq!(envelope.forbidden(), set(&[Effect::Alloc, Effect::Block]));
+
+    let envelope = super::Envelope::from_pairs([
+        ("reads", "Account"),
+        ("colour", "blue"),
+        ("allocation", "maybe"),
+        ("panic", "false"),
+        ("panic", "true"),
+    ]);
+    let errors = envelope.errors.join("\n");
+    assert!(
+        errors.contains(
+            "`[envelope]` key `reads` is part of the semantic-envelope design but cannot be \
+             checked yet"
+        ),
+        "{errors}"
+    );
+    assert!(
+        errors.contains("unknown `[envelope]` key `colour`"),
+        "{errors}"
+    );
+    assert!(
+        errors.contains("`[envelope]` key `allocation` takes `none` or `any`, not `maybe`"),
+        "{errors}"
+    );
+    assert!(
+        errors.contains("`[envelope]` key `panic` is given more than once"),
+        "{errors}"
+    );
+    assert_eq!(envelope.errors.len(), 4, "{errors}");
+
+    let empty = super::Envelope::from_pairs([]);
+    assert!(
+        empty.errors[0].contains("has no keys"),
+        "{:?}",
+        empty.errors
+    );
+}
+
+#[test]
+fn envelope_package_checks_public_functions_through_private_callees() {
+    let (db, _) = MockDatabase::with_single_file(
+        r#"
+    class Buffer { len: i64 }
+    func make(n: i64) -> i64 { let b = Buffer { len: n }; b.len }
+    func unreached() { println("never called from the public API") }
+    public func run(n: i64) -> i64 { make(n) }
+    public func pure(x: i64) -> i64 { x * 2 }
+    "#,
+    );
+    let envelope = super::Envelope::from_pairs([("allocation", "none"), ("foreign", "none")]);
+    let violations = super::package_envelope_violations(&db, &envelope);
+    assert_eq!(violations.len(), 1, "{violations:#?}");
+    let run = &violations[0];
+    assert_eq!(run.name, "run");
+    assert_eq!(run.keys, vec!["allocation"]);
+    assert!(
+        run.message.contains(
+            "public function `run` (mod.code:4) does not fit the package envelope \
+             (`[envelope]` in codira.toml: allocation = \"none\"): it allocates"
+        ),
+        "{}",
+        run.message
+    );
+    assert!(
+        run.message
+            .contains("calls `make` (line 4); class `Buffer` constructed at line 2"),
+        "{}",
+        run.message
+    );
+
+    // An envelope that forbids nothing constrains nothing.
+    let permissive = super::Envelope::from_pairs([("allocation", "any")]);
+    assert!(super::package_envelope_violations(&db, &permissive).is_empty());
+}
+
+#[test]
+fn envelope_values_and_their_direction_of_change() {
+    use super::envelope::{compare_values, inferred_values, Movement, KEY_NAMES};
+    let (db, _) = MockDatabase::with_single_file(
+        r#"
+    func pure(x: i64) -> i64 { x + 1 }
+    func noisy() { println("hi") }
+    "#,
+    );
+    let functions: Vec<_> = Package::all(&db)
+        .iter()
+        .flat_map(|p| p.modules(&db))
+        .flat_map(|m| m.all_functions(&db))
+        .collect();
+    let by_name = |name: &str| {
+        *functions
+            .iter()
+            .find(|f| f.name(&db).to_string() == name)
+            .unwrap()
+    };
+    let pure = inferred_values(&db, by_name("pure"));
+    let noisy = inferred_values(&db, by_name("noisy"));
+    assert_eq!(pure.iter().map(|(k, _)| *k).collect::<Vec<_>>(), KEY_NAMES);
+    assert!(pure.contains(&("allocation", "none")));
+    assert!(noisy.contains(&("allocation", "any")));
+    assert!(noisy.contains(&("blocking", "true")));
+
+    let widened = compare_values(&pure, &noisy);
+    assert!(
+        widened.contains(&("allocation", Movement::Widened)),
+        "{widened:?}"
+    );
+    assert!(widened.iter().all(|(_, m)| *m == Movement::Widened));
+    let narrowed = compare_values(&noisy, &pure);
+    assert!(narrowed.contains(&("allocation", Movement::Narrowed)));
+    assert!(narrowed.iter().all(|(_, m)| *m == Movement::Narrowed));
+    assert!(compare_values(&pure, &pure).is_empty());
+    // A value that is not one of its key's two cannot be compared, so it
+    // counts as widened.
+    assert_eq!(
+        compare_values(&[("allocation", "any")], &[("allocation", "some")]),
+        vec![("allocation", Movement::Widened)]
+    );
+}

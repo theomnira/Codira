@@ -8,6 +8,12 @@
 //!   declaration against everything the function calls, and
 //!   [`envelope_report`] gives every function's *inferred* envelope as
 //!   data, for `codira envelope`.
+//! - Version 1: a package envelope (`[envelope]` in `codira.toml`,
+//!   [`Envelope::from_pairs`]) that every `public` function must fit
+//!   ([`package_envelope_violations`]); each function's inferred values for
+//!   proof certificates ([`inferred_values`]); and the direction a value
+//!   moved in between two versions, for `codira api-diff`
+//!   ([`compare_values`]).
 //!
 //! Tier B (experimental) of the Frontier Systems Laboratory; the design,
 //! prior art and limits are in `lab/rfcs/0001-semantic-envelope.md`.
@@ -107,6 +113,18 @@ const KEYS: &[Key] = &[
         forbid: "none",
         allow: "any",
     },
+];
+
+/// The names of the checked keys, in the order reports list them.
+pub const KEY_NAMES: [&str; 8] = [
+    "allocation",
+    "blocking",
+    "panic",
+    "termination",
+    "foreign",
+    "concurrency",
+    "effects",
+    "secrecy",
 ];
 
 /// Keys of the CSE design that have no checker yet, and what each would
@@ -210,11 +228,36 @@ impl Envelope {
         envelope
     }
 
+    /// An envelope given as `key = value` pairs: the manifest's `[envelope]`
+    /// table. Keys and values are exactly those of the attribute, and an
+    /// unknown, unchecked, repeated or ill-valued key is an error in the
+    /// same words, naming `[envelope]` instead of `@envelope`.
+    pub fn from_pairs<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> Envelope {
+        let mut envelope = Envelope::default();
+        let mut seen: Vec<&'static str> = Vec::new();
+        for (name, value) in pairs {
+            envelope.clause_in("`[envelope]`", name, value.trim().to_string(), &mut seen);
+        }
+        if envelope.clauses.is_empty() && envelope.errors.is_empty() {
+            envelope.errors.push(
+                "`[envelope]` in codira.toml has no keys; give it some, e.g. \
+                 `allocation = \"none\"`, or remove it"
+                    .to_string(),
+            );
+        }
+        envelope
+    }
+
     fn clause(&mut self, name: &str, value: String, seen: &mut Vec<&'static str>) {
+        self.clause_in("`@envelope`", name, value, seen);
+    }
+
+    /// Accepts or rejects one clause; `what` names where it was written.
+    fn clause_in(&mut self, what: &str, name: &str, value: String, seen: &mut Vec<&'static str>) {
         if let Some(key) = KEYS.iter().find(|k| k.name == name) {
             if seen.contains(&key.name) {
                 self.errors
-                    .push(format!("`@envelope` key `{name}` is given more than once"));
+                    .push(format!("{what} key `{name}` is given more than once"));
                 return;
             }
             seen.push(key.name);
@@ -224,7 +267,7 @@ impl Envelope {
                 false
             } else {
                 self.errors.push(format!(
-                    "`@envelope` key `{name}` takes `{}` or `{}`, not `{value}`",
+                    "{what} key `{name}` takes `{}` or `{}`, not `{value}`",
                     key.forbid, key.allow
                 ));
                 return;
@@ -237,14 +280,13 @@ impl Envelope {
             });
         } else if let Some((_, needs)) = UNCHECKED_KEYS.iter().find(|(k, _)| *k == name) {
             self.errors.push(format!(
-                "`@envelope` key `{name}` is part of the semantic-envelope design but cannot be \
+                "{what} key `{name}` is part of the semantic-envelope design but cannot be \
                  checked yet: it needs {needs}. It is rejected rather than accepted unchecked"
             ));
         } else {
-            let known: Vec<&str> = KEYS.iter().map(|k| k.name).collect();
             self.errors.push(format!(
-                "unknown `@envelope` key `{name}`; the checked keys are {}",
-                known
+                "unknown {what} key `{name}`; the checked keys are {}",
+                KEY_NAMES
                     .iter()
                     .map(|k| format!("`{k}`"))
                     .collect::<Vec<_>>()
@@ -387,4 +429,186 @@ fn explain(
         (None, Some(rec)) => format!("{} at {}", rec.what, super::location(db, home, &rec.site)),
         (None, None) => "no witness recorded".to_string(),
     }
+}
+
+// ---- version 1: values, package envelopes, comparisons --------------------
+
+/// `function`'s inferred envelope as `(key, value)` pairs, one per checked
+/// key in [`KEY_NAMES`] order: the value a proof certificate records and
+/// `codira api-diff` compares.
+pub fn inferred_values(
+    db: &dyn HirDatabase,
+    function: Function,
+) -> Vec<(&'static str, &'static str)> {
+    let summary = db.effect_summary(function);
+    KEYS.iter()
+        .map(|key| {
+            let value = if summary.effects.contains(key.effect) {
+                key.allow
+            } else {
+                key.forbid
+            };
+            (key.name, value)
+        })
+        .collect()
+}
+
+/// How a key's value moved between two envelopes of one function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Movement {
+    /// From the forbidding value to the allowing one: the function may now
+    /// do something it could not before.
+    Widened,
+    /// From the allowing value to the forbidding one.
+    Narrowed,
+}
+
+/// Every key whose value differs between `old` and `new` (both as
+/// [`inferred_values`] gives them), with the direction it moved in. A key
+/// present on one side only, or a value that is neither of its key's two,
+/// counts as widened: a value that cannot be compared is never assumed
+/// harmless.
+pub fn compare_values(old: &[(&str, &str)], new: &[(&str, &str)]) -> Vec<(&'static str, Movement)> {
+    KEYS.iter()
+        .filter_map(|key| {
+            let was = old.iter().find_map(|(k, v)| (*k == key.name).then_some(*v));
+            let now = new.iter().find_map(|(k, v)| (*k == key.name).then_some(*v));
+            if was == now {
+                return None;
+            }
+            let movement = if was == Some(key.allow) && now == Some(key.forbid) {
+                Movement::Narrowed
+            } else {
+                Movement::Widened
+            };
+            Some((key.name, movement))
+        })
+        .collect()
+}
+
+/// The forbidding value of `key`, if it is a checked key.
+pub fn forbidding_value(key: &str) -> Option<&'static str> {
+    KEYS.iter().find(|k| k.name == key).map(|k| k.forbid)
+}
+
+/// The allowing value of `key`, if it is a checked key.
+pub fn allowing_value(key: &str) -> Option<&'static str> {
+    KEYS.iter().find(|k| k.name == key).map(|k| k.allow)
+}
+
+/// Why `function` has the effect of the checked `key`, as the chain of
+/// calls down to its source; `None` when it does not have it.
+pub fn explain_key(db: &dyn HirDatabase, function: Function, key: &str) -> Option<String> {
+    let key = KEYS.iter().find(|k| k.name == key)?;
+    let summary = db.effect_summary(function);
+    summary
+        .effects
+        .contains(key.effect)
+        .then(|| explain(db, function.source(db).file_id, &summary, key.effect))
+}
+
+/// A public function that does not fit the package's `[envelope]`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PackageViolation {
+    pub function: Function,
+    pub name: String,
+    /// `file.code:12`, the line of the signature.
+    pub location: String,
+    /// The `[envelope]` keys it violates.
+    pub keys: Vec<&'static str>,
+    /// The whole diagnostic, with the call chain to each cause.
+    pub message: String,
+}
+
+/// Checks every `public` function of every package in `db` against
+/// `envelope`, the package's `[envelope]` table, in source order.
+///
+/// Only public functions are checked, and that covers the package: a
+/// function's summary closes over everything it calls, so every effect
+/// reachable from the public API is in some public function's summary. A
+/// private function that no public one reaches is not constrained -- no
+/// caller outside the package can run it. A public `extern` declaration is
+/// checked against what it asserts (its trusted attributes), like any other
+/// call to it.
+///
+/// `envelope.errors` are not reported here; the caller reports them (they
+/// are about the manifest, not about any function).
+pub fn package_envelope_violations(
+    db: &dyn HirDatabase,
+    envelope: &Envelope,
+) -> Vec<PackageViolation> {
+    use crate::{HasVisibility, Visibility};
+
+    let forbidden = envelope.forbidden();
+    if forbidden.is_empty() {
+        return Vec::new();
+    }
+    let mut functions: Vec<Function> = Package::all(db)
+        .into_iter()
+        .flat_map(|package| package.modules(db))
+        .flat_map(|module| module.all_functions(db))
+        .filter(|f| f.visibility(db) == Visibility::Public)
+        .collect();
+    functions.sort_by_key(|f| {
+        (
+            f.file_id(db),
+            f.source(db).value.syntax().text_range().start(),
+        )
+    });
+
+    let mut violations = Vec::new();
+    for function in functions {
+        let summary = db.effect_summary(function);
+        let hit = summary.effects.intersection(forbidden);
+        if hit.is_empty() {
+            continue;
+        }
+        let src = function.source(db);
+        let home = src.file_id;
+        let line = db
+            .line_index(home)
+            .line_col(src.value.signature_range().start())
+            .line;
+        let location = format!("{}:{}", db.file_relative_path(home), line + 1);
+        let name = function.name(db).to_string();
+        let keys: Vec<&'static str> = KEYS
+            .iter()
+            .filter(|k| hit.contains(k.effect))
+            .map(|k| k.name)
+            .collect();
+        let clauses: Vec<String> = envelope
+            .clauses
+            .iter()
+            .filter(|c| c.forbids && hit.contains(c.effect))
+            .map(|c| format!("{} = \"{}\"", c.key, c.value))
+            .collect();
+        // One explanation per distinct cause, naming every effect it
+        // explains, as the attribute diagnostics do.
+        let mut causes: Vec<(EffectSet, String)> = Vec::new();
+        for effect in hit.iter() {
+            let because = explain(db, home, &summary, effect);
+            match causes.iter_mut().find(|(_, b)| *b == because) {
+                Some((set, _)) => *set = set.union(EffectSet::of(&[effect])),
+                None => causes.push((EffectSet::of(&[effect]), because)),
+            }
+        }
+        let causes: Vec<String> = causes
+            .into_iter()
+            .map(|(effects, because)| format!("it {}: {because}", effects.verbs()))
+            .collect();
+        let message = format!(
+            "public function `{name}` ({location}) does not fit the package envelope \
+             (`[envelope]` in codira.toml: {}): {}",
+            clauses.join(", "),
+            causes.join("; ")
+        );
+        violations.push(PackageViolation {
+            function,
+            name,
+            location,
+            keys,
+            message,
+        });
+    }
+    violations
 }

@@ -123,7 +123,10 @@ pub mod envelope;
 #[cfg(test)]
 mod tests;
 
-pub use envelope::{envelope_report, Envelope, FunctionEnvelope};
+pub use envelope::{
+    envelope_report, inferred_values, package_envelope_violations, Envelope, FunctionEnvelope,
+    PackageViolation,
+};
 
 /// Something a function can do that an attribute can rule out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

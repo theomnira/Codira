@@ -244,3 +244,43 @@ fn generic_functions_compare_their_type_parameters_by_position() {
     assert_eq!(only(&d).bump, Some(Bump::Major));
     assert_eq!(only(&d).summary, "changes the signature of `first()`");
 }
+
+#[test]
+fn a_widened_envelope_is_major_and_a_narrowed_one_minor() {
+    // The signature is the same; a private callee starts allocating.
+    let quiet = "func helper(x: i64) -> i64 { x + 1 }\n\
+                 public func f(x: i64) -> i64 { helper(x) }";
+    let noisy = "func helper(x: i64) -> i64 { println(\"hi\"); x + 1 }\n\
+                 public func f(x: i64) -> i64 { helper(x) }";
+    let d = diff(quiet, noisy);
+    let change = only(&d);
+    assert_eq!(change.bump, Some(Bump::Major), "{:#?}", d.changes);
+    assert!(
+        change
+            .summary
+            .starts_with("widens the semantic envelope of `f()` (allocation: none -> any"),
+        "{}",
+        change.summary
+    );
+    assert!(
+        change
+            .details
+            .iter()
+            .any(|d| d.starts_with("allocation is any now: calls `helper`")),
+        "{:#?}",
+        change.details
+    );
+    assert_eq!(d.required(), Bump::Major);
+
+    let d = diff(noisy, quiet);
+    let change = only(&d);
+    assert_eq!(change.bump, Some(Bump::Minor), "{:#?}", d.changes);
+    assert!(
+        change
+            .summary
+            .starts_with("narrows the semantic envelope of `f()` (allocation: any -> none"),
+        "{}",
+        change.summary
+    );
+    assert_eq!(d.required(), Bump::Minor);
+}
