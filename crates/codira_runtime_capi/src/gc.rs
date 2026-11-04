@@ -120,7 +120,13 @@ pub unsafe extern "C" fn codira_gc_unroot(runtime: Runtime, obj: GcPtr) -> Error
 /// Collects all memory that is no longer referenced by rooted objects. If
 /// successful, `reclaimed` is set, otherwise a non-zero error handle is
 /// returned. If `reclaimed` is `true`, memory was reclaimed, otherwise nothing
-/// happend. This behavior will likely change in the future.
+/// happend.
+///
+/// May be called from any thread while other threads run Codira code: the
+/// collection stops every registered thread at a safepoint and scans its
+/// stack. Threads that call Codira functions through raw function pointers
+/// are registered only between `codira_thread_enter` and
+/// `codira_thread_leave`.
 ///
 /// If a non-zero error handle is returned, it must be manually destructed using
 /// [`codira_error_destroy`].

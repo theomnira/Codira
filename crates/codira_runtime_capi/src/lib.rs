@@ -16,6 +16,7 @@ pub mod alloc;
 pub mod diagnostics;
 pub mod gc;
 pub mod runtime;
+pub mod thread;
 
 pub mod function;
 
