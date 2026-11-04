@@ -100,11 +100,12 @@ never run on MTE hardware; CHERI targets are refused) are in progress.
 
 Each stage is a group of crates in `crates/`. Arrows into `codira_smt` (Z3)
 and `codira_tv` are proofs the compiler asks for before it trusts a
-contract, a transformation or a rewrite rule. This is the compiler as of
-4 November 2026: amber outlines mark what was added or changed between
-16 October and 4 November, dashed outlines mark parts that are on `main` but
-unfinished or experimental, and the grey box lists unfinished work that is
-not on `main`.
+contract, a transformation, a rewrite rule or a replacement instruction
+sequence. This is the compiler as of the evening of 4 November 2026: amber
+outlines mark what was added or changed since 16 October, dashed outlines
+mark parts that are on `main` but unfinished, experimental or opt-in, and the
+grey box lists unfinished work that is not on `main`. Stage 8 works on
+machine code: it reads the instructions the back ends produce.
 
 ```mermaid
 flowchart TD
@@ -113,7 +114,7 @@ flowchart TD
         direction LR
         L1["on main before 16 Oct<br/>(plain outline)"]
         L2["added 16 Oct - 4 Nov<br/>(amber outline)"]
-        L3["on main but unfinished or<br/>experimental (dashed)"]
+        L3["on main but unfinished,<br/>experimental or opt-in (dashed)"]
     end
 
     %% ---------------------------------------------------------------- 5
@@ -135,7 +136,7 @@ flowchart TD
     subgraph FRONTEND [" 1. Front end: codira_syntax, codira_hir (salsa) "]
         direction TB
         Src["Codira source<br/>*.code, codira.toml"] --> Parse["codira_syntax<br/>lexer, parser, lossless CST<br/>contextual keywords"]
-        StdLib["std package<br/>import std.crypto.hash, std.fs.fs,<br/>std.memory.region / page;<br/>only modules that check clean,<br/>no implicit prelude"]
+        StdLib["std package<br/>import std.crypto.hash, std.fs.fs, std.memory.region,<br/>std.math.*, std.bit.*, std.complex, std.random.rng,<br/>std.base64, std.hashlib, std.time, std.sys.terminate,<br/>std.collections.optional; a ratchet test records<br/>which modules check clean, no implicit prelude"]
         StdLib --> Parse
         Parse --> ItemTree["Item tree and name resolution<br/>modules, visibility, imports,<br/>names across packages"]
         ItemTree --> Infer["Type inference<br/>generics, optionals, enums,<br/>closures, effect rows"]
@@ -161,6 +162,7 @@ flowchart TD
             Realtime["@noalloc @nopanic<br/>@noblock @realtime<br/>call-graph fixpoint over 8 effects,<br/>uses proven divisions"]
             Envelope["Semantic envelopes<br/>@envelope(allocation: none, ...)<br/>package envelope in codira.toml;<br/>unchecked keys rejected"]
             Codegen_ok["Codegen support<br/>honest refusals"]
+            Bindings["Binding rules<br/>assigning to a let, in-place parameters<br/>and module-level let/var are errors"]
             Realtime --> Envelope
         end
         Infer --> CHECKS
@@ -200,16 +202,17 @@ flowchart TD
     %% ---------------------------------------------------------------- 3
     subgraph BACKENDS [" 3. Back ends: codira_codegen and friends "]
         direction TB
-        LLVMGen["codira_codegen<br/>HIR instance to LLVM IR via inkwell<br/>bounds checks, effects, tasks, fuel,<br/>value-struct host wrappers"]
+        LLVMGen["codira_codegen<br/>HIR instance to LLVM IR via inkwell<br/>bounds checks, effects, tasks, fuel,<br/>value-struct host wrappers, array assignment,<br/>never-returning functions are noreturn,<br/>ct_select stays a cmov at every -O level"]
+        ArrayAlias["array alias classes<br/>TBAA tags for array lengths, elements, handles;<br/>opt-in, CODIRA_ARRAY_TBAA=1"]
         Targets["codira_target<br/>14 targets held to LLVM data layouts<br/>--target-cpu"]
-        Native["[native] C, C++, asm in a package<br/>bitcode linked before optimization"]
+        Native["[native] C, C++, asm in a package<br/>bitcode linked before optimization;<br/>C++ static constructors and destructors run<br/>(.init_array / .fini_array on ELF)"]
         Image["codira_image<br/>direct PE writer (default on Windows),<br/>ELF opt-in, declines what it cannot model"]
         LLD["codira_lld<br/>in-process LLD (fallback)"]
         Lib[".codiralib<br/>hot-reloadable shared library;<br/>imported std modules get their own"]
         Exe["codira build --exe<br/>standalone executable"]
         Wasm["wasm32-unknown-unknown<br/>module that imports nothing"]
         PTX["@target(gpu)<br/>NVPTX, launched by codira_gpu"]
-        CL["codira_cranelift<br/>codira run --jit, no LLVM, no linker<br/>scalar core only"]
+        CL["codira_cranelift<br/>codira run --jit, no LLVM, no linker<br/>scalar core only; bool and 8/16-bit values<br/>extended across calls like LLVM"]
         Quantum["codira_quantum<br/>@target(qpu): circuit IR, simulator,<br/>QIR, OpenQASM 2/3"]
         Circuits["codira_circuits<br/>oblivious function to R1CS, Circom,<br/>Groth16 (attest); Verilog (@target(fpga))"]
         Asm["@asm inline assembly<br/>machine memory intrinsics"]
@@ -219,6 +222,7 @@ flowchart TD
         Bun["Bun plugin<br/>import a .code file"]
 
         LLVMGen --> Targets
+        ArrayAlias -.-> LLVMGen
         Native --> LLVMGen
         Asm --> LLVMGen
         Targets --> Image
@@ -281,11 +285,26 @@ flowchart TD
     %% ---------------------------------------------------------------- quality
     subgraph QUALITY [" 7. Quality "]
         direction LR
-        Diff["Differential testing<br/>seeded random programs on LLVM -O2,<br/>LLVM -O0 and Cranelift; outputs compared,<br/>divergences pinned by tests"]
+        Diff["Differential testing<br/>seeded random programs on LLVM -O2,<br/>LLVM -O0 and Cranelift; outputs compared;<br/>0 failures in 10,000 programs (release build)"]
         Bench["benches/ + scripts/bench.sh<br/>Criterion vs Rust, LuaJIT, Wasm;<br/>baselines recorded, not gated"]
     end
     Diff -.->|checks| LLVMGen
     Diff -.->|checks| CL
+
+    %% ---------------------------------------------------------------- 8
+    subgraph MCODE [" 8. Machine code: codira_ctcheck, codira_mcode, codira_superopt "]
+        direction TB
+        CTCheck["codira_ctcheck<br/>codira build --check-constant-time:<br/>no secret branch, no variable-time instruction,<br/>no unchecked call, no secret address (x86-64);<br/>x86-64 and AArch64 machine code"]
+        MCodeIR["codira_mcode<br/>x86-64 and AArch64 integer instructions,<br/>one semantics run concretely and as Z3 bit-vectors,<br/>checked against the CPU it runs on"]
+        Profiles["cost profiles<br/>x86-64 latencies and throughputs measured<br/>on the host; AArch64 from the Neoverse N1<br/>optimization guide, never measured"]
+        Superopt["codira_superopt<br/>bounded search of up to 3 instructions,<br/>lowered code proven equal by Z3,<br/>chosen by cost model or by timing;<br/>refuses constant-time code; offline tool,<br/>not part of codira build"]
+        MCodeIR --> Superopt
+        Profiles --> Superopt
+    end
+    Lib -.->|"oblivious functions"| CTCheck
+    Lib -.->|"objects, offline"| Superopt
+    Superopt <==>|"replacement proven"| SMT
+    Flow -.->|"constant-time code refused"| Superopt
 
     %% ---------------------------------------------------------------- in progress
     subgraph NEXT [" Not on main: unfinished work "]
@@ -293,7 +312,7 @@ flowchart TD
         N2["loop schedules (LLVM hints)<br/>fails a dependence-safety test"]
         N3["multi-shot continuations,<br/>sample / observe<br/>fails posterior checks"]
         N6["proof-gated live updates<br/>relational prover and runtime<br/>protocol do not compile yet"]
-        N7["machine-code optimisation:<br/>cost models, superoptimiser<br/>(in progress)"]
+        N7["superoptimiser inside codira build,<br/>array handles marked dereferenceable,<br/>rewritten code patched into libraries"]
         N8["@budget, table declarations,<br/>tensor shape checking, memory<br/>domains, capability types (in progress)"]
     end
 
@@ -304,6 +323,7 @@ flowchart TD
     classDef tools fill:#422006,stroke:#fbbf24,color:#f8fafc,stroke-width:2px;
     classDef engines fill:#0c4a6e,stroke:#22d3ee,color:#f8fafc,stroke-width:2px;
     classDef quality fill:#1c1917,stroke:#a8a29e,color:#f8fafc,stroke-width:2px;
+    classDef mcode fill:#3f1d1d,stroke:#f87171,color:#f8fafc,stroke-width:2px;
     classDef inner fill:#0f172a,stroke:#64748b,color:#f8fafc,stroke-width:1px;
     classDef smt fill:#581c87,stroke:#e879f9,color:#f8fafc,stroke-width:2px;
     classDef next fill:#1f2937,stroke:#9ca3af,color:#e5e7eb,stroke-width:1px,stroke-dasharray:5 5;
@@ -319,6 +339,7 @@ flowchart TD
     class TOOLS tools;
     class ENGINES engines;
     class QUALITY quality;
+    class MCODE mcode;
     class CHECKS,VERIFY,SERVICES inner;
     class SMT,TV smt;
     class NEXT next;
@@ -327,8 +348,8 @@ flowchart TD
     class L2 added;
     class L3 wip;
     class N2,N3,N6,N7,N8 wip;
-    class MTE,Funis,Ueval wip;
-    class StdLib,Traits,Tasks,Realtime,Envelope,EnvCLI,Certify,ApiDiff,CERT,Fold,LLVMGen,Lib,FsSvc,HashSvc,DbSvc,AiSvc,DbEngine,AiEngine,Diff,Bench,Heracles added;
+    class MTE,Funis,Ueval,ArrayAlias,Superopt,Profiles wip;
+    class StdLib,Traits,Tasks,Realtime,Envelope,EnvCLI,Certify,ApiDiff,CERT,Fold,LLVMGen,Lib,FsSvc,HashSvc,DbSvc,AiSvc,DbEngine,AiEngine,Diff,Bench,Heracles,Bindings,Native,CL,CTCheck,MCodeIR added;
     linkStyle default stroke:#94a3b8,stroke-width:1.5px;
 ```
 
