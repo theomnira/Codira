@@ -37,11 +37,12 @@
 //!   `differential.rs`).
 //!   Generated programs print `(x as i64)` and `((x * 4096.0) as i64)` of
 //!   each float result instead, which still compares the float arithmetic.
-//! - Three more constructs are left out by default because of known
+//! - Two more constructs are left out by default because of known
 //!   divergences, each behind a `Config` switch so they can be turned back on
-//!   once fixed: float-to-8/16-bit casts (`float_to_narrow_int`), calls in
-//!   `println` arguments (`calls_in_print_args`), and printing from a
-//!   function without parameters (`print_in_constant_functions`).
+//!   once fixed: float-to-8/16-bit casts (`float_to_narrow_int`) and calls in
+//!   `println` arguments (`calls_in_print_args`). Printing from a function
+//!   without parameters (`print_in_constant_functions`) is on: the Eidos fold
+//!   that dropped such output is fixed.
 
 use std::fmt::Write as _;
 
@@ -181,11 +182,8 @@ pub struct Config {
     /// `known_divergence_print_argument_order`).
     pub calls_in_print_args: bool,
     /// Let a function without parameters print (itself or through a call).
-    /// Off by default: the LLVM path's Eidos constant fold replaces such a
-    /// function by its constant result and drops the printing (a known
-    /// divergence, pinned by `known_divergence_eidos_fold_drops_output`).
-    /// Functions without parameters are still generated, so the fold itself
-    /// stays under test.
+    /// On by default since the LLVM path's Eidos constant fold stopped
+    /// dropping such output (regression test `eidos_fold_keeps_output`).
     pub print_in_constant_functions: bool,
 }
 
@@ -197,7 +195,7 @@ impl Default for Config {
             cost_budget: 20_000,
             float_to_narrow_int: false,
             calls_in_print_args: false,
-            print_in_constant_functions: false,
+            print_in_constant_functions: true,
         }
     }
 }

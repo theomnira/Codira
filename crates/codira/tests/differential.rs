@@ -723,22 +723,20 @@ fn known_divergence_print_argument_order() {
     );
 }
 
-/// KNOWN DIVERGENCE (wrong code on the LLVM path): the Eidos constant fold
-/// drops output.
+/// Regression (was a wrong-code divergence on the LLVM path): the Eidos
+/// constant fold must not drop output.
 ///
-/// In a release-mode build (the default for `codira run` and `codira
-/// build`), `crates/codira_codegen/src/eidos_fold.rs` replaces a function
-/// without parameters whose result evaluates to a constant by `ret
-/// <constant>`. It does not check that the body is free of side effects, so
-/// the `println` in `g` -- reached through `f`, whose result does not depend
-/// on `g`'s -- is never executed. `--mode dev` (no Eidos) and the Cranelift
-/// backend print it. The fold's documentation says a declined fold is "never
-/// a wrong answer"; this is a wrong answer. Found by `many_programs` (seed
-/// base `0x5eed0000`, 7 of 10,000 programs). The generator keeps functions
-/// without parameters from printing by default
-/// (`Config::print_in_constant_functions`).
+/// In a release-mode build `crates/codira_codegen/src/eidos_fold.rs`
+/// replaces a function without parameters whose result evaluates to a
+/// constant by `ret <constant>`. It once did so without checking that the
+/// body was free of side effects, so the `println` in `g` -- reached through
+/// `f`, whose result does not depend on `g`'s -- never ran on LLVM while
+/// Cranelift printed it. Found by `many_programs` (seed base `0x5eed0000`, 7
+/// of 10,000 programs). The fold now declines unless the function's effect
+/// summary is free of allocation, blocking, panics, foreign code, tasks and
+/// algebraic effects.
 #[test]
-fn known_divergence_eidos_fold_drops_output() {
+fn eidos_fold_keeps_output() {
     let source = "func g() -> i8 {\n    println(\"side effect\")\n    1i8\n}\n\
                   func f() -> i64 {\n    let unused: i8 = g()\n    7i64\n}\n\
                   public func main() {\n    println(f())\n}\n";
@@ -747,13 +745,6 @@ fn known_divergence_eidos_fold_drops_output() {
     assert_eq!(jit.stdout, "side effect\n7\n");
     for backend in [Backend::LlvmDefault, Backend::LlvmO0] {
         let llvm = run(source, backend);
-        assert_eq!(
-            llvm.stdout,
-            "7\n",
-            "{}: the Eidos fold divergence changed or was fixed: update this test \
-             and the generator\n{}",
-            backend.name(),
-            llvm.stderr
-        );
+        assert_eq!(llvm.stdout, jit.stdout, "{}\n{}", backend.name(), llvm.stderr);
     }
 }

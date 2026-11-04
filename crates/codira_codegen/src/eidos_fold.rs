@@ -89,6 +89,33 @@ pub(crate) fn fold_to_constant<'ink>(
         return None;
     }
 
+    // Replacing the body by `ret <constant>` drops everything the body does
+    // besides computing its value, so it is only sound when the body (and
+    // everything it calls) does nothing else observable. The effect
+    // analysis answers that over the whole call graph: any allocation
+    // (which includes `print`/`println`), blocking, panic, foreign code,
+    // task or algebraic effect declines the fold. `Unbounded` is allowed:
+    // the interpreter's fuel already declines a body that does not finish,
+    // and one that does finish is not changed by folding. `Secret` is not
+    // an action. Without this check `func f() -> i64 { g(); 7 }`, with a
+    // printing `g`, compiled to `ret 7` and lost the output.
+    let observable = codira_hir::realtime::EffectSet::of(&[
+        codira_hir::realtime::Effect::Alloc,
+        codira_hir::realtime::Effect::Block,
+        codira_hir::realtime::Effect::Panic,
+        codira_hir::realtime::Effect::Foreign,
+        codira_hir::realtime::Effect::Spawn,
+        codira_hir::realtime::Effect::Perform,
+    ]);
+    if !db
+        .effect_summary(function)
+        .effects
+        .intersection(observable)
+        .is_empty()
+    {
+        return None;
+    }
+
     let generator = db.mir_generator(function)?;
     // A generator with unbound compile-time parameters has not been
     // specialized; it has no single value to fold to.
