@@ -132,9 +132,16 @@ fn the_constant_time_examples_pass_at_every_level() {
 /// with no branch in the IR (what `tests/constant_time.rs` checks), but at
 /// `-O0` the x86-64 backend expands it into a conditional jump on the
 /// secret condition. The source checker accepts it.
+///
+/// `scaled` divides public values: the division itself is the one violation
+/// (variable time). The contract proves the divisor non-zero, so the
+/// division has no zero-divisor check (a branch and a call to the panic
+/// routine) that would be two more.
 const SCALED: &str = r#"
 @constant_time
-func scaled(s: secret u64, p: u64, q: u64) -> secret u64 {
+func scaled(s: secret u64, p: u64, q: u64) -> secret u64
+    requires q > 0
+{
     s ^ (p / q)
 }
 "#;
