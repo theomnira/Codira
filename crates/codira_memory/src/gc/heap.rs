@@ -22,11 +22,10 @@
 //! the object. Objects are enumerated for sweeping and migration by walking
 //! blocks; there is no per-object map on the allocation path.
 //!
-//! Concurrency contract (unchanged from the previous collector): allocation,
-//! rooting and reading types are thread-safe. A collection or a memory
-//! migration must not run while another thread executes Codira code, because
-//! generated code holds unrooted handles on its stack that the collector
-//! cannot see.
+//! Concurrency contract: allocation, rooting and reading types are
+//! thread-safe. A collection or a memory migration stops the world first
+//! (`gc::safepoint`), because generated code holds unrooted handles on its
+//! stack that only a conservative scan of a parked thread can find.
 
 use std::{
     alloc::Layout,
@@ -1016,25 +1015,6 @@ impl Heap {
     /// Returns the bytes currently committed by the heap.
     pub(crate) fn committed(&self) -> usize {
         self.inner.read().committed()
-    }
-
-    /// Returns true if no thread other than the current one has allocated in
-    /// this heap (more precisely: holds a thread cache of it). Only then can
-    /// a conservative scan of the current thread's stack find every
-    /// unrooted reference that generated code holds.
-    pub(crate) fn only_current_thread_allocates(&self) -> bool {
-        let caches = self.inner.read().thread_counters.len();
-        match caches {
-            0 => true,
-            1 => THREAD_CACHES
-                .try_with(|caches| {
-                    caches
-                        .try_borrow()
-                        .is_ok_and(|caches| caches.entries.iter().any(|c| c.heap_id == self.id))
-                })
-                .unwrap_or(false),
-            _ => false,
-        }
     }
 }
 

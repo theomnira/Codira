@@ -9,13 +9,14 @@ mod heap;
 mod mark_sweep;
 mod ptr;
 mod root_ptr;
+pub mod safepoint;
 mod snapshot;
 mod stack_scan;
 
 use std::{marker::PhantomData, ptr::NonNull};
 
 pub use heap::AllocError;
-pub use mark_sweep::MarkSweep;
+pub use mark_sweep::{CollectRefused, MarkSweep};
 pub use ptr::{GcPtr, HasIndirectionPtr, RawGcPtr};
 pub use root_ptr::GcRootPtr;
 pub use snapshot::{RestoredHeap, SnapshotError};
