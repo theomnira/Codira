@@ -44,9 +44,9 @@ mod test;
 #[cfg(test)]
 mod test_memtag;
 #[cfg(test)]
-mod test_targets;
-#[cfg(test)]
 mod test_never;
+#[cfg(test)]
+mod test_targets;
 
 pub mod value;
 
