@@ -1372,22 +1372,41 @@ impl InferenceResultBuilder<'_> {
             // A default method of a trait the type implements, which its
             // implementation does not override: `p.ne(q)`.
             Err(None)
-                if crate::traits::default_method(
+                if !crate::traits::default_methods(
                     self.db,
                     &receiver_ty,
                     method_name,
                     AssociationMode::WithSelf,
                 )
-                .is_some() =>
+                .is_empty() =>
             {
-                crate::traits::default_method(
+                let defaults = crate::traits::default_methods(
                     self.db,
                     &receiver_ty,
                     method_name,
                     AssociationMode::WithSelf,
-                )
-                .expect("checked by the guard")
-                .id
+                );
+                if let [method] = defaults.as_slice() {
+                    method.id
+                } else {
+                    for &arg in args {
+                        self.infer_expr(arg, &Expectation::none());
+                    }
+                    let traits: Vec<Trait> = defaults
+                        .iter()
+                        .filter_map(|m| m.trait_container(self.db))
+                        .collect();
+                    self.diagnostics.push(InferenceDiagnostic::ExprError {
+                        id: tgt_expr.into(),
+                        message: format!(
+                            "`{method_name}` is a default method of more than one trait `{}` \
+                             implements ({}); this version cannot tell which one is meant",
+                            receiver_ty.display(self.db),
+                            crate::traits::trait_list(self.db, &traits)
+                        ),
+                    });
+                    return error_type();
+                }
             }
             Err(None) => {
                 // `len()` and friends on arrays and `str` are builtins.

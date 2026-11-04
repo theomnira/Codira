@@ -367,3 +367,43 @@ public func main() { println("unreachable") }
         "stderr: {stderr}"
     );
 }
+
+/// `bool`, `str` and `f32` implement a trait, and so does a generic class
+/// whose implementation, and an inherent `extend` block, are bounded: the
+/// bound holds in their methods and is checked where `Cell[str]` and
+/// `Cell[Cell[bool]]` are used.
+#[test]
+fn primitives_and_a_bounded_generic_class() {
+    let source = r#"
+trait Weight {
+    func weight(self) -> i64;
+}
+extend bool: Weight {
+    func weight(self) -> i64 { if self { 1 } else { 0 } }
+}
+extend str: Weight {
+    func weight(self) -> i64 { 100 }
+}
+extend f32: Weight {
+    func weight(self) -> i64 { 3 }
+}
+class Cell[T] { var v: T }
+extend Cell[T: Weight]: Weight {
+    func weight(self) -> i64 { self.v.weight() * 2 }
+}
+extend Cell[T: Weight] {
+    func heavy(self) -> bool { self.v.weight() > 1 }
+}
+func w[T: Weight](x: T) -> i64 { x.weight() }
+public func main() {
+    let f: f32 = 1.5
+    println(w(true) + w(false) + w("hi") + w(f))
+    let c = Cell { v: "x" }
+    println(w(c))
+    println(c.heavy())
+    println(w(Cell { v: Cell { v: true } }))
+}
+"#;
+    let (stdout, _) = run_ok(&[("mod.code", source)], &[]);
+    assert_eq!(stdout, "104\n200\ntrue\n4\n");
+}

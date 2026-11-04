@@ -530,17 +530,19 @@ pub fn resolve_method(
         .then(|| (method, Substitution::single(self_ty.clone())))
 }
 
-/// A default method named `name` that a trait implemented by the concrete
-/// type `ty` provides and the implementation does not override: what
-/// `p.ne(q)` reaches when `Point` implements a trait with a default `ne`.
-pub(crate) fn default_method(
+/// The default methods named `name` that traits implemented by the
+/// concrete type `ty` provide and the implementations do not override:
+/// what `p.ne(q)` reaches when `Point` implements a trait with a default
+/// `ne`. More than one is an ambiguity the caller reports.
+pub(crate) fn default_methods(
     db: &dyn HirDatabase,
     ty: &Ty,
     name: &Name,
     mode: AssociationMode,
-) -> Option<Function> {
+) -> Vec<Function> {
+    let mut found = Vec::new();
     if mono::contains_type_param(ty) {
-        return None;
+        return found;
     }
     for impls in all_trait_impls(db) {
         for candidate in &impls.impls {
@@ -551,13 +553,13 @@ pub(crate) fn default_method(
             if let Some(method) = candidate.trait_.method(db, name) {
                 let data = method.data(db);
                 let fits = data.has_self_param() == (mode == AssociationMode::WithSelf);
-                if fits && data.has_body() {
-                    return Some(method);
+                if fits && data.has_body() && !found.contains(&method) {
+                    found.push(method);
                 }
             }
         }
     }
-    None
+    found
 }
 
 /// What a method call on a value (or a type) whose type is the parameter

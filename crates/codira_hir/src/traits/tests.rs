@@ -197,6 +197,17 @@ fn method_calls_on_a_type_parameter_go_through_its_bounds() {
     func ambiguous[T: Show + Also](x: T) -> i64 { x.show() }
     func assoc[T: Show](x: T) -> i64 { T.make() }
     func ops[T: Show](a: T, b: T) -> bool { a < b }
+
+    trait D1 {
+        func d(self) -> i64 { 1 }
+    }
+    trait D2 {
+        func d(self) -> i64 { 2 }
+    }
+    struct P { x: i64 }
+    extend P: D1 {}
+    extend P: D2 {}
+    func two_defaults(p: P) -> i64 { p.d() }
     "#
     ));
 }
