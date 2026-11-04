@@ -49,7 +49,7 @@ public func dict_with_capacity[K, V](cap: usize) -> Dict[K, V] {
     let num_buckets = next_power_of_two(cap);
     let buckets = heap_alloc(num_buckets);
     // Mark every bucket as empty
-    let i: usize = 0;
+    var i: usize = 0;
     while i < num_buckets {
         let empty_entry = Entry[K, V] { key: zero_value(), value: zero_value(), state: BUCKET_EMPTY, hash: 0 };
         raw_store(buckets, i, empty_entry);
@@ -67,7 +67,7 @@ public func dict_with_capacity[K, V](cap: usize) -> Dict[K, V] {
 
 /// Returns the smallest power of two >= n.
 func next_power_of_two(n: usize) -> usize {
-    let p: usize = 1;
+    var p: usize = 1;
     while p < n {
         p = p * 2;
     }
@@ -88,7 +88,7 @@ func compute_hash[K](key: K) -> u64 {
 func dict_rehash[K, V](this: Dict[K, V]) -> Dict[K, V] {
     let new_num = this.num_buckets * 2;
     let new_buckets = heap_alloc(new_num);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < new_num {
         let empty_entry = Entry[K, V] { key: zero_value(), value: zero_value(), state: BUCKET_EMPTY, hash: 0 };
         raw_store(new_buckets, i, empty_entry);
@@ -99,7 +99,7 @@ func dict_rehash[K, V](this: Dict[K, V]) -> Dict[K, V] {
     while i < this.num_buckets {
         let e = raw_load(this.buckets, i);
         if e.state == BUCKET_OCCUPIED {
-            let idx = bucket_index(e.hash, new_num);
+            var idx = bucket_index(e.hash, new_num);
             while raw_load(new_buckets, idx).state == BUCKET_OCCUPIED {
                 idx = (idx + 1) & (new_num - 1);
             }
@@ -131,14 +131,14 @@ public func is_empty[K, V](this: Dict[K, V]) -> bool {
 /// Inserts or updates the value associated with `key`.
 /// Returns the updated dictionary.
 public func set[K, V](this: Dict[K, V], key: K, value: V) -> Dict[K, V] {
-    let out = this;
+    var out = this;
     // Check load factor and rehash if necessary
     let load = (out.len + 1) as f64 / out.num_buckets as f64;
     if load > out.load_max {
         out = dict_rehash(out);
     }
     let h = compute_hash(key);
-    let idx = bucket_index(h, out.num_buckets);
+    var idx = bucket_index(h, out.num_buckets);
     // Linear probe
     while true {
         let e = raw_load(out.buckets, idx);
@@ -163,7 +163,7 @@ public func set[K, V](this: Dict[K, V], key: K, value: V) -> Dict[K, V] {
 /// Retrieves the value associated with `key`, or panics if not found.
 public func get[K, V](this: Dict[K, V], key: K) -> V {
     let h = compute_hash(key);
-    let idx = bucket_index(h, this.num_buckets);
+    var idx = bucket_index(h, this.num_buckets);
     while true {
         let e = raw_load(this.buckets, idx);
         if e.state == BUCKET_EMPTY {
@@ -180,7 +180,7 @@ public func get[K, V](this: Dict[K, V], key: K) -> V {
 /// Retrieves the value associated with `key`, or returns `default` if absent.
 public func get_or_default[K, V](this: Dict[K, V], key: K, default: V) -> V {
     let h = compute_hash(key);
-    let idx = bucket_index(h, this.num_buckets);
+    var idx = bucket_index(h, this.num_buckets);
     while true {
         let e = raw_load(this.buckets, idx);
         if e.state == BUCKET_EMPTY {
@@ -197,7 +197,7 @@ public func get_or_default[K, V](this: Dict[K, V], key: K, default: V) -> V {
 /// Returns an Optional[V] for the given key.
 public func get_optional[K, V](this: Dict[K, V], key: K) -> Optional[V] {
     let h = compute_hash(key);
-    let idx = bucket_index(h, this.num_buckets);
+    var idx = bucket_index(h, this.num_buckets);
     while true {
         let e = raw_load(this.buckets, idx);
         if e.state == BUCKET_EMPTY {
@@ -214,7 +214,7 @@ public func get_optional[K, V](this: Dict[K, V], key: K) -> Optional[V] {
 /// Removes the entry for `key`. Returns true if the key was present.
 public func remove[K, V](this: Dict[K, V], key: K) -> (Dict[K, V], bool) {
     let h = compute_hash(key);
-    let idx = bucket_index(h, this.num_buckets);
+    var idx = bucket_index(h, this.num_buckets);
     while true {
         let e = raw_load(this.buckets, idx);
         if e.state == BUCKET_EMPTY {
@@ -236,7 +236,7 @@ public func remove[K, V](this: Dict[K, V], key: K) -> (Dict[K, V], bool) {
 /// Returns `true` if the dictionary contains `key`.
 public func contains_key[K, V](this: Dict[K, V], key: K) -> bool {
     let h = compute_hash(key);
-    let idx = bucket_index(h, this.num_buckets);
+    var idx = bucket_index(h, this.num_buckets);
     while true {
         let e = raw_load(this.buckets, idx);
         if e.state == BUCKET_EMPTY {
@@ -254,8 +254,8 @@ public func contains_key[K, V](this: Dict[K, V], key: K) -> bool {
 
 /// Returns a List of all keys.
 public func keys[K, V](this: Dict[K, V]) -> List[K] {
-    let out = list_with_capacity(this.len);
-    let i: usize = 0;
+    var out = list_with_capacity(this.len);
+    var i: usize = 0;
     while i < this.num_buckets {
         let e = raw_load(this.buckets, i);
         if e.state == BUCKET_OCCUPIED {
@@ -268,8 +268,8 @@ public func keys[K, V](this: Dict[K, V]) -> List[K] {
 
 /// Returns a List of all values.
 public func values[K, V](this: Dict[K, V]) -> List[V] {
-    let out = list_with_capacity(this.len);
-    let i: usize = 0;
+    var out = list_with_capacity(this.len);
+    var i: usize = 0;
     while i < this.num_buckets {
         let e = raw_load(this.buckets, i);
         if e.state == BUCKET_OCCUPIED {
@@ -282,8 +282,8 @@ public func values[K, V](this: Dict[K, V]) -> List[V] {
 
 /// Returns a List of (key, value) tuples.
 public func items[K, V](this: Dict[K, V]) -> List[(K, V)] {
-    let out = list_with_capacity(this.len);
-    let i: usize = 0;
+    var out = list_with_capacity(this.len);
+    var i: usize = 0;
     while i < this.num_buckets {
         let e = raw_load(this.buckets, i);
         if e.state == BUCKET_OCCUPIED {
@@ -296,8 +296,8 @@ public func items[K, V](this: Dict[K, V]) -> List[(K, V)] {
 
 /// Merges all entries from `other` into `self`. Existing keys are overwritten.
 public func update[K, V](this: Dict[K, V], other: Dict[K, V]) -> Dict[K, V] {
-    let out = this;
-    let i: usize = 0;
+    var out = this;
+    var i: usize = 0;
     while i < other.num_buckets {
         let e = raw_load(other.buckets, i);
         if e.state == BUCKET_OCCUPIED {
@@ -310,7 +310,7 @@ public func update[K, V](this: Dict[K, V], other: Dict[K, V]) -> Dict[K, V] {
 
 /// Removes all entries, keeping the backing storage allocated.
 public func clear[K, V](this: Dict[K, V]) -> Dict[K, V] {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.num_buckets {
         let empty_entry = Entry[K, V] { key: zero_value(), value: zero_value(), state: BUCKET_EMPTY, hash: 0 };
         raw_store(this.buckets, i, empty_entry);
@@ -336,7 +336,7 @@ public func iter[K, V](this: Dict[K, V]) -> DictIter[K, V] {
 
 /// Advances the iterator, returning the next (key, value) pair or none.
 public func iter_next[K, V](it: DictIter[K, V]) -> (DictIter[K, V], Optional[(K, V)]) {
-    let pos = it.pos;
+    var pos = it.pos;
     while pos < it.dict.num_buckets {
         let e = raw_load(it.dict.buckets, pos);
         if e.state == BUCKET_OCCUPIED {

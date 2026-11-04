@@ -16,7 +16,9 @@
 //!
 //! The environment variables that pick the linker are process-wide, so this
 //! file has a single test.
-use codira_compiler::{image_link_stats, DIRECT_LINK_ENV, LINK_VERIFY_ENV};
+use codira_compiler::{
+    image_link_stats, DIRECT_ELF_ENV, DIRECT_LINK_ENV, LINK_MODE_ENV, LINK_VERIFY_ENV,
+};
 use codira_test::CompileAndRunTestDriver;
 
 type Calls = fn(&CompileAndRunTestDriver) -> Vec<String>;
@@ -129,7 +131,7 @@ public func main() -> i32 {
 
 const TASKS: &str = r"
 func produce(dest: Channel[i64], from: i64, count: i64) {
-    let i = 0;
+    var i = 0;
     while i < count {
         dest <- from + i;
         i += 1;
@@ -141,8 +143,8 @@ public func producers() -> i64 {
         let ch = channel(8);
         spawn produce(ch, 0, 100);
         spawn produce(ch, 1000, 100);
-        let total = 0;
-        let n = 0;
+        var total = 0;
+        var n = 0;
         while n < 200 {
             total += <-ch;
             n += 1;
@@ -249,6 +251,11 @@ const PROGRAMS: &[(&str, &str, Calls)] = &[
 #[test]
 fn programs_behave_the_same_with_the_image_writer_and_with_lld() {
     std::env::set_var(LINK_VERIFY_ENV, "1");
+    // The image writer is tried in direct link mode, the default only on
+    // Windows hosts, and writes ELF only when asked to: ask for both, so the
+    // test compares the same two linkers on every host.
+    std::env::set_var(LINK_MODE_ENV, "direct");
+    std::env::set_var(DIRECT_ELF_ENV, "1");
     for (name, source, calls) in PROGRAMS {
         // Linked by LLD alone.
         std::env::set_var(DIRECT_LINK_ENV, "0");

@@ -128,6 +128,7 @@ struct ItemTreeData {
     effects: Arena<Effect>,
     sessions: Arena<Session>,
     enums: Arena<Enum>,
+    traits: Arena<Trait>,
 
     visibilities: ItemVisibilities,
 }
@@ -244,6 +245,7 @@ mod_items! {
     Effect in effects -> ast::EffectDef,
     Session in sessions -> ast::SessionDef,
     Enum in enums -> ast::EnumDef,
+    Trait in traits -> ast::TraitDef,
 }
 
 macro_rules! impl_index {
@@ -427,6 +429,17 @@ pub struct Impl {
     pub self_ty: LocalTypeRefId,
     pub items: Box<[AssociatedItem]>,
     pub ast_id: FileAstId<ast::Extend>,
+}
+
+/// A `trait Name { .. }` declaration: its name and its methods. Required
+/// methods have no body; default methods do. Supertraits and generic
+/// parameters are read from the source by `code_model::Trait`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Trait {
+    pub name: Name,
+    pub visibility: RawVisibilityId,
+    pub items: Box<[AssociatedItem]>,
+    pub ast_id: FileAstId<ast::TraitDef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -693,6 +706,10 @@ mod diagnostics {
                         SyntaxNodePtr::new(item_tree.source(db, item).syntax()),
                     ),
                     ModItem::Enum(item) => InFile::new(
+                        item_tree.file_id,
+                        SyntaxNodePtr::new(item_tree.source(db, item).syntax()),
+                    ),
+                    ModItem::Trait(item) => InFile::new(
                         item_tree.file_id,
                         SyntaxNodePtr::new(item_tree.source(db, item).syntax()),
                     ),

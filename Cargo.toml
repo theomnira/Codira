@@ -84,6 +84,8 @@ notify = { version = "5.2.0" }
 winapi = { version = "0.3.9", default-features = false }
 
 # Dependencies of the Funis linker crates (crates/funis*), forked from mold.
+# `blake3`, `sha2` and `libc` are also the runtime's (codira_runtime: the hash
+# and file services).
 blake3 = "1.8.7"
 bstr = "1"
 cpp_demangle = "0.5.1"

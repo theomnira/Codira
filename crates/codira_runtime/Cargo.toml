@@ -28,6 +28,16 @@ parking_lot = { workspace = true }
 rustc-hash = { workspace = true }
 seq-macro = { workspace = true }
 thiserror = { workspace = true }
+# The hash services (`native_hash`): reviewed implementations, never our own.
+sha2 = { workspace = true }
+blake3 = { workspace = true }
+# The database services (`native_db`) and tensor services (`native_ai`).
+codira_db = { version = "0.6.0-dev", path = "../codira_db" }
+codira_ai = { version = "0.6.0-dev", path = "../codira_ai" }
+
+[target.'cfg(unix)'.dependencies]
+# `close(2)` with its error and `F_FULLFSYNC` (`native_fs`).
+libc = { workspace = true }
 
 [build-dependencies]
 cc = "1.2.2"

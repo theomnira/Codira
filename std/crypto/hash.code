@@ -1,0 +1,87 @@
+// =============================================================================
+// std/crypto/hash.code — Cryptographic hashes: SHA-256, SHA-512, BLAKE3
+// =============================================================================
+//
+// Copyright (c) 2026 Omnira CJSC
+// Author: Tunjay Akbarli
+// Date: November 4, 2026
+//
+// Functionality:
+// - One-shot cryptographic digests of a byte range, over the runtime's hash
+//   services (codira_runtime::native_hash): SHA-256 (32 bytes) and SHA-512
+//   (64 bytes) from FIPS 180-4, and BLAKE3 (32 bytes, unkeyed).
+//
+// Nothing here, and nothing in the runtime, implements a hash function. The
+// runtime calls the `sha2` crate of the RustCrypto project and the `blake3`
+// crate of the BLAKE3 authors: widely deployed implementations maintained
+// and reviewed by their own projects. Known-answer tests (NIST FIPS 180-4
+// examples, the BLAKE3 reference vectors) run in the runtime's unit tests and
+// in a Codira program end to end (crates/codira/tests/fs_and_hash.rs).
+//
+// std/hashlib (FNV-1a, AHasher) is NOT cryptographic: it is for hash tables.
+// Use this module for integrity checks, content addressing and anything an
+// adversary may choose the input of.
+//
+// Data and digests are raw memory (addresses as usize). A call returns false,
+// writing nothing, when `digest` is 0, `data` is 0 with a non-zero length, or
+// the length exceeds isize::MAX; otherwise it writes the whole digest.
+//
+// Effects. The declarations below assert `@noalloc @nopanic @noblock`. These
+// are trusted assertions (the compiler cannot see into the runtime), made
+// because they are true of the runtime's implementation: both crates hash on
+// the stack without allocating, take no lock and make no system call (their
+// SIMD selection reads CPU features once and caches them in an atomic), and
+// the runtime checks the arguments above so that neither has a panic path.
+// The time is linear in the length. Not asserted: constant time with respect
+// to the length; the digests are not secret-typed values.
+// =============================================================================
+
+
+extern "C" {
+    @noalloc @nopanic @noblock
+    func codira_hash_sha256(data_addr: usize, len: usize, out_addr: usize) -> bool;
+    @noalloc @nopanic @noblock
+    func codira_hash_sha512(data_addr: usize, len: usize, out_addr: usize) -> bool;
+    @noalloc @nopanic @noblock
+    func codira_hash_blake3(data_addr: usize, len: usize, out_addr: usize) -> bool;
+}
+
+extern "codira-intrinsic" {
+    func str_data(s: str) -> usize;
+    func str_len(s: str) -> usize;
+}
+
+// Digest lengths in bytes.
+public func SHA256_LEN() -> usize { return 32; }
+public func SHA512_LEN() -> usize { return 64; }
+public func BLAKE3_LEN() -> usize { return 32; }
+
+// Write the SHA-256 digest of [data, data + len) to the 32 bytes at `digest`.
+@noalloc @nopanic @noblock
+public func sha256(data: usize, len: usize, digest: usize) -> bool {
+    return codira_hash_sha256(data, len, digest);
+}
+
+// Write the SHA-512 digest of [data, data + len) to the 64 bytes at `digest`.
+@noalloc @nopanic @noblock
+public func sha512(data: usize, len: usize, digest: usize) -> bool {
+    return codira_hash_sha512(data, len, digest);
+}
+
+// Write the BLAKE3 digest of [data, data + len) to the 32 bytes at `digest`.
+@noalloc @nopanic @noblock
+public func blake3(data: usize, len: usize, digest: usize) -> bool {
+    return codira_hash_blake3(data, len, digest);
+}
+
+// The SHA-256 digest of a string's bytes.
+@noalloc @nopanic @noblock
+public func sha256_str(text: str, digest: usize) -> bool {
+    return codira_hash_sha256(str_data(text), str_len(text), digest);
+}
+
+// The BLAKE3 digest of a string's bytes.
+@noalloc @nopanic @noblock
+public func blake3_str(text: str, digest: usize) -> bool {
+    return codira_hash_blake3(str_data(text), str_len(text), digest);
+}

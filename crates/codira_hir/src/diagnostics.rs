@@ -695,6 +695,33 @@ impl Diagnostic for UndeclaredEffect {
     }
 }
 
+/// A misuse of a trait: a declaration the first version does not support
+/// (a generic trait, a contract on a trait method), an implementation that
+/// does not match its trait (a missing or extra method, a wrong signature,
+/// a missing supertrait, a second implementation), or a bound that names
+/// no trait. One type with a message, like `EffectError`: every rule reads
+/// as a sentence about what was written. See `crate::traits`.
+#[derive(Debug)]
+pub struct TraitError {
+    pub file: FileId,
+    pub node: SyntaxNodePtr,
+    pub message: String,
+}
+
+impl Diagnostic for TraitError {
+    fn message(&self) -> String {
+        self.message.clone()
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.node.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
 /// A misuse of algebraic effects: an unknown effect or operation, a
 /// `perform` with no handler, a misplaced `resume`, a handler arm that does
 /// not fit its operation, and the version-1 restrictions on handler arms

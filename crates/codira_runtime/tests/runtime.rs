@@ -67,9 +67,9 @@ fn arrays() {
 
     /// Performs bubble sort on an array of versions
     func bubble_sort(array: [Version], len: usize) {
-        let i = 0;
+        var i = 0;
         while i<len {
-            let j = 1;
+            var j = 1;
             while j<len-i {
                 if version_greater(array[j-1], array[j]) {
                     let tmp = array[j];

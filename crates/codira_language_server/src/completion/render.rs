@@ -64,7 +64,7 @@ impl<'a> Render<'a> {
         resolution: &ScopeDef,
     ) -> Option<CompletionItem> {
         use codira_hir::ModuleDef::{
-            Effect, Enum, Function, Module, PrimitiveType, Session, Struct, TypeAlias,
+            Effect, Enum, Function, Module, PrimitiveType, Session, Struct, Trait, TypeAlias,
         };
 
         let kind = match resolution {
@@ -76,7 +76,9 @@ impl<'a> Render<'a> {
             ScopeDef::ModuleDef(Struct(_)) => CompletionItemKind::SymbolKind(SymbolKind::Struct),
             // A session is a named type with no fields of its own; the
             // closest symbol kind editors know is a type alias.
-            ScopeDef::ModuleDef(TypeAlias(_) | Session(_)) => {
+            // A trait names a set of methods rather than a type; editors
+            // have no closer kind for it here either.
+            ScopeDef::ModuleDef(TypeAlias(_) | Session(_) | Trait(_)) => {
                 CompletionItemKind::SymbolKind(SymbolKind::TypeAlias)
             }
             ScopeDef::ModuleDef(Effect(_)) => CompletionItemKind::SymbolKind(SymbolKind::Effect),
@@ -117,7 +119,8 @@ impl<'a> Render<'a> {
                 | ModuleDef::Function(_)
                 | ModuleDef::TypeAlias(_)
                 | ModuleDef::Effect(_)
-                | ModuleDef::Session(_),
+                | ModuleDef::Session(_)
+                | ModuleDef::Trait(_),
             ) => (),
         }
 

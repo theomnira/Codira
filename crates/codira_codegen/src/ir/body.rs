@@ -27,7 +27,11 @@ use inkwell::{
 use crate::{
     intrinsics,
     ir::{
-        dispatch_table::DispatchTable, intrinsic_ops, ty::HirTypeCache, type_table::TypeTable,
+        array_tbaa::{self, ArrayAccess},
+        dispatch_table::DispatchTable,
+        intrinsic_ops,
+        ty::HirTypeCache,
+        type_table::TypeTable,
         FunctionMap, RuntimeArrayValue, RuntimeReferenceValue,
     },
     module_group::ModuleGroup,
@@ -176,11 +180,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         //
         // Not for an instance of a generic function: the fold lowers the
         // declaration's body, which is written in terms of its parameters.
-        if let Some(eidos) = self
-            .eidos
-            .as_ref()
-            .filter(|_| !runtime_checks && !self.instance.is_generic())
-        {
+        if let Some(eidos) = self.eidos.as_ref().filter(|_| {
+            !runtime_checks
+                && !self.instance.is_generic()
+                && !self.instance.sig(self.db).ret().is_never()
+        }) {
             if let Some(value) = crate::eidos_fold::fold_to_constant(
                 self.db,
                 self.hir_function,
@@ -353,34 +357,39 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         let ret_value = self.gen_call(None, self.hir_function, &args);
 
-        let call_return_type = &self.infer[self.body.body_expr()];
-        if !call_return_type.is_never() {
-            let fn_ret_type = self
-                .hir_function
-                .ty(self.db)
-                .callable_sig(self.db)
-                .unwrap()
-                .ret()
-                .clone();
-
-            if fn_ret_type.is_empty() {
-                self.builder
-                    .build_return(None)
-                    .expect("failed to build return");
-            } else if let Some(value) = ret_value {
-                let ret_value = if let Some(hir_struct) = fn_ret_type.as_struct() {
-                    if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
-                        self.gen_struct_alloc_on_heap(&fn_ret_type, value.into_struct_value())
-                    } else {
-                        value
-                    }
+        // What the wrapper returns is decided by the function's declared
+        // result, never by the type of its body expression: a body ending
+        // in `return x;` is a block of type `never` although the function
+        // returns `x`, and reading the body's type here left the wrapper
+        // without a terminator -- invalid IR that crashed LLVM's optimizer
+        // for every `public` function with a value-struct parameter or
+        // result whose body ended that way.
+        let fn_ret_type = fn_sig.ret().clone();
+        if fn_ret_type.is_never() {
+            // `gen_call` has ended the block with `unreachable` already.
+        } else if fn_ret_type.is_empty() {
+            self.builder
+                .build_return(None)
+                .expect("failed to build return");
+        } else if let Some(value) = ret_value {
+            let ret_value = if let Some(hir_struct) = fn_ret_type.as_struct() {
+                if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
+                    self.gen_struct_alloc_on_heap(&fn_ret_type, value.into_struct_value())
                 } else {
                     value
-                };
-                self.builder
-                    .build_return(Some(&ret_value))
-                    .expect("failed to build return");
-            }
+                }
+            } else {
+                value
+            };
+            self.builder
+                .build_return(Some(&ret_value))
+                .expect("failed to build return");
+        } else {
+            // The call produced no value although the function's type says
+            // it returns one: the callee cannot return normally.
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable");
         }
     }
 
@@ -717,9 +726,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .build_gep(element_ty, elements, &[index_value], "fill.slot")
                 .expect("failed to build GEP into array elements")
         };
-        self.builder
+        let store = self
+            .builder
             .build_store(slot, value)
             .expect("failed to store a filled element");
+        array_tbaa::tag(store, ArrayAccess::Element);
         let next = self
             .builder
             .build_int_add(index_value, index_ty.const_int(1, false), "fill.next")
@@ -739,9 +750,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .expect("failed to cast a filled array's length")
         };
         let array_length_ptr = array.get_length_ptr(&self.builder);
-        self.builder
+        let store = self
+            .builder
             .build_store(array_length_ptr, length)
             .expect("failed to store a filled array's length");
+        array_tbaa::tag(store, ArrayAccess::Length);
         Some(array.into())
     }
 
@@ -762,9 +775,22 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let then_ir = self.opt_deref_value(*then_value, then_ir);
         let else_ir = self.gen_expr(*else_value)?;
         let else_ir = self.opt_deref_value(*else_value, else_ir);
+        // The x86-64 back end has no conditional move for 8-bit registers,
+        // and at -O0 it lowers an 8-bit `select` through a pseudo-instruction
+        // that becomes a conditional jump on the condition. Selecting on
+        // integers of at least 32 bits keeps it a `cmov`, so narrower
+        // integers and `bool` are widened (`ct_select` takes only integers
+        // and `bool`).
+        let (then_wide, else_wide, restore) = self.ct_select_operands(then_ir, else_ir);
+        // Without these `freeze`s the -O0 back end folds a `select` of two
+        // loads into a load from a `select` of their addresses, which is a
+        // memory access at a secret-dependent address. `freeze` does not
+        // change a value that is neither `undef` nor poison.
+        let then_wide = self.freeze(then_wide, "ct_select.then");
+        let else_wide = self.freeze(else_wide, "ct_select.else");
         let selected = self
             .builder
-            .build_select(condition, then_ir, else_ir, "ct_select")
+            .build_select(condition, then_wide, else_wide, "ct_select")
             .expect("failed to build ct_select");
         if let Some(instruction) = inkwell::values::BasicValue::as_instruction_value(&selected) {
             let kind = self.context.get_kind_id("unpredictable");
@@ -773,7 +799,62 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .set_metadata(empty, kind)
                 .expect("an empty node is valid `!unpredictable` metadata");
         }
-        Some(selected)
+        Some(restore(self, selected))
+    }
+
+    /// Emits `freeze value` (inkwell 0.10 has no builder method for it).
+    fn freeze(&self, value: BasicValueEnum<'ink>, name: &str) -> BasicValueEnum<'ink> {
+        use inkwell::values::AsValueRef;
+        let name = std::ffi::CString::new(name).expect("a name without NUL bytes");
+        // Safety: the builder is positioned in a function body, `value` is a
+        // first-class value of this context, and `freeze` returns a value of
+        // the same type.
+        unsafe {
+            BasicValueEnum::new(llvm_sys::core::LLVMBuildFreeze(
+                self.builder.as_mut_ptr(),
+                value.as_value_ref(),
+                name.as_ptr(),
+            ))
+        }
+    }
+
+    /// Operands for `ct_select`'s `select`, and how to turn its result back
+    /// into the original type (see [`Self::gen_ct_select`]).
+    #[allow(clippy::type_complexity)]
+    fn ct_select_operands(
+        &self,
+        then_ir: BasicValueEnum<'ink>,
+        else_ir: BasicValueEnum<'ink>,
+    ) -> (
+        BasicValueEnum<'ink>,
+        BasicValueEnum<'ink>,
+        Box<dyn Fn(&Self, BasicValueEnum<'ink>) -> BasicValueEnum<'ink> + 'ink>,
+    ) {
+        match (then_ir, else_ir) {
+            (BasicValueEnum::IntValue(a), BasicValueEnum::IntValue(b))
+                if a.get_type().get_bit_width() < 32 =>
+            {
+                let narrow = a.get_type();
+                let wide = self.context.i32_type();
+                let widen = |v: inkwell::values::IntValue<'ink>| -> BasicValueEnum<'ink> {
+                    self.builder
+                        .build_int_z_extend(v, wide, "ct_select.wide")
+                        .expect("failed to widen a ct_select operand")
+                        .into()
+                };
+                (
+                    widen(a),
+                    widen(b),
+                    Box::new(move |this: &Self, r: BasicValueEnum<'ink>| {
+                        this.builder
+                            .build_int_truncate(r.into_int_value(), narrow, "ct_select.narrow")
+                            .expect("failed to narrow a ct_select result")
+                            .into()
+                    }),
+                )
+            }
+            _ => (then_ir, else_ir, Box::new(|_: &Self, r| r)),
+        }
     }
 
     /// Generates IR for a builtin method: `len()` on an array or `str`, or
@@ -793,15 +874,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             ),
             BuiltinFn::ArrayLen => {
                 let array = self.array_value(receiver, receiver_value);
-                Some(
-                    self.builder
-                        .build_load(
-                            array.length_ty(),
-                            array.get_length_ptr(&self.builder),
-                            "len",
-                        )
-                        .expect("failed to load an array's length"),
-                )
+                let length = self
+                    .builder
+                    .build_load(
+                        array.length_ty(),
+                        array.get_length_ptr(&self.builder),
+                        "len",
+                    )
+                    .expect("failed to load an array's length");
+                array_tbaa::tag_value(length, ArrayAccess::Length);
+                Some(length)
             }
             BuiltinFn::ArrayUncheckedGet => {
                 let array = self.array_value(receiver, receiver_value);
@@ -1760,12 +1842,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         }
         let lhs_type = self.infer[lhs].clone();
         match (lhs_type.interned(), op) {
+            // An array is a GC reference: assigning one (`a = b`,
+            // `rows[i] = row`) stores the handle, as for a class instance.
+            // Both used to reach the `unimplemented!` below.
             (
                 TyKind::Optional(_)
                 | TyKind::Str
                 | TyKind::Tuple(..)
                 | TyKind::Enum(..)
-                | TyKind::Function(_),
+                | TyKind::Function(_)
+                | TyKind::Array(_),
                 BinaryOp::Assignment { op: None },
             ) => return self.gen_plain_assignment(lhs, rhs),
             (TyKind::Enum(e, _), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
@@ -1970,9 +2056,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(op) => Some(self.gen_logic_bin_op(lhs, rhs, op).into()),
@@ -2042,9 +2130,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(_) => {
@@ -2082,9 +2172,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(_) => {
@@ -2115,9 +2207,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             _ => unimplemented!("Operator {:?} is not implemented for struct", op),
@@ -2146,9 +2240,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             _ => unimplemented!("Operator {:?} is not implemented for struct", op),
@@ -2307,6 +2403,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
     /// Given an expression generate code that results in a memory address that
     /// can be used for other place operations.
+    /// Tags a store through the place `place_expr` as an array-element
+    /// access when that place is a bounds-checked `xs[i]` (see
+    /// [`array_tbaa`]).
+    fn tag_if_indexed(&self, place_expr: ExprId, store: inkwell::values::InstructionValue<'ink>) {
+        if matches!(self.body[place_expr], Expr::Index { .. }) {
+            array_tbaa::tag(store, ArrayAccess::Element);
+        }
+    }
+
     fn gen_place_expr(&mut self, expr: ExprId) -> Option<PointerValue<'ink>> {
         let body = self.body.clone();
         match &body[expr] {
@@ -2432,6 +2537,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .build_indirect_call(fn_type, asm, args, &function.name(self.db).to_string())
             .expect("failed to build inline assembly call");
 
+        if ret.is_never() {
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable after assembly returning `never`");
+            return None;
+        }
         call.try_as_basic_value()
             .basic()
             .or_else(|| match self.infer[expr].interned() {
@@ -2579,6 +2690,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             self.gen_abort_check();
         }
 
+        // A call to a function returning `never` does not come back (an
+        // abort out of a `uses` callee has just been branched away by the
+        // check above): nothing follows it.
+        if sig.ret().is_never() {
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable after a call returning `never`");
+            return None;
+        }
+
         if through_table {
             if let Some(hir_struct) = sig.ret().as_struct() {
                 if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
@@ -2687,7 +2808,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         _expr: ExprId,
         ret_expr: Option<ExprId>,
     ) -> Option<BasicValueEnum<'ink>> {
-        let ret_value = ret_expr.and_then(|expr| self.gen_expr(expr));
+        let ret_value = match ret_expr {
+            Some(expr) => {
+                // `return f()` where `f` never returns: nothing is left to
+                // return, and the block is already terminated.
+                Some(self.gen_expr(expr)?)
+            }
+            None => None,
+        };
 
         // Every task of every open scope finishes before the function does.
         self.gen_end_scopes(0);
@@ -2966,9 +3094,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     fn gen_plain_assignment(&mut self, lhs: ExprId, rhs: ExprId) -> Option<BasicValueEnum<'ink>> {
         let value = self.gen_expr(rhs)?;
         let place = self.gen_place_expr(lhs)?;
-        self.builder
+        let store = self
+            .builder
             .build_store(place, value)
             .expect("failed to build store");
+        self.tag_if_indexed(lhs, store);
         Some(self.gen_empty())
     }
 
@@ -3668,8 +3798,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let length = self
             .builder
             .build_load(length_type, array.get_length_ptr(&self.builder), "len")
-            .expect("failed to load an array's length")
-            .into_int_value();
+            .expect("failed to load an array's length");
+        array_tbaa::tag_value(length, ArrayAccess::Length);
+        let length = length.into_int_value();
 
         let counter = self
             .new_alloca_builder()
@@ -3953,17 +4084,21 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             };
 
             let expr_value = self.gen_expr(*expr)?;
-            self.builder
+            let store = self
+                .builder
                 .build_store(element_ptr, expr_value)
                 .expect("failed to build store for array element");
+            array_tbaa::tag(store, ArrayAccess::Element);
         }
 
         // Once all values have been stored in the array, update the length of the array
         let length = array.length_ty().const_int(exprs.len() as u64, false);
         let array_length_ptr = array.get_length_ptr(&self.builder);
-        self.builder
+        let store = self
+            .builder
             .build_store(array_length_ptr, length)
             .expect("failed to build store for array length");
+        array_tbaa::tag(store, ArrayAccess::Length);
 
         Some(array)
     }
@@ -3983,11 +4118,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .get_basic_type(element_ty)
             .expect("expected basic type");
         let element_ptr = self.gen_place_index(expr, base, index)?;
-        Some(
-            self.builder
-                .build_load(element_basic_ty, element_ptr, "")
-                .expect("failed to build load for array index"),
-        )
+        let element = self
+            .builder
+            .build_load(element_basic_ty, element_ptr, "")
+            .expect("failed to build load for array index");
+        array_tbaa::tag_value(element, ArrayAccess::Element);
+        Some(element)
     }
 
     /// Generates the address of `base[index]`, checking that the index is
@@ -4014,8 +4150,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let length = self
             .builder
             .build_load(length_type, base.get_length_ptr(&self.builder), "len")
-            .expect("failed to load an array's length")
-            .into_int_value();
+            .expect("failed to load an array's length");
+        array_tbaa::tag_value(length, ArrayAccess::Length);
+        let length = length.into_int_value();
 
         // Compare in whichever of the two widths is wider, so an `i128`
         // index is not truncated into range before it is checked.

@@ -75,10 +75,16 @@ public func divides_by_zero() -> bool {
         out.contains("test addition_is_wrong ... FAILED: returned false"),
         "{out}"
     );
-    assert!(
-        out.contains("test divides_by_zero ... FAILED: trapped (IntegerDivideByZero)"),
-        "{out}"
-    );
+    // The child catches the fault and names it only where
+    // `codira_healing::trap` can intercept faults (Windows). Elsewhere the
+    // child dies of the signal, and the runner reports that as a crash; the
+    // test still fails either way.
+    let expected = if cfg!(windows) {
+        "test divides_by_zero ... FAILED: trapped (IntegerDivideByZero)"
+    } else {
+        "test divides_by_zero ... FAILED: crashed (signal: 8"
+    };
+    assert!(out.contains(expected), "{out}");
     assert!(
         out.contains("test result: FAILED. 2 passed; 2 failed"),
         "{out}"

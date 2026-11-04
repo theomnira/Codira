@@ -140,7 +140,7 @@ public func new_asteroid(position: Vec2, angle: f32, size: u8) -> Asteroid {
 }
 
 public func update_asteroids(asteroids: [Asteroid], num_asteroids: usize) {
-    let i = 0;
+    var i = 0;
     while(i < num_asteroids) {
         move_object(asteroids[i].object);
         i += 1;
@@ -162,7 +162,7 @@ public func new_rocket(position: Vec2, angle: f32) -> Rocket {
 }
 
 public func update_rockets(rockets: [Rocket], num_rockets: usize) {
-    let i = 0;
+    var i = 0;
     while(i < num_rockets) {
         let rocket = rockets[i]
         i += 1;

@@ -129,7 +129,7 @@ public func mspan_slice[T](this: MutableSpan[T], start: usize, end: usize) -> Mu
 
 /// Fills the entire mutable span with `value`.
 public func mspan_fill[T](this: MutableSpan[T], value: T) {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         raw_store(this.ptr, i, value);
         i = i + 1;
@@ -140,7 +140,7 @@ public func mspan_fill[T](this: MutableSpan[T], value: T) {
 
 /// Returns true if any element in the span equals `value`.
 public func span_contains[T](this: Span[T], value: T) -> bool {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         if raw_load(this.ptr, i) == value {
             return true;
@@ -152,7 +152,7 @@ public func span_contains[T](this: Span[T], value: T) -> bool {
 
 /// Returns the index of `value` in the span, or -1 if not found.
 public func span_index_of[T](this: Span[T], value: T) -> isize {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         if raw_load(this.ptr, i) == value {
             return i as isize;
@@ -169,7 +169,7 @@ public func span_copy_into[T](src: Span[T], dst: MutableSpan[T]) {
     if src.len != dst.len {
         panic("span_copy_into: length mismatch");
     }
-    let i: usize = 0;
+    var i: usize = 0;
     while i < src.len {
         raw_store(dst.ptr, i, raw_load(src.ptr, i));
         i = i + 1;
@@ -205,7 +205,7 @@ public func span_equals[T](a: Span[T], b: Span[T]) -> bool {
     if a.len != b.len {
         return false;
     }
-    let i: usize = 0;
+    var i: usize = 0;
     while i < a.len {
         if raw_load(a.ptr, i) != raw_load(b.ptr, i) {
             return false;

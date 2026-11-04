@@ -20,8 +20,8 @@ public func counter_new[T]() -> Counter[T] {
 
 /// Creates a counter by counting every element in `items`.
 public func counter_from_list[T](items: List[T]) -> Counter[T] {
-    let c = counter_new();
-    let i: usize = 0;
+    var c = counter_new();
+    var i: usize = 0;
     while i < items.len {
         c = increment(c, get(items, i));
         i = i + 1;
@@ -81,9 +81,9 @@ public func set_count[T](this: Counter[T], key: T, n: usize) -> Counter[T] {
 
 /// Returns the total sum of all counts.
 public func total[T](this: Counter[T]) -> usize {
-    let sum: usize = 0;
+    var sum: usize = 0;
     let vals = values(this.counts);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < vals.len {
         sum = sum + get(vals, i);
         i = i + 1;
@@ -112,18 +112,18 @@ public struct CountEntry[T] {
 /// Returns a list of (element, count) pairs, sorted by count descending.
 public func most_common[T](this: Counter[T]) -> List[CountEntry[T]] {
     let pairs = items(this.counts);
-    let entries = list_with_capacity(pairs.len);
-    let i: usize = 0;
+    var entries = list_with_capacity(pairs.len);
+    var i: usize = 0;
     while i < pairs.len {
         let pair = get(pairs, i);
         entries = push(entries, CountEntry[T] { element: pair.0, count: pair.1 });
         i = i + 1;
     }
     // Sort descending by count (insertion sort for simplicity)
-    let j: usize = 1;
+    var j: usize = 1;
     while j < entries.len {
         let key_entry = get(entries, j);
-        let k: isize = (j as isize) - 1;
+        var k: isize = (j as isize) - 1;
         while k >= 0 && get(entries, k as usize).count < key_entry.count {
             entries = set(entries, (k + 1) as usize, get(entries, k as usize));
             k = k - 1;
@@ -137,7 +137,7 @@ public func most_common[T](this: Counter[T]) -> List[CountEntry[T]] {
 /// Returns the top `n` most common elements as (element, count) pairs.
 public func most_common_n[T](this: Counter[T], n: usize) -> List[CountEntry[T]] {
     let all_entries = most_common(this);
-    let limit = n;
+    var limit = n;
     if limit > all_entries.len {
         limit = all_entries.len;
     }
@@ -157,13 +157,13 @@ public func least_common[T](this: Counter[T]) -> CountEntry[T] {
 
 /// Returns a flat list where each element appears `count` times.
 public func elements[T](this: Counter[T]) -> List[T] {
-    let out = list_with_capacity(total(this));
+    var out = list_with_capacity(total(this));
     let ks = keys(this.counts);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < ks.len {
         let key = get(ks, i);
         let c = count(this, key);
-        let j: usize = 0;
+        var j: usize = 0;
         while j < c {
             out = push(out, key);
             j = j + 1;
@@ -177,9 +177,9 @@ public func elements[T](this: Counter[T]) -> List[T] {
 
 /// Adds counts from `other` into `self`.
 public func update[T](this: Counter[T], other: Counter[T]) -> Counter[T] {
-    let out = this;
+    var out = this;
     let ks = keys(other.counts);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < ks.len {
         let key = get(ks, i);
         let other_count = count(other, key);
@@ -192,9 +192,9 @@ public func update[T](this: Counter[T], other: Counter[T]) -> Counter[T] {
 /// Subtracts counts of `other` from `self`. Counts that drop to zero or
 /// below are removed.
 public func subtract[T](this: Counter[T], other: Counter[T]) -> Counter[T] {
-    let out = this;
+    var out = this;
     let ks = keys(other.counts);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < ks.len {
         let key = get(ks, i);
         let self_count  = count(out, key);
@@ -212,15 +212,15 @@ public func subtract[T](this: Counter[T], other: Counter[T]) -> Counter[T] {
 
 /// Returns a new counter with the element-wise maximum of counts.
 public func counter_max[T](a: Counter[T], b: Counter[T]) -> Counter[T] {
-    let out = counter_new();
+    var out = counter_new();
     // All keys from a
     let ka = keys(a.counts);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < ka.len {
         let key = get(ka, i);
         let ca = count(a, key);
         let cb = count(b, key);
-        let c = ca;
+        var c = ca;
         if cb > ca {
             c = cb;
         }
@@ -242,14 +242,14 @@ public func counter_max[T](a: Counter[T], b: Counter[T]) -> Counter[T] {
 
 /// Returns a new counter with the element-wise minimum of counts.
 public func counter_min[T](a: Counter[T], b: Counter[T]) -> Counter[T] {
-    let out = counter_new();
+    var out = counter_new();
     let ka = keys(a.counts);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < ka.len {
         let key = get(ka, i);
         let ca = count(a, key);
         let cb = count(b, key);
-        let c = ca;
+        var c = ca;
         if cb < ca {
             c = cb;
         }

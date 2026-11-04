@@ -38,7 +38,7 @@ public struct SIMD[T, N: usize] {
 extend SIMD[T, N] {
     public func splat(value: T) -> SIMD[T, N] {
         let result: SIMD[T, N];
-        let i: usize = 0;
+        var i: usize = 0;
         while i < N {
             result._data[i] = value;
             i = i + 1;
@@ -72,7 +72,7 @@ extend SIMD[T, N] {
 extend SIMD[T, N] {
     public func iota() -> SIMD[T, N] {
         let result: SIMD[T, N];
-        let i: usize = 0;
+        var i: usize = 0;
         while i < N {
             result._data[i] = i as T;
             i = i + 1;
@@ -335,7 +335,7 @@ extend SIMD[T, N] {
 extend SIMD[T, N] {
     public func reverse(self) -> SIMD[T, N] {
         let result: SIMD[T, N];
-        let i: usize = 0;
+        var i: usize = 0;
         while i < N {
             result._data[i] = self._data[N - 1 - i];
             i = i + 1;
@@ -348,7 +348,7 @@ extend SIMD[T, N] {
 extend SIMD[T, N] {
     public func rotate_left(self, amount: usize) -> SIMD[T, N] {
         let result: SIMD[T, N];
-        let i: usize = 0;
+        var i: usize = 0;
         while i < N {
             result._data[i] = self._data[(i + amount) % N];
             i = i + 1;
@@ -450,8 +450,8 @@ extend SIMD[T, N] {
 // Stringable — pretty-print all lanes.
 extend SIMD[T, N] {
     public func to_string(self) -> String {
-        let s = "[";
-        let i: usize = 0;
+        var s = "[";
+        var i: usize = 0;
         while i < N {
             if i > 0 {
                 s = s + ", ";

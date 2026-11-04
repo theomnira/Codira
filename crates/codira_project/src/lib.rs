@@ -4,7 +4,9 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-pub use manifest::{EidosSettings, Manifest, ManifestMetadata, NativeSources, PackageId};
+pub use manifest::{
+    EidosSettings, EnvelopeTable, Manifest, ManifestMetadata, NativeSources, PackageId,
+};
 pub use package::Package;
 pub use project_manifest::ProjectManifest;
 

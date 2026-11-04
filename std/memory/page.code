@@ -19,7 +19,6 @@
 // The functions are provided by the runtime (codira_runtime::native_memory).
 // =============================================================================
 
-import root.builtin.types.*;
 
 extern "C" {
     func codira_page_size() -> usize;

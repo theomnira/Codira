@@ -17,7 +17,7 @@ public struct InlineArray[T, N: usize] {
 /// Creates a new InlineArray with all elements set to `value`.
 public func inline_array_new[T, N: usize](value: T) -> InlineArray[T, N] {
     let arr = InlineArray[T, N] { data: uninit_fixed_buf() };
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         fixed_buf_store(arr.data, i, value);
         i = i + 1;
@@ -75,7 +75,7 @@ public func last[T, N: usize](this: InlineArray[T, N]) -> T {
 /// Sets every element to `value`.
 public func fill[T, N: usize](this: InlineArray[T, N], value: T) -> InlineArray[T, N] {
     let out = this;
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         fixed_buf_store(out.data, i, value);
         i = i + 1;
@@ -86,7 +86,7 @@ public func fill[T, N: usize](this: InlineArray[T, N], value: T) -> InlineArray[
 /// Sets every element using a generator function: `f(index)`.
 public func fill_with[T, N: usize](this: InlineArray[T, N], f: func(usize) -> T) -> InlineArray[T, N] {
     let out = this;
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         fixed_buf_store(out.data, i, f(i));
         i = i + 1;
@@ -98,7 +98,7 @@ public func fill_with[T, N: usize](this: InlineArray[T, N], f: func(usize) -> T)
 
 /// Returns true if any element equals `value`.
 public func contains[T, N: usize](this: InlineArray[T, N], value: T) -> bool {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         if fixed_buf_load(this.data, i) == value {
             return true;
@@ -110,7 +110,7 @@ public func contains[T, N: usize](this: InlineArray[T, N], value: T) -> bool {
 
 /// Returns the index of the first occurrence of `value`, or -1.
 public func index_of[T, N: usize](this: InlineArray[T, N], value: T) -> isize {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         if fixed_buf_load(this.data, i) == value {
             return i as isize;
@@ -125,7 +125,7 @@ public func index_of[T, N: usize](this: InlineArray[T, N], value: T) -> isize {
 /// Applies `f` to every element in-place.
 public func map_in_place[T, N: usize](this: InlineArray[T, N], f: func(T) -> T) -> InlineArray[T, N] {
     let out = this;
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         fixed_buf_store(out.data, i, f(fixed_buf_load(out.data, i)));
         i = i + 1;
@@ -135,8 +135,8 @@ public func map_in_place[T, N: usize](this: InlineArray[T, N], f: func(T) -> T) 
 
 /// Reduces all elements into a single value.
 public func reduce[T, U, N: usize](this: InlineArray[T, N], init: U, f: func(U, T) -> U) -> U {
-    let acc = init;
-    let i: usize = 0;
+    var acc = init;
+    var i: usize = 0;
     while i < N {
         acc = f(acc, fixed_buf_load(this.data, i));
         i = i + 1;
@@ -170,8 +170,8 @@ public func iter_next[T, N: usize](it: InlineArrayIter[T, N]) -> (InlineArrayIte
 
 /// Copies the array into a new List[T].
 public func to_list[T, N: usize](this: InlineArray[T, N]) -> List[T] {
-    let out = list_with_capacity(N);
-    let i: usize = 0;
+    var out = list_with_capacity(N);
+    var i: usize = 0;
     while i < N {
         out = push(out, fixed_buf_load(this.data, i));
         i = i + 1;
@@ -188,7 +188,7 @@ public func as_span[T, N: usize](this: InlineArray[T, N]) -> Span[T] {
 
 /// Returns true if two arrays have identical elements.
 public func array_equals[T, N: usize](a: InlineArray[T, N], b: InlineArray[T, N]) -> bool {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         if fixed_buf_load(a.data, i) != fixed_buf_load(b.data, i) {
             return false;
@@ -215,8 +215,8 @@ public func swap[T, N: usize](this: InlineArray[T, N], i: usize, j: usize) -> In
 /// Reverses the array in-place.
 public func reverse[T, N: usize](this: InlineArray[T, N]) -> InlineArray[T, N] {
     let out = this;
-    let lo: usize = 0;
-    let hi: usize = N;
+    var lo: usize = 0;
+    var hi: usize = N;
     if hi == 0 {
         return out;
     }

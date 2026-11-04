@@ -908,6 +908,7 @@ dependencies = [
  "codira_compiler",
  "codira_compiler_daemon",
  "codira_cranelift",
+ "codira_ctcheck",
  "codira_healing",
  "codira_hir",
  "codira_hir_input",
@@ -933,6 +934,10 @@ dependencies = [
  "parking_lot 0.12.3",
  "serde",
 ]
+
+[[package]]
+name = "codira_ai"
+version = "0.6.0-dev"
 
 [[package]]
 name = "codira_capi_utils"
@@ -1036,12 +1041,14 @@ dependencies = [
  "codira_certificate",
  "codira_circuits",
  "codira_codegen",
+ "codira_ctcheck",
  "codira_diagnostics",
  "codira_hir",
  "codira_hir_input",
  "codira_image",
  "codira_paths",
  "codira_project",
+ "codira_runtime",
  "codira_smt",
  "codira_syntax",
  "codira_target",
@@ -1096,6 +1103,24 @@ dependencies = [
  "cranelift-module",
  "cranelift-native",
  "rustc-hash 1.1.0",
+]
+
+[[package]]
+name = "codira_ctcheck"
+version = "0.6.0-dev"
+dependencies = [
+ "iced-x86",
+ "object 0.36.5",
+ "yaxpeax-arch",
+ "yaxpeax-arm",
+]
+
+[[package]]
+name = "codira_db"
+version = "0.6.0-dev"
+dependencies = [
+ "crc32fast",
+ "tempfile",
 ]
 
 [[package]]
@@ -1240,6 +1265,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "codira_mcode"
+version = "0.6.0-dev"
+dependencies = [
+ "codira_smt",
+]
+
+[[package]]
 name = "codira_memory"
 version = "0.6.0-dev"
 dependencies = [
@@ -1304,15 +1336,19 @@ dependencies = [
 name = "codira_runtime"
 version = "0.6.0-dev"
 dependencies = [
+ "blake3",
  "cc",
  "codira_abi",
+ "codira_ai",
  "codira_capi_utils",
  "codira_compiler",
+ "codira_db",
  "codira_libloader",
  "codira_memory",
  "codira_project",
  "codira_test",
  "itertools 0.12.1",
+ "libc",
  "libloading",
  "log",
  "notify",
@@ -1320,6 +1356,7 @@ dependencies = [
  "parking_lot 0.12.3",
  "rustc-hash 1.1.0",
  "seq-macro",
+ "sha2 0.11.1",
  "tempfile",
  "termcolor",
  "thiserror 1.0.69",
@@ -1357,6 +1394,14 @@ name = "codira_smt"
 version = "0.6.0-dev"
 dependencies = [
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "codira_superopt"
+version = "0.6.0-dev"
+dependencies = [
+ "codira_mcode",
+ "codira_smt",
 ]
 
 [[package]]
@@ -2849,6 +2894,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "iced-x86"
+version = "1.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c23ad4d19dca41180e835ef6fbd2c1ee655777eca086ad80dd517e0513322879"
+dependencies = [
+ "lazy_static",
 ]
 
 [[package]]
@@ -6350,6 +6404,25 @@ name = "yasna"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+
+[[package]]
+name = "yaxpeax-arch"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb869f86d5a365bf741d9df773f7a5347757b1c466b7383b74989324785ef36b"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "yaxpeax-arm"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79f8d9808ad0b7e434882c66e50704138e7c0bdf3408a9f3159c50603dc3168c"
+dependencies = [
+ "bitvec",
+ "yaxpeax-arch",
+]
 
 [[package]]
 name = "yoke"

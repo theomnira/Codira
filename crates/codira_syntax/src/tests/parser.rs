@@ -1786,3 +1786,67 @@ fn unit_is_a_qualifier_only_after_a_type() {
         .count();
     assert_eq!(units, 2);
 }
+
+/// Traits, implementations and bounds: `T: A + B` in a parameter list and
+/// in a `where` clause, and `extend Box[T: Show]: Show`. The AST helpers
+/// tell a bound from the constrained type and from a generic argument.
+#[test]
+fn trait_bounds_in_every_position() {
+    let source = r#"
+        trait Show {
+            func show(self) -> i64;
+            func twice(self) -> i64 { self.show() * 2 }
+        }
+
+        func both[T: Show + Eq](x: T) -> i64 { x.show() }
+
+        func later[T, U](x: T, y: U) -> i64 where T: Show + Eq, U: Show { 0 }
+
+        extend Box[T: Show + Eq, U]: Show {
+            func show(self) -> i64 { 1 }
+        }
+        "#;
+    let parse = SourceFile::parse(source);
+    insta::assert_snapshot!(parse.debug_dump());
+
+    let file = parse.tree();
+    let text = |t: ast::TypeRef| t.syntax().text().to_string();
+
+    let param = file
+        .syntax()
+        .descendants()
+        .find_map(ast::GenericParam::cast)
+        .unwrap();
+    assert_eq!(param.bounds().map(text).collect::<Vec<_>>(), ["Show", "Eq"]);
+
+    let preds: Vec<_> = file
+        .syntax()
+        .descendants()
+        .filter_map(ast::WherePred::cast)
+        .collect();
+    assert_eq!(preds.len(), 2);
+    assert_eq!(text(preds[0].subject().unwrap()), "T");
+    assert_eq!(
+        preds[0].bounds().map(text).collect::<Vec<_>>(),
+        ["Show", "Eq"]
+    );
+    assert_eq!(preds[1].bounds().map(text).collect::<Vec<_>>(), ["Show"]);
+
+    let args = file
+        .syntax()
+        .descendants()
+        .find_map(ast::GenericArgList::cast)
+        .unwrap();
+    let args: Vec<(String, Vec<String>)> = args
+        .args_with_bounds()
+        .into_iter()
+        .map(|(arg, bounds)| (text(arg), bounds.into_iter().map(text).collect()))
+        .collect();
+    assert_eq!(
+        args,
+        [
+            ("T".to_owned(), vec!["Show".to_owned(), "Eq".to_owned()]),
+            ("U".to_owned(), vec![])
+        ]
+    );
+}

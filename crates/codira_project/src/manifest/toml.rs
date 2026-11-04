@@ -6,7 +6,7 @@
 //! - Part of the Codira compiler and runtime toolchain.
 use serde_derive::{Deserialize, Serialize};
 
-use super::{EidosSettings, Manifest, ManifestMetadata, NativeSources, PackageId};
+use super::{EidosSettings, EnvelopeTable, Manifest, ManifestMetadata, NativeSources, PackageId};
 
 /// A manifest as specified in a codira.toml file.
 #[derive(Debug, Deserialize, Serialize)]
@@ -16,6 +16,31 @@ pub struct TomlManifest {
     eidos: Option<TomlEidos>,
     #[serde(default)]
     native: Option<TomlNative>,
+    /// The package's semantic envelope; see [`EnvelopeTable`].
+    #[serde(default)]
+    envelope: Option<::toml::value::Table>,
+}
+
+/// Reads the `[envelope]` table. Every value must be a string or a boolean
+/// (`allocation = "none"`, `blocking = false`); anything else is an error.
+/// Which keys and values are accepted is decided by the effect analysis
+/// (`codira_hir::realtime::envelope`), which rejects an unknown or unchecked
+/// key with the same message as for `@envelope`. Nothing is dropped here.
+fn envelope_table(table: ::toml::value::Table) -> Result<EnvelopeTable, anyhow::Error> {
+    let mut entries = Vec::with_capacity(table.len());
+    for (key, value) in table {
+        let value = match value {
+            ::toml::Value::String(text) => text,
+            ::toml::Value::Boolean(flag) => flag.to_string(),
+            other => anyhow::bail!(
+                "[envelope] {key} must be a string or a boolean (as in `allocation = \"none\"` \
+                 or `blocking = false`), not {}",
+                other.type_str()
+            ),
+        };
+        entries.push((key, value));
+    }
+    Ok(EnvelopeTable { entries })
 }
 
 /// The `[native]` section: C, C++ and assembly compiled into the package.
@@ -149,6 +174,7 @@ impl TomlManifest {
                     libs: native.libs,
                 })
                 .unwrap_or_default(),
+            envelope: self.envelope.map(envelope_table).transpose()?,
         })
     }
 }

@@ -197,7 +197,13 @@ impl Assembly {
         dispatch_table: &DispatchTable,
         type_table: &TypeTable,
         fn_cells: &mut FnCells,
-        to_link: impl Iterator<Item = (&'abi mut *const c_void, &'abi abi::FunctionPrototype<'abi>)>,
+        to_link: impl Iterator<
+            Item = (
+                &'abi mut *const c_void,
+                &'abi abi::FunctionPrototype<'abi>,
+                &'abi libloading::Library,
+            ),
+        >,
     ) -> Result<(), LinkFunctionsError> {
         let mut to_link: Vec<_> = to_link.collect();
 
@@ -207,7 +213,7 @@ impl Assembly {
             let mut failed_to_link = Vec::new();
 
             // Try to link outstanding entries
-            for (dispatch_ptr, fn_prototype) in to_link {
+            for (dispatch_ptr, fn_prototype, library) in to_link {
                 // Get the types of the function arguments
                 let fn_proto_arg_type_infos = fn_prototype
                     .signature
@@ -267,7 +273,7 @@ impl Assembly {
                     *dispatch_ptr = existing_fn_def.fn_ptr;
                     retry = true;
                 } else {
-                    failed_to_link.push((dispatch_ptr, fn_prototype));
+                    failed_to_link.push((dispatch_ptr, fn_prototype, library));
                 }
             }
 
@@ -279,12 +285,12 @@ impl Assembly {
         // A function-value cell slot receives the runtime's cell for its key
         // (see `fn_cells`). Anything else may still be an `extern "C"` symbol
         // -- see `resolve_native_symbol`.
-        to_link.retain_mut(|(dispatch_ptr, fn_prototype)| {
+        to_link.retain_mut(|(dispatch_ptr, fn_prototype, library)| {
             if let Some(key) = fn_prototype.name().strip_prefix(abi::FN_VALUE_CELL_PREFIX) {
                 **dispatch_ptr = fn_cells.cell_for(key);
                 return false;
             }
-            match resolve_native_symbol(fn_prototype.name()) {
+            match resolve_native_symbol(library, fn_prototype.name()) {
                 Some(address) => {
                     // SAFETY: the dispatch slot holds a function pointer, and
                     // the address came from the platform's own symbol table.
@@ -305,7 +311,7 @@ impl Assembly {
             Err(LinkFunctionsError::MissingDependencies {
                 functions: to_link
                     .into_iter()
-                    .map(|(_, fn_prototype)| fn_prototype.name().to_string())
+                    .map(|(_, fn_prototype, _)| fn_prototype.name().to_string())
                     .collect(),
             })
         }
@@ -348,12 +354,21 @@ impl Assembly {
             dispatch_table.insert_module(&assembly.info().symbols, &type_table);
         }
 
+        // Each slot travels with the library that declared it: an `extern "C"`
+        // function the package's own native sources define (`[native]` C,
+        // C++ or assembly linked as an object) is found there.
         let functions_to_link = assemblies
             .into_iter()
-            .flat_map(|asm| asm.info_mut().dispatch_table.iter_mut())
+            .flat_map(|asm| {
+                let library = asm.library.library();
+                asm.info
+                    .dispatch_table
+                    .iter_mut()
+                    .map(move |(ptr, prototype)| (ptr, prototype, library))
+            })
             // Only take signatures into account that do *not* yet have a function pointer assigned
             // by the compiler.
-            .filter(|(ptr, _)| ptr.is_null());
+            .filter(|(ptr, _, _)| ptr.is_null());
 
         Assembly::link_all_functions(&dispatch_table, &type_table, fn_cells, functions_to_link)?;
 
@@ -480,15 +495,17 @@ impl Assembly {
             // Insert the new assembly's functions into the dispatch table
             dispatch_table.insert_module(&new_assembly.info.symbols, &type_table);
 
+            let library = new_assembly.library.library();
             let functions_to_link = new_assembly
-                .info_mut()
+                .info
                 .dispatch_table
                 .iter_mut()
+                .map(|(ptr, prototype)| (ptr, prototype, library))
                 // Only take signatures into account that do *not* yet have a function pointer
                 // assigned by the compiler. When an assembly is compiled it
                 // "pre-fills" its internal dispatch table with pointers to
                 // self-referencing functions.
-                .filter(|(ptr, _)| ptr.is_null());
+                .filter(|(ptr, _, _)| ptr.is_null());
 
             // Update the dispatch tables of the assemblies themselves based on our global
             // dispatch table. This will effectively link the function
@@ -586,9 +603,21 @@ impl Assembly {
 /// `ucrtbase` is the current runtime and `msvcrt` the legacy one, and a
 /// program should bind to the modern one when both are present.
 ///
+/// First, though, the library that declared the `extern`: a symbol the
+/// package's own native sources define lives there. On Unix a library the
+/// runtime loads is not in the `RTLD_DEFAULT` scope, so without this an
+/// assembly-language function in `[native]` could never be called
+/// ("missing dependencies: `asm_identity`").
+///
 /// Returns `None` when the symbol is not found anywhere, leaving the
 /// caller's existing "missing dependencies" error to report it.
-fn resolve_native_symbol(name: &str) -> Option<*const c_void> {
+fn resolve_native_symbol(declaring: &libloading::Library, name: &str) -> Option<*const c_void> {
+    // SAFETY: a lookup neither executes the symbol nor takes ownership of
+    // it; the library stays loaded for as long as its assembly is.
+    if let Ok(symbol) = unsafe { declaring.get::<*const c_void>(name.as_bytes()) } {
+        return Some(*symbol);
+    }
+
     #[cfg(windows)]
     {
         /// Modules searched for `extern "C"` symbols, in order.
@@ -637,6 +666,7 @@ fn resolve_native_symbol(name: &str) -> Option<*const c_void> {
         let this = libloading::os::unix::Library::this();
         // SAFETY: as above -- a lookup neither executes nor takes ownership.
         let symbol = unsafe { this.get::<*const c_void>(name.as_bytes()) }.ok()?;
-        Some(unsafe { *symbol })
+        // Copying the address out of the symbol reads nothing behind it.
+        Some(*symbol)
     }
 }

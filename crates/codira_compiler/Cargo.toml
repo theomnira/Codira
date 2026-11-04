@@ -23,6 +23,7 @@ codira_target = { version = "0.6.0-dev", path = "../codira_target" }
 codira_project = { version = "0.6.0-dev", path = "../codira_project" }
 codira_diagnostics = { version = "0.6.0-dev", path = "../codira_diagnostics" }
 codira_certificate = { version = "0.6.0-dev", path = "../codira_certificate" }
+codira_ctcheck = { version = "0.6.0-dev", path = "../codira_ctcheck" }
 codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }
 annotate-snippets = { workspace = true }
 anyhow = { workspace = true }
@@ -33,5 +34,7 @@ yansi-term = { workspace = true }
 
 [dev-dependencies]
 codira_image = { path = "../codira_image" }
+# The importability ratchet loads what it builds.
+codira_runtime = { path = "../codira_runtime" }
 tempfile = { workspace = true }
 insta = { workspace = true }

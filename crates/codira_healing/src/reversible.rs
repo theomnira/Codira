@@ -241,7 +241,13 @@ mod tests {
 /// state was polluted; we rewind the pollution, pick a divisor with the SMT
 /// synthesizer, and re-execute. The final register file is indistinguishable
 /// from a run that simply never faulted.
-#[cfg(test)]
+///
+/// The test provokes a real division fault and needs `crate::trap` to catch
+/// it, which only Windows implements (vectored exception handlers);
+/// elsewhere `protected` runs its closure unprotected and the fault ends the
+/// test process with SIGFPE, taking every test after it in the same binary
+/// with it. So it is compiled only on Windows.
+#[cfg(all(test, windows))]
 mod integration_tests {
     use codira_smt::Context;
 

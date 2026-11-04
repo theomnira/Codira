@@ -6,6 +6,7 @@
 //! - Part of the Codira compiler and runtime toolchain.
 use codira_hir::{mono::Instance, HirDatabase};
 use inkwell::{
+    attributes::{Attribute, AttributeLoc},
     module::{Linkage, Module},
     values::FunctionValue,
 };
@@ -33,7 +34,9 @@ pub(crate) fn gen_prototype<'db, 'ink>(
     let func = instance.function();
     let ir_ty = types.get_function_type(instance);
     if instance.is_generic() || local_copy {
-        return module.add_function(&instance.name(db), ir_ty, Some(Linkage::Private));
+        let value = module.add_function(&instance.name(db), ir_ty, Some(Linkage::Private));
+        mark_noreturn(db, func, value);
+        return value;
     }
     let name = func.name(db).to_string();
 
@@ -60,7 +63,40 @@ pub(crate) fn gen_prototype<'db, 'ink>(
         _ => None,
     };
 
-    module.add_function(&name, ir_ty, linkage)
+    let value = module.add_function(&name, ir_ty, linkage);
+    mark_noreturn(db, func, value);
+    value
+}
+
+/// Whether a call to `func` can never come back: it returns `never` and
+/// has no `uses` clause. A `uses` function returning `never` does return
+/// when a handler aborts it (aborts unwind by ordinary returns, see
+/// `ir::body::effects`), so the caller checks for that after the call and
+/// only then reaches `unreachable`; it is not `noreturn`.
+pub(crate) fn never_returns(db: &dyn HirDatabase, func: codira_hir::Function) -> bool {
+    func.effects(db).is_empty()
+        && func
+            .ty(db)
+            .callable_sig(db)
+            .is_some_and(|sig| sig.ret().is_never())
+}
+
+/// Gives `value` LLVM's `noreturn` attribute when `func` never returns
+/// (see [`never_returns`]). Its LLVM type is then `void` (see
+/// `HirTypeCache::get_function_type`).
+fn mark_noreturn<'ink>(
+    db: &dyn HirDatabase,
+    func: codira_hir::Function,
+    value: FunctionValue<'ink>,
+) {
+    if never_returns(db, func) {
+        let context = value.get_type().get_context();
+        let kind = Attribute::get_named_enum_kind_id("noreturn");
+        value.add_attribute(
+            AttributeLoc::Function,
+            context.create_enum_attribute(kind, 0),
+        );
+    }
 }
 
 /// Generates a `FunctionValue` for a `codira_hir::Function` that is usable from
@@ -77,5 +113,7 @@ pub(crate) fn gen_public_prototype<'db, 'ink>(
 ) -> FunctionValue<'ink> {
     let name = format!("{}_wrapper", func.name(db));
     let ir_ty = types.get_public_function_type(&Instance::of(func));
-    module.add_function(&name, ir_ty, None)
+    let value = module.add_function(&name, ir_ty, None);
+    mark_noreturn(db, func, value);
+    value
 }

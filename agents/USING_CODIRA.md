@@ -114,6 +114,33 @@ public func distance_squared(a: Point, b: Point) -> f64 {
 
 Implicit return — the last expression is the return value; `return x` also works.
 
+Every argument is passed by copy (a class instance is a reference, so the
+callee and the caller share its fields). There are no in-place
+parameters yet: `inout`, `mut` and `out` before a parameter, and the
+mutable reference types `mut T` and `&mut T` anywhere, are rejected ("...
+are not supported yet"). Return the new value instead
+(`func bump(s: S) -> S`), or pass a class instance. `consuming`,
+`borrowing` and `read` are accepted and mean nothing beyond a copy (no
+move checking), and `&T` is accepted as `T`.
+
+A function that never returns declares the result `never` (`Never` in
+`std.builtin.type_aliases`): its body must diverge (`loop {}` without a
+`break`, or a call to another such function), and a call to it can stand
+where any type is expected (`if c { x } else { fail(3) }`):
+
+```codira
+extern "C" { func codira_exit(code: i32) -> never; }
+public func fail(code: i32) -> never { codira_exit(code) }
+```
+
+Compiled as a function returning nothing that LLVM is told does not return
+(`noreturn`), with `unreachable` after each call; its reflected signature
+names `()` as the result, so the runtime's hooks that do not return
+(`codira_abort`, `codira_exit`) are registered with a unit result. A `uses`
+function returning `never` can still come back when a handler aborts it,
+and is not `noreturn`. The Cranelift `--jit` backend compiles a call to one
+as a trap after the call.
+
 ### Bindings
 
 ```codira
@@ -123,6 +150,21 @@ counter += 1
 ```
 
 `var` replaces `let mut`; there is no standalone `mut` keyword.
+
+A `let` binding cannot be assigned after its declaration: `x = ..`,
+`x += ..`, and assigning to a field of a value struct or an element of a
+tuple held in it (`p.x = ..`) are errors ("cannot assign to `x`: it is
+bound with `let`..."). That includes a `let` declared without an
+initializer: there is no deferred initialization of a `let`, so write
+`var x: T` and assign it. Through a `let` you may still change what the
+binding *refers to* but does not hold: a field of a class instance
+(`c.n = 3`) and an element of an array (`a[0] = 5`). Parameters are
+mutable local copies.
+
+Bindings exist only inside functions. A module-level `let` or `var`
+(`public let LIMIT: i64 = 10;`) is rejected ("module-level `let` is not
+supported yet"): write a function returning the value instead, as
+`std.math.constants` does (`public func LIMIT() -> i64 { 10 }`).
 
 ### Loops and arrays
 
@@ -295,10 +337,11 @@ func main() -> f64 {
   they are always inferred from the arguments and the expected type. A
   parameter nothing determines (`func size[T]() -> i64` called as `size()`)
   is an error at the call.
-- A value of type `T` can be moved, copied, passed, returned and stored.
-  Anything more -- `a + b`, `a < b`, `-a`, `a.len()` -- needs a bound
-  (`where T: ...`), and bounds are not supported yet: it is a type error
-  saying so.
+- A value of type `T` can be moved, copied, passed, returned and stored,
+  and the methods of its bounds called (see "Traits and bounds" below).
+  Operators -- `a + b`, `a < b`, `-a` -- are not resolved through traits:
+  on a `T` they are a type error saying so; declare the operation as a
+  trait method and call that.
 - A generic type needs its arguments outside its own declaration: `b: Box`
   is an error, write `b: Box[i32]`.
 - Generics cross modules as source: a module calling another module's
@@ -312,6 +355,94 @@ func main() -> f64 {
   inside `f[T]`) has no finite set of instances and is reported.
 - The Cranelift backend (`codira run --jit`) does not compile generic
   functions; a program using them runs on LLVM.
+
+#### Traits and bounds
+
+A `trait` declares methods; a type implements it in an `extend` block that
+names it; a generic parameter bounded by it can call those methods. Every
+call is resolved at compile time, per instantiation (static dispatch, no
+vtables): `total(r)` for a `Rect` calls `Rect`'s `area` directly.
+
+```codira
+trait Shape {
+    func area(self) -> i64;                          // required
+    func describe(self) -> i64 { self.area() * 10 }  // default body
+}
+trait Named: Shape {                                 // supertrait
+    func id(self) -> i64;
+}
+trait Make {
+    func make() -> Self;                             // no `self`: associated
+}
+
+struct Rect { w: i64, h: i64 }
+struct Box[T] { v: T }
+
+extend Rect: Shape {                                 // the implementation
+    func area(self) -> i64 { self.w * self.h }       // `describe`: default
+}
+extend Rect: Named { func id(self) -> i64 { 7 } }
+extend Rect: Make { func make() -> Rect { Rect { w: 2, h: 5 } } }
+extend i64: Shape { func area(self) -> i64 { self * self } }
+extend Box[T: Shape]: Shape {                        // Box[T] is a Shape
+    func area(self) -> i64 { self.v.area() + 1 }     // when T is
+}
+
+func total[T: Shape](x: T) -> i64 { x.area() + x.describe() }
+func both[T](x: T) -> i64 where T: Named { x.id() + x.area() }
+func fresh[T: Shape + Make](x: T) -> i64 { T.make().area() + x.area() }
+```
+
+- Bounds: `[T: A + B]`, `where T: A + B` (only on the function's own
+  parameters), and on an `extend` block's parameters, `extend Box[T: A]`,
+  which hold in all its methods (with or without a trait after the `:`).
+  A bound gives `T` its traits' methods and their supertraits' methods;
+  `T.make()` calls an associated function of a bound. A method name two
+  bounds both declare is an error at the call.
+- At every call of a bounded function, the type each parameter stands for
+  must implement its bounds: ``the type `Circle` does not implement the
+  trait `Shape`, which `total` requires of its parameter `T` ``. An
+  integer literal is `i32` unless something says otherwise, so with only
+  `extend i64: Shape`, `total(5)` is that error; write `let n: i64 = 5`.
+- Implementations are checked: every method without a default present,
+  each method's signature equal to the trait's with `Self` read as the
+  extended type, no other methods in the block, every supertrait
+  implemented, and at most one implementation of a trait per type (two
+  generic implementations whose types can overlap, `Box[T]` and
+  `Box[i64]`, count as two).
+- What can implement a trait: structs, classes, enums, generic structs
+  and classes (`extend Box[T: Shape]: Shape`), and the integer and float
+  types, `bool` and `str`. A struct, class or enum is extended in its own
+  package (as for any `extend`); a primitive type only in the package that
+  declares the trait. A trait method is called like any method on a
+  concrete type, `r.area()`, including a default one it does not override,
+  `r.describe()`; methods of a trait implementation are visible wherever
+  the type is.
+- A trait and its methods cross modules like other items: `import
+  shapes.{Shape, total}`; the program implementing `Shape` and calling
+  `total` instantiates it.
+- `@noalloc`, `@nopanic`, `@noblock`, `@realtime`: the analysis runs once
+  per generic body, before an implementation is chosen, so a trait method
+  called on a type parameter -- including inside a default body, which is
+  written in terms of `Self` -- is treated as having every effect. A
+  promise-keeping function must call the implementation directly
+  (`r.area()`), not through a bound. The verifier likewise knows nothing
+  about the result of a call through a bound.
+- Not supported, each a clear error: generic traits (`trait Iterable[E]`)
+  and so a bound with arguments (`T: Iterable[i64]`); generic methods in a
+  trait; `requires`/`ensures` on a trait method (put them on the
+  implementations); a `where` clause on a trait; bounds on a struct's own
+  parameters (`struct Box[T: Shape]`: bound the `extend` instead); a trait
+  named on a declaration (`struct P: Shape`: write `extend P: Shape`); a
+  trait used as a type (`x: Shape`: there are no trait objects or dynamic
+  dispatch); operators on a type parameter. There are no associated types
+  or constants, no blanket implementations (`extend T: Shape`), no
+  negative or specialised implementations, and one type cannot implement
+  two traits that declare a method of the same name (a type's methods
+  share one namespace). Generic enums do not exist, so `Option[T]`-style
+  traits cannot be written yet.
+- `codira run --jit` (Cranelift) does not compile method calls or generic
+  functions: it says so, and the program runs on LLVM.
 
 ### Optional types
 
@@ -506,11 +637,11 @@ public func sum_of_squares(n: i32) -> i32 {
     scope {
         let jobs = channel(64)      // bounded; the element type is inferred
         let results = channel(64)
-        let i = 0
+        var i = 0
         while i < n { spawn square(jobs, results); i += 1 }
         i = 0
         while i < n { jobs <- i; i += 1 }
-        let sum = 0
+        var sum = 0
         i = 0
         while i < n { sum += <-results; i += 1 }
         sum
@@ -548,9 +679,9 @@ public func sum_of_squares(n: i32) -> i32 {
 
 ```codira
 func collect(jobs: Channel[i64], results: Channel[i64], quit: Channel[bool]) -> i64 {
-    let total = 0
-    let sent = 0
-    let idle = 0
+    var total = 0
+    var sent = 0
+    var idle = 0
     let x = 7
     select {
         v = <-jobs -> total += v,       // receive, bind the value in this arm
@@ -800,10 +931,40 @@ public func equal(a: u64, b: u64) -> bool {
   constant-time. `ct_select(c, a, b)` chooses without a branch.
 - What is guaranteed: those source rules, and that `ct_select` becomes one
   LLVM `select` marked `!unpredictable` with no conditional branch (checked
-  in tests at `-O0`, `-O2`, `-O3`). What is not: the LLVM backend may still
-  lower a `select` to a branch (`!unpredictable` asks it not to); multiplies,
-  shifts and loads at public addresses are assumed constant-time; speculative
-  execution is out of scope.
+  in tests at `-O0`, `-O2`, `-O3`). The IR is not the machine code: the LLVM
+  backend may still lower a `select` to a branch, and does -- at `-O0` on
+  x86-64 a `ct_select` on `u8`/`i8` becomes a conditional jump on the secret
+  condition, and a `bool` one a select of two stack addresses followed by a
+  load.
+- `codira build --check-constant-time` (alias `--check-ct`, off by default)
+  checks the machine code. After linking, it disassembles each `oblivious` /
+  `@constant_time` function of the library (found by its symbol) and fails
+  the build, naming the function and each offending instruction (address and
+  disassembly), on: (a) any conditional branch -- even on a public value, such
+  as a loop counter at `-O0`; the report says whether the condition was traced
+  to a secret; any indirect branch; (b) a variable-time instruction: integer
+  and floating-point division and square root, x87 remainder/transcendental
+  instructions (`AArch64`: `udiv`, `sdiv`, `fdiv`, `fsqrt`), and a `rep`
+  string instruction whose count is secret; (c) a call to anything but
+  another function the check covers; (d) x86-64 only: a load or store whose
+  address register a taint analysis traces to a secret parameter (through
+  registers, flags and stack slots). Rule (d) starts from the registers the
+  calling convention passes `secret` parameters in, so it covers functions
+  whose parameters and result are integers, `bool`s or floats; a secret
+  reached through a pointer (an array, a struct) is not seen there and is
+  covered only by the source rule, and the build prints a note for each
+  function this applies to. A function the optimizer inlined everywhere and
+  removed has no code of its own and is reported as not checked.
+- What the machine-code check is not: a proof of constant-time execution.
+  It has been run on x86-64 Linux (ELF) builds, and on `aarch64` Linux
+  libraries cross-compiled there (checked, never run on `AArch64` hardware),
+  where it checks rules (a)-(c) only; Mach-O and PE libraries are read but
+  call targets through their stubs are not resolved, so calls there are
+  reported.
+  Multiplies, shifts, `cmov` and loads at public addresses are assumed
+  constant-time; other micro-architectural effects (cache banks, subnormal
+  floats, frequency) are not modelled; speculative execution is out of
+  scope.
 
 ### Units of measure
 
@@ -907,16 +1068,191 @@ worst-case execution time needs a cycle model of the target CPU that the
 compiler does not have. `codira build --fuel` lets any call stop when its fuel
 runs out, so such a build rejects `@nopanic` and `@realtime` functions.
 
+### Semantic envelopes: `@envelope` (experimental)
+
+`@envelope(..)` declares what a function may do. Each clause rules out one
+effect, and the compiler checks it through everything the function calls,
+like `@noalloc`:
+
+```codira
+@envelope(allocation: none, blocking: false, panic: false, termination: bounded,
+          foreign: none, concurrency: none, effects: none, secrecy: none)
+func scale(x: i64, k: i64) -> i64 { x * k + 1 }
+```
+
+| key | rules out with | allows with | what it rules out |
+|-----|----------------|-------------|-------------------|
+| `allocation` | `none` | `any` | allocation (as `@noalloc`) |
+| `blocking` | `false` | `true` | blocking (as `@noblock`) |
+| `panic` | `false` | `true` | panics and unchecked UB (as `@nopanic`) |
+| `termination` | `bounded` | `any` | unproven loops, recursion |
+| `foreign` | `none` | `any` | `extern`, `@asm`, `perform`, calls through function values |
+| `concurrency` | `none` | `any` | `scope`, `spawn` |
+| `effects` | `none` | `any` | `perform` |
+| `secrecy` | `none` | `any` | `secret` parameters, results and `let`s, `oblivious`, `declassify` |
+
+The allowing value checks nothing; it documents intent. On an `extern`
+declaration the envelope is a trusted assertion. Keys from the design that
+cannot be checked yet (`reads`, `writes`, `persistence`, `capability`,
+`memory`, `fuel`, `latency`, `energy`, `network`, `targets`) are errors, not
+silently ignored, and so are unknown keys, repeated keys, values without a
+key and a second `@envelope` on the same function.
+
+`codira envelope` prints every function's *inferred* envelope (the strongest
+value of each key the analysis proves, with the call chain behind each
+permissive value) beside its declaration. `--json` writes the
+`codira-envelope/0` schema, and `--check` exits with an error when a
+declaration is not met. The guarantee is about the source, under the same
+limits as `@noalloc` and the other attributes, not about machine code.
+Example:
+`examples/envelope`.
+
+**Package envelope.** An `[envelope]` table in `codira.toml` takes the same
+keys and values (strings, or `true`/`false` for `blocking` and `panic`):
+
+```toml
+[envelope]
+allocation = "none"
+blocking = false
+foreign = "none"
+```
+
+Every `public` function of the package must fit it: `codira check` reports
+each one that does not, with the call chain to the cause, and `codira build`
+refuses to build (it checks before compiling, so no library is written).
+Non-public functions are covered exactly as far as a public function reaches
+them, because a function's inferred envelope includes everything it calls; a
+private function no public one calls is not constrained. Unknown, unchecked
+and repeated keys are errors, as for the attribute. `codira envelope` shows
+the package envelope and whether it is met (`package_envelope` in the JSON),
+and `--check` fails when it is not. Only `check`, `build` and `envelope`
+enforce it today (`codira run` and `codira test` do not), and a rebuild under
+`codira build --watch` does not re-check it.
+
+**In certificates and `api-diff`.** `codira build --certify` records every
+function's inferred envelope in its proof certificate, and `codira certify`
+re-derives it from the source (see "Proof certificates"). `codira api-diff`
+treats a public function whose inferred envelope *widened* (a key moved to
+its allowing value, for instance because a private callee started
+allocating) as a major change, and one that narrowed as a minor change.
+
 ### Modules & imports
 
 ```codira
 import math
 import collections.list
 import geometry.{ Point, Vector as Vec2 }
-
-root.tools.clamp(x, 0, 1)     // `root` = package root
-super.helper()                 // parent module
+import root.tools.clamp        // `root` = package root
+import super.helper            // parent module
+import std.crypto.hash.{sha256_str, SHA256_LEN}   // the standard library
 ```
+
+Each file is a module (`geometry.code` or `geometry/mod.code` is
+`geometry`, `a/b.code` is `a.b`). Paths with more than one segment are
+written in `import` and in type position (`let p: root.geometry.Point`); in
+an expression, import the name and call it (`clamp(x, 0, 1)`), since
+`root.tools.clamp(x, 0, 1)` is read as field accesses and does not resolve.
+
+#### Importing the standard library
+
+A program imports standard-library modules (the `std/` directory of the
+Codira distribution) by their path under `std`:
+
+```codira
+import std.crypto.hash.{sha256_str, SHA256_LEN}
+import std.fs.fs.*
+import std.memory.region.{Region, region_new, region_alloc, region_free}
+```
+
+- **Only what is imported is loaded**: the modules a program's imports
+  name, and the modules those import in turn (`import root.<..>` inside
+  `std` means the standard library's root). Nothing else of `std/` is read,
+  and there is **no implicit prelude**: `std/prelude.code` is not in scope
+  in programs (it would pull in all of `std/`, most of which does not check
+  yet). Import what you use, explicitly.
+- **Standard-library modules do not use the prelude either.** Each one
+  imports what it uses (`import root.sys.terminate.{panic};`), exactly as
+  a program does, so that it means the same whether it is imported by a
+  program or checked as part of `std/`.
+- **Only modules that check, build and load can be used.** Importing a
+  module with errors, or one that imports such a module, fails the build
+  with the module's own diagnostics, shown against its file
+  (`--> std/collections/list.code:10:10`), and a line naming it:
+  ``error: the standard-library module `std.collections.list`
+  (std/collections/list.code) has 55 errors; ...``. Which modules can be
+  imported, and for each one that cannot, the first error and what it is
+  waiting for, is recorded in
+  `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
+  (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
+  which is not what a program sees).
+- **Importable today** (17 of 89 modules), each run from a program in
+  `crates/codira/tests/std_imports.rs` against independently computed
+  values, except `std.memory.page` and `std.builtin.type_aliases` (check,
+  build and load; not run):
+  - `std.crypto.hash` (SHA-256, SHA-512, BLAKE3), `std.fs.fs`,
+    `std.memory.region`, `std.memory.page`.
+  - `std.bit.bit`, `std.bit.mask`: bit counts, reversal, byte swaps,
+    rotations, masks and fields on `u64`/`u32`. Exact. `bit_ceil` needs a
+    result that fits (`value` at most 2^63).
+  - `std.math.constants` (`PI()`, `E()`, `INF()`, `NAN()`, `F64_MAX()`,
+    integer limits...: niladic functions, since module-level
+    `let`s are not supported) and `std.math.fast` (f32 approximations: `fast_sin`/`fast_cos`
+    within 7e-5 absolute, `fast_exp` 0.01 % relative, `fast_log` 5.4e-4
+    absolute, `fast_sqrt`/`fast_rsqrt` 0.175 % relative; `fast_pow` and
+    `fast_tan` have no stated bound).
+  - `std.hashlib.hash`: FNV-1a 64 over `[u8]`, integers, floats and bools,
+    hash combiners, and `hash[T: Hashable]`. **Not cryptographic**: for
+    hash tables and fingerprints of trusted data only.
+  - `std.base64.base64`: base64, base32 and base16 encode and decode over
+    `[u8]` (encoded text is its ASCII bytes), standard alphabets with `=`
+    padding; decoding skips bytes outside the alphabet and returns an empty
+    array for invalid input.
+  - `std.random.rng`: xoshiro256** with the state in a `Rng` the caller
+    holds, seeded by SplitMix64 (`rng_seeded(seed)`, `rng_next_u64`,
+    `rng_next_f64`, `rng_range_i64`, `rng_next_bool`). **Not
+    cryptographic**: predictable from its output, and seeded only by the
+    caller.
+  - `std.builtin.type_aliases` (`Never`).
+  - `std.sys.terminate`: `panic` (writes `panic: <message>` to standard
+    error and aborts), `exit`, `abort`, `assert`, `unreachable`, `todo`.
+  - What calls `panic`: `std.math.math` (libm-backed `sin`...`atan2`,
+    rounding, `gcd`, `factorial`, classification; within 2 ulp of Rust's
+    libm in the tests), `std.time.time` (durations, monotonic instants,
+    wall clock, sleep), `std.complex.complex`, `std.collections.optional`
+    (a generic `Optional[T]` struct; `unwrap` of an empty one panics).
+- **Waiting for the language**: what is written against `String` (most of
+  `std.format`, `std.os`, `std.pathlib`, `std.testing`, `std.sys.info`, and
+  the `*_string` halves split off from the modules above:
+  `std.base64.base64_string`, `std.hashlib.string_hash`,
+  `std.complex.complex_string`); everything built on `Pointer[T]` (every
+  collection but `optional`, and through `List`, `std.math.sequence` and
+  `std.math.polynomial`); `std.builtin.traits` (generic traits);
+  `std.sys.assert_compare` (`assert_eq` and friends: operators on a type
+  parameter); `std.random.random` (a global generator: there is no
+  module-level state, and a module-level `var` is rejected);
+  `std.hashlib.hasher` and `std.atomic.atomic` (they update a struct
+  passed as a `mut` parameter, and in-place parameters are rejected; the
+  orderings of `std.atomic.atomic` are module-level `let`s).
+- **Linking**: each imported standard-library module is compiled with the
+  program into a library of its own in the program's `target/` directory
+  (`target/hash$crypto$std.codiralib`), exactly like the program's own
+  modules, and the runtime loads it with the program (`codira start`,
+  `Runtime::builder`, and `codira build --exe`, which bundles every library
+  in `target/`). There is no precompiled standard library.
+- Names: a program module of its own called `std` takes precedence over
+  the standard library (then `std` means that module). The program's
+  `fs` module and `std.fs` are different modules with different symbols.
+  Private and `internal` items of the standard library cannot be imported.
+- **Where the standard library is found**: `CODIRA_STD_PATH` if set (a
+  directory holding `prelude.code`); otherwise `std/` next to the `codira`
+  executable or one directory above it (`<prefix>/bin/codira` and
+  `<prefix>/std`); otherwise the `std/` of the source tree the compiler was
+  built from. A program that imports `std` when none is found fails with
+  a message saying so; a program that imports nothing from `std` never
+  looks.
+- Not yet: the language server does not load the standard library (an
+  `import std.<..>` is unresolved there); a standard-library module cannot
+  be named in an expression without importing it, like any module.
 
 ---
 
@@ -1085,11 +1421,12 @@ runs load them directly. `main` may return nothing (exit code 0), an integer
 
 ```bash
 codira build --certify                     # also writes target/mod.codiralib.cert.json
-codira certify target/mod.codiralib        # re-checks it without the compiler
+codira certify target/mod.codiralib        # re-checks it (envelopes aside, without the compiler)
 codira certify target/                     # every library in a directory
 codira build --exe --certify -o app.exe    # the certificates travel inside the executable
 codira certify app.exe
 codira certify target/mod.codiralib --source-dir src   # also match the source text
+codira certify lib.codiralib --require-envelopes        # fail unless envelopes are re-derived
 ```
 
 The certificate (a JSON sidecar, `<library>.cert.json`) lists every function
@@ -1100,8 +1437,9 @@ for it, each as the self-contained SMT-LIB2 queries Z3 decided (premise
 asserted, then the negated goal; `unsat` = proven) or the reason it is not
 proven. The whole library file is hashed too.
 
-`codira certify` uses Z3 and the certificate reader only -- no parser, type
-checker, verifier or code generator. It fails (exit 1) when the library is not
+Apart from re-deriving envelopes (below), `codira certify` uses Z3 and the
+certificate reader only -- no parser, type checker, verifier or code
+generator. It fails (exit 1) when the library is not
 the hashed file, when a function's code bytes or symbol position differ (the
 failing function is named), when a query contains anything but declarations
 and assertions, or when Z3 under the checker's own `--rlimit` does not answer
@@ -1109,6 +1447,22 @@ and assertions, or when Z3 under the checker's own `--rlimit` does not answer
 obligations the certificate records as unproven (a `@runtime_checked`
 `requires` the solver could not decide; `--deny-unproven` makes them fail) and
 proofs that hold only because their path condition is unsatisfiable.
+
+**Envelopes.** The format is `codira-certificate/2`: each function also
+records its inferred semantic envelope (key to value, e.g. `"allocation":
+"none"`; see "Semantic envelopes"), computed from the source at build time.
+`codira-certificate/1` files are still read and checked; they carry no
+envelopes, and the check says so. Re-deriving an envelope needs the
+compiler's front end, so this one step is the exception to "no compiler":
+when `codira certify` finds the package source (`--source-dir`,
+`--manifest-path`, or the `codira.toml` in the artifact's directory or a
+parent), it recomputes every function's envelope and fails if any recorded
+one differs, naming the function and key. Without a source it reports the
+envelopes as not re-derived and passes; `--require-envelopes` makes that a
+failure. What this certifies is the source-level effect analysis result
+recorded at build time, and that today's analysis of today's source agrees
+with it -- not anything about the machine code, and nothing enforced at
+run time.
 
 What a passing check establishes, and what it does not:
 
@@ -1675,9 +2029,27 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   enums in fields, arrays, parameters and results, across modules and hot
   reload (see "Enums & pattern matching" for the limits)
 - generic functions, structs and classes, monomorphised per instantiation
-  (see "Generics" above for the limits: no bounds, so a `T` can only be
-  moved and stored; generic functions are not exported to the host)
+  (see "Generics" above for the limits; generic functions are not exported
+  to the host)
+- traits with static dispatch: `trait` declarations with required and
+  default methods and supertraits, `extend Type: Trait` for structs,
+  classes, enums, generic structs and primitive types, bounds
+  (`[T: A + B]`, `where`, `extend Box[T: A]`), trait-method calls resolved
+  per instantiation (see "Traits and bounds" for the limits: no generic
+  traits, associated types, trait objects or operators on a `T`)
 - imports and visibility (`public`/`internal`/`private`)
+- importing standard-library modules, explicitly, with no prelude:
+  `std.crypto.hash`, `std.fs.fs`, `std.memory.region`, `std.bit`,
+  `std.math.constants`, `std.math.fast`, `std.hashlib.hash`,
+  `std.base64.base64`, `std.random.rng`, `std.sys.terminate`,
+  `std.math.math`, `std.time.time`, `std.complex.complex`,
+  `std.collections.optional` (see "Importing the standard library" for
+  what is loaded, how it is linked, which modules qualify and why the
+  others do not yet)
+- functions returning `never`, called locally, across modules and as
+  `extern "C"` declarations (see "Functions")
+- `public` functions that take and return value structs, called from
+  other modules and from the host
 - algebraic effects and structured concurrency (see below)
 - function values: named functions as values, closures with by-value
   captures, calls through locals, fields and arrays (see "Function values
@@ -1712,6 +2084,72 @@ Runtime (hosts embedding `codira_runtime`):
   (`codira_region_*`), OS pages with W^X protection, huge pages and icache
   flushing (`codira_page_*`, `codira_icache_flush`), and aligned allocation.
   Addresses are `usize`; failures return 0/false. Region memory is untraced.
+- Files and hashes (Linux tested; macOS and Windows built but never run):
+  the runtime provides file and hash services that a program reaches with
+  `extern "C"` declarations, wrapped in `std/fs/fs.code` and
+  `std/crypto/hash.code`. A program imports the wrappers
+  (`import std.fs.fs.*`, `import std.crypto.hash.*`) or declares the
+  services itself.
+  - **Opening:** `codira_fs_open(path_addr: usize, path_len: usize, flags:
+    u32) -> i64`. The flags are READ 1, WRITE 2, APPEND 4, CREATE 8,
+    TRUNCATE 16 and CREATE_NEW 32; pass the path with `str_data`/`str_len`.
+  - **Reading and writing:** `codira_fs_read` and `codira_fs_write(fd: i64,
+    buf: usize, len: usize) -> i64` are single calls that may return a short
+    count; a read returns 0 at the end of the file.
+  - **Other file calls:** `codira_fs_seek(fd, offset: i64, whence: u32) ->
+    i64` and `codira_fs_size(fd) -> i64`. `codira_fs_fsync`,
+    `codira_fs_close`, `codira_fs_remove`, `codira_fs_rename` and
+    `codira_fs_sync_dir` return `i32`.
+  - **Results:** a value >= 0, or a negative `FS_ERR_*` code: -2 not found,
+    -5 invalid argument, -6 bad handle, -7 path too long, -8 path not UTF-8,
+    -18 wrong mode, and so on. `codira_fs_last_os_error()` gives the raw
+    errno.
+  - **Handles** are generation-checked runtime handles, not OS descriptors,
+    so a closed or forged handle is refused.
+  - **Durability:** a new or renamed name is durable only after
+    `codira_fs_sync_dir` on its directory. That call is unsupported on
+    Windows, where renames are not made durable. On Linux, do not retry
+    after an fsync error.
+  - **Hashes:** `codira_hash_sha256`, `codira_hash_sha512` and
+    `codira_hash_blake3(data_addr, len, out_addr) -> bool` write 32, 64 and
+    32 bytes. They use the RustCrypto `sha2` and the `blake3` crates and are
+    checked against the NIST and BLAKE3 known answers. They may be declared
+    `@noalloc @nopanic @noblock` (a trusted assertion, as
+    `std/crypto/hash.code` does).
+  - **Effects:** file services are ordinary externs, so they count as
+    blocking.
+  - **Not cryptographic:** `std.hashlib` (FNV-1a) and `std.random`
+    (xoshiro256**).
+  - **Clocks and termination:** `codira_time_now() -> f64` (seconds since
+    the Unix epoch), `codira_time_monotonic_ns() -> u64` (from the first
+    call in the process), `codira_time_sleep_ns(u64)`, and the hooks
+    `panic` is written on (`codira_write_stderr(addr, len)`,
+    `codira_abort`, `codira_exit(code)`, `codira_is_debug`), for
+    `std/time/time.code` and `std/sys/terminate.code`.
+  - Tests: `crates/codira/tests/fs_and_hash.rs`. Durability is claimed for Linux
+    only; macOS and Windows are built but not run.
+- Database and tensors (experimental, x86-64 Linux tested): the
+  `codira_db` engine and a first slice of `codira_ai` are reached through the
+  runtime services `codira_db_*` and `codira_ai_*`, wrapped in
+  `std/db/db.code` and `std/ai/runtime.code`. Until `std` can be imported,
+  declare the `extern "C"` services in the program.
+  - **Database:** a program can open a directory with an fsync policy, run
+    snapshot-isolation transactions (`get` into a caller buffer, `put`,
+    `delete`), commit, abort, checkpoint and close. Commit returns the
+    commit timestamp, and a write-write conflict returns its own code, -3.
+    Snapshot isolation is not serializable: write skew is possible. A
+    directory may be opened once per process, and nothing stops a second
+    process. Scans and typed tables are not exposed.
+  - **Tensors:** a program can create f32 tensors from a buffer and shape,
+    and run `matmul` (batched), broadcasting `add`, `relu` and `softmax`. It
+    can read values back, and train a Linear layer with
+    `codira_ai_linear_mse_sgd_step`.
+  - **Handles and errors:** handles are generation-checked `i64` values,
+    tagged by kind, so a transaction handle passed as a database handle is
+    refused. Tensors and layers are not traced by the GC and must be freed
+    explicitly. Every error is a documented negative code.
+  - **Effects:** all of these services count as blocking and allocating.
+  - Tests: `crates/codira/tests/db_and_ai.rs`.
 - Experimental hardware safety: `codira build --sanitize=memtag` tags
   `stack_alloc` slots, region memory and OS pages with ARM MTE on aarch64
   Linux targets with `+mte` (built and inspected, never run: see
@@ -1736,6 +2174,9 @@ Circom output), and `codira build` writes `target/<function>.v` (Verilog) for
 `@noalloc`, `@nopanic`, `@noblock` and `@realtime` are checked statically in
 `codira check` and `codira build` (see their section above); `@deadline` is
 rejected.
+Experimental: `@envelope(..)` declarations are checked the same way, and
+`codira envelope` reports every function's inferred envelope (see
+"Semantic envelopes").
 
 Algebraic effects (`effect`, `uses`, `perform`, `handle`, `resume`) with
 one-shot, tail-resumptive or aborting handlers, nested handlers, and aborts
@@ -1752,8 +2193,13 @@ types").
 
 Parsed but **not yet lowered** -- the compiler stops with "... is not
 supported by the code generator yet" naming the construct: postfix `^`. Not available at
-all yet: generic enums, `trait` (and so generic bounds), `String`, and using the
-standard library from a program.
+all yet: generic enums, generic traits, trait objects (dynamic dispatch),
+`String`, module-level `let` and `var` (rejected with "module-level `let`
+is not supported yet"), in-place parameters (`inout`/`mut`/`out` and
+`mut T`/`&mut T`, rejected with "... are not supported yet"), the
+standard library's
+prelude in programs, and the standard-library modules that are not
+importable (most of `std/`: see "Importing the standard library").
 
 ---
 

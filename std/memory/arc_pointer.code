@@ -56,7 +56,7 @@ extend ArcPointer[T] {
         let payload_size = __intrinsic_sizeof();
         let payload_align = __intrinsic_alignof();
         let header_align = __intrinsic_alignof();
-        let align = header_align;
+        var align = header_align;
         if payload_align > align {
             align = payload_align;
         }
@@ -90,7 +90,7 @@ extend ArcPointer[T] {
         let header_size = __intrinsic_sizeof();
         let payload_align = __intrinsic_alignof();
         let header_align = __intrinsic_alignof();
-        let align = header_align;
+        var align = header_align;
         if payload_align > align {
             align = payload_align;
         }
@@ -244,7 +244,7 @@ extend ArcPointer[T] {
             let payload_size = __intrinsic_sizeof();
             let payload_align = __intrinsic_alignof();
             let header_align = __intrinsic_alignof();
-            let align = header_align;
+            var align = header_align;
             if payload_align > align {
                 align = payload_align;
             }

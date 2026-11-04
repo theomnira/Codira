@@ -65,7 +65,7 @@ extend GPUInfo {
         version: String,
         sm_count: usize,
     ) -> GPUInfo {
-        let info: GPUInfo;
+        var info: GPUInfo;
         info.name = name;
         info.api = api;
         info.arch_name = arch_name;

@@ -1,0 +1,6 @@
+---
+source: crates/codira_hir/src/traits/tests.rs
+expression: diagnostics(source)
+snapshot_kind: text
+---
+274..284: `through_bound` is `@noalloc` but calls `show_it` (line 12), which allocates: a trait method called on a generic type, whose implementation is chosen per instantiation and is not known here at line 8

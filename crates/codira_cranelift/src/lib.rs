@@ -39,7 +39,7 @@ use codira_hir::{
 use cranelift_codegen::{
     ir::{
         condcodes::{FloatCC, IntCC},
-        types, AbiParam, Block, InstBuilder, Signature, Type, Value,
+        types, AbiParam, Block, InstBuilder, Signature, TrapCode, Type, Value,
     },
     settings::{self, Configurable},
 };
@@ -172,14 +172,19 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
 
     let mut print_ids = FxHashMap::default();
     for (name, params) in [
-        ("codira_jit_print_i64", vec![types::I64]),
-        ("codira_jit_print_u64", vec![types::I64]),
-        ("codira_jit_print_f64", vec![types::F64]),
-        ("codira_jit_print_bool", vec![types::I8]),
-        ("codira_jit_print_str", vec![pointer, pointer]),
+        ("codira_jit_print_i64", vec![AbiParam::new(types::I64)]),
+        ("codira_jit_print_u64", vec![AbiParam::new(types::I64)]),
+        ("codira_jit_print_f64", vec![AbiParam::new(types::F64)]),
+        // A Rust `u8` parameter: the caller zero-extends it (see
+        // `ScalarTy::abi_param`).
+        ("codira_jit_print_bool", vec![ScalarTy::Bool.abi_param()]),
+        (
+            "codira_jit_print_str",
+            vec![AbiParam::new(pointer), AbiParam::new(pointer)],
+        ),
     ] {
         let mut sig = module.make_signature();
-        sig.params.extend(params.into_iter().map(AbiParam::new));
+        sig.params.extend(params);
         let id = module
             .declare_function(name, Linkage::Import, &sig)
             .map_err(|e| fail(e.to_string()))?;
@@ -240,6 +245,30 @@ enum ScalarTy {
 }
 
 impl ScalarTy {
+    /// The value as a parameter or result of a call, extended as the
+    /// System V and `AArch64` C conventions that LLVM (and so Rust) implement
+    /// expect: a `bool` or 8/16-bit integer occupies a full 32-bit register,
+    /// zero- or sign-extended. Without the extension the upper bits of the
+    /// register are whatever the computation left there, and an optimised
+    /// Rust callee or caller (`codira_jit_print_bool`, the host reading the
+    /// entry point's result) reads them: `(672u32 + 7u32) == 515u32` once
+    /// printed `true` with a release-built compiler.
+    fn abi_param(self) -> AbiParam {
+        let param = AbiParam::new(self.clif());
+        match self {
+            ScalarTy::Bool
+            | ScalarTy::Int {
+                bits: 8 | 16,
+                signed: false,
+            } => param.uext(),
+            ScalarTy::Int {
+                bits: 8 | 16,
+                signed: true,
+            } => param.sext(),
+            _ => param,
+        }
+    }
+
     fn clif(self) -> Type {
         match self {
             ScalarTy::Bool | ScalarTy::Int { bits: 8, .. } => types::I8,
@@ -340,10 +369,9 @@ impl State<'_> {
     fn signature(&self, function: Function) -> Result<Signature, Unsupported> {
         let (params, ret) = self.signature_types(function)?;
         let mut sig = self.module.make_signature();
-        sig.params
-            .extend(params.iter().map(|ty| AbiParam::new(ty.clif())));
+        sig.params.extend(params.iter().map(|ty| ty.abi_param()));
         if let Some(ret) = ret {
-            sig.returns.push(AbiParam::new(ret.clif()));
+            sig.returns.push(ret.abi_param());
         }
         Ok(sig)
     }
@@ -936,6 +964,19 @@ impl<'a, 'db> Translator<'a, 'db> {
             .module
             .declare_func_in_func(callee_id, self.builder.func);
         let call = self.builder.ins().call(callee_ref, &values);
+        // A function returning `never` has no result here either; nothing
+        // after a call to it can run, so the block ends in a trap and what
+        // follows goes to a dead block, as after a `return`.
+        let never = function
+            .ty(self.state.db)
+            .callable_sig(self.state.db)
+            .is_some_and(|sig| sig.ret().is_never());
+        if never {
+            self.builder.ins().trap(TrapCode::unwrap_user(1));
+            self.terminated = true;
+            self.after_terminator();
+            return Ok(None);
+        }
         Ok(self.builder.inst_results(call).first().copied())
     }
 

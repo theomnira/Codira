@@ -14,6 +14,7 @@ mod primitive_type;
 pub(crate) mod session;
 pub(crate) mod src;
 pub(crate) mod r#struct;
+pub(crate) mod r#trait;
 mod type_alias;
 
 use std::sync::Arc;
@@ -30,8 +31,9 @@ pub use self::{
     package::Package,
     primitive_type::PrimitiveType,
     r#enum::{Enum, EnumData, EnumLayout, EnumSlot, EnumVariant, VariantKind},
-    r#impl::{AssocItem, ImplData},
+    r#impl::{AssocItem, Impl, ImplData},
     r#struct::{Field, Struct, StructData, StructKind, StructMemoryKind},
+    r#trait::{Trait, TraitData},
     session::{Protocol, ProtocolStep, Session, SessionData},
     src::HasSource,
     type_alias::{TypeAlias, TypeAliasData},

@@ -1,0 +1,11 @@
+---
+source: crates/codira_hir/src/traits/tests.rs
+expression: "diagnostics(r#\"\n    trait Show {\n        func show(self) -> i64;\n        func other(self, x: Self) -> bool;\n    }\n    trait Named: Show {\n        func id(self) -> i64;\n    }\n    struct A { x: i64 }\n    struct B { x: i64 }\n    struct C { x: i64 }\n\n    extend A: Show {\n        func show(self) -> i64 { 1 }\n    }\n    extend B: Show {\n        func show(self) -> bool { true }\n        func other(self, x: A) -> bool { true }\n        func extra(self) -> i64 { 2 }\n    }\n    extend C: Named {\n        func id(self) -> i64 { 3 }\n    }\n    extend A: Named {\n        func id() -> i64 { 3 }\n    }\n    \"#)"
+snapshot_kind: text
+---
+201..205: the implementation of `Show` for `A` is missing the method `other`
+259..296: `show` does not match its declaration in trait `Show` (with `Self` = `B`): expected `func(self) -> i64`, found `func(self) -> bool`
+296..340: `other` does not match its declaration in trait `Show` (with `Self` = `B`): expected `func(self, B) -> bool`, found `func(self, A) -> bool`
+340..374: `extra` is not a method of `Show`; an `extend` block that implements a trait holds only that trait's methods
+387..392: `Named` requires `Show`, which `C` does not implement
+445..472: `id` of trait `Named` takes `self`, and this one does not

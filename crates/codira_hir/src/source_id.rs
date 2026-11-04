@@ -81,6 +81,7 @@ register_ast_id_node! {
         EffectDef,
         SessionDef,
         EnumDef,
+        TraitDef,
     Param, SelfParam
 }
 

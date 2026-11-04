@@ -1,0 +1,195 @@
+---
+source: crates/codira_compiler/tests/stdlib_import_ratchet.rs
+expression: summary
+snapshot_kind: text
+---
+17 of 89 std modules are importable from a program
+
+importable:
+  std.base64.base64
+  std.bit.bit
+  std.bit.mask
+  std.builtin.type_aliases
+  std.collections.optional
+  std.complex.complex
+  std.crypto.hash
+  std.fs.fs
+  std.hashlib.hash
+  std.math.constants
+  std.math.fast
+  std.math.math
+  std.memory.page
+  std.memory.region
+  std.random.rng
+  std.sys.terminate
+  std.time.time
+
+blocked:
+std.ai.algorithm.functional
+    check (22 diagnostics): std/ai/tensor/buffer.code:81: undefined value `SIZE_F32`
+std.ai.algorithm.reduction
+    check (33 diagnostics): std/ai/algorithm/reduction.code:34: module-level `let` is not supported yet: `PAIRWISE_THRESHOLD` would not be defined, and no name can refer to it; write a function returning the value (`func PAIRWISE_THRESHOLD() -> T { .. }`), as `std.math.constants` does `public let PAIRWISE_THRESHOLD: usize = 128;`
+std.ai.linalg.matmul
+    check (43 diagnostics): std/ai/linalg/matmul.code:37: module-level `let` is not supported yet: `BLOCK` would not be defined, and no name can refer to it; write a function returning the value (`func BLOCK() -> T { .. }`), as `std.math.constants` does `public let BLOCK: usize = 64;`
+std.ai.linalg.vector
+    check (37 diagnostics): std/ai/linalg/vector.code:25: module-level `let` is not supported yet: `DOT_THRESHOLD` would not be defined, and no name can refer to it; write a function returning the value (`func DOT_THRESHOLD() -> T { .. }`), as `std.math.constants` does `public let DOT_THRESHOLD: usize = 128;`
+std.ai.nn.activation
+    check (35 diagnostics): std/ai/nn/activation.code:298: access of private type `src.shape`
+std.ai.nn.layer
+    check (70 diagnostics): std/ai/nn/layer.code:42: access of private type `y.shape`
+std.ai.quantize
+    check (35 diagnostics): std/ai/quantize.code:38: module-level `let` is not supported yet: `SYMMETRIC_MAX` would not be defined, and no name can refer to it; write a function returning the value (`func SYMMETRIC_MAX() -> T { .. }`), as `std.math.constants` does `public let SYMMETRIC_MAX: f32 = 127.0;`
+std.ai.runtime
+    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
+std.ai.tensor.buffer
+    check (22 diagnostics): std/ai/tensor/buffer.code:81: undefined value `SIZE_F32`
+std.ai.tensor.raw
+    check (15 diagnostics): std/ai/tensor/raw.code:72: module-level `let` is not supported yet: `SIZE_F32` would not be defined, and no name can refer to it; write a function returning the value (`func SIZE_F32() -> T { .. }`), as `std.math.constants` does `public let SIZE_F32: usize = 4;`
+std.ai.tensor.shape
+    check (2 diagnostics): std/ai/tensor/shape.code:27: module-level `let` is not supported yet: `MAX_RANK` would not be defined, and no name can refer to it; write a function returning the value (`func MAX_RANK() -> T { .. }`), as `std.math.constants` does `public let MAX_RANK: usize = 4;`
+std.atomic.atomic
+    check (24 diagnostics): std/atomic/atomic.code:17: module-level `let` is not supported yet: `RELAXED` would not be defined, and no name can refer to it; write a function returning the value (`func RELAXED() -> T { .. }`), as `std.math.constants` does `public let RELAXED: MemoryOrder = MemoryOrder { _value: 0 };`
+    needs: module-level `let` (its orderings), `String`, and in-place parameters (`mut`), none of which the compiler has: it rejects the first and the last
+std.base64.base64_string
+    check (82 diagnostics): std/base64/base64_string.code:17: module-level `let` is not supported yet: `B64_ALPHABET` would not be defined, and no name can refer to it; write a function returning the value (`func B64_ALPHABET() -> T { .. }`), as `std.math.constants` does `let B64_ALPHABET: String = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdef...`
+    needs: `String`, the growable `Array[u8]`, and module-level `let`
+std.builtin.bool
+    check (22 diagnostics): std/builtin/bool.code:132: undefined type `String`
+std.builtin.dtype
+    check (231 diagnostics): std/builtin/dtype.code:51: cannot apply unary operator `self.is_unsigned()`
+std.builtin.error
+    check (52 diagnostics): std/builtin/error.code:33: undefined type `String`
+std.builtin.int
+    check (67 diagnostics): std/builtin/int.code:103: undefined value `__panic`
+std.builtin.range
+    check (47 diagnostics): std/builtin/range.code:87: mismatched type `self.end`
+std.builtin.simd
+    check (93 diagnostics): std/builtin/simd.code:28: undefined type `__simd_storage[T, N]`
+std.builtin.slice
+    check (63 diagnostics): std/builtin/slice.code:51: the type `Pointer[T]` mentions the generic parameter `T`, which `from_ref` does not declare: a generic type needs its arguments written out, e.g. `Box[i32]` rather than `Box`
+std.builtin.sort
+    check (106 diagnostics): std/builtin/sort.code:38: undefined value `__intrinsic_ilog2`
+std.builtin.string_literal
+    check (22 diagnostics): std/ai/tensor/raw.code:72: module-level `let` is not supported yet: `SIZE_F32` would not be defined, and no name can refer to it; write a function returning the value (`func SIZE_F32() -> T { .. }`), as `std.math.constants` does `public let SIZE_F32: usize = 4;`
+std.builtin.swap
+    check (46 diagnostics): std/builtin/swap.code:34: undefined type `Pointer[T]`
+std.builtin.traits
+    check (18 diagnostics): std/builtin/traits.code:124: undefined type `Hasher`
+    needs: generic traits (`Indexable[Index, Element]`, `Iterable[Element]`) and `String`
+std.builtin.tuple
+    check (104 diagnostics): std/builtin/tuple.code:77: undefined type `String`
+std.builtin.types
+    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
+    needs: the `f16` and `bf16` types, and sizeof/alignof intrinsics it does not declare
+std.collections.array
+    check (50 diagnostics): std/collections/array.code:12: undefined type `FixedBuf[T, N]`
+std.collections.binary_heap
+    check (45 diagnostics): std/collections/binary_heap.code:11: undefined type `Pointer[T]`
+    needs: `Pointer[T]` (std.memory.pointer)
+std.collections.bitset
+    check (44 diagnostics): std/collections/bitset.code:10: module-level `let` is not supported yet: `BITS_PER_WORD` would not be defined, and no name can refer to it; write a function returning the value (`func BITS_PER_WORD() -> T { .. }`), as `std.math.constants` does `let BITS_PER_WORD: usize = 64;`
+    needs: `Pointer[u64]` (std.memory.pointer)
+std.collections.counter
+    check (64 diagnostics): std/collections/counter.code:11: undefined type `Dict[T, usize]`
+    needs: `Dict` (std.collections.dict)
+std.collections.deque
+    check (26 diagnostics): std/collections/deque.code:10: undefined type `Pointer[T]`
+    needs: `Pointer[T]` (std.memory.pointer)
+std.collections.dict
+    check (119 diagnostics): std/collections/dict.code:14: module-level `let` is not supported yet: `BUCKET_EMPTY` would not be defined, and no name can refer to it; write a function returning the value (`func BUCKET_EMPTY() -> T { .. }`), as `std.math.constants` does `let BUCKET_EMPTY: u8 = 0;`
+    needs: `Pointer[T]` (std.memory.pointer)
+std.collections.linked_list
+    check (134 diagnostics): std/collections/linked_list.code:11: undefined type `Pointer[Node[T]]`
+    needs: `Pointer[T]` (std.memory.pointer)
+std.collections.list
+    check (55 diagnostics): std/collections/list.code:10: undefined type `Pointer[T]`
+    needs: `Pointer[T]` (std.memory.pointer)
+std.collections.set
+    check (100 diagnostics): std/collections/set.code:15: module-level `let` is not supported yet: `SET_EMPTY` would not be defined, and no name can refer to it; write a function returning the value (`func SET_EMPTY() -> T { .. }`), as `std.math.constants` does `let SET_EMPTY: u8 = 0;`
+    needs: `Pointer[T]` (std.memory.pointer)
+std.collections.span
+    check (31 diagnostics): std/collections/span.code:11: undefined type `Pointer[T]`
+    needs: `Pointer[T]` (std.memory.pointer)
+std.collections.string
+    check (75 diagnostics): std/collections/string.code:10: undefined type `Pointer[u8]`
+    needs: `Pointer[u8]` (std.memory.pointer)
+std.complex.complex_string
+    check (78 diagnostics): std/complex/complex_string.code:17: cannot apply binary operator `float_to_string(z.real) + "+"`
+    needs: `String`
+std.db.db
+    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
+std.ffi.cstring
+    check (47 diagnostics): std/ffi/cstring.code:12: undefined type `Array[u8]`
+std.ffi.unsafe_union
+    check (38 diagnostics): std/ffi/unsafe_union.code:15: undefined type `Array[u8]`
+std.format.format
+    check (72 diagnostics): std/format/format.code:15: undefined type `String`
+    needs: `String`
+std.format.repr
+    check (55 diagnostics): std/format/repr.code:15: undefined type `String`
+    needs: `String`
+std.gpu.globals
+    check (174 diagnostics): std/gpu/globals.code:40: module-level `let` is not supported yet: `WARP_SIZE` would not be defined, and no name can refer to it; write a function returning the value (`func WARP_SIZE() -> T { .. }`), as `std.math.constants` does `public let WARP_SIZE: usize = _resolve_warp_size();`
+std.gpu.host_info
+    check (87 diagnostics): std/gpu/host_info.code:20: module-level `let` is not supported yet: `KB` would not be defined, and no name can refer to it; write a function returning the value (`func KB() -> T { .. }`), as `std.math.constants` does `public let KB: usize = 1024;`
+std.gpu.id
+    check (547 diagnostics): std/gpu/id.code:32: undefined type `StringLiteral`
+std.gpu.intrinsics
+    check (736 diagnostics): std/gpu/intrinsics.code:44: module-level `let` is not supported yet: `CACHE_ALWAYS` would not be defined, and no name can refer to it; write a function returning the value (`func CACHE_ALWAYS() -> T { .. }`), as `std.math.constants` does `public let CACHE_ALWAYS: i32 = 0;`
+std.gpu.profiler
+    check (15 diagnostics): std/gpu/profiler.code:32: undefined type `String`
+std.gpu.warp
+    check (547 diagnostics): std/gpu/warp.code:33: module-level `let` is not supported yet: `_FULL_MASK` would not be defined, and no name can refer to it; write a function returning the value (`func _FULL_MASK() -> T { .. }`), as `std.math.constants` does `public let _FULL_MASK: u64 = ((1 as u64) << globals.WARP_SIZ...`
+std.hashlib.hasher
+    check (52 diagnostics): std/hashlib/hasher.code:14: undefined type `Array[u8]`
+    needs: in-place parameters: its writers take the hasher as `mut`, and the compiler has only by-copy parameters (it rejects `mut`); and `String`
+std.hashlib.string_hash
+    check (76 diagnostics): std/hashlib/string_hash.code:16: method `as_bytes` does not exist `value.as_bytes()`
+    needs: `String`
+std.math.polynomial
+    check (52 diagnostics): std/math/polynomial.code:19: undefined type `List[f64]`
+    needs: `List` (std.collections.list)
+std.math.sequence
+    check (55 diagnostics): std/collections/list.code:10: undefined type `Pointer[T]`
+    needs: `List` (std.collections.list)
+std.memory.alloc
+    check (93 diagnostics): std/memory/alloc.code:59: mismatched type `0`
+std.memory.arc_pointer
+    check (84 diagnostics): std/memory/arc_pointer.code:55: undefined value `__intrinsic_sizeof`
+std.memory.memory
+    check (37 diagnostics): std/memory/memory.code:31: undefined value `__intrinsic_memcpy`
+std.memory.owned_pointer
+    check (63 diagnostics): std/memory/owned_pointer.code:86: undefined value `__intrinsic_addr_to_ref`
+std.memory.pointer
+    check (44 diagnostics): std/memory/pointer.code:140: undefined value `__panic`
+    needs: std.builtin.traits and std.builtin.types, `String`, and intrinsics the compiler does not have (`__intrinsic_to_hex`, `__intrinsic_type_name`)
+std.memory.unsafe_pointer
+    check (51 diagnostics): std/memory/unsafe_pointer.code:89: undefined type `Pointer[T]`
+std.os.env
+    check (29 diagnostics): std/os/env.code:11: undefined type `String`
+std.os.os
+    check (47 diagnostics): std/os/os.code:12: undefined type `String`
+std.os.path
+    check (69 diagnostics): std/os/path.code:9: module-level `let` is not supported yet: `PATH_SEP` would not be defined, and no name can refer to it; write a function returning the value (`func PATH_SEP() -> T { .. }`), as `std.math.constants` does `let PATH_SEP: String = "/";`
+std.os.process
+    check (11 diagnostics): std/os/process.code:11: undefined type `Never`
+std.pathlib.path
+    check (75 diagnostics): std/pathlib/path.code:12: undefined type `String`
+std.prelude
+    check (1051 diagnostics): std/ai/tensor/raw.code:72: module-level `let` is not supported yet: `SIZE_F32` would not be defined, and no name can refer to it; write a function returning the value (`func SIZE_F32() -> T { .. }`), as `std.math.constants` does `public let SIZE_F32: usize = 4;`
+std.random.random
+    check (87 diagnostics): std/random/random.code:27: module-level `var` is not supported yet: there is no module-level state, so `_global_rng` would not exist at run time; keep the state in a value the functions that use it pass along, or in a class instance `let mut _global_rng: RngState = RngState { s0: 0, s1: 0, s2:...`
+    needs: module-level mutable state (its generator is a global, and the compiler rejects a module-level `var`); and the growable `Array`
+std.sys.arg
+    check (134 diagnostics): std/sys/arg.code:36: undefined value `__intrinsic_argc`
+std.sys.assert_compare
+    check (22 diagnostics): std/sys/assert_compare.code:20: cannot apply `==` to a value of generic type `T`: operators on a type parameter are not supported; declare the operation as a method of a trait, bound `T` by it (`T: Trait`) and call the method `a == b`
+    needs: operators on a type parameter (`==`, `<` through traits) and `String` (`Stringable`)
+std.sys.info
+    check (64 diagnostics): std/sys/info.code:27: module-level `let` is not supported yet: `os_is_linux` would not be defined, and no name can refer to it; write a function returning the value (`func os_is_linux() -> T { .. }`), as `std.math.constants` does `public let os_is_linux: bool = __intrinsic_target_os() == "l...`
+std.sys.intrinsics
+    check (181 diagnostics): std/sys/intrinsics.code:40: undefined trait `StringLiteral`
+std.testing.suite
+    check (39 diagnostics): std/testing/suite.code:11: undefined type `String`
+std.testing.testing
+    check (62 diagnostics): std/testing/testing.code:11: undefined type `String`

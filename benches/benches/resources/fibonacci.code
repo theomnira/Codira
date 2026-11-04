@@ -1,18 +1,18 @@
-pub fn fibonacci(n: i64) -> i64 {
-    let a = 0;
-    let b = 1;
-    let i = 1;
+func fibonacci(n: i64) -> i64 {
+    var a: i64 = 0
+    var b: i64 = 1
+    var i: i64 = 1
     loop {
         if i > n {
             return a
         }
-        let sum = a + b;
-        a = b;
-        b = sum;
-        i += 1;
+        let sum = a + b
+        a = b
+        b = sum
+        i += 1
     }
 }
 
-pub fn main(n: i64) -> i64 {
+public func main(n: i64) -> i64 {
     fibonacci(n)
 }

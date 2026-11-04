@@ -385,6 +385,17 @@ pub fn is_runtime_checked(db: &dyn HirDatabase, func: Function) -> bool {
         })
 }
 
+/// What the signature of a `@constant_time` or `oblivious` function says
+/// about secrets: per ordinary parameter whether it is `secret`, and whether
+/// the result is. `None` for a function that is neither. For checks outside
+/// this crate, such as the machine-code constant-time check.
+pub fn constant_time_signature(db: &dyn HirDatabase, func: Function) -> Option<(Vec<bool>, bool)> {
+    let signature = flow::secret_signature(db, func);
+    signature
+        .constant_time
+        .then_some((signature.params, signature.result))
+}
+
 /// The salsa query behind [`HirDatabase::verify_function`].
 pub(crate) fn verify_function_query(
     db: &dyn HirDatabase,

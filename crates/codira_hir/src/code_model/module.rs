@@ -8,7 +8,7 @@ use codira_hir_input::{FileId, ModuleId};
 
 use super::{
     r#impl::Impl, AssocItem, Effect, Enum, Function, Package, PrimitiveType, Session, Struct,
-    TypeAlias,
+    Trait, TypeAlias,
 };
 use crate::{ids::ItemDefinitionId, DiagnosticSink, HirDatabase};
 
@@ -51,10 +51,20 @@ impl Module {
         })
     }
 
-    /// Returns the name of this module or None if this is the root module
+    /// Returns the name of this module, or None if this is the root module of
+    /// the package being compiled.
+    ///
+    /// The root module of a named package (`std`, see
+    /// `codira_hir_input::PackageData::name`) is named after the package, so
+    /// every full name of an item in it -- the symbols in the dispatch
+    /// table, type names, the file names of libraries -- differs from the
+    /// names of the program's own items, even for a program module with the
+    /// same path as a standard-library module.
     pub fn name(self, db: &dyn HirDatabase) -> Option<String> {
         let module_tree = db.module_tree(self.id.package);
-        let parent = module_tree[self.id.local_id].parent?;
+        let Some(parent) = module_tree[self.id.local_id].parent else {
+            return db.packages()[self.id.package].name.clone();
+        };
         module_tree[parent]
             .children
             .iter()
@@ -104,6 +114,10 @@ impl Module {
             // their structural validation walks the raw syntax tree
             // directly instead of going through the item tree above.
             crate::supervisor_validator::supervisor_diagnostics(db, file_id, sink);
+
+            // In-place parameters and module-level bindings parse, but
+            // would compile to something other than what they say.
+            crate::unsupported_syntax::unsupported_syntax_diagnostics(db, file_id, sink);
         }
 
         // Add diagnostics from the items
@@ -115,12 +129,14 @@ impl Module {
                 ModuleDef::Effect(e) => e.diagnostics(db, sink),
                 ModuleDef::Session(s) => s.diagnostics(db, sink),
                 ModuleDef::Enum(e) => e.diagnostics(db, sink),
+                ModuleDef::Trait(t) => t.diagnostics(db, sink),
                 _ => (),
             }
         }
 
         // Add diagnostics from impls
         for item in self.impls(db) {
+            crate::traits::impl_diagnostics(db, item.id, sink);
             for associated_item in item.items(db) {
                 let AssocItem::Function(fun) = associated_item;
 
@@ -215,6 +231,13 @@ pub enum ModuleDef {
     Effect(Effect),
     Session(Session),
     Enum(Enum),
+    Trait(Trait),
+}
+
+impl From<Trait> for ModuleDef {
+    fn from(t: Trait) -> Self {
+        ModuleDef::Trait(t)
+    }
 }
 
 impl From<Session> for ModuleDef {
@@ -276,6 +299,7 @@ impl From<ItemDefinitionId> for ModuleDef {
             ItemDefinitionId::EffectId(id) => Effect { id }.into(),
             ItemDefinitionId::SessionId(id) => Session { id }.into(),
             ItemDefinitionId::EnumId(id) => Enum { id }.into(),
+            ItemDefinitionId::TraitId(id) => Trait { id }.into(),
         }
     }
 }

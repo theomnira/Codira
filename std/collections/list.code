@@ -38,7 +38,7 @@ public func list_with_capacity[T](capacity: usize) -> List[T] {
 /// Creates a list from a fixed-size array (copies elements).
 public func list_from_array[T](arr: Span[T]) -> List[T] {
     let out = list_with_capacity(arr.len);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < arr.len {
         raw_store(out.buf.ptr, i, span_get(arr, i));
         i = i + 1;
@@ -51,7 +51,7 @@ public func list_from_array[T](arr: Span[T]) -> List[T] {
 
 /// Doubles capacity (or sets to 4 if currently 0).
 func list_grow[T](this: List[T]) -> List[T] {
-    let new_cap: usize = 0;
+    var new_cap: usize = 0;
     if this.buf.cap == 0 {
         new_cap = 4;
     } else {
@@ -59,7 +59,7 @@ func list_grow[T](this: List[T]) -> List[T] {
     }
     let new_ptr = heap_alloc(new_cap);
     // Copy old data
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         raw_store(new_ptr, i, raw_load(this.buf.ptr, i));
         i = i + 1;
@@ -71,7 +71,7 @@ func list_grow[T](this: List[T]) -> List[T] {
 
 /// Ensures the list can hold at least `min_cap` elements.
 func list_ensure_capacity[T](this: List[T], min_cap: usize) -> List[T] {
-    let out = this;
+    var out = this;
     while out.buf.cap < min_cap {
         out = list_grow(out);
     }
@@ -152,7 +152,7 @@ public func insert[T](this: List[T], index: usize, value: T) -> List[T] {
     }
     let out = list_ensure_capacity(this, this.len + 1);
     // Shift elements right from end down to index
-    let i = out.len;
+    var i = out.len;
     while i > index {
         raw_store(out.buf.ptr, i, raw_load(out.buf.ptr, i - 1));
         i = i - 1;
@@ -168,7 +168,7 @@ public func remove[T](this: List[T], index: usize) -> (List[T], T) {
         panic("List.remove: index out of bounds");
     }
     let val = raw_load(this.buf.ptr, index);
-    let i = index;
+    var i = index;
     while i < this.len - 1 {
         raw_store(this.buf.ptr, i, raw_load(this.buf.ptr, i + 1));
         i = i + 1;
@@ -189,7 +189,7 @@ public func clear[T](this: List[T]) -> List[T] {
 
 /// Returns `true` if any element equals `value`.
 public func contains[T](this: List[T], value: T) -> bool {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         if raw_load(this.buf.ptr, i) == value {
             return true;
@@ -201,7 +201,7 @@ public func contains[T](this: List[T], value: T) -> bool {
 
 /// Returns the index of the first occurrence of `value`, or -1.
 public func index_of[T](this: List[T], value: T) -> isize {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         if raw_load(this.buf.ptr, i) == value {
             return i as isize;
@@ -213,8 +213,8 @@ public func index_of[T](this: List[T], value: T) -> isize {
 
 /// Counts occurrences of `value`.
 public func count[T](this: List[T], value: T) -> usize {
-    let n: usize = 0;
-    let i: usize = 0;
+    var n: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         if raw_load(this.buf.ptr, i) == value {
             n = n + 1;
@@ -229,7 +229,7 @@ public func count[T](this: List[T], value: T) -> usize {
 /// Appends every element of `other` to the end of `self`.
 public func extend[T](this: List[T], other: List[T]) -> List[T] {
     let out = list_ensure_capacity(this, this.len + other.len);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < other.len {
         raw_store(out.buf.ptr, out.len, raw_load(other.buf.ptr, i));
         out.len = out.len + 1;
@@ -248,7 +248,7 @@ public func slice[T](this: List[T], start: usize, end: usize) -> List[T] {
     }
     let new_len = end - start;
     let out = list_with_capacity(new_len);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < new_len {
         raw_store(out.buf.ptr, i, raw_load(this.buf.ptr, start + i));
         i = i + 1;
@@ -262,8 +262,8 @@ public func reverse[T](this: List[T]) -> List[T] {
     if this.len <= 1 {
         return this;
     }
-    let lo: usize = 0;
-    let hi: usize = this.len - 1;
+    var lo: usize = 0;
+    var hi: usize = this.len - 1;
     while lo < hi {
         let tmp = raw_load(this.buf.ptr, lo);
         raw_store(this.buf.ptr, lo, raw_load(this.buf.ptr, hi));
@@ -290,8 +290,8 @@ func quicksort_impl[T](ptr: Pointer[T], lo: usize, hi: usize) {
         return;
     }
     let pivot = raw_load(ptr, hi);
-    let i = lo;
-    let j = lo;
+    var i = lo;
+    var j = lo;
     while j < hi {
         if raw_load(ptr, j) < pivot {
             let tmp = raw_load(ptr, i);
@@ -316,7 +316,7 @@ func quicksort_impl[T](ptr: Pointer[T], lo: usize, hi: usize) {
 /// Returns a new list produced by applying `f` to every element.
 public func map[T, U](this: List[T], f: func(T) -> U) -> List[U] {
     let out = list_with_capacity(this.len);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         let mapped = f(raw_load(this.buf.ptr, i));
         raw_store(out.buf.ptr, i, mapped);
@@ -328,8 +328,8 @@ public func map[T, U](this: List[T], f: func(T) -> U) -> List[U] {
 
 /// Returns a new list containing only elements for which `pred` is true.
 public func filter[T](this: List[T], pred: func(T) -> bool) -> List[T] {
-    let out = list_new();
-    let i: usize = 0;
+    var out = list_new();
+    var i: usize = 0;
     while i < this.len {
         let elem = raw_load(this.buf.ptr, i);
         if pred(elem) {
@@ -343,8 +343,8 @@ public func filter[T](this: List[T], pred: func(T) -> bool) -> List[T] {
 /// Reduces the list to a single value by repeatedly applying `f`.
 /// `init` is the initial accumulator value.
 public func reduce[T, U](this: List[T], init: U, f: func(U, T) -> U) -> U {
-    let acc = init;
-    let i: usize = 0;
+    var acc = init;
+    var i: usize = 0;
     while i < this.len {
         acc = f(acc, raw_load(this.buf.ptr, i));
         i = i + 1;
@@ -354,7 +354,7 @@ public func reduce[T, U](this: List[T], init: U, f: func(U, T) -> U) -> U {
 
 /// Returns true if `pred` holds for every element.
 public func all[T](this: List[T], pred: func(T) -> bool) -> bool {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         if !pred(raw_load(this.buf.ptr, i)) {
             return false;
@@ -366,7 +366,7 @@ public func all[T](this: List[T], pred: func(T) -> bool) -> bool {
 
 /// Returns true if `pred` holds for at least one element.
 public func any[T](this: List[T], pred: func(T) -> bool) -> bool {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         if pred(raw_load(this.buf.ptr, i)) {
             return true;

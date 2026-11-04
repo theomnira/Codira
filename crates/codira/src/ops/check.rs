@@ -72,6 +72,7 @@ pub fn check(args: Args) -> Result<ExitStatus, anyhow::Error> {
     };
 
     let mut package_root = None;
+    let mut manifest = None;
     let (driver, what) = if let Some(path) = args.path {
         let label = path.display().to_string();
         (Driver::with_source_directory(&path, config)?, label)
@@ -96,6 +97,7 @@ pub fn check(args: Args) -> Result<ExitStatus, anyhow::Error> {
         };
         let (package, driver) = Driver::with_package_path(&manifest_path, config)?;
         package_root = Some(package.root().to_path_buf());
+        manifest = Some(package.manifest().clone());
         (driver, package.name().to_string())
     };
 
@@ -140,8 +142,20 @@ pub fn check(args: Args) -> Result<ExitStatus, anyhow::Error> {
         total_files,
         clean_files,
         syntax,
-        semantic,
+        mut semantic,
     } = counts;
+
+    // The package envelope (`[envelope]` in codira.toml): every public
+    // function must fit it. These are package-level errors, not any one
+    // file's, so they count as semantic errors without making a file
+    // unclean.
+    if let Some(manifest) = &manifest {
+        let errors = super::envelope::package_envelope_errors(manifest, driver.db());
+        for error in &errors {
+            eprintln!("error: {error}");
+        }
+        semantic += errors.len();
+    }
 
     if args.gaps {
         // Two messages that differ only in which identifier they name are

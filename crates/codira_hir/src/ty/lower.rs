@@ -208,7 +208,18 @@ impl Ty {
         if let Some(ty) = res {
             ty
         } else {
-            diagnostics.push(LowerDiagnostic::UnresolvedType { id: type_ref });
+            // A trait named where a type is expected (`value: Hashable`)
+            // gets its own message: the name is defined, it just does not
+            // name a type.
+            let names_trait = match &type_ref_map[type_ref] {
+                TypeRef::Path(path, _) => resolver.resolve_path_as_trait(db, path).is_some(),
+                _ => false,
+            };
+            diagnostics.push(if names_trait {
+                LowerDiagnostic::TraitAsType { id: type_ref }
+            } else {
+                LowerDiagnostic::UnresolvedType { id: type_ref }
+            });
             TyKind::Unknown.intern()
         }
     }
@@ -344,7 +355,10 @@ impl From<ModuleDef> for Option<TypableDef> {
             ModuleDef::Struct(t) => Some(TypableDef::Struct(t)),
             ModuleDef::TypeAlias(t) => Some(TypableDef::TypeAlias(t)),
             ModuleDef::Enum(e) => Some(TypableDef::Enum(e)),
-            ModuleDef::Module(_) | ModuleDef::Effect(_) | ModuleDef::Session(_) => None,
+            ModuleDef::Module(_)
+            | ModuleDef::Effect(_)
+            | ModuleDef::Session(_)
+            | ModuleDef::Trait(_) => None,
         }
     }
 }
@@ -536,6 +550,10 @@ pub mod diagnostics {
         DualOfNonSession {
             id: LocalTypeRefId,
         },
+        /// A trait named where a type is expected.
+        TraitAsType {
+            id: LocalTypeRefId,
+        },
     }
 
     impl LowerDiagnostic {
@@ -554,6 +572,15 @@ pub mod diagnostics {
                 LowerDiagnostic::TypeIsPrivate { id } => sink.push(PrivateAccess {
                     file: file_id,
                     expr: source_map.type_ref_syntax(*id).unwrap().syntax_node_ptr(),
+                }),
+                LowerDiagnostic::TraitAsType { id } => sink.push(crate::diagnostics::TraitError {
+                    file: file_id,
+                    node: source_map.type_ref_syntax(*id).unwrap().syntax_node_ptr(),
+                    message:
+                        "a trait is not a type: values of a trait type (dynamic dispatch) are not \
+                  supported; take a generic parameter bounded by the trait instead \
+                  (`[T: Trait]`)"
+                            .to_string(),
                 }),
                 LowerDiagnostic::DualOfNonSession { id } => sink.push(SessionError {
                     file: file_id,

@@ -40,10 +40,15 @@ pub enum InherentImplsDiagnostics {
 }
 
 /// A type that `extend` blocks can add methods to.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 enum ImplTarget {
     Struct(StructId),
     Enum(EnumId),
+    /// A primitive type (`i64`, `f64`, `bool`, `str`). Only an `extend`
+    /// that implements a trait may name one (see `crate::traits`): a
+    /// primitive has no package, so an inherent method on it would belong
+    /// to every package at once.
+    Primitive(Ty),
 }
 
 impl ImplTarget {
@@ -51,14 +56,20 @@ impl ImplTarget {
         match ty.interned() {
             TyKind::Struct(s, _) => Some(ImplTarget::Struct(s.id)),
             TyKind::Enum(e, _) => Some(ImplTarget::Enum(e.id)),
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => {
+                Some(ImplTarget::Primitive(ty.clone()))
+            }
             _ => None,
         }
     }
 
-    fn package(self, db: &dyn HirDatabase) -> PackageId {
+    /// The package whose `extend` blocks can add methods to the type: its
+    /// own, or for a primitive, none in particular.
+    fn package(&self, db: &dyn HirDatabase) -> Option<PackageId> {
         match self {
-            ImplTarget::Struct(id) => id.module(db).package,
-            ImplTarget::Enum(id) => id.module(db).package,
+            ImplTarget::Struct(id) => Some(id.module(db).package),
+            ImplTarget::Enum(id) => Some(id.module(db).package),
+            ImplTarget::Primitive(_) => None,
         }
     }
 }
@@ -117,9 +128,17 @@ impl InherentImpls {
                         .map(|d| InherentImplsDiagnostics::LowerDiagnostic(impl_id, d.clone())),
                 );
 
-                // Make sure the type is a struct or an enum
+                // Make sure the type is a struct or an enum, or a primitive
+                // type for an implementation of a trait
                 let self_ty = lowered[impl_data.self_ty].clone();
                 let target = match ImplTarget::of(&self_ty) {
+                    Some(ImplTarget::Primitive(_))
+                        if !crate::traits::is_trait_impl(db, impl_id) =>
+                    {
+                        self.diagnostics
+                            .push(InherentImplsDiagnostics::InvalidSelfTy(impl_id));
+                        continue;
+                    }
                     Some(target) => target,
                     None if self_ty.is_unknown() => continue,
                     None => {
@@ -129,8 +148,13 @@ impl InherentImpls {
                     }
                 };
 
-                // Make sure the type is defined in the same package
-                if target.package(db) != package_defs.id {
+                // Make sure the type is defined in the same package (a
+                // primitive's trait implementation is checked against the
+                // trait's package instead, in `crate::traits`)
+                if target
+                    .package(db)
+                    .is_some_and(|package| package != package_defs.id)
+                {
                     self.diagnostics
                         .push(InherentImplsDiagnostics::ImplForForeignType(impl_id));
                 }
@@ -348,29 +372,32 @@ impl<'db> MethodResolutionCtx<'db> {
         &self,
         mut callback: impl FnMut(AssocItemId, bool) -> ControlFlow<T>,
     ) -> ControlFlow<T> {
-        let Some(package_id) = self.defining_package() else {
+        let Some(target) = ImplTarget::of(&self.ty) else {
             return ControlFlow::Continue(());
         };
-        let inherent_impls = self.db.inherent_impls_in_package(package_id);
-        let impls = inherent_impls.for_self_ty(&self.ty);
-        for &self_impl in impls {
-            let impl_data = self.db.impl_data(self_impl);
-            for item in impl_data.items.iter().copied() {
-                let visible = match self.is_valid_candidate(self_impl, item) {
-                    IsValidCandidate::Yes => true,
-                    IsValidCandidate::No => continue,
-                    IsValidCandidate::NotVisible => false,
-                };
-                callback(item, visible)?;
+        // A struct's or enum's methods are all in its own package; a
+        // primitive's (trait implementations only) can be in any.
+        let packages: Vec<PackageId> = match target.package(self.db) {
+            Some(package) => vec![package],
+            None => self.db.packages().iter().collect(),
+        };
+        for package_id in packages {
+            let inherent_impls = self.db.inherent_impls_in_package(package_id);
+            let impls = inherent_impls.for_self_ty(&self.ty);
+            for &self_impl in impls {
+                let impl_data = self.db.impl_data(self_impl);
+                for item in impl_data.items.iter().copied() {
+                    let visible = match self.is_valid_candidate(self_impl, item) {
+                        IsValidCandidate::Yes => true,
+                        IsValidCandidate::No => continue,
+                        IsValidCandidate::NotVisible => false,
+                    };
+                    callback(item, visible)?;
+                }
             }
         }
 
         ControlFlow::Continue(())
-    }
-
-    /// Returns the package in which the type was defined.
-    fn defining_package(&self) -> Option<PackageId> {
-        ImplTarget::of(&self.ty).map(|target| target.package(self.db))
     }
 
     /// Returns whether the specified item is a valid candidate for method
@@ -383,11 +410,7 @@ impl<'db> MethodResolutionCtx<'db> {
 
     /// Returns true if the specified function is a valid candidate for method
     /// resolution based on the filters.
-    fn is_valid_function_candidate(
-        &self,
-        _impl_id: ImplId,
-        fun_id: FunctionId,
-    ) -> IsValidCandidate {
+    fn is_valid_function_candidate(&self, impl_id: ImplId, fun_id: FunctionId) -> IsValidCandidate {
         let data = self.db.fn_data(fun_id);
 
         // Check if the name matches
@@ -407,12 +430,15 @@ impl<'db> MethodResolutionCtx<'db> {
             }
         }
 
-        // Check if the function is visible from the selected module
+        // Check if the function is visible from the selected module. A method
+        // of a trait implementation is as visible as the type and the trait
+        // are: it implements a contract anyone who can name both relies on.
         if let Some(visible_from) = self.visible_from {
-            if !self
-                .db
-                .function_visibility(fun_id)
-                .is_visible_from(self.db, visible_from)
+            if !crate::traits::is_trait_impl(self.db, impl_id)
+                && !self
+                    .db
+                    .function_visibility(fun_id)
+                    .is_visible_from(self.db, visible_from)
             {
                 return IsValidCandidate::NotVisible;
             }

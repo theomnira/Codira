@@ -58,7 +58,7 @@ fn arrays_as_argument() {
         r"
     public func generate() -> [i32] { [5,4,3,2,1] }
     public func add_one(array: [i32], len: usize) -> [i32] {
-        let i = 0;
+        var i = 0;
         loop {
             array[i] += 1;
             i += 1;

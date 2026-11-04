@@ -182,6 +182,28 @@ impl InferenceResultBuilder<'_> {
         });
     }
 
+    /// Reports an assignment to a `let` binding, or to a field of a value
+    /// struct (or tuple) held in one: `let` binds once. A field of a class
+    /// and an array element are storage of a shared object, not of the
+    /// binding, and stay assignable through a `let`.
+    pub(super) fn check_immutable_assignment(&mut self, assignment: ExprId, lhs: ExprId) {
+        let Some(pat) = self.place_root_binding(lhs) else {
+            return;
+        };
+        if !self.body.is_immutable_binding(pat) {
+            return;
+        }
+        let name = self.binding_name(pat);
+        self.diagnostics.push(InferenceDiagnostic::ExprError {
+            id: assignment.into(),
+            message: format!(
+                "cannot assign to `{name}`: it is bound with `let`, which cannot be \
+                 assigned after its declaration (not even to give it a first value); \
+                 declare it with `var {name}`"
+            ),
+        });
+    }
+
     /// The local binding whose own storage the place `expr` names: the
     /// variable itself, or a field of a value struct (or tuple) stored in
     /// it. A field of a class or an array element is storage of a shared

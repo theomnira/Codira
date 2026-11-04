@@ -50,9 +50,13 @@ const LOCK_ACQUIRE_ATTEMPTS: u32 = 60;
 use walkdir::WalkDir;
 
 pub use self::{config::Config, display_color::DisplayColor};
-use crate::diagnostics_snippets::{emit_hir_diagnostic, emit_syntax_error};
+use crate::diagnostics_snippets::{display_path, emit_hir_diagnostic, emit_syntax_error};
 
 pub const WORKSPACE: SourceRootId = SourceRootId(0);
+
+/// The source root of the standard-library files a program imports (see
+/// `crate::std_library`).
+pub const STD_SOURCE_ROOT: SourceRootId = SourceRootId(1);
 
 /// Which compiler phase produced a diagnostic.
 ///
@@ -82,6 +86,9 @@ pub struct CheckDiagnostic {
     /// 1-based line number, as a human would cite it.
     pub line: u32,
     pub message: String,
+    /// The source text the diagnostic points at, as written (empty for a
+    /// syntax error): what an `undefined value` is the undefined value of.
+    pub highlight: String,
 }
 
 /// Aggregate counts produced by a single diagnostic pass.
@@ -152,6 +159,23 @@ pub struct Driver {
     module_to_temp_assembly_path: HashMap<Module, PathBuf>,
 
     emit_ir: bool,
+
+    /// The standard-library files loaded for the program's imports, by path
+    /// relative to the standard library's directory, and the source root
+    /// they form (see `Driver::refresh_std_package`).
+    std_files: std::collections::BTreeMap<String, FileId>,
+    std_source_root: SourceRoot,
+    /// Whether the package set includes the standard library.
+    std_loaded: bool,
+    /// Whether every library written gets a proof certificate
+    /// ([`Driver::set_certify`]).
+    certify: bool,
+    /// Whether every library written has its constant-time functions'
+    /// machine code checked ([`Driver::set_check_constant_time`]).
+    check_constant_time: bool,
+    /// The directory checked by `with_source_directory` is the standard
+    /// library itself, whose `root` it already is.
+    is_std_itself: bool,
 }
 
 impl Driver {
@@ -175,6 +199,12 @@ impl Driver {
             next_file_id: 0,
             module_to_temp_assembly_path: HashMap::default(),
             emit_ir: config.emit_ir,
+            std_files: std::collections::BTreeMap::new(),
+            std_source_root: SourceRoot::default(),
+            std_loaded: false,
+            certify: false,
+            check_constant_time: false,
+            is_std_itself: false,
         }
     }
 
@@ -210,6 +240,7 @@ impl Driver {
         driver.db.set_packages(Arc::new(package_set));
 
         driver.path_to_file_id.insert(rel_path, file_id);
+        driver.refresh_std_package()?;
 
         Ok((driver, file_id))
     }
@@ -283,6 +314,7 @@ impl Driver {
         let mut package_set = PackageSet::default();
         package_set.add_package(WORKSPACE);
         driver.db.set_packages(Arc::new(package_set));
+        driver.refresh_std_package()?;
 
         Ok((package, driver))
     }
@@ -343,6 +375,14 @@ impl Driver {
         package_set.add_package(WORKSPACE);
         driver.db.set_packages(Arc::new(package_set));
 
+        // Checking the standard library's own directory: it is the
+        // workspace package already, and `root` in it is its root.
+        driver.is_std_itself = crate::std_library::std_library_dir()
+            .ok()
+            .zip(source_directory.canonicalize().ok())
+            .is_some_and(|(std_dir, dir)| std_dir.canonicalize().ok() == Some(dir));
+        driver.refresh_std_package()?;
+
         Ok(driver)
     }
 }
@@ -381,8 +421,25 @@ impl Driver {
     /// SMT-LIB2 queries (see `codira_certificate`). Functions keep their
     /// symbols in the library so the certificate can name their code.
     pub fn set_certify(&mut self, enabled: bool) {
-        if self.db.keep_function_symbols() != enabled {
-            self.db.set_keep_function_symbols(enabled);
+        self.certify = enabled;
+        self.update_keep_function_symbols();
+    }
+
+    /// Turns the machine-code constant-time check on or off (`codira build
+    /// --check-constant-time`): after a library is linked, the machine code
+    /// of each of its `oblivious` / `@constant_time` functions is
+    /// disassembled and checked (see `codira_ctcheck`), and a function that
+    /// breaks a rule fails the build. Functions keep their symbols in the
+    /// library so their code can be found.
+    pub fn set_check_constant_time(&mut self, enabled: bool) {
+        self.check_constant_time = enabled;
+        self.update_keep_function_symbols();
+    }
+
+    fn update_keep_function_symbols(&mut self) {
+        let keep = self.certify || self.check_constant_time;
+        if self.db.keep_function_symbols() != keep {
+            self.db.set_keep_function_symbols(keep);
         }
     }
 
@@ -500,10 +557,11 @@ impl Driver {
                 if let Some(file_id) = module.file_id(&self.db) {
                     let parse = self.db.parse(file_id);
                     let source_code = self.db.file_text(file_id);
-                    let relative_file_path = self.db.file_relative_path(file_id);
+                    let relative_file_path = display_path(&self.db, file_id);
                     let line_index = self.db.line_index(file_id);
 
                     // Emit all syntax diagnostics
+                    let mut module_errors = 0;
                     for syntax_error in parse.errors().iter() {
                         emit_syntax_error(
                             syntax_error,
@@ -514,6 +572,7 @@ impl Driver {
                             writer,
                         )?;
                         has_error = true;
+                        module_errors += 1;
                     }
 
                     // Emit all HIR diagnostics
@@ -522,6 +581,7 @@ impl Driver {
                         module,
                         &mut DiagnosticSink::new(|d| {
                             has_error = true;
+                            module_errors += 1;
                             if let Err(e) =
                                 emit_hir_diagnostic(d, &self.db, file_id, emit_colors, writer)
                             {
@@ -535,6 +595,7 @@ impl Driver {
                     if let Some(e) = error {
                         return Err(e.into());
                     }
+                    self.report_std_module_errors(file_id, module_errors, writer)?;
                 }
             }
         }
@@ -571,10 +632,11 @@ impl Driver {
 
                 let parse = self.db.parse(file_id);
                 let source_code = self.db.file_text(file_id);
-                let relative_file_path = self.db.file_relative_path(file_id);
+                let relative_file_path = display_path(&self.db, file_id);
                 let line_index = self.db.line_index(file_id);
 
                 let mut file_has_diagnostic = false;
+                let mut module_errors = 0;
 
                 for syntax_error in parse.errors().iter() {
                     emit_syntax_error(
@@ -586,6 +648,7 @@ impl Driver {
                         writer,
                     )?;
                     counts.syntax += 1;
+                    module_errors += 1;
                     file_has_diagnostic = true;
                 }
 
@@ -594,6 +657,7 @@ impl Driver {
                     module,
                     &mut DiagnosticSink::new(|d| {
                         counts.semantic += 1;
+                        module_errors += 1;
                         file_has_diagnostic = true;
                         if let Err(e) =
                             emit_hir_diagnostic(d, &self.db, file_id, emit_colors, writer)
@@ -605,6 +669,7 @@ impl Driver {
                 if let Some(e) = error {
                     return Err(e.into());
                 }
+                self.report_std_module_errors(file_id, module_errors, writer)?;
 
                 if !file_has_diagnostic {
                     counts.clean_files += 1;
@@ -613,6 +678,32 @@ impl Driver {
         }
 
         Ok(counts)
+    }
+
+    /// After the diagnostics of a standard-library file, says which module
+    /// they belong to and why the program cannot use it: a program can only
+    /// import standard-library modules that check clean (along with every
+    /// module they import).
+    fn report_std_module_errors(
+        &self,
+        file_id: FileId,
+        errors: usize,
+        writer: &mut dyn std::io::Write,
+    ) -> Result<(), anyhow::Error> {
+        if errors == 0 || self.db.file_source_root(file_id) != STD_SOURCE_ROOT {
+            return Ok(());
+        }
+        let relative = self.db.file_relative_path(file_id);
+        let module = crate::std_library::module_path_of(relative.as_str()).join(".");
+        writeln!(
+            writer,
+            "error: the standard-library module `std.{module}` ({}) has {errors} error{}; \
+             the program imports it, directly or through another standard-library module, \
+             and only modules that check clean can be imported\n",
+            display_path(&self.db, file_id),
+            if errors == 1 { "" } else { "s" },
+        )?;
+        Ok(())
     }
 
     /// Collects every diagnostic in the database as structured data, one
@@ -634,7 +725,8 @@ impl Driver {
 
                 let parse = self.db.parse(file_id);
                 let line_index = self.db.line_index(file_id);
-                let relative_path = self.db.file_relative_path(file_id).to_string();
+                let relative_path = display_path(&self.db, file_id).to_string();
+                let text = self.db.file_text(file_id);
 
                 let mut diagnostics: Vec<CheckDiagnostic> = parse
                     .errors()
@@ -643,6 +735,7 @@ impl Driver {
                         kind: DiagnosticKind::Syntax,
                         line: line_index.line_col(syntax_error.location().offset()).line + 1,
                         message: syntax_error.to_string(),
+                        highlight: String::new(),
                     })
                     .collect();
 
@@ -653,6 +746,13 @@ impl Driver {
                             kind: DiagnosticKind::Semantic,
                             line: line_index.line_col(d.highlight_range().start()).line + 1,
                             message: d.message(),
+                            highlight: if d.source().file_id == file_id {
+                                text.get(std::ops::Range::<usize>::from(d.highlight_range()))
+                                    .unwrap_or_default()
+                                    .to_owned()
+                            } else {
+                                String::new()
+                            },
                         });
                     }),
                 );
@@ -964,10 +1064,33 @@ impl Driver {
         // A certificate describes exactly one build of the library: write
         // this one's, or remove one left by an earlier certified build.
         let certificate = codira_certificate::sidecar_path(&assembly_path);
-        if self.db.keep_function_symbols() {
+        if self.certify {
             crate::certify::write_certificate(&self.db, module_group_id, &assembly_path)?;
         } else if certificate.is_file() {
             std::fs::remove_file(&certificate)?;
+        }
+
+        // The machine code of the constant-time functions, as written.
+        if self.check_constant_time {
+            let (report, notes) =
+                crate::ct_check::check_library(&self.db, module_group_id, &assembly_path)?;
+            for note in &notes {
+                eprintln!("note: machine-code constant-time check: {note}");
+            }
+            if !report.passed() {
+                // Not a library anyone should load.
+                std::fs::remove_file(&assembly_path)?;
+                anyhow::bail!(
+                    "{}",
+                    crate::ct_check::failure_message(&report, &assembly_path)
+                );
+            }
+            let checked = report.functions.iter().filter(|f| f.was_checked()).count();
+            eprintln!(
+                "machine-code constant-time check ({}): {checked} function(s) checked, no rule \
+                 broken",
+                report.arch
+            );
         }
 
         // Store the information so we maybe don't have to write it next time
@@ -1174,7 +1297,106 @@ impl Driver {
                 .set_source_root(WORKSPACE, Arc::new(self.source_root.clone()));
         }
 
+        // An import of the standard library may have appeared or gone.
+        if !summary.is_unchanged() {
+            self.refresh_std_package()?;
+        }
+
         Ok(summary)
+    }
+}
+
+impl Driver {
+    /// Loads the standard-library modules the program's imports name, and
+    /// the ones they import in turn, as the package `std` (see
+    /// `crate::std_library`); drops the ones it no longer imports.
+    ///
+    /// The constructors and `sync_source_directory` call this. After
+    /// `add_file`, `update_file`, `remove_file` or `rename` changed which
+    /// standard-library modules the program imports, call it again.
+    ///
+    /// Nothing is loaded when the program imports nothing from `std`, or
+    /// when it has a top-level module of its own called `std` (which is then
+    /// what `std` means in it). Fails when the program imports `std` and the
+    /// standard library cannot be found, or one of its files cannot be read.
+    pub fn refresh_std_package(&mut self) -> Result<(), anyhow::Error> {
+        use crate::std_library::{std_closure, std_library_dir, std_module_path, STD_PACKAGE_NAME};
+
+        let mut roots = Vec::new();
+        let mut defines_std = false;
+        for file_id in self.source_root.files() {
+            let relative = self.source_root.relative_path(file_id);
+            let first = relative.components().next().map(|c| c.as_str().to_owned());
+            if first.as_deref().is_some_and(|first| {
+                first == STD_PACKAGE_NAME || first == format!("{STD_PACKAGE_NAME}.code")
+            }) {
+                defines_std = true;
+            }
+            for import in codira_hir::import_paths_in_source(&self.db.file_text(file_id)) {
+                if let Some(path) = std_module_path(&import, None) {
+                    roots.push(path);
+                }
+            }
+        }
+
+        let files = if roots.is_empty() || defines_std || self.is_std_itself {
+            std::collections::BTreeMap::new()
+        } else {
+            let std_dir = std_library_dir().map_err(|reason| {
+                anyhow::anyhow!("the program imports the standard library, but {reason}")
+            })?;
+            std_closure(&std_dir, roots)?
+        };
+
+        // Set only what changed: every salsa input set invalidates what was
+        // computed from it, even when the value is the same.
+        let mut source_root = SourceRoot::default();
+        let mut std_files = std::collections::BTreeMap::new();
+        for (relative, text) in files {
+            let file_id = if let Some(&file_id) = self.std_files.get(&relative) {
+                if *self.db.file_text(file_id) != *text {
+                    self.db.set_file_text(file_id, Arc::from(text));
+                }
+                file_id
+            } else {
+                let file_id = FileId(
+                    self.next_file_id
+                        .try_into()
+                        .map_err(|_e| anyhow::anyhow!("too many active source files"))?,
+                );
+                self.next_file_id += 1;
+                self.db.set_file_text(file_id, Arc::from(text));
+                self.db.set_file_source_root(file_id, STD_SOURCE_ROOT);
+                file_id
+            };
+            source_root.insert_file(file_id, relative.as_str());
+            std_files.insert(relative, file_id);
+        }
+        let file_set_changed = std_files.keys().ne(self.std_files.keys());
+        self.std_files = std_files;
+        if file_set_changed || !self.std_loaded {
+            self.std_source_root = source_root;
+            self.db
+                .set_source_root(STD_SOURCE_ROOT, Arc::new(self.std_source_root.clone()));
+        }
+
+        let load = !self.std_files.is_empty();
+        if load != self.std_loaded {
+            let mut package_set = PackageSet::default();
+            package_set.add_package(WORKSPACE);
+            if load {
+                package_set.add_named_package(STD_SOURCE_ROOT, STD_PACKAGE_NAME);
+            }
+            self.db.set_packages(Arc::new(package_set));
+            self.std_loaded = load;
+        }
+        Ok(())
+    }
+
+    /// The standard-library files loaded for the program's imports, by path
+    /// relative to the standard library's directory (`crypto/hash.code`).
+    pub fn std_files(&self) -> impl Iterator<Item = &str> + '_ {
+        self.std_files.keys().map(String::as_str)
     }
 }
 

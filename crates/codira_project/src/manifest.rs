@@ -20,6 +20,28 @@ pub struct Manifest {
     metadata: ManifestMetadata,
     eidos: EidosSettings,
     native: NativeSources,
+    envelope: Option<EnvelopeTable>,
+}
+
+/// The package's semantic envelope, from the manifest's `[envelope]` table
+/// (Codira Semantic Envelope version 1):
+///
+/// ```toml
+/// [envelope]
+/// allocation = "none"
+/// blocking = false
+/// foreign = "none"
+/// ```
+///
+/// The keys and values are those of the `@envelope` attribute; a boolean is
+/// read as `true`/`false`. This type only holds the entries, in the order
+/// TOML gives them: `codira check`, `codira build` and `codira envelope`
+/// validate them with the effect analysis (an unknown or unchecked key is an
+/// error there) and require every `public` function of the package to fit.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct EnvelopeTable {
+    /// `(key, value)`, e.g. `("allocation", "none")`.
+    pub entries: Vec<(String, String)>,
 }
 
 /// C, C++ and assembly sources compiled into the package, from the
@@ -122,6 +144,11 @@ impl Manifest {
     /// Returns the native (C, C++, assembly) sources of the package
     pub fn native(&self) -> &NativeSources {
         &self.native
+    }
+
+    /// Returns the package's `[envelope]` table, if it has one
+    pub fn envelope(&self) -> Option<&EnvelopeTable> {
+        self.envelope.as_ref()
     }
 }
 
@@ -266,6 +293,49 @@ mod tests {
         assert_eq!(native.defines, vec!["FAST=1"]);
         assert_eq!(native.flags, vec!["-O3"]);
         assert!(native.libs.is_empty());
+    }
+
+    #[test]
+    fn envelope_table_keeps_every_entry_and_reads_booleans() {
+        let manifest = Manifest::from_str(
+            r#"
+        [package]
+        name="test"
+        version="0.2.0"
+
+        [envelope]
+        allocation = "none"
+        blocking = false
+        colour = "blue"
+        "#,
+        )
+        .unwrap();
+        let mut entries = manifest.envelope().unwrap().entries.clone();
+        entries.sort();
+        // The unknown key is kept, so the effect analysis can reject it by
+        // name; it is never dropped here.
+        assert_eq!(
+            entries,
+            vec![
+                ("allocation".to_string(), "none".to_string()),
+                ("blocking".to_string(), "false".to_string()),
+                ("colour".to_string(), "blue".to_string()),
+            ]
+        );
+
+        let plain = Manifest::from_str("[package]\nname=\"test\"\nversion=\"0.2.0\"\n").unwrap();
+        assert!(plain.envelope().is_none());
+    }
+
+    #[test]
+    fn envelope_values_must_be_strings_or_booleans() {
+        let error = Manifest::from_str(
+            "[package]\nname=\"test\"\nversion=\"0.2.0\"\n\n[envelope]\nallocation = 0\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("[envelope] allocation"), "{error}");
+        assert!(error.contains("string or a boolean"), "{error}");
     }
 
     #[test]

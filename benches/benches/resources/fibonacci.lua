@@ -1,11 +1,11 @@
 function fibonacci(n)
-    a, b, i = 0,0,0
+    local a, b, i = 0, 1, 1
     repeat
         if i > n then
             return a
         end
-        sum = a+b
-        a,b = b,sum
+        local sum = a + b
+        a, b = b, sum
         i = i + 1
     until false
 end

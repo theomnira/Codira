@@ -86,6 +86,23 @@ impl Printer<'_> {
                 writeln!(self, "session {name} {{ .. }}")
             }
             ModItem::Enum(it) => self.print_enum(it),
+            ModItem::Trait(it) => {
+                let super::Trait {
+                    name,
+                    visibility,
+                    items,
+                    ast_id: _,
+                } = &self.tree[it];
+                self.print_visibility(*visibility)?;
+                write!(self, "trait {name} {{")?;
+                self.indented(|this| {
+                    for item in items.iter().copied() {
+                        this.print_mod_item(item.into())?;
+                    }
+                    Ok(())
+                })?;
+                writeln!(self, "}}")
+            }
         }
     }
 

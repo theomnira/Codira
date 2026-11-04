@@ -667,3 +667,356 @@ fn array_filled_allocates_and_the_scalar_builtins_do_not() {
     );
     assert!(!diags.contains("scalar"), "{diags}");
 }
+
+// ---- @envelope (Codira Semantic Envelope, version 0) ----------------------
+
+#[test]
+fn envelope_clauses_are_checked_through_calls() {
+    let diags = diagnostics(
+        r#"
+    class C { x: i64 }
+    extern func c_io(x: i64) -> i64;
+    func make() -> i64 { let c = C { x: 1 }; c.x }
+    func io(x: i64) -> i64 { c_io(x) }
+    func tasks() { scope { } }
+
+    @envelope(allocation: none)
+    func a() -> i64 { make() }
+    @envelope(foreign: none, allocation: any)
+    func b(x: i64) -> i64 { io(x) }
+    @envelope(concurrency: none)
+    func c() { tasks() }
+    @envelope(allocation: none, blocking: false, panic: false, termination: bounded, foreign: none, concurrency: none, effects: none, secrecy: none)
+    func pure(x: i64) -> i64 { x + 1 }
+    "#,
+    );
+    let count = |needle: &str| diags.matches(needle).count();
+    assert_eq!(
+        count(
+            "`a` is `@envelope(allocation: none)` but calls `make` (line 8), which allocates: \
+             class `C` constructed"
+        ),
+        1,
+        "{diags}"
+    );
+    assert_eq!(
+        count(
+            "`b` is `@envelope(foreign: none)` but calls `io` (line 10), which calls `c_io` \
+             (line 4), which runs code outside the analysis"
+        ),
+        1,
+        "{diags}"
+    );
+    assert_eq!(
+        count("`c` is `@envelope(concurrency: none)` but calls `tasks` (line 12), which starts concurrent tasks"),
+        1,
+        "{diags}"
+    );
+    assert_eq!(count("`pure`"), 0, "{diags}");
+    assert_eq!(diags.lines().count(), 3, "{diags}");
+}
+
+#[test]
+fn envelope_and_attributes_combine_in_one_message() {
+    let diags = diagnostics(
+        r#"
+    @noalloc @envelope(allocation: none)
+    func both() { println("hi") }
+    "#,
+    );
+    assert!(
+        diags.contains(
+            "`both` is `@noalloc` and `@envelope(allocation: none)` but allocates here: `println`"
+        ),
+        "{diags}"
+    );
+    assert_eq!(diags.lines().count(), 1, "{diags}");
+}
+
+#[test]
+fn envelope_tracks_effects_and_secrets() {
+    let diags = diagnostics(
+        r#"
+    effect Ask {
+        func ask(x: i64) -> i64
+    }
+    func asks(x: i64) uses Ask -> i64 { perform Ask.ask(x) }
+    @envelope(effects: none)
+    func caller(x: i64) uses Ask -> i64 { asks(x) }
+
+    func mix(key: secret u64) -> secret u64 { key + 1 }
+    @envelope(secrecy: none)
+    func public_only(x: u64) -> u64 { declassify(mix(x)) }
+    @envelope(secrecy: none)
+    func plain(x: u64) -> u64 { x * 2 }
+    "#,
+    );
+    assert!(
+        diags.contains("`caller` is `@envelope(effects: none)` but calls `asks`"),
+        "{diags}"
+    );
+    assert!(
+        diags.contains(
+            "`public_only` is `@envelope(secrecy: none)` but handles `secret` data here: \
+             `declassify` releases a `secret` value"
+        ),
+        "{diags}"
+    );
+    assert!(
+        diags.contains(
+            "`public_only` is `@envelope(secrecy: none)` but calls `mix` (line 10), which \
+             handles `secret` data: `mix` takes, returns or binds a `secret` value"
+        ),
+        "{diags}"
+    );
+    assert!(!diags.contains("`plain`"), "{diags}");
+}
+
+#[test]
+fn envelope_rejects_what_it_cannot_check() {
+    let diags = diagnostics(
+        r#"
+    @envelope(reads: [Account], allocation: none)
+    func r() {}
+    @envelope(allocation: maybe)
+    func v() {}
+    @envelope(colour: blue)
+    func u() {}
+    @envelope(allocation: none, allocation: any)
+    func d() {}
+    @envelope(none)
+    func p() {}
+    @envelope
+    func e() {}
+    @envelope(allocation: none) @envelope(blocking: false)
+    func twice() {}
+    "#,
+    );
+    let count = |needle: &str| diags.matches(needle).count();
+    assert_eq!(
+        count("`@envelope` key `reads` is part of the semantic-envelope design but cannot be checked yet"),
+        1,
+        "{diags}"
+    );
+    assert_eq!(
+        count("`@envelope` key `allocation` takes `none` or `any`, not `maybe`"),
+        1,
+        "{diags}"
+    );
+    assert_eq!(count("unknown `@envelope` key `colour`"), 1, "{diags}");
+    assert_eq!(
+        count("`@envelope` key `allocation` is given more than once"),
+        1,
+        "{diags}"
+    );
+    assert_eq!(count("`none` has no key"), 1, "{diags}");
+    assert_eq!(count("`@envelope` needs clauses"), 1, "{diags}");
+    assert_eq!(
+        count("a function has at most one `@envelope`"),
+        1,
+        "{diags}"
+    );
+    assert_eq!(diags.lines().count(), 7, "{diags}");
+}
+
+#[test]
+fn envelope_on_an_extern_is_a_trusted_assertion() {
+    let diags = diagnostics(
+        r#"
+    @envelope(foreign: none, allocation: none)
+    extern func c_pure(x: i64) -> i64;
+    extern func c_other(x: i64) -> i64;
+    @envelope(foreign: none, allocation: none)
+    func ok(x: i64) -> i64 { c_pure(x) }
+    @envelope(foreign: none)
+    func bad(x: i64) -> i64 { c_other(x) }
+    "#,
+    );
+    assert!(!diags.contains("`ok`"), "{diags}");
+    assert!(
+        diags.contains("`bad` is `@envelope(foreign: none)` but calls `c_other`"),
+        "{diags}"
+    );
+    assert_eq!(diags.lines().count(), 1, "{diags}");
+}
+
+#[test]
+fn scope_spawn_and_externs_have_the_new_effects() {
+    let source = r#"
+    extern func c_x(x: i64) -> i64;
+    func par() { scope { } }
+    func ext(x: i64) -> i64 { c_x(x) }
+    func s(k: secret u64) -> secret u64 { k }
+    "#;
+    assert!(effects_of(source, "par").contains(Effect::Spawn));
+    let ext = effects_of(source, "ext");
+    assert!(ext.contains(Effect::Foreign) && !ext.contains(Effect::Secret));
+    assert_eq!(effects_of(source, "s"), set(&[Effect::Secret]));
+}
+
+#[test]
+fn envelope_report_infers_every_function() {
+    let (db, _) = MockDatabase::with_single_file(
+        r#"
+    func pure(x: i64) -> i64 { x + 1 }
+    @envelope(allocation: none)
+    func noisy() { println("hi") }
+    "#,
+    );
+    let report = super::envelope_report(&db);
+    assert_eq!(report.len(), 2);
+    let pure = &report[0];
+    assert_eq!(pure.name, "pure");
+    assert!(pure.declared.is_none() && pure.violated.is_empty());
+    let value = |f: &super::FunctionEnvelope, key: &str| {
+        f.inferred
+            .iter()
+            .find(|d| d.key == key)
+            .map(|d| d.value)
+            .unwrap()
+    };
+    assert_eq!(value(pure, "allocation"), "none");
+    assert_eq!(value(pure, "termination"), "bounded");
+    assert_eq!(value(pure, "secrecy"), "none");
+    let noisy = &report[1];
+    assert_eq!(value(noisy, "allocation"), "any");
+    assert_eq!(noisy.violated, vec!["allocation"]);
+    let because = noisy
+        .inferred
+        .iter()
+        .find(|d| d.key == "allocation")
+        .and_then(|d| d.because.clone())
+        .unwrap();
+    assert!(because.contains("`println` formats"), "{because}");
+}
+
+// ---- package envelopes, values and comparisons (version 1) ---------------
+
+#[test]
+fn envelope_from_manifest_pairs_takes_the_attribute_keys_and_rejects_the_rest() {
+    let envelope = super::Envelope::from_pairs([
+        ("allocation", "none"),
+        ("blocking", "false"),
+        ("foreign", "any"),
+    ]);
+    assert!(envelope.errors.is_empty(), "{:?}", envelope.errors);
+    assert_eq!(envelope.forbidden(), set(&[Effect::Alloc, Effect::Block]));
+
+    let envelope = super::Envelope::from_pairs([
+        ("reads", "Account"),
+        ("colour", "blue"),
+        ("allocation", "maybe"),
+        ("panic", "false"),
+        ("panic", "true"),
+    ]);
+    let errors = envelope.errors.join("\n");
+    assert!(
+        errors.contains(
+            "`[envelope]` key `reads` is part of the semantic-envelope design but cannot be \
+             checked yet"
+        ),
+        "{errors}"
+    );
+    assert!(
+        errors.contains("unknown `[envelope]` key `colour`"),
+        "{errors}"
+    );
+    assert!(
+        errors.contains("`[envelope]` key `allocation` takes `none` or `any`, not `maybe`"),
+        "{errors}"
+    );
+    assert!(
+        errors.contains("`[envelope]` key `panic` is given more than once"),
+        "{errors}"
+    );
+    assert_eq!(envelope.errors.len(), 4, "{errors}");
+
+    let empty = super::Envelope::from_pairs([]);
+    assert!(
+        empty.errors[0].contains("has no keys"),
+        "{:?}",
+        empty.errors
+    );
+}
+
+#[test]
+fn envelope_package_checks_public_functions_through_private_callees() {
+    let (db, _) = MockDatabase::with_single_file(
+        r#"
+    class Buffer { len: i64 }
+    func make(n: i64) -> i64 { let b = Buffer { len: n }; b.len }
+    func unreached() { println("never called from the public API") }
+    public func run(n: i64) -> i64 { make(n) }
+    public func pure(x: i64) -> i64 { x * 2 }
+    "#,
+    );
+    let envelope = super::Envelope::from_pairs([("allocation", "none"), ("foreign", "none")]);
+    let violations = super::package_envelope_violations(&db, &envelope);
+    assert_eq!(violations.len(), 1, "{violations:#?}");
+    let run = &violations[0];
+    assert_eq!(run.name, "run");
+    assert_eq!(run.keys, vec!["allocation"]);
+    assert!(
+        run.message.contains(
+            "public function `run` (mod.code:4) does not fit the package envelope \
+             (`[envelope]` in codira.toml: allocation = \"none\"): it allocates"
+        ),
+        "{}",
+        run.message
+    );
+    assert!(
+        run.message
+            .contains("calls `make` (line 4); class `Buffer` constructed at line 2"),
+        "{}",
+        run.message
+    );
+
+    // An envelope that forbids nothing constrains nothing.
+    let permissive = super::Envelope::from_pairs([("allocation", "any")]);
+    assert!(super::package_envelope_violations(&db, &permissive).is_empty());
+}
+
+#[test]
+fn envelope_values_and_their_direction_of_change() {
+    use super::envelope::{compare_values, inferred_values, Movement, KEY_NAMES};
+    let (db, _) = MockDatabase::with_single_file(
+        r#"
+    func pure(x: i64) -> i64 { x + 1 }
+    func noisy() { println("hi") }
+    "#,
+    );
+    let functions: Vec<_> = Package::all(&db)
+        .iter()
+        .flat_map(|p| p.modules(&db))
+        .flat_map(|m| m.all_functions(&db))
+        .collect();
+    let by_name = |name: &str| {
+        *functions
+            .iter()
+            .find(|f| f.name(&db).to_string() == name)
+            .unwrap()
+    };
+    let pure = inferred_values(&db, by_name("pure"));
+    let noisy = inferred_values(&db, by_name("noisy"));
+    assert_eq!(pure.iter().map(|(k, _)| *k).collect::<Vec<_>>(), KEY_NAMES);
+    assert!(pure.contains(&("allocation", "none")));
+    assert!(noisy.contains(&("allocation", "any")));
+    assert!(noisy.contains(&("blocking", "true")));
+
+    let widened = compare_values(&pure, &noisy);
+    assert!(
+        widened.contains(&("allocation", Movement::Widened)),
+        "{widened:?}"
+    );
+    assert!(widened.iter().all(|(_, m)| *m == Movement::Widened));
+    let narrowed = compare_values(&noisy, &pure);
+    assert!(narrowed.contains(&("allocation", Movement::Narrowed)));
+    assert!(narrowed.iter().all(|(_, m)| *m == Movement::Narrowed));
+    assert!(compare_values(&pure, &pure).is_empty());
+    // A value that is not one of its key's two cannot be compared, so it
+    // counts as widened.
+    assert_eq!(
+        compare_values(&[("allocation", "any")], &[("allocation", "some")]),
+        vec![("allocation", Movement::Widened)]
+    );
+}

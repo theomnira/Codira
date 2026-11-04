@@ -16,14 +16,14 @@ fn a_guard_catches_fuel_exhaustion_and_the_runtime_recovers() {
     let driver = CompileAndRunTestDriver::with_fuel_instrumentation(
         r#"
         public func forever() -> i64 {
-            let i = 0;
+            var i = 0;
             loop {
                 i += 1;
             }
         }
 
         public func count(n: i64) -> i64 {
-            let i = 0;
+            var i = 0;
             while i < n {
                 i += 1;
             }

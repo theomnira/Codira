@@ -1,0 +1,220 @@
+// =============================================================================
+// std/ai/runtime.code — runtime-owned f32 tensors and a trainable Linear layer
+// =============================================================================
+//
+// Copyright (c) 2026 Omnira CJSC
+// Author: Tunjay Akbarli
+// Date: November 4, 2026
+//
+// Functionality:
+// - A first, deliberately small slice of the native tensor and autodiff
+//   engine (crates/codira_ai) over the runtime's tensor
+//   services (codira_runtime::native_ai): f32 tensors created
+//   from a buffer and a shape, matmul (batched, broadcasting batch axes),
+//   broadcasting add, relu, softmax, reading a tensor back into a buffer,
+//   freeing it; and a Linear layer `y = x W + b` trained by one step of plain
+//   SGD on the mean squared error, its gradient computed by the engine's
+//   reverse-mode autodiff.
+//
+// How this differs from the rest of std/ai. std/ai/tensor's TensorF32 is a
+// *view*: an address and a Shape over memory the caller owns, used by the
+// Codira kernels in std/ai/linalg and std/ai/nn. The tensors here are
+// *runtime-owned values* behind an i64 handle: `ai_tensor_new` copies the
+// caller's data, every operation returns a new handle and leaves its
+// operands unchanged, and the data lives in the runtime until
+// `ai_tensor_free`. The two do not share memory; `ai_tensor_read` copies a
+// tensor out into a buffer a TensorF32 can then describe.
+//
+// What is NOT provided here (the engine has much of it; the runtime does not
+// expose it yet): a general autodiff graph (only the Linear + MSE + SGD path
+// is reachable), other ops (sub, mul, exp, reductions, reshape, transpose,
+// log_softmax, cross-entropy), other layers (Embedding, LayerNorm,
+// attention), other optimisers (momentum, Adam), f64 tensors, quantisation,
+// the tokenizer, and any GPU or multithreaded execution. Nothing is freed
+// automatically: the garbage collector does not know these handles, so free
+// every tensor and layer you create.
+//
+// Handles are positive i64 values; a negative value is an AI_ERR_* code. The
+// runtime keeps generation-checked tables with a kind tag, so a freed,
+// forged or wrong-kind handle (a layer passed as a tensor) is refused with
+// AI_ERR_BAD_HANDLE. Bare i64, not structs, for the reason std/fs gives.
+//
+// Memory passed by address is raw memory like the load_*/store_*
+// intrinsics: element data is f32, row-major; a shape is `rank` usize
+// values; neither needs alignment. The runtime checks addresses are not null
+// and sizes are in range (rank <= 8, at most 2^28 elements per tensor,
+// checked before anything is allocated) and trusts the caller for the rest.
+//
+// Numerics follow codira_ai's floating-point policy: sums in increasing
+// index order, no reassociation, no FMA contraction. Results are not
+// claimed to match any other library bit for bit.
+//
+// Effects: every function here allocates in the runtime and takes the
+// runtime's table locks, so none is `@noalloc` or `@noblock`. The runtime
+// services are `extern`, so the effect analysis counts them as every effect;
+// no assertion is made.
+// =============================================================================
+
+import root.builtin.types.*;
+
+extern "C" {
+    func codira_ai_tensor_new(data_addr: usize, shape_addr: usize, rank: usize) -> i64;
+    func codira_ai_tensor_rank(tensor: i64) -> i64;
+    func codira_ai_tensor_dim(tensor: i64, axis: usize) -> i64;
+    func codira_ai_tensor_numel(tensor: i64) -> i64;
+    func codira_ai_tensor_read(tensor: i64, out_addr: usize, capacity: usize) -> i64;
+    func codira_ai_tensor_free(tensor: i64) -> i32;
+    func codira_ai_matmul(a: i64, b: i64) -> i64;
+    func codira_ai_add(a: i64, b: i64) -> i64;
+    func codira_ai_relu(tensor: i64) -> i64;
+    func codira_ai_softmax(tensor: i64, axis: usize) -> i64;
+    func codira_ai_linear_new(in_dim: usize, out_dim: usize, seed: u64) -> i64;
+    func codira_ai_linear_forward(linear: i64, x: i64) -> i64;
+    func codira_ai_linear_weight(linear: i64) -> i64;
+    func codira_ai_linear_bias(linear: i64) -> i64;
+    func codira_ai_linear_mse_sgd_step(linear: i64, x: i64, y: i64, lr: f32, loss_out_addr: usize) -> i32;
+    func codira_ai_linear_free(linear: i64) -> i32;
+}
+
+extern "codira-intrinsic" {
+    func stack_alloc(size: usize, align: usize) -> usize;
+    func store_u64(addr: usize, value: u64);
+}
+
+// Error codes (always negative).
+// An unexpected internal failure.
+public func AI_ERR_OTHER() -> i64 { return -1; }
+// Not a live tensor (or layer) of the expected kind: never created, freed,
+// or forged.
+public func AI_ERR_BAD_HANDLE() -> i64 { return -2; }
+// A null address with a non-zero size, a rank above 8, a zero layer
+// dimension, or a learning rate that is not finite and positive.
+public func AI_ERR_INVALID_ARGUMENT() -> i64 { return -3; }
+// Shapes that must agree do not (a matmul operand of rank below 2, a layer
+// input whose last axis is not the layer's input width).
+public func AI_ERR_SHAPE() -> i64 { return -4; }
+// Shapes that cannot be broadcast together (NumPy's rules).
+public func AI_ERR_BROADCAST() -> i64 { return -5; }
+// A matmul whose inner dimensions differ.
+public func AI_ERR_MATMUL_INNER() -> i64 { return -6; }
+// An axis out of range.
+public func AI_ERR_OUT_OF_RANGE() -> i64 { return -7; }
+// The buffer holds fewer elements than the tensor; nothing was written.
+public func AI_ERR_BUFFER_TOO_SMALL() -> i64 { return -8; }
+// The runtime's table of tensors or layers is full.
+public func AI_ERR_TOO_MANY_HANDLES() -> i64 { return -9; }
+// The result would hold more than 2^28 elements.
+public func AI_ERR_TOO_LARGE() -> i64 { return -10; }
+
+// Whether a result is a success (a handle, a count or 0), not an AI_ERR_*
+// code.
+public func ai_ok(result: i64) -> bool {
+    return result >= 0;
+}
+
+// A tensor of shape `shape[0..rank]` (usize values) holding a copy of the
+// f32 values at `data`, row-major. Returns a handle or an AI_ERR_* code.
+public func ai_tensor_new(data: usize, shape: usize, rank: usize) -> i64 {
+    return codira_ai_tensor_new(data, shape, rank);
+}
+
+// A `[n]` tensor holding a copy of the n f32 values at `data`.
+public func ai_tensor_1d(data: usize, n: usize) -> i64 {
+    let shape = stack_alloc(8, 8);
+    store_u64(shape, n as u64);
+    return codira_ai_tensor_new(data, shape, 1);
+}
+
+// A `[rows, cols]` tensor holding a copy of the rows * cols f32 values at
+// `data`, row-major.
+public func ai_tensor_2d(data: usize, rows: usize, cols: usize) -> i64 {
+    let shape = stack_alloc(16, 8);
+    store_u64(shape, rows as u64);
+    store_u64(shape + 8, cols as u64);
+    return codira_ai_tensor_new(data, shape, 2);
+}
+
+// The rank of a tensor, or AI_ERR_BAD_HANDLE.
+public func ai_tensor_rank(tensor: i64) -> i64 {
+    return codira_ai_tensor_rank(tensor);
+}
+
+// The extent of axis `axis`, or an AI_ERR_* code.
+public func ai_tensor_dim(tensor: i64, axis: usize) -> i64 {
+    return codira_ai_tensor_dim(tensor, axis);
+}
+
+// The number of elements, or AI_ERR_BAD_HANDLE.
+public func ai_tensor_numel(tensor: i64) -> i64 {
+    return codira_ai_tensor_numel(tensor);
+}
+
+// Copy the elements, row-major, to `buf` (room for `capacity` f32 values).
+// Returns the count written or an AI_ERR_* code (AI_ERR_BUFFER_TOO_SMALL
+// writes nothing).
+public func ai_tensor_read(tensor: i64, buf: usize, capacity: usize) -> i64 {
+    return codira_ai_tensor_read(tensor, buf, capacity);
+}
+
+// Free a tensor. Returns 0 or AI_ERR_BAD_HANDLE.
+public func ai_tensor_free(tensor: i64) -> i32 {
+    return codira_ai_tensor_free(tensor);
+}
+
+// `a @ b` over the last two axes (both of rank 2 or more; batch axes
+// broadcast). Returns a new handle or an AI_ERR_* code.
+public func ai_matmul(a: i64, b: i64) -> i64 {
+    return codira_ai_matmul(a, b);
+}
+
+// `a + b`, broadcasting. Returns a new handle or an AI_ERR_* code.
+public func ai_add(a: i64, b: i64) -> i64 {
+    return codira_ai_add(a, b);
+}
+
+// `max(x, 0)`. Returns a new handle or AI_ERR_BAD_HANDLE.
+public func ai_relu(tensor: i64) -> i64 {
+    return codira_ai_relu(tensor);
+}
+
+// Softmax along `axis` (stable: exp(x - max) over its sum). Returns a new
+// handle or an AI_ERR_* code.
+public func ai_softmax(tensor: i64, axis: usize) -> i64 {
+    return codira_ai_softmax(tensor, axis);
+}
+
+// A Linear layer `y = x W + b`, W: [in_dim, out_dim] Xavier-uniform from a
+// seeded (not cryptographic) generator, b zero. The same seed gives the same
+// weights. Returns a layer handle or an AI_ERR_* code.
+public func ai_linear_new(in_dim: usize, out_dim: usize, seed: u64) -> i64 {
+    return codira_ai_linear_new(in_dim, out_dim, seed);
+}
+
+// Apply a layer to `x: [..., in_dim]` (rank 2 or more). Returns a new
+// tensor handle of shape [..., out_dim] or an AI_ERR_* code.
+public func ai_linear_forward(linear: i64, x: i64) -> i64 {
+    return codira_ai_linear_forward(linear, x);
+}
+
+// A copy of the layer's weight [in_dim, out_dim] as a new tensor handle.
+public func ai_linear_weight(linear: i64) -> i64 {
+    return codira_ai_linear_weight(linear);
+}
+
+// A copy of the layer's bias [out_dim] as a new tensor handle.
+public func ai_linear_bias(linear: i64) -> i64 {
+    return codira_ai_linear_bias(linear);
+}
+
+// One training step: loss = mean((x W + b - y)^2), gradient by reverse-mode
+// autodiff, then W -= lr * dW and b -= lr * db (plain SGD). Writes the loss
+// before the update as an f32 to `loss_out` unless it is 0. Returns 0 or an
+// AI_ERR_* code; on an error the layer is unchanged.
+public func ai_linear_mse_sgd_step(linear: i64, x: i64, y: i64, lr: f32, loss_out: usize) -> i32 {
+    return codira_ai_linear_mse_sgd_step(linear, x, y, lr, loss_out);
+}
+
+// Free a layer. Returns 0 or AI_ERR_BAD_HANDLE.
+public func ai_linear_free(linear: i64) -> i32 {
+    return codira_ai_linear_free(linear);
+}

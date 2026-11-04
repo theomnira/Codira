@@ -13,7 +13,7 @@
 // bare top-level `public let PI: f64 = ...;` fails to parse with "expected
 // a declaration" (`let`/`var` only exist as function-body statements, per
 // USING_CODIRA.md's "Bindings" section). A niladic function is the closest
-// honest Tier-1 equivalent -- it is a real, callable, constant-folding-
+// honest equivalent -- it is a real, callable, constant-folding-
 // eligible function today, not a value binding.
 // =============================================================================
 
@@ -142,26 +142,31 @@ public func LOG10_2() -> f64 {
 // Special IEEE-754 values
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// `__intrinsic_inf_f64`/`__intrinsic_nan_f64` are compiler-provided
-// intrinsics (design reference, matching the naming convention used
-// throughout std/builtin/dtype.code's `__intrinsic_*` calls) -- not
-// verified to resolve today; kept as the honest placeholder rather than a
-// fabricated numeric literal that would silently be wrong if IEEE bit
-// patterns for inf/nan ever changed.
+// Infinity and NaN have no source spelling, and `1.0 / 0.0` or `0.0 / 0.0`
+// is constant-folded by the optimiser into whatever it likes, so they are
+// built from their exact IEEE 754 bit patterns, as `std.math.math` builds
+// `inf()` and `nan()`.
+
+extern "codira-intrinsic" {
+    func __intrinsic_bitcast_u64_f64(bits: u64) -> f64;
+}
 
 // Positive infinity (f64).
 public func INF() -> f64 {
-    __intrinsic_inf_f64()
+    // Exponent all ones, significand zero: 0x7FF0000000000000.
+    __intrinsic_bitcast_u64_f64(9218868437227405312)
 }
 
 // Negative infinity (f64).
 public func NEG_INF() -> f64 {
-    -__intrinsic_inf_f64()
+    // Sign, then exponent all ones: 0xFFF0000000000000.
+    __intrinsic_bitcast_u64_f64(18442240474082181120)
 }
 
 // Not-a-Number (quiet NaN, f64).
 public func NAN() -> f64 {
-    __intrinsic_nan_f64()
+    // Exponent all ones, top significand bit set: 0x7FF8000000000000.
+    __intrinsic_bitcast_u64_f64(9221120237041090560)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

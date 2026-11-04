@@ -9,7 +9,7 @@ description = "Benchmarks for the Codira compiler and runtime"
 [dev-dependencies]
 criterion = { version = "0.5.1", default-features = false }
 mlua = { package = "mlua", version = "0.9.2", default-features = false, features = ["vendored", "luajit"] }
-wasmer = { version = "4.2.4", default-features = false, features = ["sys-default"] }
+wasmer = { version = "6.0", default-features = false, features = ["sys-default"] }
 codira_runtime = { path = "../crates/codira_runtime", default-features = false }
 codira_compiler = { path = "../crates/codira_compiler", default-features = false }
 

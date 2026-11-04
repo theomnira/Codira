@@ -32,9 +32,23 @@
 //! | postcondition weakened (guarantees less, for some accepted input) | major |
 //! | postcondition strengthened (guarantees more) | minor |
 //! | clauses rewritten but equivalent | patch |
+//! | inferred semantic envelope widened (a key moved to its allowing value) | major |
+//! | inferred semantic envelope narrowed (a key moved to its forbidding value) | minor |
 //! | struct fields, kind or value/reference changed | major |
 //! | type alias retargeted, or its refinement changed in any way | major |
 //! | anything else (bodies, private items) | patch |
+//!
+//! The semantic envelope (`@envelope`) is the one
+//! the effect analysis *infers* for the function, through everything it
+//! calls, private callees included: a body change that makes a public
+//! function allocate, block, panic, run unboundedly, call foreign code,
+//! start tasks, perform effects or handle `secret` data is a breaking change
+//! for a caller that relied on it not doing so, even with the signature
+//! untouched. Narrowing is minor, like a strengthened postcondition: the
+//! function promises more and no caller can break. A key that changed in
+//! both directions at once cannot happen (each key has two values). The
+//! comparison is of the source-level analysis result only, with its
+//! documented limits.
 //!
 //! "Precondition" is the conjunction of the `requires` clauses and the
 //! parameters' refinement predicates; "postcondition" is the `ensures`
@@ -406,7 +420,79 @@ fn compare_functions(
         });
     }
 
+    compare_envelopes(old, a, new, b, path, changes);
     compare_contracts(old, a, new, b, path, changes);
+}
+
+/// The inferred semantic envelopes of the two versions: widened keys are
+/// one major change, narrowed keys one minor change.
+fn compare_envelopes(
+    old: &dyn HirDatabase,
+    a: Function,
+    new: &dyn HirDatabase,
+    b: Function,
+    path: &str,
+    changes: &mut Vec<ApiChange>,
+) {
+    use crate::realtime::envelope::{compare_values, explain_key, inferred_values, Movement};
+
+    let was = inferred_values(old, a);
+    let now = inferred_values(new, b);
+    let value = |side: &[(&'static str, &'static str)], key: &str| {
+        side.iter()
+            .find_map(|(k, v)| (*k == key).then_some(*v))
+            .unwrap_or("(none)")
+    };
+    let moved = compare_values(&was, &now);
+    let shown = format!("`{path}()`");
+    for direction in [Movement::Widened, Movement::Narrowed] {
+        let keys: Vec<&str> = moved
+            .iter()
+            .filter(|(_, m)| *m == direction)
+            .map(|(k, _)| *k)
+            .collect();
+        if keys.is_empty() {
+            continue;
+        }
+        let moves: Vec<String> = keys
+            .iter()
+            .map(|k| format!("{k}: {} -> {}", value(&was, k), value(&now, k)))
+            .collect();
+        let (bump, verb, mut details) = match direction {
+            Movement::Widened => (
+                Bump::Major,
+                "widens",
+                vec![
+                    "callers that relied on the old envelope may break: the function may now \
+                     do what it could not before"
+                        .to_string(),
+                ],
+            ),
+            Movement::Narrowed => (Bump::Minor, "narrows", Vec::new()),
+        };
+        if direction == Movement::Widened {
+            for key in &keys {
+                if let Some(because) = explain_key(new, b, key) {
+                    details.push(format!("{key} is {} now: {because}", value(&now, key)));
+                }
+            }
+        } else {
+            for key in &keys {
+                if let Some(because) = explain_key(old, a, key) {
+                    details.push(format!("{key} was {}: {because}", value(&was, key)));
+                }
+            }
+        }
+        changes.push(ApiChange {
+            item: path.to_string(),
+            bump: Some(bump),
+            summary: format!(
+                "{verb} the semantic envelope of {shown} ({})",
+                moves.join(", ")
+            ),
+            details,
+        });
+    }
 }
 
 /// The outcome of one implication check.

@@ -2,6 +2,15 @@
 // Time and duration utilities for Codira.
 // Provides wall-clock time, high-resolution performance counters,
 // sleep, and a Duration struct for time arithmetic.
+//
+// The clocks are the runtime's (`codira_time_*`, the platform's clocks).
+// Duration arithmetic is on whole nanoseconds in a `u64` (584 years); it
+// wraps on overflow like any `u64` arithmetic, except `duration_sub`, which
+// saturates at zero.
+
+// No standard-library module relies on the prelude; each imports what it
+// uses, so that a program (which has no prelude) can import it.
+import root.sys.terminate.{panic};
 
 // ---------------------------------------------------------------------------
 // Duration
@@ -130,12 +139,12 @@ public struct Instant {
 
 // Returns the current instant from a monotonic clock.
 public func instant_now() -> Instant {
-    return Instant { _nanos: _platform_perf_counter_ns() };
+    return Instant { _nanos: codira_time_monotonic_ns() };
 }
 
 // Returns the duration elapsed since this instant.
 public func instant_elapsed(start: Instant) -> Duration {
-    let now_ns: u64 = _platform_perf_counter_ns();
+    let now_ns: u64 = codira_time_monotonic_ns();
     if now_ns >= start._nanos {
         return Duration { _nanos: now_ns - start._nanos };
     }
@@ -156,7 +165,7 @@ public func instant_duration_since(later: Instant, earlier: Instant) -> Duration
 // (1970-01-01 00:00:00 UTC) as a f64.
 // ---------------------------------------------------------------------------
 public func now() -> f64 {
-    return _platform_time_now();
+    return codira_time_now();
 }
 
 // ---------------------------------------------------------------------------
@@ -164,18 +173,18 @@ public func now() -> f64 {
 // Suspends the current thread for at least `duration`.
 // ---------------------------------------------------------------------------
 public func sleep(duration: Duration) {
-    _platform_sleep_ns(duration._nanos);
+    codira_time_sleep_ns(duration._nanos);
 }
 
 // Convenience: sleep for the given number of seconds.
 public func sleep_secs(secs: f64) {
     let nanos: u64 = (secs * 1_000_000_000.0) as u64;
-    _platform_sleep_ns(nanos);
+    codira_time_sleep_ns(nanos);
 }
 
 // Convenience: sleep for the given number of milliseconds.
 public func sleep_ms(ms: u64) {
-    _platform_sleep_ns(ms * 1_000_000);
+    codira_time_sleep_ns(ms * 1_000_000);
 }
 
 // ---------------------------------------------------------------------------
@@ -184,7 +193,7 @@ public func sleep_ms(ms: u64) {
 // The absolute value is arbitrary; only differences are meaningful.
 // ---------------------------------------------------------------------------
 public func perf_counter() -> f64 {
-    let ns: u64 = _platform_perf_counter_ns();
+    let ns: u64 = codira_time_monotonic_ns();
     return (ns as f64) / 1_000_000_000.0;
 }
 
@@ -193,7 +202,7 @@ public func perf_counter() -> f64 {
 // Returns a high-resolution performance counter value in nanoseconds.
 // ---------------------------------------------------------------------------
 public func perf_counter_ns() -> u64 {
-    return _platform_perf_counter_ns();
+    return codira_time_monotonic_ns();
 }
 
 // ---------------------------------------------------------------------------
@@ -221,8 +230,13 @@ public func time_function_void(f: func()) -> Duration {
 }
 
 // ---------------------------------------------------------------------------
-// Platform stubs.
+// The runtime's clocks (`crates/codira_runtime/src/native_time.rs`).
 // ---------------------------------------------------------------------------
-extern func _platform_time_now() -> f64;
-extern func _platform_sleep_ns(nanos: u64);
-extern func _platform_perf_counter_ns() -> u64;
+extern "C" {
+    // Seconds since the Unix epoch by the wall clock.
+    func codira_time_now() -> f64;
+    // Blocks for at least `nanos` nanoseconds.
+    func codira_time_sleep_ns(nanos: u64);
+    // Nanoseconds by a monotonic clock, from the first call in the process.
+    func codira_time_monotonic_ns() -> u64;
+}

@@ -1,0 +1,19 @@
+[package]
+name = "codira_ctcheck"
+description = "A machine-code constant-time checker for Codira's `oblivious` and `@constant_time` functions: disassembles their code in the built library and checks it for conditional branches, variable-time instructions, unchecked calls and secret-dependent addresses"
+keywords = ["codira", "constant-time", "side-channel", "disassembler"]
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+iced-x86 = { version = "1.22.0", default-features = false, features = ["std", "decoder", "instr_info", "intel"] }
+object = { version = "0.36.5", default-features = false, features = ["std", "read"] }
+yaxpeax-arch = { version = "0.3.3", default-features = false, features = ["std"] }
+yaxpeax-arm = { version = "0.5.0", default-features = false, features = ["std", "fmt"] }

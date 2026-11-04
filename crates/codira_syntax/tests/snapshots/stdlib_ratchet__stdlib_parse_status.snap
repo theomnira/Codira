@@ -3,7 +3,7 @@ source: crates/codira_syntax/tests/stdlib_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-79 of 79 std files parse
+89 of 89 std files parse
 
 ok    std/ai/algorithm/functional.code
 ok    std/ai/algorithm/reduction.code
@@ -12,11 +12,13 @@ ok    std/ai/linalg/vector.code
 ok    std/ai/nn/activation.code
 ok    std/ai/nn/layer.code
 ok    std/ai/quantize.code
+ok    std/ai/runtime.code
 ok    std/ai/tensor/buffer.code
 ok    std/ai/tensor/raw.code
 ok    std/ai/tensor/shape.code
 ok    std/atomic/atomic.code
 ok    std/base64/base64.code
+ok    std/base64/base64_string.code
 ok    std/bit/bit.code
 ok    std/bit/mask.code
 ok    std/builtin/bool.code
@@ -46,10 +48,14 @@ ok    std/collections/set.code
 ok    std/collections/span.code
 ok    std/collections/string.code
 ok    std/complex/complex.code
+ok    std/complex/complex_string.code
+ok    std/crypto/hash.code
+ok    std/db/db.code
 ok    std/ffi/cstring.code
 ok    std/ffi/unsafe_union.code
 ok    std/format/format.code
 ok    std/format/repr.code
+ok    std/fs/fs.code
 ok    std/gpu/globals.code
 ok    std/gpu/host_info.code
 ok    std/gpu/id.code
@@ -58,10 +64,12 @@ ok    std/gpu/profiler.code
 ok    std/gpu/warp.code
 ok    std/hashlib/hash.code
 ok    std/hashlib/hasher.code
+ok    std/hashlib/string_hash.code
 ok    std/math/constants.code
 ok    std/math/fast.code
 ok    std/math/math.code
 ok    std/math/polynomial.code
+ok    std/math/sequence.code
 ok    std/memory/alloc.code
 ok    std/memory/arc_pointer.code
 ok    std/memory/memory.code
@@ -77,7 +85,9 @@ ok    std/os/process.code
 ok    std/pathlib/path.code
 ok    std/prelude.code
 ok    std/random/random.code
+ok    std/random/rng.code
 ok    std/sys/arg.code
+ok    std/sys/assert_compare.code
 ok    std/sys/info.code
 ok    std/sys/intrinsics.code
 ok    std/sys/terminate.code

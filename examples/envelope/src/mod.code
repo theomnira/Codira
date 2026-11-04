@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Omnira CJSC
+// Author: Tunjay Akbarli
+// Date: November 4, 2026
+//
+// Functionality:
+// - The Codira Semantic Envelope (experimental): `@envelope` states
+//   what a function may do and the compiler checks it over everything the
+//   function calls. Run with
+//   `codira run --manifest-path examples/envelope/codira.toml`, and see each
+//   function's inferred envelope with
+//   `codira envelope --manifest-path examples/envelope/codira.toml`
+//   (`--json` for the machine-readable form, `--check` to fail on a broken
+//   declaration).
+
+class Packet {
+    len: i64
+}
+
+// Every clause is established over the call graph: no allocation, no
+// blocking, no panic, bounded running time, no foreign code, no tasks, no
+// algebraic effects and no secret data.
+@envelope(allocation: none, blocking: false, panic: false, termination: bounded,
+          foreign: none, concurrency: none, effects: none, secrecy: none)
+func scale(x: i64, k: i64) -> i64 {
+    x * k + 1
+}
+
+@envelope(allocation: none, foreign: none, termination: bounded)
+func checksum(xs: [i64]) -> i64 {
+    var acc = 0
+    for i in 0..xs.len() {
+        acc = scale(acc, 31) + xs.unchecked_get(i)
+    }
+    acc
+}
+
+// Allocation is allowed here (`allocation: any` documents it) but nothing
+// concurrent or foreign is. Changing `scale` to call an `extern` function
+// would make both this envelope and `checksum`'s fail to check.
+@envelope(allocation: any, foreign: none, concurrency: none)
+func packet(n: i64) -> Packet {
+    Packet { len: scale(n, 2) }
+}
+
+public func main() {
+    let p = packet(4)
+    println("packet length ", p.len)
+    println("checksum ", checksum([1, 2, 3, p.len]))
+}

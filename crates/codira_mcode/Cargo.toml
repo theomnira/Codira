@@ -1,0 +1,15 @@
+[package]
+name = "codira_mcode"
+description = "Machine-instruction IR for Codira: x86-64 and AArch64 integer instruction models with one semantics shared by a concrete evaluator and a Z3 bit-vector encoding, and versioned microarchitecture cost profiles (experimental, Project APEX)"
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }

@@ -24,6 +24,14 @@
 //! arguments, so `Box[i32]` is a type in its own right, and its fields are
 //! the declared ones read through those arguments
 //! ([`struct_field_types`]).
+//!
+//! A call of a trait method on a type parameter (`x.show()` for `x: T`,
+//! `T: Show`) is recorded by inference as a call of the trait's declaration
+//! with `Self` instantiated at `T`. Reading the body at an instance makes
+//! `Self` concrete, and [`Instance::infer`] then replaces the declaration
+//! with the function that type's implementation provides (or the trait's
+//! default body at that type): static dispatch, decided here, so that code
+//! generation and [`collect_instances`] only ever see ordinary calls.
 
 use std::{collections::VecDeque, sync::Arc};
 
@@ -125,7 +133,9 @@ impl Instance {
             return infer;
         }
         let environment = self.function.generic_environment(db);
-        Arc::new(infer.map_types(|ty| substitute(ty, &environment, &self.args)))
+        let mut result = infer.map_types(|ty| substitute(ty, &environment, &self.args));
+        resolve_trait_calls(db, &mut result);
+        Arc::new(result)
     }
 
     /// The instance of `callee` that the call expression `call` reaches,
@@ -155,6 +165,39 @@ impl Instance {
         let mut name = self.function.full_name(db);
         push_args(db, &mut name, &self.args);
         name
+    }
+}
+
+/// Replaces every call of a trait method whose `Self` is now concrete with a
+/// call of the implementation for that type (see the module documentation).
+///
+/// A call whose `Self` has no implementation is left as it is. Type
+/// checking reports that at the call of the generic function that leads
+/// here, so a program that reaches code generation has none.
+fn resolve_trait_calls(db: &dyn HirDatabase, infer: &mut InferenceResult) {
+    let calls: Vec<(ExprId, crate::ids::FunctionId)> = infer
+        .method_resolutions
+        .iter()
+        .map(|(expr, f)| (*expr, *f))
+        .collect();
+    for (call, method) in calls {
+        let method = Function::from(method);
+        if method.trait_container(db).is_none() {
+            continue;
+        }
+        let Some(self_ty) = infer.instantiations.get(&call).and_then(|a| a.first()) else {
+            continue;
+        };
+        let Some((target, args)) = crate::traits::resolve_method(db, method, &self_ty.clone())
+        else {
+            continue;
+        };
+        infer.method_resolutions.insert(call, target.id);
+        if args.is_empty() {
+            infer.instantiations.remove(&call);
+        } else {
+            infer.instantiations.insert(call, args);
+        }
     }
 }
 

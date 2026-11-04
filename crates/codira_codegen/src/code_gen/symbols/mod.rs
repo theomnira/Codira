@@ -20,7 +20,6 @@ use crate::{
         type_table::TypeTable,
         types as ir,
     },
-    type_info::HasStaticTypeId,
     value::{
         AsValue, CanInternalize, Global, IrValueContext, IterAsIrValue, SizedValueType, Value,
     },
@@ -45,11 +44,7 @@ fn gen_prototype_from_function<'ink>(
 
     // Get the `ir::TypeInfo` pointer for the return type of the function
     let fn_sig = function.ty(db).callable_sig(db).unwrap();
-    let return_type = if fn_sig.ret().is_empty() {
-        ir_type_builder.construct_from_type_id(<() as HasStaticTypeId>::type_id())
-    } else {
-        ir_type_builder.construct_from_type_id(&hir_types.type_id(fn_sig.ret()))
-    };
+    let return_type = ir_type_builder.construct_from_type_id(&hir_types.ret_type_id(fn_sig.ret()));
 
     // Construct an array of pointers to `ir::TypeInfo`s for the arguments of the
     // prototype

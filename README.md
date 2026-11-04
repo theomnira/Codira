@@ -35,6 +35,23 @@ it, and one source can target CPUs, GPUs, quantum processors and more.
   `@noblock` and `@realtime` are proven over the whole call graph; a broken
   promise is reported with the chain of calls behind it.
 
+- **Semantic envelopes** (experimental) - `@envelope(allocation: none,
+  foreign: none, concurrency: none, secrecy: none, ..)` states what a
+  function may do and is checked through its whole call graph;
+  `codira envelope --json` reports every function's inferred envelope.
+  Keys the compiler cannot check yet are rejected, not ignored.
+
+- **Native storage and AI engines** (experimental) - `codira_db`: a
+  write-ahead-logged, snapshot-isolation transactional store tested by
+  crashing a workload at every storage operation; `codira_ai`: strided
+  tensors, tape-based reverse-mode autodiff with every gradient rule checked
+  numerically, attention and transformer layers, Adam/AdamW, INT8 weights
+  and a BPE tokenizer. Programs reach the database and a first slice of the
+  tensor engine through runtime services wrapped by `std/db` and
+  `std/ai/runtime.code`. Limits and measurements:
+  [`crates/codira_db/README.md`](crates/codira_db/README.md),
+  [`crates/codira_ai/README.md`](crates/codira_ai/README.md).
+
 - **Units of measure** - `f64 unit(m / s)` is checked at compile time and
   erased, so it costs nothing at run time.
 
@@ -72,28 +89,32 @@ it, and one source can target CPUs, GPUs, quantum processors and more.
 
 What runs end to end today, and what is parsed but not yet compiled, is
 listed precisely in [`agents/USING_CODIRA.md`](agents/USING_CODIRA.md)
-("End-to-end status today"). Enums, generic instantiation, closures,
-`select`, session types, proof-carrying artifacts, zero-knowledge circuits,
-Verilog output and experimental hardware memory safety (ARM MTE, a
-CHERI-style capability mode) are in progress.
+("End-to-end status today"). Traits with static dispatch, standard-library
+imports, semantic envelopes, `select`, session types and the native database
+and tensor services are on `main`. Generic traits and trait objects, most
+standard-library modules (still failing to check), proof-carrying
+executables, and experimental hardware memory safety (ARM MTE is built but
+never run on MTE hardware; CHERI targets are refused) are in progress.
 
 ## Compiler architecture
 
 Each stage is a group of crates in `crates/`. Arrows into `codira_smt` (Z3)
 and `codira_tv` are proofs the compiler asks for before it trusts a
-contract, a transformation or a rewrite rule. This is the compiler as of
-15 October 2026: amber outlines mark what was added on 14 and 15 October,
-dashed outlines mark parts that are on `main` but unfinished or experimental,
-and the grey box lists unfinished work that is not on `main`.
+contract, a transformation, a rewrite rule or a replacement instruction
+sequence. This is the compiler as of the evening of 4 November 2026: amber
+outlines mark what was added or changed since 16 October, dashed outlines
+mark parts that are on `main` but unfinished, experimental or opt-in, and the
+grey box lists unfinished work that is not on `main`. Stage 8 works on
+machine code: it reads the instructions the back ends produce.
 
 ```mermaid
 flowchart TD
     %% ---------------------------------------------------------------- legend
     subgraph LEGEND [" Legend "]
         direction LR
-        L1["on main since 13 Oct<br/>(earlier work, plain outline)"]
-        L2["added 14-15 Oct<br/>(amber outline)"]
-        L3["on main but unfinished or<br/>experimental (dashed)"]
+        L1["on main before 16 Oct<br/>(plain outline)"]
+        L2["added 16 Oct - 4 Nov<br/>(amber outline)"]
+        L3["on main but unfinished,<br/>experimental or opt-in (dashed)"]
     end
 
     %% ---------------------------------------------------------------- 5
@@ -103,8 +124,9 @@ flowchart TD
         Daemon["codira_compiler_daemon<br/>warm salsa + LLVM, token-authenticated"]
         LSP["codira_language_server"]
         ImportC["codira import-c<br/>C headers via Clang"]
-        Certify["codira certify<br/>re-checks proofs with Z3 alone"]
-        ApiDiff["codira api-diff<br/>breaking-change check, Z3 implication"]
+        EnvCLI["codira envelope<br/>inferred envelope of every function,<br/>--json, --check"]
+        Certify["codira certify<br/>re-checks proofs with Z3 alone,<br/>re-derives recorded envelopes"]
+        ApiDiff["codira api-diff<br/>breaking-change check, Z3 implication,<br/>a widened envelope is major"]
         Attest["codira attest<br/>zero-knowledge proof of an oblivious function"]
         Ueval["codira_ueval<br/>evaluation harness scaffolding (paper)"]
     end
@@ -114,9 +136,14 @@ flowchart TD
     subgraph FRONTEND [" 1. Front end: codira_syntax, codira_hir (salsa) "]
         direction TB
         Src["Codira source<br/>*.code, codira.toml"] --> Parse["codira_syntax<br/>lexer, parser, lossless CST<br/>contextual keywords"]
-        Parse --> ItemTree["Item tree and name resolution<br/>modules, visibility, imports"]
+        StdLib["std package<br/>import std.crypto.hash, std.fs.fs, std.memory.region,<br/>std.math.*, std.bit.*, std.complex, std.random.rng,<br/>std.base64, std.hashlib, std.time, std.sys.terminate,<br/>std.collections.optional; a ratchet test records<br/>which modules check clean, no implicit prelude"]
+        StdLib --> Parse
+        Parse --> ItemTree["Item tree and name resolution<br/>modules, visibility, imports,<br/>names across packages"]
         ItemTree --> Infer["Type inference<br/>generics, optionals, enums,<br/>closures, effect rows"]
         Infer --> Mono["codira_hir::mono<br/>one instance per type argument"]
+        Traits["Traits and bounds<br/>trait, extend T: Trait, T: A + B,<br/>defaults, supertraits;<br/>static dispatch per instance"]
+        Traits --> Mono
+        Infer --- Traits
         Comptime["codira_comptime<br/>compile-time interpreter<br/>fuel + depth limits"] <-->|folds comptime blocks| Infer
 
         Enums["enum, match, optionals<br/>exhaustiveness checker"]
@@ -129,11 +156,14 @@ flowchart TD
         subgraph CHECKS [" Static checks, every one a diagnostic, never a crash "]
             direction LR
             Effects["Effect obligations<br/>uses / handle"]
-            Tasks["Structured concurrency<br/>scope, spawn, channels"]
+            Tasks["Structured concurrency<br/>scope, spawn, channels,<br/>select, session types"]
             Flow["Information flow<br/>secret, oblivious, ct_select"]
             Units["Units of measure<br/>f64 unit(m / s)"]
-            Realtime["@noalloc @nopanic<br/>@noblock @realtime<br/>call-graph fixpoint,<br/>uses proven divisions"]
+            Realtime["@noalloc @nopanic<br/>@noblock @realtime<br/>call-graph fixpoint over 8 effects,<br/>uses proven divisions"]
+            Envelope["Semantic envelopes<br/>@envelope(allocation: none, ...)<br/>package envelope in codira.toml;<br/>unchecked keys rejected"]
             Codegen_ok["Codegen support<br/>honest refusals"]
+            Bindings["Binding rules<br/>assigning to a let, in-place parameters<br/>and module-level let/var are errors"]
+            Realtime --> Envelope
         end
         Infer --> CHECKS
 
@@ -148,8 +178,9 @@ flowchart TD
 
     SMT["codira_smt<br/>Z3, deterministic rlimit"]
     VERIFY <==>|bit-vector proof obligations| SMT
-    CERT["codira_certificate<br/>proofs as SMT-LIB2 + code hashes"]
+    CERT["codira_certificate<br/>codira-certificate/2: proofs as SMT-LIB2,<br/>code hashes, inferred envelopes"]
     VERIFY --> CERT
+    Envelope --> CERT
     CERT <--> SMT
 
     %% ---------------------------------------------------------------- 2
@@ -159,36 +190,39 @@ flowchart TD
         MIR --> Passes["MIR passes<br/>const_fold, cse, dce, inline,<br/>unroll, simplify, rewrite"]
         Passes --> EGraph["codira_egraph<br/>equality saturation<br/>hard node cap, exact extractor"]
         Rewrite["@rewrite rules<br/>library equations"] -->|admitted only when proven| EGraph
-        EGraph --> Fold["eidos_fold<br/>whole-function constant result"]
+        EGraph --> Fold["eidos_fold<br/>whole-function constant result,<br/>only for effect-free functions"]
         TV["codira_tv<br/>translation validation<br/>counterexamples re-executed"]
         Passes <==>|each transform checked| TV
         Rewrite <==>|proof before use| TV
     end
     Mono ==>|"--mode=release"| MirLower
     TV <==> SMT
+    Realtime -.->|effect summary gates the fold| Fold
 
     %% ---------------------------------------------------------------- 3
     subgraph BACKENDS [" 3. Back ends: codira_codegen and friends "]
         direction TB
-        LLVMGen["codira_codegen<br/>HIR instance to LLVM IR via inkwell<br/>bounds checks, effects, tasks, fuel"]
+        LLVMGen["codira_codegen<br/>HIR instance to LLVM IR via inkwell<br/>bounds checks, effects, tasks, fuel,<br/>value-struct host wrappers, array assignment,<br/>never-returning functions are noreturn,<br/>ct_select stays a cmov at every -O level"]
+        ArrayAlias["array alias classes<br/>TBAA tags for array lengths, elements, handles;<br/>opt-in, CODIRA_ARRAY_TBAA=1"]
         Targets["codira_target<br/>14 targets held to LLVM data layouts<br/>--target-cpu"]
-        Native["[native] C, C++, asm in a package<br/>bitcode linked before optimization"]
+        Native["[native] C, C++, asm in a package<br/>bitcode linked before optimization;<br/>C++ static constructors and destructors run<br/>(.init_array / .fini_array on ELF)"]
         Image["codira_image<br/>direct PE writer (default on Windows),<br/>ELF opt-in, declines what it cannot model"]
         LLD["codira_lld<br/>in-process LLD (fallback)"]
-        Lib[".codiralib<br/>hot-reloadable shared library"]
+        Lib[".codiralib<br/>hot-reloadable shared library;<br/>imported std modules get their own"]
         Exe["codira build --exe<br/>standalone executable"]
         Wasm["wasm32-unknown-unknown<br/>module that imports nothing"]
         PTX["@target(gpu)<br/>NVPTX, launched by codira_gpu"]
-        CL["codira_cranelift<br/>codira run --jit, no LLVM, no linker"]
+        CL["codira_cranelift<br/>codira run --jit, no LLVM, no linker<br/>scalar core only; bool and 8/16-bit values<br/>extended across calls like LLVM"]
         Quantum["codira_quantum<br/>@target(qpu): circuit IR, simulator,<br/>QIR, OpenQASM 2/3"]
         Circuits["codira_circuits<br/>oblivious function to R1CS, Circom,<br/>Groth16 (attest); Verilog (@target(fpga))"]
         Asm["@asm inline assembly<br/>machine memory intrinsics"]
-        MTE["--sanitize=memtag (AArch64)<br/>experimental, never run on MTE hardware"]
+        MTE["--sanitize=memtag (AArch64)<br/>experimental, never run on MTE hardware;<br/>CHERI / Morello targets refused"]
         Funis["funis_* crates (mold fork, MIT)<br/>ELF + Mach-O linker; library mode unfinished,<br/>not used by the compiler yet"]
         Bindgen["codira bindgen<br/>C, Rust, Go, TypeScript"]
         Bun["Bun plugin<br/>import a .code file"]
 
         LLVMGen --> Targets
+        ArrayAlias -.-> LLVMGen
         Native --> LLVMGen
         Asm --> LLVMGen
         Targets --> Image
@@ -220,7 +254,16 @@ flowchart TD
         Pool["Worker pool<br/>scope joins, bounded channels"]
         EffRT["Effect handlers<br/>resume, abort across frames"]
         Fuel["Fuel metering<br/>--fuel"]
-        Heracles["codira_healing (HERACLES)<br/>fault interception, @heal strategies"]
+        Heracles["codira_healing (HERACLES)<br/>fault interception (Windows only),<br/>@heal strategies"]
+
+        subgraph SERVICES [" Native services, extern C, generation-checked handles, negative error codes "]
+            direction LR
+            FsSvc["codira_fs_*<br/>open, read, write, seek,<br/>fsync, rename, sync_dir<br/>(std.fs.fs)"]
+            HashSvc["codira_hash_*<br/>SHA-256, SHA-512, BLAKE3<br/>via sha2 / blake3 crates<br/>(std.crypto.hash)"]
+            DbSvc["codira_db_*<br/>open, begin, get, put, delete,<br/>commit (conflict code), checkpoint<br/>(std/db/db.code)"]
+            AiSvc["codira_ai_*<br/>f32 tensors, matmul, add, relu,<br/>softmax, Linear + MSE + SGD step<br/>(std/ai/runtime.code)"]
+        end
+
         Loader --> Reload
         Reload --> GC
         Reload --> Snap
@@ -230,13 +273,47 @@ flowchart TD
     Lib ==> Loader
     Exe ==> Loader
 
-    %% ---------------------------------------------------------------- in progress
-    subgraph NEXT [" Not on main: unfinished work kept in branch worktrees "]
+    %% ---------------------------------------------------------------- engines
+    subgraph ENGINES [" 6. Native engines (pure Rust, no Python, no BLAS) "]
         direction LR
-        N1["select and session types<br/>merge with main unfinished"]
+        DbEngine["codira_db<br/>checksummed WAL, MVCC snapshot isolation<br/>(not serializable), atomic checkpoints,<br/>typed tables, add-column migrations;<br/>crash injected at every storage operation"]
+        AiEngine["codira_ai<br/>strided tensors, broadcasting, blocked matmul,<br/>tape reverse-mode autodiff (gradient-checked),<br/>attention, transformer block, Adam/AdamW,<br/>INT8 weights, byte-level BPE"]
+    end
+    DbSvc ==> DbEngine
+    AiSvc ==> AiEngine
+
+    %% ---------------------------------------------------------------- quality
+    subgraph QUALITY [" 7. Quality "]
+        direction LR
+        Diff["Differential testing<br/>seeded random programs on LLVM -O2,<br/>LLVM -O0 and Cranelift; outputs compared;<br/>0 failures in 10,000 programs (release build)"]
+        Bench["benches/ + scripts/bench.sh<br/>Criterion vs Rust, LuaJIT, Wasm;<br/>baselines recorded, not gated"]
+    end
+    Diff -.->|checks| LLVMGen
+    Diff -.->|checks| CL
+
+    %% ---------------------------------------------------------------- 8
+    subgraph MCODE [" 8. Machine code: codira_ctcheck, codira_mcode, codira_superopt "]
+        direction TB
+        CTCheck["codira_ctcheck<br/>codira build --check-constant-time:<br/>no secret branch, no variable-time instruction,<br/>no unchecked call, no secret address (x86-64);<br/>x86-64 and AArch64 machine code"]
+        MCodeIR["codira_mcode<br/>x86-64 and AArch64 integer instructions,<br/>one semantics run concretely and as Z3 bit-vectors,<br/>checked against the CPU it runs on"]
+        Profiles["cost profiles<br/>x86-64 latencies and throughputs measured<br/>on the host; AArch64 from the Neoverse N1<br/>optimization guide, never measured"]
+        Superopt["codira_superopt<br/>bounded search of up to 3 instructions,<br/>lowered code proven equal by Z3,<br/>chosen by cost model or by timing;<br/>refuses constant-time code; offline tool,<br/>not part of codira build"]
+        MCodeIR --> Superopt
+        Profiles --> Superopt
+    end
+    Lib -.->|"oblivious functions"| CTCheck
+    Lib -.->|"objects, offline"| Superopt
+    Superopt <==>|"replacement proven"| SMT
+    Flow -.->|"constant-time code refused"| Superopt
+
+    %% ---------------------------------------------------------------- in progress
+    subgraph NEXT [" Not on main: unfinished work "]
+        direction LR
         N2["loop schedules (LLVM hints)<br/>fails a dependence-safety test"]
         N3["multi-shot continuations,<br/>sample / observe<br/>fails posterior checks"]
         N6["proof-gated live updates<br/>relational prover and runtime<br/>protocol do not compile yet"]
+        N7["superoptimiser inside codira build,<br/>array handles marked dereferenceable,<br/>rewritten code patched into libraries"]
+        N8["@budget, table declarations,<br/>tensor shape checking, memory<br/>domains, capability types (in progress)"]
     end
 
     classDef frontend fill:#1e293b,stroke:#38bdf8,color:#f8fafc,stroke-width:2px;
@@ -244,6 +321,10 @@ flowchart TD
     classDef backend fill:#064e3b,stroke:#34d399,color:#f8fafc,stroke-width:2px;
     classDef runtime fill:#3b0764,stroke:#c084fc,color:#f8fafc,stroke-width:2px;
     classDef tools fill:#422006,stroke:#fbbf24,color:#f8fafc,stroke-width:2px;
+    classDef engines fill:#0c4a6e,stroke:#22d3ee,color:#f8fafc,stroke-width:2px;
+    classDef quality fill:#1c1917,stroke:#a8a29e,color:#f8fafc,stroke-width:2px;
+    classDef mcode fill:#3f1d1d,stroke:#f87171,color:#f8fafc,stroke-width:2px;
+    classDef inner fill:#0f172a,stroke:#64748b,color:#f8fafc,stroke-width:1px;
     classDef smt fill:#581c87,stroke:#e879f9,color:#f8fafc,stroke-width:2px;
     classDef next fill:#1f2937,stroke:#9ca3af,color:#e5e7eb,stroke-width:1px,stroke-dasharray:5 5;
     classDef legend fill:#0f172a,stroke:#94a3b8,color:#f8fafc,stroke-width:1px;
@@ -256,15 +337,19 @@ flowchart TD
     class BACKENDS backend;
     class RUNTIME runtime;
     class TOOLS tools;
+    class ENGINES engines;
+    class QUALITY quality;
+    class MCODE mcode;
+    class CHECKS,VERIFY,SERVICES inner;
     class SMT,TV smt;
     class NEXT next;
     class LEGEND legend;
     class L1 old;
     class L2 added;
     class L3 wip;
-    class N1,N2,N3,N6 wip;
-    class MTE,Funis,Ueval wip;
-    class Enums,Closures,Loops,Units,Realtime,Mono,Certify,ApiDiff,Attest,CERT,Rewrite,Image,Circuits,PTX,Snap,Cells added;
+    class N2,N3,N6,N7,N8 wip;
+    class MTE,Funis,Ueval,ArrayAlias,Superopt,Profiles wip;
+    class StdLib,Traits,Tasks,Realtime,Envelope,EnvCLI,Certify,ApiDiff,CERT,Fold,LLVMGen,Lib,FsSvc,HashSvc,DbSvc,AiSvc,DbEngine,AiEngine,Diff,Bench,Heracles,Bindings,Native,CL,CTCheck,MCodeIR added;
     linkStyle default stroke:#94a3b8,stroke-width:1.5px;
 ```
 

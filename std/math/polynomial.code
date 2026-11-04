@@ -20,8 +20,8 @@ public func polynomial_evaluate(coeffs: List[f64], x: f64) -> f64 {
     if coeffs.len == 0 {
         return 0.0;
     }
-    let result = get(coeffs, 0);
-    let i: usize = 1;
+    var result = get(coeffs, 0);
+    var i: usize = 1;
     while i < coeffs.len {
         result = result * x + get(coeffs, i);
         i = i + 1;
@@ -34,8 +34,8 @@ public func polynomial_evaluate_f32(coeffs: List[f32], x: f32) -> f32 {
     if coeffs.len == 0 {
         return 0.0 as f32;
     }
-    let result = get(coeffs, 0);
-    let i: usize = 1;
+    var result = get(coeffs, 0);
+    var i: usize = 1;
     while i < coeffs.len {
         result = result * x + get(coeffs, i);
         i = i + 1;
@@ -49,8 +49,8 @@ public func polynomial_evaluate_fma(coeffs: List[f64], x: f64) -> f64 {
     if coeffs.len == 0 {
         return 0.0;
     }
-    let result = get(coeffs, 0);
-    let i: usize = 1;
+    var result = get(coeffs, 0);
+    var i: usize = 1;
     while i < coeffs.len {
         result = fma(result, x, get(coeffs, i));
         i = i + 1;
@@ -69,8 +69,8 @@ public func polynomial_evaluate_ascending(coeffs: List[f64], x: f64) -> f64 {
         return 0.0;
     }
     // Horner from the back
-    let result = get(coeffs, coeffs.len - 1);
-    let i: isize = (coeffs.len as isize) - 2;
+    var result = get(coeffs, coeffs.len - 1);
+    var i: isize = (coeffs.len as isize) - 2;
     while i >= 0 {
         result = result * x + get(coeffs, i as usize);
         i = i - 1;
@@ -90,9 +90,9 @@ public func polynomial_evaluate_with_derivative(coeffs: List[f64], x: f64) -> (f
     if coeffs.len == 0 {
         return (0.0, 0.0);
     }
-    let p  = get(coeffs, 0);
-    let dp: f64 = 0.0;
-    let i: usize = 1;
+    var p  = get(coeffs, 0);
+    var dp: f64 = 0.0;
+    var i: usize = 1;
     while i < coeffs.len {
         dp = dp * x + p;
         p  = p  * x + get(coeffs, i);
@@ -112,9 +112,9 @@ public func polynomial_evaluate_compensated(coeffs: List[f64], x: f64) -> f64 {
     if coeffs.len == 0 {
         return 0.0;
     }
-    let s = get(coeffs, 0);
-    let c: f64 = 0.0;
-    let i: usize = 1;
+    var s = get(coeffs, 0);
+    var c: f64 = 0.0;
+    var i: usize = 1;
     while i < coeffs.len {
         // Two-product: s * x = prod + err_prod
         let prod = s * x;
@@ -149,18 +149,18 @@ public func polynomial_evaluate_estrin(coeffs: List[f64], x: f64) -> f64 {
         return polynomial_evaluate(coeffs, x);
     }
     // Build a mutable copy of values — we reduce pairs iteratively
-    let vals = list_with_capacity(n);
-    let i: usize = 0;
+    var vals = list_with_capacity(n);
+    var i: usize = 0;
     while i < n {
         vals = push(vals, get(coeffs, i));
         i = i + 1;
     }
-    let pow_x = x;
-    let count = n;
+    var pow_x = x;
+    var count = n;
     while count > 1 {
         let new_count = (count + 1) / 2;
-        let new_vals = list_with_capacity(new_count);
-        let j: usize = 0;
+        var new_vals = list_with_capacity(new_count);
+        var j: usize = 0;
         while j + 1 < count {
             // Pair (j, j+1): result = vals[j] * pow_x + vals[j+1]
             let combined = get(vals, j) * pow_x + get(vals, j + 1);
@@ -188,16 +188,16 @@ public func polynomial_evaluate_estrin(coeffs: List[f64], x: f64) -> f64 {
 public func polynomial_from_roots(roots: List[f64]) -> List[f64] {
     // Start with [1.0]  (the constant polynomial "1")
     let coeffs = list_new();
-    let c = push(coeffs, 1.0);
-    let i: usize = 0;
+    var c = push(coeffs, 1.0);
+    var i: usize = 0;
     while i < roots.len {
         let r = get(roots, i);
         // Multiply current polynomial by (x - r)
         let new_len = c.len + 1;
-        let new_c = list_with_capacity(new_len);
+        var new_c = list_with_capacity(new_len);
         // Leading coefficient
         new_c = push(new_c, get(c, 0));
-        let j: usize = 1;
+        var j: usize = 1;
         while j < c.len {
             new_c = push(new_c, get(c, j) - r * get(c, j - 1));
             j = j + 1;

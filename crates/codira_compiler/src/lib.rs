@@ -9,11 +9,13 @@
 #![allow(clippy::enum_variant_names)] // This is a HACK because we use salsa
 
 mod certify;
+mod ct_check;
 mod db;
 pub mod diagnostics;
 mod diagnostics_snippets;
 mod driver;
 mod native_build;
+mod std_library;
 
 use std::{
     ffi::OsStr,
@@ -40,6 +42,7 @@ pub use crate::{
         FileDiagnostics, SyncSummary,
     },
     native_build::find_clang,
+    std_library::{std_library_dir, STD_PACKAGE_NAME, STD_PATH_ENV},
 };
 
 #[derive(Debug, Clone)]

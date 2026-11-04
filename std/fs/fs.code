@@ -1,0 +1,215 @@
+// =============================================================================
+// std/fs/fs.code — Files: open, read, write, seek, fsync, close, rename
+// =============================================================================
+//
+// Copyright (c) 2026 Omnira CJSC
+// Author: Tunjay Akbarli
+// Date: November 4, 2026
+//
+// Functionality:
+// - Byte-level file I/O over the runtime's file services
+//   (codira_runtime::native_fs): open with explicit flags, read and write
+//   between a file and raw memory, seek, fsync, size, close, remove, rename,
+//   and directory sync for durable creates and renames.
+//
+// A file handle is an i64 the runtime hands out, not an OS descriptor: the
+// runtime keeps a generation-checked table, so a closed or forged handle is
+// refused (FS_ERR_BAD_HANDLE) instead of reaching another file. `fs_open`
+// returns the handle (positive) or the error code (negative). Handles are a
+// bare i64, not a struct like std/memory's Region: they were written while
+// the compiler still crashed on `public` functions that take or return a
+// value struct (since fixed); a struct wrapper is a compatible change.
+//
+// Every operation returns a value or a negative FS_ERR_* code; nothing
+// panics. `fs_last_os_error` gives the raw OS error (errno, GetLastError) of
+// the calling thread's last failure, for messages.
+//
+// Paths are `str` values: UTF-8, at most 4096 bytes, not empty, without NUL.
+// Buffers are raw memory (addresses as usize, like region memory and the
+// load_*/store_* intrinsics): the runtime checks the length and that the
+// address is not null, and trusts the caller for the rest.
+//
+// Durability. Written bytes reach the OS at once but the storage device
+// only after `fs_fsync`: fsync(2) on Linux and the BSDs, fcntl(F_FULLFSYNC)
+// on macOS and iOS (which also empties the drive's write cache; plain fsync
+// there does not), FlushFileBuffers on Windows. A created, removed or renamed
+// *name* is durable only after `fs_sync_dir` on its directory (Unix; on
+// Windows it returns FS_ERR_UNSUPPORTED). The safe way to replace a file is:
+// write a temporary file in the same directory, fsync it, close it, rename it
+// over the target, then sync the directory.
+//
+// Effects: every function here blocks (it is a system call) and the runtime
+// takes a lock on its handle table, so none is `@noblock`. The runtime
+// services are `extern`, so the effect analysis counts them as every effect;
+// no assertion is made.
+// =============================================================================
+
+
+extern "C" {
+    func codira_fs_open(path_addr: usize, path_len: usize, flags: u32) -> i64;
+    func codira_fs_read(fd: i64, buf_addr: usize, len: usize) -> i64;
+    func codira_fs_write(fd: i64, buf_addr: usize, len: usize) -> i64;
+    func codira_fs_seek(fd: i64, offset: i64, whence: u32) -> i64;
+    func codira_fs_fsync(fd: i64) -> i32;
+    func codira_fs_close(fd: i64) -> i32;
+    func codira_fs_size(fd: i64) -> i64;
+    func codira_fs_remove(path_addr: usize, path_len: usize) -> i32;
+    func codira_fs_rename(from_addr: usize, from_len: usize, to_addr: usize, to_len: usize) -> i32;
+    func codira_fs_sync_dir(path_addr: usize, path_len: usize) -> i32;
+    func codira_fs_last_os_error() -> i32;
+}
+
+extern "codira-intrinsic" {
+    func str_data(s: str) -> usize;
+    func str_len(s: str) -> usize;
+}
+
+// Open flags, combined with `|`. At least one of READ, WRITE or APPEND.
+public func FS_READ() -> u32 { return 1; }
+public func FS_WRITE() -> u32 { return 2; }
+// Every write goes to the end of the file (implies writing).
+public func FS_APPEND() -> u32 { return 4; }
+// Create the file if it is missing (needs WRITE or APPEND).
+public func FS_CREATE() -> u32 { return 8; }
+// Truncate to length 0 when opening (needs WRITE, not APPEND).
+public func FS_TRUNCATE() -> u32 { return 16; }
+// Create the file; fail with FS_ERR_ALREADY_EXISTS if it exists.
+public func FS_CREATE_NEW() -> u32 { return 32; }
+
+// `whence` for fs_seek.
+public func FS_SEEK_START() -> u32 { return 0; }
+public func FS_SEEK_CURRENT() -> u32 { return 1; }
+public func FS_SEEK_END() -> u32 { return 2; }
+
+// Error codes (always negative).
+public func FS_ERR_OTHER() -> i64 { return -1; }
+public func FS_ERR_NOT_FOUND() -> i64 { return -2; }
+public func FS_ERR_PERMISSION_DENIED() -> i64 { return -3; }
+public func FS_ERR_ALREADY_EXISTS() -> i64 { return -4; }
+// Bad flags, whence, length or address; an empty path or one with NUL.
+public func FS_ERR_INVALID_ARGUMENT() -> i64 { return -5; }
+// Not an open file: never opened, closed, or forged.
+public func FS_ERR_BAD_HANDLE() -> i64 { return -6; }
+public func FS_ERR_PATH_TOO_LONG() -> i64 { return -7; }
+public func FS_ERR_PATH_NOT_UTF8() -> i64 { return -8; }
+public func FS_ERR_TOO_MANY_OPEN() -> i64 { return -9; }
+public func FS_ERR_IS_A_DIRECTORY() -> i64 { return -10; }
+public func FS_ERR_NOT_A_DIRECTORY() -> i64 { return -11; }
+public func FS_ERR_STORAGE_FULL() -> i64 { return -12; }
+public func FS_ERR_UNSUPPORTED() -> i64 { return -13; }
+public func FS_ERR_DIRECTORY_NOT_EMPTY() -> i64 { return -14; }
+public func FS_ERR_CROSSES_DEVICES() -> i64 { return -15; }
+public func FS_ERR_READ_ONLY_FILESYSTEM() -> i64 { return -16; }
+public func FS_ERR_FILE_TOO_LARGE() -> i64 { return -17; }
+// Reading a file not opened for reading, or writing one not opened for
+// writing.
+public func FS_ERR_WRONG_MODE() -> i64 { return -18; }
+
+// Open the file at `path` with `flags`. Returns a handle (positive) or an
+// FS_ERR_* code (negative).
+public func fs_open(path: str, flags: u32) -> i64 {
+    return codira_fs_open(str_data(path), str_len(path), flags);
+}
+
+// Whether a result is a success (a handle, a count, a position or 0), not an
+// FS_ERR_* code.
+public func fs_ok(result: i64) -> bool {
+    return result >= 0;
+}
+
+// Read at most `len` bytes into `buf`. Returns the count (0 at the end of
+// the file; fewer than `len` is not an error) or an FS_ERR_* code.
+public func fs_read(fd: i64, buf: usize, len: usize) -> i64 {
+    return codira_fs_read(fd, buf, len);
+}
+
+// Read until `len` bytes are in `buf` or the file ends. Returns the count
+// or the first FS_ERR_* code.
+public func fs_read_full(fd: i64, buf: usize, len: usize) -> i64 {
+    var done: usize = 0;
+    while done < len {
+        let got = codira_fs_read(fd, buf + done, len - done);
+        if got < 0 {
+            return got;
+        }
+        if got == 0 {
+            return done as i64;
+        }
+        done += got as usize;
+    }
+    return done as i64;
+}
+
+// Write at most `len` bytes from `buf`. Returns the count (fewer than `len`
+// is not an error) or an FS_ERR_* code.
+public func fs_write(fd: i64, buf: usize, len: usize) -> i64 {
+    return codira_fs_write(fd, buf, len);
+}
+
+// Write all `len` bytes from `buf`. Returns `len` or the first FS_ERR_*
+// code (some bytes may have been written before it).
+public func fs_write_all(fd: i64, buf: usize, len: usize) -> i64 {
+    var done: usize = 0;
+    while done < len {
+        let put = codira_fs_write(fd, buf + done, len - done);
+        if put < 0 {
+            return put;
+        }
+        if put == 0 {
+            return FS_ERR_OTHER();
+        }
+        done += put as usize;
+    }
+    return done as i64;
+}
+
+// Write the bytes of a string.
+public func fs_write_str(fd: i64, text: str) -> i64 {
+    return fs_write_all(fd, str_data(text), str_len(text));
+}
+
+// Move the position to `offset` relative to `whence`. Returns the new
+// position or an FS_ERR_* code.
+public func fs_seek(fd: i64, offset: i64, whence: u32) -> i64 {
+    return codira_fs_seek(fd, offset, whence);
+}
+
+// Flush the file's data and metadata to the storage device (see
+// "Durability" above). Returns 0 or an FS_ERR_* code.
+public func fs_fsync(fd: i64) -> i32 {
+    return codira_fs_fsync(fd);
+}
+
+// The file's size in bytes, or an FS_ERR_* code.
+public func fs_size(fd: i64) -> i64 {
+    return codira_fs_size(fd);
+}
+
+// Close the file. Returns 0 or an FS_ERR_* code (on Unix, the error close(2)
+// reports); the handle is invalid afterwards either way.
+public func fs_close(fd: i64) -> i32 {
+    return codira_fs_close(fd);
+}
+
+// Remove the file at `path`. Returns 0 or an FS_ERR_* code.
+public func fs_remove(path: str) -> i32 {
+    return codira_fs_remove(str_data(path), str_len(path));
+}
+
+// Rename `from` to `to`, replacing `to` if it is a file (atomically within
+// one file system on POSIX). Returns 0 or an FS_ERR_* code.
+public func fs_rename(from: str, to: str) -> i32 {
+    return codira_fs_rename(str_data(from), str_len(from), str_data(to), str_len(to));
+}
+
+// Make the names in directory `path` durable (Unix). Returns 0, an FS_ERR_*
+// code, or FS_ERR_UNSUPPORTED on Windows.
+public func fs_sync_dir(path: str) -> i32 {
+    return codira_fs_sync_dir(str_data(path), str_len(path));
+}
+
+// The raw OS error number of this thread's last failed call, or 0 if the
+// runtime refused the call itself.
+public func fs_last_os_error() -> i32 {
+    return codira_fs_last_os_error();
+}

@@ -1,0 +1,16 @@
+[package]
+name = "codira_superopt"
+description = "Bounded, Z3-verified superoptimisation of straight-line integer machine code for x86-64 and AArch64, directed by microarchitecture cost profiles (experimental, Project APEX)"
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+codira_mcode = { version = "0.6.0-dev", path = "../codira_mcode" }
+codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }

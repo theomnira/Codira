@@ -38,14 +38,14 @@ fn regions_allocate_reset_and_refuse_beyond_their_quota() {
 public func region_sum(n: usize) -> u64 {{
     let region = codira_region_new(0);
     let base = codira_region_alloc(region, n * 8, 8);
-    let i = 0;
-    let value: u64 = 0;
+    var i = 0;
+    var value: u64 = 0;
     while i < n {{
         store_u64(base + i * 8, value * 3);
         value += 1;
         i += 1;
     }}
-    let total: u64 = 0;
+    var total: u64 = 0;
     i = 0;
     while i < n {{
         total += load_u64(base + i * 8);
@@ -57,7 +57,7 @@ public func region_sum(n: usize) -> u64 {{
 
 public func quota_checks(quota: usize) -> usize {{
     let region = codira_region_new(quota);
-    let flags = 0;
+    var flags = 0;
     if codira_region_alloc(region, quota, 1) != 0 {{ flags += 1; }}
     if codira_region_alloc(region, 1, 1) == 0 {{ flags += 2; }}
     if codira_region_used(region) == quota {{ flags += 4; }}

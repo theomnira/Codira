@@ -144,9 +144,9 @@ fn fibonacci_loop() {
     let driver = CompileAndRunTestDriver::new(
         r#"
     public func fibonacci(n:i64)->i64 {
-        let a = 0;
-        let b = 1;
-        let i = 1;
+        var a = 0;
+        var b = 1;
+        var i = 1;
         loop {
             if i > n {
                 return a
@@ -173,9 +173,9 @@ fn fibonacci_loop_break() {
     let driver = CompileAndRunTestDriver::new(
         r#"
     public func fibonacci(n:i64)->i64 {
-        let a = 0;
-        let b = 1;
-        let i = 1;
+        var a = 0;
+        var b = 1;
+        var i = 1;
         loop {
             if i > n {
                 break a;
@@ -202,9 +202,9 @@ fn fibonacci_while() {
     let driver = CompileAndRunTestDriver::new(
         r#"
     public func fibonacci(n:i64)->i64 {
-        let a = 0;
-        let b = 1;
-        let i = 1;
+        var a = 0;
+        var b = 1;
+        var i = 1;
         while i <= n {
             let sum = a + b;
             a = b;

@@ -16,7 +16,7 @@ const SOURCE: &str = r"
     }
 
     func produce(dest: Channel[i64], from: i64, count: i64) {
-        let i = 0;
+        var i = 0;
         while i < count {
             dest <- from + i;
             i += 1;
@@ -28,8 +28,8 @@ const SOURCE: &str = r"
             let ch = channel(8);
             spawn produce(ch, 0, 100);
             spawn produce(ch, 1000, 100);
-            let total = 0;
-            let n = 0;
+            var total = 0;
+            var n = 0;
             while n < 200 {
                 total += <-ch;
                 n += 1;
@@ -47,7 +47,7 @@ const SOURCE: &str = r"
         scope {
             let jobs = channel(64);
             let results = channel(64);
-            let i = 0;
+            var i = 0;
             while i < n {
                 spawn square(jobs, results);
                 i += 1;
@@ -57,7 +57,7 @@ const SOURCE: &str = r"
                 jobs <- i;
                 i += 1;
             };
-            let sum = 0;
+            var sum = 0;
             i = 0;
             while i < n {
                 sum += <-results;
@@ -83,7 +83,7 @@ const SOURCE: &str = r"
     }
 
     public func break_out() -> i32 {
-        let total = 0;
+        var total = 0;
         loop {
             scope {
                 let ch = channel(1);

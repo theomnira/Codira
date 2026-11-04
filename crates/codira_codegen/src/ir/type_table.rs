@@ -201,7 +201,7 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
 
         // Collect return type
         let ret_ty = fn_sig.ret();
-        if !ret_ty.is_empty() {
+        if !ret_ty.is_empty() && !ret_ty.is_never() {
             self.collect_type(self.hir_types.type_id(ret_ty));
         }
     }

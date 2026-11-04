@@ -10,7 +10,7 @@ use codira_hir_input::ModuleId;
 
 use crate::{
     item_tree::{
-        Effect, Enum, Function, Impl, ItemTreeId, ItemTreeNode, Session, Struct, TypeAlias,
+        Effect, Enum, Function, Impl, ItemTreeId, ItemTreeNode, Session, Struct, Trait, TypeAlias,
     },
     primitive_type::PrimitiveType,
     DefDatabase,
@@ -97,10 +97,16 @@ macro_rules! impl_intern {
 
 /// Represents an id of an item inside a item container such as a module or a
 /// `impl` block.
+// Named after the id type each wraps, like the other id enums here (see
+// `GenericDefId`).
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemContainerId {
     ModuleId(ModuleId),
     ImplId(ImplId),
+    /// A method declared in a `trait`: a required method (no body) or a
+    /// default one (a body written in terms of the trait's `Self`).
+    TraitId(TraitId),
 }
 impl From<ModuleId> for ItemContainerId {
     fn from(value: ModuleId) -> Self {
@@ -156,6 +162,13 @@ pub struct SessionId(salsa::InternId);
 pub(crate) type SessionLoc = ItemLoc<Session>;
 impl_intern!(SessionId, SessionLoc, intern_session, lookup_intern_session);
 
+/// A trait declared with `trait Name { .. }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
+pub struct TraitId(salsa::InternId);
+
+pub(crate) type TraitLoc = ItemLoc<Trait>;
+impl_intern!(TraitId, TraitLoc, intern_trait, lookup_intern_trait);
+
 /// An enumeration declared with `enum Name { .. }`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd)]
 pub struct EnumId(salsa::InternId);
@@ -190,6 +203,16 @@ pub enum ItemDefinitionId {
     /// An enum is a type; its variants are reached through it
     /// (`Shape.Circle`), never by name alone.
     EnumId(EnumId),
+    /// A trait lives in the type namespace but is not a type: only
+    /// `Resolver::resolve_path_as_trait` accepts it (a bound, or the trait
+    /// of an `extend Type: Trait`).
+    TraitId(TraitId),
+}
+
+impl From<TraitId> for ItemDefinitionId {
+    fn from(id: TraitId) -> Self {
+        ItemDefinitionId::TraitId(id)
+    }
 }
 
 impl From<EnumId> for ItemDefinitionId {
@@ -288,6 +311,15 @@ pub enum GenericDefId {
     /// binding occurrences among the extended type's generic arguments --
     /// `T` in `extend Box[T]`, but not `i32` in `extend Box[i32]`.
     ImplId(ImplId),
+    /// A trait. Its one parameter, index 0, is `Self`: the type a method
+    /// of the trait is called on, which is known only per implementation.
+    TraitId(TraitId),
+}
+
+impl From<TraitId> for GenericDefId {
+    fn from(id: TraitId) -> Self {
+        GenericDefId::TraitId(id)
+    }
 }
 
 impl From<FunctionId> for GenericDefId {
@@ -328,6 +360,7 @@ impl TypeParamId {
             // (see `resolve::impl_generic_param`), so none is ever owned by
             // the block itself.
             GenericDefId::ImplId(_) => None,
+            GenericDefId::TraitId(_) => (index == 0).then_some(crate::name![Self]),
         }
     }
 }

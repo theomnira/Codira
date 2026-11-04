@@ -327,14 +327,14 @@ public func threadfence(scope: i32) {
     if !info.is_nvidia_gpu() {
         __panic("threadfence is only implemented on NVIDIA GPUs");
     }
-    let suffix: StringLiteral = "gl";
+    var suffix: StringLiteral = "gl";
     if scope == SCOPE_BLOCK {
         suffix = "cta";
     }
     if scope == SCOPE_SYSTEM {
         suffix = "sys";
     }
-    let name = "llvm.nvvm.membar." + suffix;
+    var name = "llvm.nvvm.membar." + suffix;
     intrinsics.llvm_intrinsic_void();
 }
 
@@ -355,7 +355,7 @@ extend AMDBufferResource {
         if !info.is_amd_gpu() {
             __panic("AMDBufferResource is only applicable on AMDGPU hardware.");
         }
-        let r: AMDBufferResource;
+        var r: AMDBufferResource;
         r.desc = SIMD.zero();
         r.desc[0] = (address & 0xFFFF_FFFF) as u32;
         r.desc[1] = (address >> 32) as u32;
@@ -462,7 +462,7 @@ public func permlane_swap(val1: u32, val2: u32, stride: i32) -> SIMD[u32, 2] {
     if !info._cdna_4_or_newer() {
         __panic("permlane_swap is only supported on CDNA4+");
     }
-    let name: String;
+    var name: String;
     if stride == 16 {
         name = "llvm.amdgcn.permlane16.swap";
     } else {

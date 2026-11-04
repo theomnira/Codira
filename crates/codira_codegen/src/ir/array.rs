@@ -67,7 +67,9 @@ impl<'ink> RuntimeArrayValue<'ink> {
 
     /// Generate code to get to the array value.
     fn get_array_ptr(&self, builder: &Builder<'ink>) -> PointerValue<'ink> {
-        self.0.get_data_ptr(builder)
+        let data = self.0.get_data_ptr(builder);
+        super::array_tbaa::tag_value(data, super::array_tbaa::ArrayAccess::Handle);
+        data
     }
 
     /// Generate code to fetch the length of the array.

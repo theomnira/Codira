@@ -39,8 +39,8 @@ const PROGRAM: &str = r#"
     }
 
     public func total_hp(level: Level) -> i64 {
-        let total = 0;
-        let i = 0;
+        var total = 0;
+        var i = 0;
         while i < 3 {
             total += level.enemies[i].hp as i64;
             i += 1;

@@ -167,8 +167,8 @@ public func get_at[T](this: LinkedList[T], index: usize) -> T {
     if index >= this.len {
         panic("LinkedList.get_at: index out of bounds");
     }
-    let cur = unwrap(this.head);
-    let i: usize = 0;
+    var cur = unwrap(this.head);
+    var i: usize = 0;
     while i < index {
         cur = unwrap(ptr_deref(cur).next);
         i = i + 1;
@@ -188,8 +188,8 @@ public func insert[T](this: LinkedList[T], index: usize, value: T) -> LinkedList
         return push_back(this, value);
     }
     // Walk to the node currently at `index`
-    let cur = unwrap(this.head);
-    let i: usize = 0;
+    var cur = unwrap(this.head);
+    var i: usize = 0;
     while i < index {
         cur = unwrap(ptr_deref(cur).next);
         i = i + 1;
@@ -219,8 +219,8 @@ public func remove_at[T](this: LinkedList[T], index: usize) -> (LinkedList[T], T
         return pop_back(this);
     }
     // Walk to the node at `index`
-    let cur = unwrap(this.head);
-    let i: usize = 0;
+    var cur = unwrap(this.head);
+    var i: usize = 0;
     while i < index {
         cur = unwrap(ptr_deref(cur).next);
         i = i + 1;
@@ -244,8 +244,8 @@ public func contains[T](this: LinkedList[T], value: T) -> bool {
     if this.len == 0 {
         return false;
     }
-    let cur = unwrap(this.head);
-    let i: usize = 0;
+    var cur = unwrap(this.head);
+    var i: usize = 0;
     while i < this.len {
         if ptr_deref(cur).value == value {
             return true;
@@ -271,7 +271,7 @@ public func reverse[T](this: LinkedList[T]) -> LinkedList[T] {
     if this.len <= 1 {
         return this;
     }
-    let cur_opt = this.head;
+    var cur_opt = this.head;
     while is_some(cur_opt) {
         let cur = unwrap(cur_opt);
         let node = ptr_deref(cur);
@@ -293,12 +293,12 @@ public func reverse[T](this: LinkedList[T]) -> LinkedList[T] {
 
 /// Converts to a List[T] (front-to-back).
 public func to_list[T](this: LinkedList[T]) -> List[T] {
-    let out = list_with_capacity(this.len);
+    var out = list_with_capacity(this.len);
     if this.len == 0 {
         return out;
     }
-    let cur = unwrap(this.head);
-    let i: usize = 0;
+    var cur = unwrap(this.head);
+    var i: usize = 0;
     while i < this.len {
         out = push(out, ptr_deref(cur).value);
         if is_some(ptr_deref(cur).next) {

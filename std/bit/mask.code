@@ -15,8 +15,8 @@ public func create_mask(offset: u32, width: u32) -> u64 {
     if width >= 64 {
         return 0xFFFFFFFFFFFFFFFF;
     }
-    let ones: u64 = (1 as u64 << width) - 1;
-    return ones << offset;
+    let ones: u64 = ((1 as u64) << (width as u64)) - 1;
+    return ones << (offset as u64);
 }
 
 // create_mask for u32.
@@ -84,7 +84,7 @@ public func extract_bits(value: u64, offset: u32, width: u32) -> u64 {
         return 0;
     }
     let mask: u64 = create_mask(0, width);
-    return (value >> offset) & mask;
+    return (value >> (offset as u64)) & mask;
 }
 
 // extract_bits for u32.
@@ -109,7 +109,7 @@ public func insert_bits(value: u64, field: u64, offset: u32, width: u32) -> u64 
         return value;
     }
     let mask: u64 = create_mask(offset, width);
-    let field_shifted: u64 = (field << offset) & mask;
+    let field_shifted: u64 = (field << (offset as u64)) & mask;
     return (value & (~mask)) | field_shifted;
 }
 
@@ -145,7 +145,7 @@ public func bit_select_u32(selector: u32, on_true: u32, on_false: u32) -> u32 {
 // Returns `value` with bit at `position` set to 1.
 // ---------------------------------------------------------------------------
 public func set_bit(value: u64, position: u32) -> u64 {
-    return value | (1 as u64 << position);
+    return value | ((1 as u64) << (position as u64));
 }
 
 // ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ public func set_bit(value: u64, position: u32) -> u64 {
 // Returns `value` with bit at `position` cleared to 0.
 // ---------------------------------------------------------------------------
 public func clear_bit(value: u64, position: u32) -> u64 {
-    return value & (~(1 as u64 << position));
+    return value & (~((1 as u64) << (position as u64)));
 }
 
 // ---------------------------------------------------------------------------
@@ -161,7 +161,7 @@ public func clear_bit(value: u64, position: u32) -> u64 {
 // Returns `value` with bit at `position` toggled (flipped).
 // ---------------------------------------------------------------------------
 public func toggle_bit(value: u64, position: u32) -> u64 {
-    return value ^ (1 as u64 << position);
+    return value ^ ((1 as u64) << (position as u64));
 }
 
 // ---------------------------------------------------------------------------
@@ -169,7 +169,7 @@ public func toggle_bit(value: u64, position: u32) -> u64 {
 // Returns true if the bit at `position` in `value` is set (1).
 // ---------------------------------------------------------------------------
 public func test_bit(value: u64, position: u32) -> bool {
-    return (value & (1 as u64 << position)) != 0;
+    return (value & ((1 as u64) << (position as u64))) != 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -218,5 +218,5 @@ public func mask_up_to_bit(position: u32) -> u64 {
     if position >= 63 {
         return 0xFFFFFFFFFFFFFFFF;
     }
-    return (1 as u64 << (position + 1)) - 1;
+    return ((1 as u64) << ((position + 1) as u64)) - 1;
 }

@@ -166,7 +166,7 @@ extend Slice[T] {
 // Return the first N elements and the remainder.
 extend Slice[T] {
     public func take_first(self, n: usize) -> (Slice[T], Slice[T]) {
-        let count = n;
+        var count = n;
         if count > self._len {
             count = self._len;
         }
@@ -177,7 +177,7 @@ extend Slice[T] {
 // Return the last N elements and the prefix.
 extend Slice[T] {
     public func take_last(self, n: usize) -> (Slice[T], Slice[T]) {
-        let count = n;
+        var count = n;
         if count > self._len {
             count = self._len;
         }
@@ -192,7 +192,7 @@ extend Slice[T] {
 // Return the index of the first element equal to `value`, or -1 if not found.
 extend Slice[T] {
     public func index_of(self, value: T) -> isize {
-        let i: usize = 0;
+        var i: usize = 0;
         while i < self._len {
             if self._ptr.offset(i as isize).read() == value {
                 return i as isize;
@@ -213,7 +213,7 @@ extend Slice[T] {
 // Return true if every element satisfies `predicate`.
 extend Slice[T] {
     public func all(self, predicate: func(T) -> bool) -> bool {
-        let i: usize = 0;
+        var i: usize = 0;
         while i < self._len {
             if !predicate(self._ptr.offset(i as isize).read()) {
                 return false;
@@ -227,7 +227,7 @@ extend Slice[T] {
 // Return true if any element satisfies `predicate`.
 extend Slice[T] {
     public func any(self, predicate: func(T) -> bool) -> bool {
-        let i: usize = 0;
+        var i: usize = 0;
         while i < self._len {
             if predicate(self._ptr.offset(i as isize).read()) {
                 return true;
@@ -241,8 +241,8 @@ extend Slice[T] {
 // Count elements that satisfy `predicate`.
 extend Slice[T] {
     public func count(self, predicate: func(T) -> bool) -> usize {
-        let n: usize = 0;
-        let i: usize = 0;
+        var n: usize = 0;
+        var i: usize = 0;
         while i < self._len {
             if predicate(self._ptr.offset(i as isize).read()) {
                 n = n + 1;
@@ -264,7 +264,7 @@ extend Slice[T] {
         if self._len != src._len {
             __panic("Slice.copy_from: length mismatch");
         }
-        let i: usize = 0;
+        var i: usize = 0;
         while i < self._len {
             self._ptr.offset(i as isize).write(src._ptr.offset(i as isize).read());
             i = i + 1;
@@ -275,7 +275,7 @@ extend Slice[T] {
 // Fill every element with `value`.
 extend Slice[T] {
     public func fill(self, value: T) {
-        let i: usize = 0;
+        var i: usize = 0;
         while i < self._len {
             self._ptr.offset(i as isize).write(value);
             i = i + 1;
@@ -289,8 +289,8 @@ extend Slice[T] {
         if self._len <= 1 {
             return;
         }
-        let lo: usize = 0;
-        let hi: usize = self._len - 1;
+        var lo: usize = 0;
+        var hi: usize = self._len - 1;
         while lo < hi {
             let tmp = self._ptr.offset(lo as isize).read();
             self._ptr.offset(lo as isize).write(self._ptr.offset(hi as isize).read());
@@ -311,7 +311,7 @@ extend Slice[T] {
         if self._len != other._len {
             return false;
         }
-        let i: usize = 0;
+        var i: usize = 0;
         while i < self._len {
             if self._ptr.offset(i as isize).read() != other._ptr.offset(i as isize).read() {
                 return false;
@@ -325,11 +325,11 @@ extend Slice[T] {
 // Lexicographic comparison: -1, 0, or 1.
 extend Slice[T] {
     public func cmp(self, other: Slice[T]) -> i32 {
-        let min_len = self._len;
+        var min_len = self._len;
         if other._len < min_len {
             min_len = other._len;
         }
-        let i: usize = 0;
+        var i: usize = 0;
         while i < min_len {
             let a = self._ptr.offset(i as isize).read();
             let b = other._ptr.offset(i as isize).read();
@@ -349,8 +349,8 @@ extend Slice[T] {
 
 extend Slice[T] {
     public func to_string(self) -> String {
-        let s = "[";
-        let i: usize = 0;
+        var s = "[";
+        var i: usize = 0;
         while i < self._len {
             if i > 0 {
                 s = s + ", ";

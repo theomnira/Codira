@@ -15,6 +15,7 @@ use inkwell::{
 };
 
 mod array;
+mod array_tbaa;
 pub mod body;
 pub(crate) mod closures;
 #[macro_use]

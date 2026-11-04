@@ -24,31 +24,31 @@ fn test_uninitialized_access_if() {
     insta::assert_snapshot!(diagnostics(
         r#"
     func foo() {
-        let a:i64;
+        var a:i64;
         if true { a = 3; } else { a = 4; }
         let b = a + 4;  // correct, `a` is initialized either way
     }
 
     func bar() {
-        let a:i64;
+        var a:i64;
         if true { a = 3; }
         let b = a + 4;  // `a` is possibly-unitialized
     }
 
     func baz() {
-        let a:i64;
+        var a:i64;
         if true { return } else { a = 4 };
         let b = a + 4;  // correct, `a` is initialized either way
     }
 
     func foz() {
-        let a:i64;
+        var a:i64;
         if true { a = 4 } else { return };
         let b = a + 4;  // correct, `a` is initialized either way
     }
 
     func boz() {
-        let a:i64;
+        var a:i64;
         return;
         let b = a + 4;  // `a` is not initialized but this is dead code anyway
     }
@@ -61,7 +61,7 @@ fn test_uninitialized_access_while() {
     insta::assert_snapshot!(diagnostics(
         r#"
     func foo(b:i64) {
-        let a:i64;
+        var a:i64;
         while b < 4 { b += 1; a = b; a += 1; }
         let c = a + 4;  // `a` is possibly-unitialized
     }
@@ -256,7 +256,7 @@ fn test_closure_capture_rules() {
 
     func f() {
         var x = 1
-        let p = Point { x: 1, y: 2 }
+        var p = Point { x: 1, y: 2 }
         let c = Counter { n: 1 }
         let g = func() { x = 2 }
         let h = func() { p.x = 3 }
@@ -553,4 +553,55 @@ fn test_optional_typing() {
     204..207: type annotations needed: the type of this expression is ambiguous
     194..201: type annotations needed: the type of this expression is ambiguous
     ");
+}
+
+/// The binding named by every "cannot assign to `x`: it is bound with
+/// `let`" diagnostic of `source`, in order.
+fn let_assignments(source: &str) -> Vec<String> {
+    diagnostics(source)
+        .lines()
+        .filter(|line| line.contains("it is bound with `let`"))
+        .map(|line| {
+            let name = line.split("cannot assign to `").nth(1).unwrap();
+            name.split('`').next().unwrap().to_owned()
+        })
+        .collect()
+}
+
+/// `let` binds once: assigning to the binding, compound assignment, and
+/// assigning to a field of a value struct or a tuple element it holds are
+/// errors, as is assigning a first value to a `let` declared without one.
+/// `var`, `let mut`, parameters, the fields of a class and the elements of
+/// an array (storage of a shared object, not of the binding) stay
+/// assignable.
+#[test]
+fn test_let_bindings_cannot_be_assigned() {
+    let source = r#"
+    struct Point { x: i32, y: i32 }
+    class Counter { n: i32 }
+
+    func f(q: i32) {
+        let a = 1
+        a = 2
+        a += 1
+        let p = Point { x: 1, y: 2 }
+        p.x = 3
+        let (u, v) = (1, 2)
+        u = 5
+        let d: i32
+        d = 1
+        let c = Counter { n: 1 }
+        c.n = 3
+        let arr = [1, 2]
+        arr[0] = 5
+        var b = 1
+        b = 2
+        let mut m = 1
+        m += 2
+        q = 4
+        var w = Point { x: 1, y: 2 }
+        w.y = 4
+    }
+    "#;
+    assert_eq!(let_assignments(source), ["a", "a", "p", "u", "d"]);
 }

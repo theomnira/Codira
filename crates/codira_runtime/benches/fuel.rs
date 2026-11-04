@@ -23,8 +23,8 @@ const WORKLOAD: &str = r#"
     }
 
     public func work(n: i64) -> i64 {
-        let acc = 0;
-        let i = 0;
+        var acc = 0;
+        var i = 0;
         while i < n {
             acc = step(acc + i);
             i += 1;
@@ -33,8 +33,8 @@ const WORKLOAD: &str = r#"
     }
 
     public func tight(n: i64) -> i64 {
-        let acc = 0;
-        let i = 0;
+        var acc = 0;
+        var i = 0;
         while i < n {
             acc += i ^ (acc >> 3);
             i += 1;

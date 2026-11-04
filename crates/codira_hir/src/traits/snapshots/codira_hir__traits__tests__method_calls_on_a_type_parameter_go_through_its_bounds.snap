@@ -1,0 +1,11 @@
+---
+source: crates/codira_hir/src/traits/tests.rs
+expression: "diagnostics(r#\"\n    trait Show {\n        func show(self) -> i64;\n    }\n    trait Also {\n        func show(self) -> i64;\n    }\n    func unbounded[T](x: T) -> i64 { x.show() }\n    func missing[T: Show](x: T) -> i64 { x.len() }\n    func ambiguous[T: Show + Also](x: T) -> i64 { x.show() }\n    func assoc[T: Show](x: T) -> i64 { T.make() }\n    func ops[T: Show](a: T, b: T) -> bool { a < b }\n\n    trait D1 {\n        func d(self) -> i64 { 1 }\n    }\n    trait D2 {\n        func d(self) -> i64 { 2 }\n    }\n    struct P { x: i64 }\n    extend P: D1 {}\n    extend P: D2 {}\n    func two_defaults(p: P) -> i64 { p.d() }\n    \"#)"
+snapshot_kind: text
+---
+119..127: cannot call `show` on a value of generic type `T`: `T` has no bounds; bound it by a trait that declares `show` (`T: Trait`)
+167..174: no method `len` in the bounds of `T` (`Show`)
+223..231: `show` is declared by more than one bound of `T` (`Show`, `Also`); this version cannot tell which one is meant
+269..277: no method `make` in the bounds of `T` (`Show`)
+320..325: cannot apply `<` to a value of generic type `T`: operators on a type parameter are not supported; declare the operation as a method of a trait, bound `T` by it (`T: Trait`) and call the method
+500..505: `d` is a default method of more than one trait `P` implements (`D1`, `D2`); this version cannot tell which one is meant

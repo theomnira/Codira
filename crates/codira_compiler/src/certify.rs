@@ -4,8 +4,9 @@
 //!
 //! Functionality:
 //! - Writes the proof certificate of a linked library (`codira build
-//!   --certify`): every function's source and code hashes and its verified
-//!   obligations as SMT-LIB2 queries. The format and the checker are in
+//!   --certify`): every function's source and code hashes, its verified
+//!   obligations as SMT-LIB2 queries, and its inferred semantic envelope
+//!   (`codira_hir::realtime::inferred_values`). The format and the checker are in
 //!   `codira_certificate`.
 
 use std::path::Path;
@@ -166,6 +167,11 @@ pub(crate) fn certificate(
             })
             .collect();
 
+        let envelope = codira_hir::realtime::inferred_values(db, function)
+            .into_iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect();
+
         records.push(FunctionRecord {
             name: function.full_name(db),
             symbol: name,
@@ -173,6 +179,7 @@ pub(crate) fn certificate(
             code,
             code_note,
             obligations,
+            envelope: Some(envelope),
         });
     }
 
@@ -190,6 +197,7 @@ pub(crate) fn certificate(
             sha256: sha256_hex(&bytes),
         },
         translation_validation: codira_certificate::TRANSLATION_VALIDATION_NOT_RUN.to_string(),
+        envelope_basis: Some(codira_certificate::ENVELOPE_BASIS.to_string()),
         functions: records,
     })
 }

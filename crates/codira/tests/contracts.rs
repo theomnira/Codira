@@ -91,6 +91,18 @@ fn verified_contracts_build_and_run_with_the_contracts_erased() {
     // A host call bypasses every static check; the `@runtime_checked`
     // precondition is what stops it, with a trap rather than a division by
     // zero.
+    //
+    // Catching that trap needs `codira_healing::trap`, whose fault
+    // interception exists only on Windows (vectored exception handlers);
+    // elsewhere `protected` runs the closure unprotected and the trap ends
+    // the test process with SIGILL. So the trap is only provoked where it
+    // can be observed. The checks above run on every platform.
+    if cfg!(windows) {
+        expect_entry_trap(&runtime);
+    }
+}
+
+fn expect_entry_trap(runtime: &Runtime) {
     codira_healing::trap::install();
     let outcome = codira_healing::trap::protected(|| {
         let _: i64 = runtime.invoke("checked_inverse", (0i64,)).unwrap();

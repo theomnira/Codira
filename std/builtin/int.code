@@ -157,11 +157,11 @@ extend Int {
         }
         let base: isize = self._value;
         let e: isize = exp._value;
-        let result: isize = 1;
-        let b: isize = base;
+        var result: isize = 1;
+        var b: isize = base;
 
         // Fast exponentiation by squaring
-        let remaining: isize = e;
+        var remaining: isize = e;
         // Iterative squaring loop
         while remaining > 0 {
             if remaining % 2 == 1 {

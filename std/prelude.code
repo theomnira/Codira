@@ -8,6 +8,19 @@
 // built-in primitive, falls through to this module's *public* items. A
 // package without a `prelude` module simply has no prelude.
 //
+// # The prelude is for programs that check `std/` as a whole, not for the
+// # standard library's own modules
+//
+// A program that imports a standard-library module (`import std.time.time`)
+// loads that module and what it imports, and nothing else -- not this
+// prelude, which would pull in all of `std/`. So no module of the standard
+// library may rely on the prelude: each imports what it uses, explicitly
+// (`import root.sys.terminate.{panic};`), exactly as a program does. A
+// module that uses a prelude name without importing it still checks when
+// `std/` is checked as one package, and fails when a program imports it;
+// `crates/codira_compiler/tests/stdlib_import_ratchet.rs` is what catches
+// that.
+//
 // Everything here is `public import`, which re-exports. A plain `import`
 // would bring the name into this module and no further, and since the
 // prelude is only ever consulted for its public items, a prelude written
@@ -38,6 +51,7 @@ public import root.builtin.simd.*;
 // failed invariant is reported from everywhere, and a module that has to
 // import something before it can give up is a module that will not bother.
 public import root.sys.terminate.*;
+public import root.sys.assert_compare.*;
 
 public import root.builtin.error.*;
 public import root.builtin.range.*;
@@ -71,12 +85,14 @@ public import root.memory.unsafe_pointer.*;
 // ---- Hashing and formatting -------------------------------------------------
 
 public import root.hashlib.hash.*;
+public import root.hashlib.string_hash.*;
 public import root.hashlib.hasher.*;
 public import root.format.repr.*;
 
 // ---- Math -------------------------------------------------------------------
 
 public import root.math.math.*;
+public import root.math.sequence.*;
 
 // =============================================================================
 // Not here yet

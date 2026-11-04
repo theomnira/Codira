@@ -1,0 +1,8 @@
+---
+source: crates/codira_hir/src/traits/tests.rs
+expression: "diagnostics(r#\"\n    trait Show {\n        func show(self) -> i64;\n    }\n    trait Other {\n        func other(self) -> i64;\n    }\n    struct A { x: i64 }\n    struct Box[T] { v: T }\n    extend A: Show {\n        func show(self) -> i64 { 1 }\n    }\n    extend Box[T: Show]: Show {\n        func show(self) -> i64 { self.v.show() }\n    }\n\n    func show_it[T: Show](x: T) -> i64 { x.show() }\n    func needs_other[T: Other](x: T) -> i64 { x.other() }\n    func forward[T: Show](x: T) -> i64 { show_it(x) + needs_other(x) }\n\n    func main() -> i64 {\n        // An integer literal is an `i32` unless something says otherwise,\n        // and only `A` implements `Show` here.\n        show_it(A { x: 1 }) + show_it(5) + show_it(Box { v: A { x: 1 } })\n            + show_it(Box { v: 2.5 })\n    }\n    \"#)"
+snapshot_kind: text
+---
+411..425: the type `T` does not implement the trait `Other`, which `needs_other` requires of its parameter `T`
+591..601: the type `i32` does not implement the trait `Show`, which `show_it` requires of its parameter `T`
+645..668: the type `Box[f64]` does not implement the trait `Show`, which `show_it` requires of its parameter `T`
