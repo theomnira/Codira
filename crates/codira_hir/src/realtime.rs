@@ -95,8 +95,8 @@
 //! * A proven division relies on the function's `requires`, which every Codira
 //!   caller is proven to satisfy; a host calling through `Runtime::invoke` is
 //!   trusted to.
-//! * Shifts by the operand width or more are LLVM poison, not a panic, and are
-//!   not reported.
+//! * Shifts never panic: the shift amount is taken modulo the operand's width
+//!   (`agents/USING_CODIRA.md`, "Integer arithmetic"), so they are no source.
 //! * `codira build --fuel` makes every function entry and loop iteration a
 //!   point where the call can stop; such a build rejects `@nopanic` and
 //!   `@realtime` functions ([`fuel_diagnostics`]).

@@ -2445,8 +2445,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     self.builder.build_int_unsigned_rem(lhs, rhs, "rem")
                 }
             },
-            ArithOp::LeftShift => self.builder.build_left_shift(lhs, rhs, "left_shift"),
+            ArithOp::LeftShift => {
+                let rhs = self.mask_shift_amount(rhs);
+                self.builder.build_left_shift(lhs, rhs, "left_shift")
+            }
             ArithOp::RightShift => {
+                let rhs = self.mask_shift_amount(rhs);
                 self.builder
                     .build_right_shift(lhs, rhs, signedness.is_signed(), "right_shift")
             }
@@ -2455,6 +2459,22 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             ArithOp::BitXor => self.builder.build_xor(lhs, rhs, "bit_xor"),
         })
         .expect("failed to build int arithmetic operation")
+    }
+
+    /// Shifts take the amount modulo the operand's width (its low
+    /// `log2(width)` bits, read as unsigned), as Rust's wrapping shifts,
+    /// Java and C# do: `x << 65` on an `i64` is `x << 1`, and a negative
+    /// amount `-k` shifts by `width - k`. LLVM's `shl`, `lshr` and `ashr`
+    /// are poison for an amount of the width or more, so the mask is what
+    /// defines them. It costs nothing on x86-64 and `AArch64` at 32 and 64
+    /// bits (their shift instructions mask the same way, and LLVM drops the
+    /// `and`); 8- and 16-bit shifts keep one `and`.
+    fn mask_shift_amount(&self, amount: IntValue<'ink>) -> IntValue<'ink> {
+        let int_type = amount.get_type();
+        let mask = int_type.const_int(u64::from(int_type.get_bit_width() - 1), false);
+        self.builder
+            .build_and(amount, mask, "shift.amount")
+            .expect("failed to mask a shift amount")
     }
 
     fn gen_arith_bin_op_float(

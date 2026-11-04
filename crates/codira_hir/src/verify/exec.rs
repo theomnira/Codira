@@ -1955,6 +1955,20 @@ fn unary(op: UnaryOp, value: Sym<'_>) -> Sym<'_> {
     }
 }
 
+/// A shift amount as the language defines it: modulo the operand's width,
+/// which is a power of two, so its low `log2(width)` bits read as unsigned
+/// (`agents/USING_CODIRA.md`, "Integer arithmetic"). Z3's shifts give 0 (or
+/// all sign bits) for an amount of the width or more, which is not what the
+/// generated code computes.
+fn shift_amount(amount: BvExpr<'_>) -> BvExpr<'_> {
+    let width = amount.width();
+    let bits = width.trailing_zeros();
+    if bits == 0 || !width.is_power_of_two() {
+        return amount;
+    }
+    amount.extract(bits - 1, 0).zero_ext(width - bits)
+}
+
 fn arith<'ctx>(op: ArithOp, l: Sym<'ctx>, r: Sym<'ctx>) -> Sym<'ctx> {
     match (l, r) {
         (Sym::Int(a, ty), Sym::Int(b, rty)) => {
@@ -1969,9 +1983,9 @@ fn arith<'ctx>(op: ArithOp, l: Sym<'ctx>, r: Sym<'ctx>) -> Sym<'ctx> {
                     ArithOp::Divide => a.udiv(b),
                     ArithOp::Remainder if signed => a.srem(b),
                     ArithOp::Remainder => a.urem(b),
-                    ArithOp::LeftShift => a.shl(b),
-                    ArithOp::RightShift if signed => a.ashr(b),
-                    ArithOp::RightShift => a.lshr(b),
+                    ArithOp::LeftShift => a.shl(shift_amount(b)),
+                    ArithOp::RightShift if signed => a.ashr(shift_amount(b)),
+                    ArithOp::RightShift => a.lshr(shift_amount(b)),
                     ArithOp::BitAnd => a.bitand(b),
                     ArithOp::BitOr => a.bitor(b),
                     ArithOp::BitXor => a.bitxor(b),
