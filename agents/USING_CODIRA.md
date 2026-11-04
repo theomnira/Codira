@@ -114,6 +114,15 @@ public func distance_squared(a: Point, b: Point) -> f64 {
 
 Implicit return — the last expression is the return value; `return x` also works.
 
+Every argument is passed by copy (a class instance is a reference, so the
+callee and the caller share its fields). There are no in-place
+parameters yet: `inout`, `mut` and `out` before a parameter, and the
+mutable reference types `mut T` and `&mut T` anywhere, are rejected ("...
+are not supported yet"). Return the new value instead
+(`func bump(s: S) -> S`), or pass a class instance. `consuming`,
+`borrowing` and `read` are accepted and mean nothing beyond a copy (no
+move checking), and `&T` is accepted as `T`.
+
 A function that never returns declares the result `never` (`Never` in
 `std.builtin.type_aliases`): its body must diverge (`loop {}` without a
 `break`, or a call to another such function), and a call to it can stand
@@ -141,6 +150,21 @@ counter += 1
 ```
 
 `var` replaces `let mut`; there is no standalone `mut` keyword.
+
+A `let` binding cannot be assigned after its declaration: `x = ..`,
+`x += ..`, and assigning to a field of a value struct or an element of a
+tuple held in it (`p.x = ..`) are errors ("cannot assign to `x`: it is
+bound with `let`..."). That includes a `let` declared without an
+initializer: there is no deferred initialization of a `let`, so write
+`var x: T` and assign it. Through a `let` you may still change what the
+binding *refers to* but does not hold: a field of a class instance
+(`c.n = 3`) and an element of an array (`a[0] = 5`). Parameters are
+mutable local copies.
+
+Bindings exist only inside functions. A module-level `let` or `var`
+(`public let LIMIT: i64 = 10;`) is rejected ("module-level `let` is not
+supported yet"): write a function returning the value instead, as
+`std.math.constants` does (`public func LIMIT() -> i64 { 10 }`).
 
 ### Loops and arrays
 
@@ -613,11 +637,11 @@ public func sum_of_squares(n: i32) -> i32 {
     scope {
         let jobs = channel(64)      // bounded; the element type is inferred
         let results = channel(64)
-        let i = 0
+        var i = 0
         while i < n { spawn square(jobs, results); i += 1 }
         i = 0
         while i < n { jobs <- i; i += 1 }
-        let sum = 0
+        var sum = 0
         i = 0
         while i < n { sum += <-results; i += 1 }
         sum
@@ -655,9 +679,9 @@ public func sum_of_squares(n: i32) -> i32 {
 
 ```codira
 func collect(jobs: Channel[i64], results: Channel[i64], quit: Channel[bool]) -> i64 {
-    let total = 0
-    let sent = 0
-    let idle = 0
+    var total = 0
+    var sent = 0
+    var idle = 0
     let x = 7
     select {
         v = <-jobs -> total += v,       // receive, bind the value in this arm
@@ -1171,8 +1195,8 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     rotations, masks and fields on `u64`/`u32`. Exact. `bit_ceil` needs a
     result that fits (`value` at most 2^63).
   - `std.math.constants` (`PI()`, `E()`, `INF()`, `NAN()`, `F64_MAX()`,
-    integer limits...: niladic functions, since there are no module-level
-    constants) and `std.math.fast` (f32 approximations: `fast_sin`/`fast_cos`
+    integer limits...: niladic functions, since module-level
+    `let`s are not supported) and `std.math.fast` (f32 approximations: `fast_sin`/`fast_cos`
     within 7e-5 absolute, `fast_exp` 0.01 % relative, `fast_log` 5.4e-4
     absolute, `fast_sqrt`/`fast_rsqrt` 0.175 % relative; `fast_pow` and
     `fast_tan` have no stated bound).
@@ -1205,9 +1229,10 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `std.math.polynomial`); `std.builtin.traits` (generic traits);
   `std.sys.assert_compare` (`assert_eq` and friends: operators on a type
   parameter); `std.random.random` (a global generator: there is no
-  module-level state); `std.hashlib.hasher` and `std.atomic.atomic` (they
-  update a struct passed as a `mut` parameter, which the compiler accepts
-  but passes by copy, so the caller would see no change).
+  module-level state, and a module-level `var` is rejected);
+  `std.hashlib.hasher` and `std.atomic.atomic` (they update a struct
+  passed as a `mut` parameter, and in-place parameters are rejected; the
+  orderings of `std.atomic.atomic` are module-level `let`s).
 - **Linking**: each imported standard-library module is compiled with the
   program into a library of its own in the program's `target/` directory
   (`target/hash$crypto$std.codiralib`), exactly like the program's own
@@ -2126,9 +2151,10 @@ types").
 Parsed but **not yet lowered** -- the compiler stops with "... is not
 supported by the code generator yet" naming the construct: postfix `^`. Not available at
 all yet: generic enums, generic traits, trait objects (dynamic dispatch),
-`String`, module-level `let` (a top-level `let` is accepted and dropped
-without a diagnostic), in-place parameters (`mut`/`inout` on a parameter
-is accepted and the argument is passed by copy), the standard library's
+`String`, module-level `let` and `var` (rejected with "module-level `let`
+is not supported yet"), in-place parameters (`inout`/`mut`/`out` and
+`mut T`/`&mut T`, rejected with "... are not supported yet"), the
+standard library's
 prelude in programs, and the standard-library modules that are not
 importable (most of `std/`: see "Importing the standard library").
 

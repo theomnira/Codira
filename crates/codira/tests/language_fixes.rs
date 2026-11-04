@@ -7,7 +7,13 @@
 //!   written:
 //!   - functions returning `never`: built and run, locally, as `extern "C"`
 //!     declarations and across modules, on the LLVM backend and on the
-//!     Cranelift `--jit` backend.
+//!     Cranelift `--jit` backend;
+//!   - in-place parameters (`inout`, `mut`, `out`, `mut T`, `&mut T`),
+//!     which compiled to a copy and are rejected;
+//!   - module-level `let` and `var`, which were dropped and are rejected;
+//!   - assignment to a `let` binding, which is rejected, while what a `let`
+//!     refers to but does not hold (a class field, an array element) stays
+//!     assignable.
 
 use std::{
     path::Path,
@@ -171,4 +177,142 @@ public func main() {
         "fell back to LLVM:\n{stderr}"
     );
     assert_eq!(stdout, "5\n");
+}
+
+// ---- in-place parameters -------------------------------------------------
+
+/// `func bump(s: mut S)` used to compile and change only a copy. It is
+/// rejected, as are the `inout`, `mut` and `out` conventions, wherever the
+/// parameter is declared.
+#[test]
+fn in_place_parameters_are_rejected() {
+    for (program, what) in [
+        (
+            "struct S { v: i64 }\nfunc bump(s: mut S) { s.v = s.v + 1 }\npublic func main() {}\n",
+            "mutable references (`mut T`, `&mut T`) are not supported yet",
+        ),
+        (
+            "struct S { v: i64 }\nfunc bump(s: &mut S) {}\npublic func main() {}\n",
+            "mutable references (`mut T`, `&mut T`) are not supported yet",
+        ),
+        (
+            "struct S { v: i64 }\nfunc bump(inout s: S) {}\npublic func main() {}\n",
+            "`inout` parameters are not supported yet",
+        ),
+        (
+            "func set(out x: i64) {}\npublic func main() {}\n",
+            "`out` parameters are not supported yet",
+        ),
+        (
+            "extern \"C\" { func fill(mut x: i64); }\npublic func main() {}\n",
+            "`mut` parameters are not supported yet",
+        ),
+    ] {
+        let (ok, stderr) = check(&[("mod.code", program)]);
+        assert!(!ok, "accepted:\n{program}");
+        assert!(stderr.contains(what), "{program}\n{stderr}");
+    }
+}
+
+/// What a copy implements is still accepted: a mutable receiver is a
+/// mutable local copy, and returning the new value is how to update one.
+#[test]
+fn by_copy_updates_still_work() {
+    let program = r"
+struct S { v: i64 }
+extend S {
+    func bumped(var self) -> S { self.v = self.v + 1; self }
+}
+func bump(s: S) -> S { S { v: s.v + 1 } }
+public func main() {
+    let s = S { v: 1 }
+    let t = bump(s)
+    println(s.v)
+    println(t.v)
+    println(t.bumped().v)
+    println(t.v)
+}
+";
+    let (code, stdout, stderr) = run(&[("mod.code", program)], &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "1\n2\n3\n2\n");
+}
+
+// ---- module-level bindings -----------------------------------------------
+
+/// `public let LIMIT: i64 = 10;` used to be dropped without a word, and a
+/// use of it was an undefined name. The binding itself is rejected now,
+/// and the replacement the message suggests works across modules.
+#[test]
+fn module_level_bindings_are_rejected() {
+    let (ok, stderr) = check(&[(
+        "mod.code",
+        "public let LIMIT: i64 = 10;\npublic func main() {}\n",
+    )]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("module-level `let` is not supported yet: `LIMIT`"),
+        "{stderr}"
+    );
+
+    let (ok, stderr) = check(&[("mod.code", "var COUNT: i64 = 0;\npublic func main() {}\n")]);
+    assert!(!ok);
+    assert!(
+        stderr.contains("module-level `var` is not supported yet"),
+        "{stderr}"
+    );
+
+    let main = "import limits.{LIMIT}\npublic func main() { println(LIMIT() * 2) }\n";
+    let limits = "public func LIMIT() -> i64 { 10 }\n";
+    let (code, stdout, stderr) = run(&[("mod.code", main), ("limits.code", limits)], &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "20\n");
+}
+
+// ---- `let` is immutable -------------------------------------------------
+
+#[test]
+fn assigning_to_a_let_binding_is_rejected() {
+    for (body, name) in [
+        ("let x = 1\n    x = 2", "x"),
+        ("let x = 1\n    x += 2", "x"),
+        ("let p = P { a: 1 }\n    p.a = 2", "p"),
+        ("let x: i64\n    x = 1", "x"),
+    ] {
+        let program = format!("struct P {{ a: i64 }}\npublic func main() {{\n    {body}\n}}\n");
+        let (ok, stderr) = check(&[("mod.code", &program)]);
+        assert!(!ok, "accepted:\n{program}");
+        assert!(
+            stderr.contains(&format!(
+                "cannot assign to `{name}`: it is bound with `let`"
+            )),
+            "{program}\n{stderr}"
+        );
+    }
+}
+
+/// `var`, `let mut`, a class field and an array element reached through a
+/// `let` stay assignable, and run as before.
+#[test]
+fn what_a_let_does_not_hold_stays_assignable() {
+    let program = r"
+class C { n: i64 }
+public func main() {
+    var a = 1
+    a += 1
+    let mut b = 10
+    b = b + 1
+    let c = C { n: 5 }
+    c.n = 6
+    let xs = [1, 2, 3]
+    xs[0] = 7
+    println(a)
+    println(b)
+    println(c.n)
+    println(xs[0])
+}
+";
+    let (code, stdout, stderr) = run(&[("mod.code", program)], &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "2\n11\n6\n7\n");
 }
