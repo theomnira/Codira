@@ -101,6 +101,21 @@ pub struct Args {
     #[clap(long, conflicts_with_all = ["watch", "daemon", "emit_ir"])]
     certify: bool,
 
+    /// Check the machine code of every `oblivious` / `@constant_time`
+    /// function in the built library, and fail the build on a conditional
+    /// or indirect branch, a variable-time instruction (division, square
+    /// root), a call to code the check does not cover, or (x86-64 only) a
+    /// memory access at an address derived from a secret parameter. Names
+    /// the function and the offending instruction. Not a proof of
+    /// constant-time execution; see "Secrets and constant-time code" in
+    /// `agents/USING_CODIRA.md`.
+    #[clap(
+        long,
+        visible_alias = "check-ct",
+        conflicts_with_all = ["watch", "daemon", "emit_ir"]
+    )]
+    check_constant_time: bool,
+
     /// Target for machine code
     #[clap(long, value_parser=parse_target_triple)]
     target: Option<TargetArg>,
@@ -265,6 +280,7 @@ pub fn build(args: Args) -> Result<ExitStatus, anyhow::Error> {
         |driver| {
             driver.set_fuel_instrumentation(args.fuel);
             driver.set_certify(args.certify);
+            driver.set_check_constant_time(args.check_constant_time);
             driver.set_hardware_safety(safety);
         },
     )? {

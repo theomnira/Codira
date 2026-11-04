@@ -164,6 +164,12 @@ pub struct Driver {
     std_source_root: SourceRoot,
     /// Whether the package set includes the standard library.
     std_loaded: bool,
+    /// Whether every library written gets a proof certificate
+    /// ([`Driver::set_certify`]).
+    certify: bool,
+    /// Whether every library written has its constant-time functions'
+    /// machine code checked ([`Driver::set_check_constant_time`]).
+    check_constant_time: bool,
     /// The directory checked by `with_source_directory` is the standard
     /// library itself, whose `root` it already is.
     is_std_itself: bool,
@@ -193,6 +199,8 @@ impl Driver {
             std_files: std::collections::BTreeMap::new(),
             std_source_root: SourceRoot::default(),
             std_loaded: false,
+            certify: false,
+            check_constant_time: false,
             is_std_itself: false,
         }
     }
@@ -410,8 +418,25 @@ impl Driver {
     /// SMT-LIB2 queries (see `codira_certificate`). Functions keep their
     /// symbols in the library so the certificate can name their code.
     pub fn set_certify(&mut self, enabled: bool) {
-        if self.db.keep_function_symbols() != enabled {
-            self.db.set_keep_function_symbols(enabled);
+        self.certify = enabled;
+        self.update_keep_function_symbols();
+    }
+
+    /// Turns the machine-code constant-time check on or off (`codira build
+    /// --check-constant-time`): after a library is linked, the machine code
+    /// of each of its `oblivious` / `@constant_time` functions is
+    /// disassembled and checked (see `codira_ctcheck`), and a function that
+    /// breaks a rule fails the build. Functions keep their symbols in the
+    /// library so their code can be found.
+    pub fn set_check_constant_time(&mut self, enabled: bool) {
+        self.check_constant_time = enabled;
+        self.update_keep_function_symbols();
+    }
+
+    fn update_keep_function_symbols(&mut self) {
+        let keep = self.certify || self.check_constant_time;
+        if self.db.keep_function_symbols() != keep {
+            self.db.set_keep_function_symbols(keep);
         }
     }
 
@@ -1016,10 +1041,33 @@ impl Driver {
         // A certificate describes exactly one build of the library: write
         // this one's, or remove one left by an earlier certified build.
         let certificate = codira_certificate::sidecar_path(&assembly_path);
-        if self.db.keep_function_symbols() {
+        if self.certify {
             crate::certify::write_certificate(&self.db, module_group_id, &assembly_path)?;
         } else if certificate.is_file() {
             std::fs::remove_file(&certificate)?;
+        }
+
+        // The machine code of the constant-time functions, as written.
+        if self.check_constant_time {
+            let (report, notes) =
+                crate::ct_check::check_library(&self.db, module_group_id, &assembly_path)?;
+            for note in &notes {
+                eprintln!("note: machine-code constant-time check: {note}");
+            }
+            if !report.passed() {
+                // Not a library anyone should load.
+                std::fs::remove_file(&assembly_path)?;
+                anyhow::bail!(
+                    "{}",
+                    crate::ct_check::failure_message(&report, &assembly_path)
+                );
+            }
+            let checked = report.functions.iter().filter(|f| f.was_checked()).count();
+            eprintln!(
+                "machine-code constant-time check ({}): {checked} function(s) checked, no rule \
+                 broken",
+                report.arch
+            );
         }
 
         // Store the information so we maybe don't have to write it next time

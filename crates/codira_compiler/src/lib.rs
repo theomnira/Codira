@@ -9,6 +9,7 @@
 #![allow(clippy::enum_variant_names)] // This is a HACK because we use salsa
 
 mod certify;
+mod ct_check;
 mod db;
 pub mod diagnostics;
 mod diagnostics_snippets;
