@@ -14,7 +14,7 @@
 use std::cell::RefCell;
 
 use codira_hir::{diagnostics::DiagnosticSink, HirDatabase};
-use codira_hir_input::{SourceDatabase, WithFixture};
+use codira_hir_input::WithFixture;
 use codira_target::spec::Target;
 use inkwell::{context::Context, OptimizationLevel};
 
