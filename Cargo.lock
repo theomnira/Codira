@@ -1048,6 +1048,7 @@ dependencies = [
  "codira_image",
  "codira_paths",
  "codira_project",
+ "codira_runtime",
  "codira_smt",
  "codira_syntax",
  "codira_target",

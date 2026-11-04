@@ -13,159 +13,159 @@ importable:
   std.memory.region
 
 blocked:
-std.ai.algorithm.functional (16 diagnostics)
-    first: std/ai/tensor/buffer.code:81: undefined value `SIZE_F32`
-std.ai.algorithm.reduction (26 diagnostics)
-    first: std/ai/algorithm/reduction.code:48: undefined value `PAIRWISE_THRESHOLD`
-std.ai.linalg.matmul (36 diagnostics)
-    first: std/ai/linalg/matmul.code:49: access of private type `a.shape`
-std.ai.linalg.vector (29 diagnostics)
-    first: std/ai/linalg/vector.code:40: undefined value `DOT_THRESHOLD`
-std.ai.nn.activation (28 diagnostics)
-    first: std/ai/nn/activation.code:298: access of private type `src.shape`
-std.ai.nn.layer (61 diagnostics)
-    first: std/ai/nn/layer.code:42: access of private type `y.shape`
-std.ai.quantize (27 diagnostics)
-    first: std/ai/quantize.code:74: undefined value `SYMMETRIC_MAX`
-std.ai.runtime (7 diagnostics)
-    first: std/builtin/types.code:81: undefined type `f16`
-std.ai.tensor.buffer (16 diagnostics)
-    first: std/ai/tensor/buffer.code:81: undefined value `SIZE_F32`
-std.ai.tensor.raw (10 diagnostics)
-    first: std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
-std.ai.tensor.shape (1 diagnostic)
-    first: std/ai/tensor/shape.code:95: undefined value `MAX_RANK`
-std.atomic.atomic (1 diagnostic)
-    first: std/atomic/atomic.code:25: undefined type `String`
-std.base64.base64 (77 diagnostics)
-    first: std/base64/base64.code:17: undefined type `Array[u8]`
-std.bit.bit (10 diagnostics)
-    first: std/bit/bit.code:192: mismatched type `width`
-std.bit.mask (20 diagnostics)
-    first: std/bit/mask.code:18: mismatched type `width`
-std.builtin.bool (22 diagnostics)
-    first: std/builtin/bool.code:132: undefined type `String`
-std.builtin.dtype (234 diagnostics)
-    first: std/builtin/dtype.code:51: cannot apply unary operator `self.is_unsigned()`
-std.builtin.error (52 diagnostics)
-    first: std/builtin/error.code:33: undefined type `String`
-std.builtin.int (64 diagnostics)
-    first: std/builtin/int.code:103: undefined value `__panic`
-std.builtin.range (47 diagnostics)
-    first: std/builtin/range.code:87: mismatched type `self.end`
-std.builtin.simd (93 diagnostics)
-    first: std/builtin/simd.code:28: undefined type `__simd_storage[T, N]`
-std.builtin.slice (63 diagnostics)
-    first: std/builtin/slice.code:51: the type `Pointer[T]` mentions the generic parameter `T`, which `from_ref` does not declare: a generic type needs its arguments written out, e.g. `Box[i32]` rather than `Box` `from_ref`
-std.builtin.sort (106 diagnostics)
-    first: std/builtin/sort.code:38: undefined value `__intrinsic_ilog2`
-std.builtin.string_literal (17 diagnostics)
-    first: std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
-std.builtin.swap (46 diagnostics)
-    first: std/builtin/swap.code:34: undefined type `Pointer[T]`
-std.builtin.traits (18 diagnostics)
-    first: std/builtin/traits.code:124: undefined type `Hasher`
-std.builtin.tuple (104 diagnostics)
-    first: std/builtin/tuple.code:77: undefined type `String`
-std.builtin.types (7 diagnostics)
-    first: std/builtin/types.code:81: undefined type `f16`
-std.collections.array (50 diagnostics)
-    first: std/collections/array.code:12: undefined type `FixedBuf[T, N]`
-std.collections.binary_heap (45 diagnostics)
-    first: std/collections/binary_heap.code:11: undefined type `Pointer[T]`
-std.collections.bitset (43 diagnostics)
-    first: std/collections/bitset.code:13: undefined type `Pointer[u64]`
-std.collections.counter (64 diagnostics)
-    first: std/collections/counter.code:11: undefined type `Dict[T, usize]`
-std.collections.deque (26 diagnostics)
-    first: std/collections/deque.code:10: undefined type `Pointer[T]`
-std.collections.dict (116 diagnostics)
-    first: std/collections/dict.code:34: undefined type `Pointer[Entry[K, V]]`
-std.collections.linked_list (134 diagnostics)
-    first: std/collections/linked_list.code:11: undefined type `Pointer[Node[T]]`
-std.collections.list (55 diagnostics)
-    first: std/collections/list.code:10: undefined type `Pointer[T]`
-std.collections.optional (3 diagnostics)
-    first: std/collections/optional.code:85: undefined value `panic`
-std.collections.set (97 diagnostics)
-    first: std/collections/set.code:24: undefined type `Pointer[SetEntry[T]]`
-std.collections.span (31 diagnostics)
-    first: std/collections/span.code:11: undefined type `Pointer[T]`
-std.collections.string (75 diagnostics)
-    first: std/collections/string.code:10: undefined type `Pointer[u8]`
-std.complex.complex (3 diagnostics)
-    first: std/complex/complex.code:187: undefined value `panic`
-std.db.db (7 diagnostics)
-    first: std/builtin/types.code:81: undefined type `f16`
-std.ffi.cstring (47 diagnostics)
-    first: std/ffi/cstring.code:12: undefined type `Array[u8]`
-std.ffi.unsafe_union (27 diagnostics)
-    first: std/ffi/unsafe_union.code:15: undefined type `Array[u8]`
-std.format.format (72 diagnostics)
-    first: std/format/format.code:15: undefined type `String`
-std.format.repr (55 diagnostics)
-    first: std/format/repr.code:15: undefined type `String`
-std.gpu.globals (121 diagnostics)
-    first: std/gpu/globals.code:44: method `is_nvidia_gpu` does not exist `info.is_nvidia_gpu()`
-std.gpu.host_info (61 diagnostics)
-    first: std/gpu/host_info.code:44: undefined type `String`
-std.gpu.id (502 diagnostics)
-    first: std/gpu/id.code:32: undefined type `StringLiteral`
-std.gpu.intrinsics (676 diagnostics)
-    first: std/gpu/intrinsics.code:69: undefined type `StringLiteral`
-std.gpu.profiler (16 diagnostics)
-    first: std/gpu/profiler.code:32: undefined type `String`
-std.gpu.warp (502 diagnostics)
-    first: std/gpu/warp.code:49: mismatched type `{ if info.is_nvidia_gpu() { return intrinsics.llvm_intrinsic...`
-std.hashlib.hash (19 diagnostics)
-    first: std/hashlib/hash.code:19: a trait is not a type: values of a trait type (dynamic dispatch) are not supported; take a generic parameter bounded by the trait instead (`[T: Trait]`) `Hashable`
-std.hashlib.hasher (34 diagnostics)
-    first: std/hashlib/hasher.code:14: undefined type `Array[u8]`
-std.math.constants (4 diagnostics)
-    first: std/math/constants.code:154: undefined value `__intrinsic_inf_f64`
-std.math.fast (4 diagnostics)
-    first: std/math/fast.code:131: undefined value `__intrinsic_nan_f32`
-std.math.math (13 diagnostics)
-    first: std/math/math.code:601: undefined value `panic`
-std.math.polynomial (52 diagnostics)
-    first: std/math/polynomial.code:19: undefined type `List[f64]`
-std.memory.alloc (92 diagnostics)
-    first: std/memory/alloc.code:59: mismatched type `0`
-std.memory.arc_pointer (84 diagnostics)
-    first: std/memory/arc_pointer.code:55: undefined value `__intrinsic_sizeof`
-std.memory.memory (37 diagnostics)
-    first: std/memory/memory.code:31: undefined value `__intrinsic_memcpy`
-std.memory.owned_pointer (63 diagnostics)
-    first: std/memory/owned_pointer.code:86: undefined value `__intrinsic_addr_to_ref`
-std.memory.pointer (44 diagnostics)
-    first: std/memory/pointer.code:140: undefined value `__panic`
-std.memory.unsafe_pointer (51 diagnostics)
-    first: std/memory/unsafe_pointer.code:89: undefined type `Pointer[T]`
-std.os.env (29 diagnostics)
-    first: std/os/env.code:11: undefined type `String`
-std.os.os (47 diagnostics)
-    first: std/os/os.code:12: undefined type `String`
-std.os.path (67 diagnostics)
-    first: std/os/path.code:16: undefined type `String`
-std.os.process (11 diagnostics)
-    first: std/os/process.code:11: undefined type `Never`
-std.pathlib.path (75 diagnostics)
-    first: std/pathlib/path.code:12: undefined type `String`
-std.prelude (1037 diagnostics)
-    first: std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
-std.random.random (83 diagnostics)
-    first: std/random/random.code:33: attempted to access a non-existent field in a struct. `_global_rng.s0`
-std.sys.arg (134 diagnostics)
-    first: std/sys/arg.code:36: undefined value `__intrinsic_argc`
-std.sys.info (40 diagnostics)
-    first: std/sys/info.code:42: undefined type `String`
-std.sys.intrinsics (181 diagnostics)
-    first: std/sys/intrinsics.code:40: undefined trait `StringLiteral` `StringLiteral`
-std.sys.terminate (19 diagnostics)
-    first: std/sys/terminate.code:213: undefined trait `EqualityComparable` `EqualityComparable`
-std.testing.suite (38 diagnostics)
-    first: std/testing/suite.code:11: undefined type `String`
-std.testing.testing (62 diagnostics)
-    first: std/testing/testing.code:11: undefined type `String`
-std.time.time (1 diagnostic)
-    first: std/time/time.code:103: undefined value `panic`
+std.ai.algorithm.functional
+    check (16 diagnostics): std/ai/tensor/buffer.code:81: undefined value `SIZE_F32`
+std.ai.algorithm.reduction
+    check (26 diagnostics): std/ai/algorithm/reduction.code:48: undefined value `PAIRWISE_THRESHOLD`
+std.ai.linalg.matmul
+    check (36 diagnostics): std/ai/linalg/matmul.code:49: access of private type `a.shape`
+std.ai.linalg.vector
+    check (29 diagnostics): std/ai/linalg/vector.code:40: undefined value `DOT_THRESHOLD`
+std.ai.nn.activation
+    check (28 diagnostics): std/ai/nn/activation.code:298: access of private type `src.shape`
+std.ai.nn.layer
+    check (61 diagnostics): std/ai/nn/layer.code:42: access of private type `y.shape`
+std.ai.quantize
+    check (27 diagnostics): std/ai/quantize.code:74: undefined value `SYMMETRIC_MAX`
+std.ai.runtime
+    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
+std.ai.tensor.buffer
+    check (16 diagnostics): std/ai/tensor/buffer.code:81: undefined value `SIZE_F32`
+std.ai.tensor.raw
+    check (10 diagnostics): std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
+std.ai.tensor.shape
+    check (1 diagnostic): std/ai/tensor/shape.code:95: undefined value `MAX_RANK`
+std.atomic.atomic
+    check (1 diagnostic): std/atomic/atomic.code:25: undefined type `String`
+std.base64.base64
+    check (77 diagnostics): std/base64/base64.code:17: undefined type `Array[u8]`
+std.bit.bit
+    check (10 diagnostics): std/bit/bit.code:192: mismatched type `width`
+std.bit.mask
+    check (20 diagnostics): std/bit/mask.code:18: mismatched type `width`
+std.builtin.bool
+    check (22 diagnostics): std/builtin/bool.code:132: undefined type `String`
+std.builtin.dtype
+    check (234 diagnostics): std/builtin/dtype.code:51: cannot apply unary operator `self.is_unsigned()`
+std.builtin.error
+    check (52 diagnostics): std/builtin/error.code:33: undefined type `String`
+std.builtin.int
+    check (64 diagnostics): std/builtin/int.code:103: undefined value `__panic`
+std.builtin.range
+    check (47 diagnostics): std/builtin/range.code:87: mismatched type `self.end`
+std.builtin.simd
+    check (93 diagnostics): std/builtin/simd.code:28: undefined type `__simd_storage[T, N]`
+std.builtin.slice
+    check (63 diagnostics): std/builtin/slice.code:51: the type `Pointer[T]` mentions the generic parameter `T`, which `from_ref` does not declare: a generic type needs its arguments written out, e.g. `Box[i32]` rather than `Box`
+std.builtin.sort
+    check (106 diagnostics): std/builtin/sort.code:38: undefined value `__intrinsic_ilog2`
+std.builtin.string_literal
+    check (17 diagnostics): std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
+std.builtin.swap
+    check (46 diagnostics): std/builtin/swap.code:34: undefined type `Pointer[T]`
+std.builtin.traits
+    check (18 diagnostics): std/builtin/traits.code:124: undefined type `Hasher`
+std.builtin.tuple
+    check (104 diagnostics): std/builtin/tuple.code:77: undefined type `String`
+std.builtin.types
+    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
+std.collections.array
+    check (50 diagnostics): std/collections/array.code:12: undefined type `FixedBuf[T, N]`
+std.collections.binary_heap
+    check (45 diagnostics): std/collections/binary_heap.code:11: undefined type `Pointer[T]`
+std.collections.bitset
+    check (43 diagnostics): std/collections/bitset.code:13: undefined type `Pointer[u64]`
+std.collections.counter
+    check (64 diagnostics): std/collections/counter.code:11: undefined type `Dict[T, usize]`
+std.collections.deque
+    check (26 diagnostics): std/collections/deque.code:10: undefined type `Pointer[T]`
+std.collections.dict
+    check (116 diagnostics): std/collections/dict.code:34: undefined type `Pointer[Entry[K, V]]`
+std.collections.linked_list
+    check (134 diagnostics): std/collections/linked_list.code:11: undefined type `Pointer[Node[T]]`
+std.collections.list
+    check (55 diagnostics): std/collections/list.code:10: undefined type `Pointer[T]`
+std.collections.optional
+    check (3 diagnostics): std/collections/optional.code:85: undefined value `panic`
+std.collections.set
+    check (97 diagnostics): std/collections/set.code:24: undefined type `Pointer[SetEntry[T]]`
+std.collections.span
+    check (31 diagnostics): std/collections/span.code:11: undefined type `Pointer[T]`
+std.collections.string
+    check (75 diagnostics): std/collections/string.code:10: undefined type `Pointer[u8]`
+std.complex.complex
+    check (3 diagnostics): std/complex/complex.code:187: undefined value `panic`
+std.db.db
+    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
+std.ffi.cstring
+    check (47 diagnostics): std/ffi/cstring.code:12: undefined type `Array[u8]`
+std.ffi.unsafe_union
+    check (27 diagnostics): std/ffi/unsafe_union.code:15: undefined type `Array[u8]`
+std.format.format
+    check (72 diagnostics): std/format/format.code:15: undefined type `String`
+std.format.repr
+    check (55 diagnostics): std/format/repr.code:15: undefined type `String`
+std.gpu.globals
+    check (121 diagnostics): std/gpu/globals.code:44: method `is_nvidia_gpu` does not exist `info.is_nvidia_gpu()`
+std.gpu.host_info
+    check (61 diagnostics): std/gpu/host_info.code:44: undefined type `String`
+std.gpu.id
+    check (502 diagnostics): std/gpu/id.code:32: undefined type `StringLiteral`
+std.gpu.intrinsics
+    check (676 diagnostics): std/gpu/intrinsics.code:69: undefined type `StringLiteral`
+std.gpu.profiler
+    check (16 diagnostics): std/gpu/profiler.code:32: undefined type `String`
+std.gpu.warp
+    check (502 diagnostics): std/gpu/warp.code:49: mismatched type `{ if info.is_nvidia_gpu() { return intrinsics.llvm_intrinsic...`
+std.hashlib.hash
+    check (19 diagnostics): std/hashlib/hash.code:19: a trait is not a type: values of a trait type (dynamic dispatch) are not supported; take a generic parameter bounded by the trait instead (`[T: Trait]`) `Hashable`
+std.hashlib.hasher
+    check (34 diagnostics): std/hashlib/hasher.code:14: undefined type `Array[u8]`
+std.math.constants
+    check (4 diagnostics): std/math/constants.code:154: undefined value `__intrinsic_inf_f64`
+std.math.fast
+    check (4 diagnostics): std/math/fast.code:131: undefined value `__intrinsic_nan_f32`
+std.math.math
+    check (13 diagnostics): std/math/math.code:601: undefined value `panic`
+std.math.polynomial
+    check (52 diagnostics): std/math/polynomial.code:19: undefined type `List[f64]`
+std.memory.alloc
+    check (92 diagnostics): std/memory/alloc.code:59: mismatched type `0`
+std.memory.arc_pointer
+    check (84 diagnostics): std/memory/arc_pointer.code:55: undefined value `__intrinsic_sizeof`
+std.memory.memory
+    check (37 diagnostics): std/memory/memory.code:31: undefined value `__intrinsic_memcpy`
+std.memory.owned_pointer
+    check (63 diagnostics): std/memory/owned_pointer.code:86: undefined value `__intrinsic_addr_to_ref`
+std.memory.pointer
+    check (44 diagnostics): std/memory/pointer.code:140: undefined value `__panic`
+std.memory.unsafe_pointer
+    check (51 diagnostics): std/memory/unsafe_pointer.code:89: undefined type `Pointer[T]`
+std.os.env
+    check (29 diagnostics): std/os/env.code:11: undefined type `String`
+std.os.os
+    check (47 diagnostics): std/os/os.code:12: undefined type `String`
+std.os.path
+    check (67 diagnostics): std/os/path.code:16: undefined type `String`
+std.os.process
+    check (11 diagnostics): std/os/process.code:11: undefined type `Never`
+std.pathlib.path
+    check (75 diagnostics): std/pathlib/path.code:12: undefined type `String`
+std.prelude
+    check (1037 diagnostics): std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
+std.random.random
+    check (83 diagnostics): std/random/random.code:33: attempted to access a non-existent field in a struct. `_global_rng.s0`
+std.sys.arg
+    check (134 diagnostics): std/sys/arg.code:36: undefined value `__intrinsic_argc`
+std.sys.info
+    check (40 diagnostics): std/sys/info.code:42: undefined type `String`
+std.sys.intrinsics
+    check (181 diagnostics): std/sys/intrinsics.code:40: undefined trait `StringLiteral`
+std.sys.terminate
+    check (19 diagnostics): std/sys/terminate.code:213: undefined trait `EqualityComparable`
+std.testing.suite
+    check (38 diagnostics): std/testing/suite.code:11: undefined type `String`
+std.testing.testing
+    check (62 diagnostics): std/testing/testing.code:11: undefined type `String`
+std.time.time
+    check (1 diagnostic): std/time/time.code:103: undefined value `panic`

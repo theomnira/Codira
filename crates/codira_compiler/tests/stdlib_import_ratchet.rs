@@ -12,18 +12,36 @@
 //! module with errors.
 //!
 //! This test does, for every `std/**/*.code` file, what a program importing
-//! it does: it checks a one-line program `import std.<module>.*` and records
-//! whether the program checks clean, and if not, the first diagnostic (in
-//! the module itself, or else in the first module it reaches that has one).
-//! A module that is blocked for a reason the compiler cannot express yet
-//! carries that reason in `KNOWN_BLOCKERS`, so the snapshot says why.
+//! it does, with the one-line program `import std.<module>.*`:
+//!
+//! 1. *check*: the program and every standard-library file it reaches have
+//!    no diagnostics;
+//! 2. *build*: the code generator compiles them all into libraries (each
+//!    imported module is compiled whole, whatever the program uses);
+//! 3. *load*: the runtime loads the program's library and the standard
+//!    library's, resolving every symbol they call, `extern "C"` ones
+//!    included.
+//!
+//! A module is importable when all three pass. Otherwise the snapshot shows
+//! the stage that failed and its first error (for a check, in the module
+//! itself, or else in the first module it reaches that has one). A module
+//! blocked by something the compiler cannot express yet carries the reason
+//! in `KNOWN_BLOCKERS`.
+//!
+//! This says a module can be *used*; it says nothing about whether its
+//! functions are right. The end-to-end tests in
+//! `crates/codira/tests/std_imports.rs` run them against known values.
 //!
 //! # Updating
 //!
 //! Review the diff and accept it with `cargo insta accept`. A module going
 //! from importable to blocked is a regression.
 
-use std::path::{Path, PathBuf};
+use std::{
+    panic::AssertUnwindSafe,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use codira_compiler::{Config, Driver, OptimizationLevel, Target};
 
@@ -69,13 +87,23 @@ fn module_of(relative: &str) -> String {
     path.replace('/', ".")
 }
 
-/// What importing one module gives a program.
-struct Outcome {
-    /// Diagnostics over the program and every standard-library file loaded.
-    errors: usize,
-    /// The first diagnostic: `path:line: message`.
-    first: Option<String>,
+/// Where importing a module stopped, and why.
+enum Outcome {
+    Importable,
+    /// `diagnostics` over the program and every standard-library file
+    /// loaded; `first` is `path:line: message`.
+    Check {
+        diagnostics: usize,
+        first: String,
+    },
+    Build(String),
+    Load(String),
 }
+
+/// The message of the last panic, recorded by the hook `main` installs: a
+/// panic in a code-generation thread reaches the caller only as "a scoped
+/// thread panicked".
+static LAST_PANIC: Mutex<Option<String>> = Mutex::new(None);
 
 fn import_outcome(std_dir: &Path, module: &str) -> Outcome {
     let program = tempfile::tempdir().unwrap();
@@ -84,19 +112,21 @@ fn import_outcome(std_dir: &Path, module: &str) -> Outcome {
         format!("import std.{module}.*\n\npublic func main() {{}}\n"),
     )
     .unwrap();
+    let target = program.path().join("target");
+    std::fs::create_dir(&target).unwrap();
 
     let config = Config {
         target: Target::host_target().expect("unable to determine host target"),
         optimization_lvl: OptimizationLevel::None,
         mode: codira_compiler::BuildMode::default(),
-        out_dir: None,
+        out_dir: Some(target.clone()),
         emit_ir: false,
     };
-    let driver = Driver::with_source_directory(program.path(), config)
+    let mut driver = Driver::with_source_directory(program.path(), config)
         .expect("the program and the standard library load");
     let per_file = driver.collect_diagnostics();
 
-    let errors = per_file.iter().map(|f| f.diagnostics.len()).sum();
+    let diagnostics = per_file.iter().map(|f| f.diagnostics.len()).sum();
     let own = format!("std/{}", std_file_path(std_dir, module));
     // The module's own first diagnostic, else the first of any file.
     let first = per_file
@@ -107,7 +137,7 @@ fn import_outcome(std_dir: &Path, module: &str) -> Outcome {
             f.diagnostics.first().map(|d| {
                 let mut first = format!("{}:{}: {}", f.relative_path, d.line, one_line(&d.message));
                 let highlight = one_line(&d.highlight);
-                if !highlight.is_empty() {
+                if !highlight.is_empty() && !first.contains(&format!("`{highlight}`")) {
                     let short: String = highlight.chars().take(60).collect();
                     let ellipsis = if short.len() < highlight.len() {
                         "..."
@@ -119,7 +149,26 @@ fn import_outcome(std_dir: &Path, module: &str) -> Outcome {
                 first
             })
         });
-    Outcome { errors, first }
+    if let Some(first) = first {
+        return Outcome::Check { diagnostics, first };
+    }
+
+    *LAST_PANIC.lock().unwrap() = None;
+    match std::panic::catch_unwind(AssertUnwindSafe(|| driver.write_all_assemblies(false))) {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return Outcome::Build(one_line(&format!("{error:#}"))),
+        Err(_) => {
+            let message = LAST_PANIC.lock().unwrap().take().unwrap_or_default();
+            return Outcome::Build(format!("the code generator panicked: {message}"));
+        }
+    }
+
+    // Safety: the libraries were compiled by this test, from a program whose
+    // `main` is never called; loading runs no Codira code.
+    match unsafe { codira_runtime::Runtime::builder(target.join("mod.codiralib")).finish() } {
+        Ok(_runtime) => Outcome::Importable,
+        Err(error) => Outcome::Load(one_line(&format!("{error:#}"))),
+    }
 }
 
 /// The file of `module` relative to `std_dir`.
@@ -142,9 +191,36 @@ fn stdlib_import_status_is_stable() {
     if !std_dir.is_dir() {
         return;
     }
-    // The standard library of this source tree, whatever the environment
-    // says. This is the only test in this binary, so nothing races on it.
-    std::env::set_var("CODIRA_STD_PATH", &std_dir);
+    // The driver finds the standard library itself, as for a program; it
+    // must be this source tree's.
+    assert_eq!(
+        codira_compiler::std_library_dir()
+            .ok()
+            .and_then(|dir| dir.canonicalize().ok()),
+        std_dir.canonicalize().ok(),
+        "unset {} to run this test against this source tree",
+        codira_compiler::STD_PATH_ENV
+    );
+
+    // Panics are expected (a module the code generator cannot compile);
+    // record the message instead of printing it.
+    std::panic::set_hook(Box::new(|info| {
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(ToString::to_string)
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        let location = info
+            .location()
+            .map(|l| format!(" (in {})", l.file()))
+            .unwrap_or_default();
+        let mut last = LAST_PANIC.lock().unwrap_or_else(|e| e.into_inner());
+        // The first panic is the cause; "a scoped thread panicked" follows.
+        if last.is_none() {
+            *last = Some(format!("{message}{location}"));
+        }
+    }));
 
     let files = std_files(&std_dir);
     assert!(!files.is_empty(), "no std/**/*.code files");
@@ -158,26 +234,28 @@ fn stdlib_import_status_is_stable() {
             .iter()
             .find(|(m, _)| *m == module)
             .map(|(_, r)| *r);
-        match outcome.first {
-            None => {
+        let failure = match outcome {
+            Outcome::Importable => {
                 assert!(
                     reason.is_none(),
                     "std.{module} is importable; remove it from KNOWN_BLOCKERS"
                 );
                 importable.push(format!("std.{module}"));
+                continue;
             }
-            Some(first) => {
-                blocked.push_str(&format!(
-                    "std.{module} ({} diagnostic{})\n    first: {first}\n",
-                    outcome.errors,
-                    if outcome.errors == 1 { "" } else { "s" },
-                ));
-                if let Some(reason) = reason {
-                    blocked.push_str(&format!("    needs: {reason}\n"));
-                }
-            }
+            Outcome::Check { diagnostics, first } => format!(
+                "check ({diagnostics} diagnostic{}): {first}",
+                if diagnostics == 1 { "" } else { "s" }
+            ),
+            Outcome::Build(error) => format!("build: {error}"),
+            Outcome::Load(error) => format!("load: {error}"),
+        };
+        blocked.push_str(&format!("std.{module}\n    {failure}\n"));
+        if let Some(reason) = reason {
+            blocked.push_str(&format!("    needs: {reason}\n"));
         }
     }
+    let _ = std::panic::take_hook();
 
     let summary = format!(
         "{} of {} std modules are importable from a program\n\nimportable:\n{}\n\nblocked:\n{blocked}",

@@ -34,5 +34,7 @@ yansi-term = { workspace = true }
 
 [dev-dependencies]
 codira_image = { path = "../codira_image" }
+# The importability ratchet loads what it builds.
+codira_runtime = { path = "../codira_runtime" }
 tempfile = { workspace = true }
 insta = { workspace = true }
