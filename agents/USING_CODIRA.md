@@ -721,7 +721,10 @@ public func sum_of_squares(n: i32) -> i32 {
   function or `spawn`. It cannot be stored, returned, copied into another
   binding or made the value of a block -- that is what keeps it from
   outliving its scope.
-- Tasks share nothing but channels, so they cannot race on memory.
+- Tasks share nothing but channels, so they cannot race on memory. A task
+  may allocate; a collection on any thread stops it at its next allocation
+  (or finds it parked in a channel operation or join) and scans its stack,
+  so its objects stay alive (see "End-to-end status today").
 - The pool keeps `available_parallelism()` workers running and starts a
   replacement when one blocks on a channel or a nested scope, so blocked
   tasks cannot starve the ones that would unblock them. Mismatched sends and
@@ -2137,13 +2140,61 @@ Runtime (hosts embedding `codira_runtime`):
 
 - The GC heap is a segregated size-class allocator with per-thread bump
   allocation; `Runtime::gc_collect()` collects objects not reachable from
-  host-rooted handles. There are no stack maps: never collect while another
-  thread runs Codira code.
+  host-rooted handles or from a thread running Codira code.
+- Collections stop the world (stack capture for x86-64 and AArch64 on
+  Linux, macOS and Windows; tested on x86-64 Linux only). There are no stack maps, so a collection
+  asks every thread running Codira code to park, scans each parked thread's
+  stack and spilled callee-saved registers conservatively, collects, and
+  resumes them. What is guaranteed:
+  - **No live object is freed**, whichever thread collects and whatever
+    other threads are doing: `gc_collect` from any thread, an allocation at
+    the heap limit on any thread or task, `codira_gc_collect`. The same stop
+    protects `save_heap`/`restore_heap` and the heap migration of a hot
+    reload.
+  - **Which threads count:** a host thread inside `Runtime::invoke`, every
+    `spawn`ed task on the worker pool, and any thread holding
+    `codira_runtime::enter_codira()` (C: between `codira_thread_enter` and
+    `codira_thread_leave`).
+  - **Where threads park:** every GC allocation is a safepoint. A thread
+    waiting in a channel send or receive, a `select`, a scope join or
+    `codira_time_sleep_ns` is already parked and never holds up a
+    collection.
+  - **Hot reload:** `Runtime::update` relinks with the world stopped, and
+    only while no thread is inside Codira code. Otherwise it returns
+    `false` and the next `update` retries, without needing a new file
+    event.
+- What is not guaranteed:
+  - **Latency:** a collection waits for every running thread to reach a
+    safepoint. A loop that neither allocates nor blocks delays it until the
+    loop ends (there are no safepoints at loop back-edges). Calls to the
+    file, database and tensor services are not safepoints; a collection
+    waits for them to return.
+  - **Raw function pointers:** a Codira function called through a
+    `FunctionDefinition`'s `fn_ptr` (or `codira_function_fn_ptr`) without
+    the guard is invisible to the collector, and a reload does not wait for
+    it. Take the guard.
+  - **Host functions called from Codira code** run as part of a running
+    thread. One that waits for something only a collecting thread can
+    release (a lock the collector holds, a join) deadlocks with it; wrap
+    such waits in `codira_runtime::blocking`. The same applies to a host
+    thread that holds the guard.
+  - **Unrooted host handles:** a `StructRef` or `ArrayRef` the host keeps
+    after `invoke` returns is not protected; root it, or hold the guard.
+  - **Scope of a stop:** the registry is per process. A collection in one
+    runtime pauses threads running another runtime's code, and a reload
+    waits until no runtime's code runs.
+  - **Unsupported targets:** where a thread's stack cannot be captured, a
+    collection that would need it is refused (`gc_collect` returns `false`,
+    `GarbageCollector::try_collect` returns `CollectRefused`, and an
+    allocation at the heap limit aborts).
 - `Runtime::builder(lib).heap_limit(bytes)` caps the GC heap. An allocation
-  that would exceed it first collects (scanning the allocating thread's stack
-  conservatively; only while one thread allocates) and retries; if memory is
-  still short the process aborts with a message naming the type and limit.
-  It caps the GC heap only, not raw allocations.
+  that would exceed it first collects, with the world stopped as above, and
+  retries before the other threads resume; if memory is still short the
+  process aborts with a message naming the type and limit. It caps the GC
+  heap only, not raw allocations. Tests:
+  `crates/codira_runtime/tests/gc_threads.rs` (tasks allocating and checking
+  patterned objects under a small cap and under collections from a host
+  thread).
 - The runtime provides raw memory services a program reaches with
   `extern "C"` declarations (wrapped in `std/memory/region.code` and
   `std/memory/page.code`): region arenas with byte quotas and bulk reset
