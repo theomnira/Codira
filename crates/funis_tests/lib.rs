@@ -60,6 +60,7 @@ use std::os::unix::process::CommandExt;
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// A configuration the scripts run in.
+#[derive(Clone)]
 struct Target {
     /// The name its results go under.
     label: String,
@@ -88,6 +89,15 @@ struct Options {
     patterns: Vec<String>,
     timeout: Duration,
     list: bool,
+    /// `--list --format terse`: list the tests one per line, as libtest
+    /// does for cargo-nextest, instead of counting them.
+    terse: bool,
+    /// `--ignored`: list, or run, only the tests that are ignored.
+    ignored: bool,
+    /// `--include-ignored`: run the ignored tests too.
+    include_ignored: bool,
+    /// `--exact`: the patterns are whole test names, as listed.
+    exact: bool,
 }
 
 struct TestJob {
@@ -150,6 +160,9 @@ fn usage() -> ! {
     eprintln!(
         "Usage: cargo test [pattern] [-- [--test-threads N] \
          [--native | --all | --triple TRIPLE] [--cpu CPU] [--timeout SECONDS] [--list]]\n\
+         Test harness protocol (as cargo-nextest uses it): --list --format terse [--ignored] \
+         lists the tests, one `<target>::<script>: test` per line, and `<name> --exact` runs \
+         one of them.\n\
          By default the ELF tests run for every target whose cross compiler and QEMU are \
          installed, and the Mach-O tests for macOS (arm64, and x86_64 under Rosetta) and the \
          arm64 iOS simulator; --all adds the other simulators. --native runs the targets the \
@@ -177,6 +190,10 @@ fn parse_options() -> Options {
     let mut patterns = Vec::new();
     let mut timeout = DEFAULT_TIMEOUT;
     let mut list = false;
+    let mut terse = false;
+    let mut ignored = false;
+    let mut include_ignored = false;
+    let mut exact = false;
 
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -197,7 +214,15 @@ fn parse_options() -> Options {
             "--cpu" => cpu = Some(args.next().unwrap_or_else(|| usage())),
             "--timeout" => timeout = Duration::from_secs(parse_usize(args.next()) as u64),
             "--list" => list = true,
-            "--nocapture" | "--show-output" => {}
+            "--format" => match args.next().as_deref() {
+                Some("terse") => terse = true,
+                _ => usage(),
+            },
+            "--format=terse" => terse = true,
+            "--ignored" => ignored = true,
+            "--include-ignored" => include_ignored = true,
+            "--exact" => exact = true,
+            "--nocapture" | "--show-output" | "-q" | "--quiet" => {}
             "-h" | "--help" => usage(),
             _ if arg.starts_with("-j") && arg.len() > 2 => {
                 jobs = parse_usize(Some(arg[2..].to_owned()))
@@ -219,7 +244,18 @@ fn parse_options() -> Options {
         cpu = var("CPU").map(|s| s.to_string_lossy().into_owned());
     }
 
-    Options { jobs, mode, cpu, patterns, timeout, list }
+    Options {
+        jobs,
+        mode,
+        cpu,
+        patterns,
+        timeout,
+        list,
+        terse,
+        ignored,
+        include_ignored,
+        exact,
+    }
 }
 
 fn matches_target(name: &str, target: &Target) -> bool {
@@ -269,19 +305,32 @@ fn replace_file_link(source: &Path, destination: &Path) -> io::Result<()> {
                 format!("{} is a directory", destination.display()),
             ));
         }
-        Ok(_) => fs::remove_file(destination)?,
+        // Already in place. cargo-nextest runs one process per test, many at
+        // once, and the scripts of the others run the linker by this name:
+        // it must not be taken away under them, even for a moment.
+        #[cfg(unix)]
+        Ok(metadata)
+            if metadata.file_type().is_symlink()
+                && fs::read_link(destination).is_ok_and(|target| target == source) =>
+        {
+            return Ok(());
+        }
+        Ok(_) => {}
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
         Err(err) => return Err(err),
     }
 
+    // Made beside the destination under a name of this process's own, then
+    // renamed over it, which replaces it in one step.
+    let mut temporary = destination.as_os_str().to_owned();
+    temporary.push(format!(".{}.tmp", std::process::id()));
+    let temporary = PathBuf::from(temporary);
+    let _ = fs::remove_file(&temporary);
     #[cfg(unix)]
-    {
-        std::os::unix::fs::symlink(source, destination)
-    }
+    std::os::unix::fs::symlink(source, &temporary)?;
     #[cfg(not(unix))]
-    {
-        fs::copy(source, destination).map(|_| ())
-    }
+    fs::copy(source, &temporary)?;
+    fs::rename(&temporary, destination)
 }
 
 /// Tests run from a directory beside the linker under test and write
@@ -319,6 +368,8 @@ fn make_jobs(
         let result_dir = work_dir.join("out/test/results").join(&target.label);
         if clean {
             clear_results(&result_dir)?;
+        } else {
+            fs::create_dir_all(&result_dir)?;
         }
         for (name, script) in scripts {
             if matches_target(name, &target) {
@@ -515,6 +566,142 @@ fn print_summary(results: &[TestResult]) -> ExitCode {
         println!("pass={} skip={} fail={}", total.pass, total.skip, total.fail);
     }
     if total.fail == 0 { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+}
+
+/// A target as the test harness protocol lists it, for cargo-nextest.
+struct Listed {
+    target: Target,
+    /// Its scripts are one test, `<label>::all`, not one test each: a
+    /// simulator's scripts run on a device booted once for all of them.
+    whole: bool,
+    /// Why its tests cannot run on this machine, if they cannot: they are
+    /// listed as ignored, and running one says why it cannot run.
+    unavailable: Option<String>,
+}
+
+impl Listed {
+    fn available(target: Target) -> Self {
+        Self { target, whole: false, unavailable: None }
+    }
+
+    /// The names of its tests, `<target>::<script>`, each with its script.
+    fn test_names<'a>(
+        &'a self,
+        scripts: &'a [(String, PathBuf)],
+    ) -> impl Iterator<Item = (String, Option<&'a (String, PathBuf)>)> + 'a {
+        let label = &self.target.label;
+        let whole = self.whole.then(|| (format!("{label}::all"), None));
+        let each = scripts
+            .iter()
+            .filter(move |(name, _)| !self.whole && matches_target(name, &self.target))
+            .map(move |script| (format!("{label}::{}", script.0), Some(script)));
+        whole.into_iter().chain(each)
+    }
+}
+
+/// Lists the tests, or with `--ignored` the ignored ones, one
+/// `<name>: test` line each on stdout and nothing else there, as
+/// cargo-nextest reads a test harness's list. As with libtest, the full
+/// list includes the ignored tests.
+fn print_test_list(
+    scripts: &[(String, PathBuf)],
+    listed: &[Listed],
+    ignored_only: bool,
+) -> ExitCode {
+    for entry in listed {
+        if ignored_only && entry.unavailable.is_none() {
+            continue;
+        }
+        for (name, _) in entry.test_names(scripts) {
+            println!("{name}: test");
+        }
+        if ignored_only && let Some(reason) = &entry.unavailable {
+            eprintln!("{}: ignored: {reason}", entry.target.label);
+        }
+    }
+    ExitCode::SUCCESS
+}
+
+/// Runs the tests named exactly, as cargo-nextest runs each test, with
+/// `<name> --exact`. `run_whole` runs the scripts of a target listed as
+/// one test, given its index in `listed`.
+fn run_exact(
+    options: &Options,
+    scripts: &[(String, PathBuf)],
+    work_dir: &Path,
+    listed: &[Listed],
+    mut run_whole: impl FnMut(usize) -> ExitCode,
+) -> ExitCode {
+    let mut status = ExitCode::SUCCESS;
+    for wanted in &options.patterns {
+        let found = listed.iter().enumerate().find_map(|(index, entry)| {
+            entry.test_names(scripts).find(|(name, _)| name == wanted).map(|(_, s)| (index, s))
+        });
+        let Some((index, script)) = found else {
+            eprintln!("funis-tests: no test is named {wanted}");
+            status = ExitCode::FAILURE;
+            continue;
+        };
+        let entry = &listed[index];
+        if let Some(reason) = &entry.unavailable {
+            if options.ignored || options.include_ignored {
+                eprintln!("{wanted}: cannot run on this machine: {reason}");
+                status = ExitCode::FAILURE;
+            } else {
+                println!("{wanted}: ignored: {reason}");
+            }
+            continue;
+        }
+        if options.ignored {
+            // Only the ignored tests were asked for, as with libtest.
+            continue;
+        }
+        let Some(script) = script else {
+            if run_whole(index) != ExitCode::SUCCESS {
+                status = ExitCode::FAILURE;
+            }
+            continue;
+        };
+        let jobs =
+            make_jobs(std::slice::from_ref(script), work_dir, vec![entry.target.clone()], false)
+                .unwrap_or_else(|err| fail(err));
+        for result in run_jobs(work_dir, jobs, options) {
+            match result.outcome {
+                Outcome::Pass => println!("{wanted}: pass"),
+                Outcome::Skip => {
+                    // The script found nothing to test on this machine (a
+                    // tool it needs is missing); its log says so.
+                    let log = fs::read_to_string(&result.log).unwrap_or_default();
+                    let why = log.lines().rev().find(|line| line.trim_end().ends_with("skipped"));
+                    println!("{wanted}: skipped by the script: {}", why.unwrap_or("").trim());
+                }
+                Outcome::Fail | Outcome::Timeout => {
+                    status = ExitCode::FAILURE;
+                    match fs::read_to_string(&result.log) {
+                        Ok(log) => println!("{log}"),
+                        Err(err) => println!("cannot read {}: {err}", result.log.display()),
+                    }
+                }
+            }
+        }
+    }
+    status
+}
+
+/// The harness of a host the scripts cannot run on at all. Its one test,
+/// `name`, is listed as ignored, and says why when it is run.
+pub fn run_unsupported(name: &str, reason: &str) -> ExitCode {
+    let options = parse_options();
+    if options.list && options.terse {
+        println!("{name}: test");
+        return ExitCode::SUCCESS;
+    }
+    if options.ignored || options.include_ignored {
+        eprintln!("{name}: cannot run on this machine: {reason}");
+        return ExitCode::FAILURE;
+    }
+    println!("{name}: ignored: {reason}");
+    ExitCode::SUCCESS
 }
 
 #[cfg(test)]
