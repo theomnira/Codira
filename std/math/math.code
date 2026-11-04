@@ -28,6 +28,10 @@
 // `0.0 / 0.0`) are constant-folded by the optimiser into whatever it likes
 // rather than reliably the value asked for.
 
+// No standard-library module relies on the prelude; each imports what it
+// uses, so that a program (which has no prelude) can import it.
+import root.sys.terminate.{panic};
+
 extern "codira-intrinsic" {
     // Trigonometric, exponential and logarithmic.
     public func __intrinsic_sin_f64(x: f64) -> f64;
@@ -735,57 +739,8 @@ public func inverse_lerp(a: f64, b: f64, value: f64) -> f64 {
     return (value - a) / (b - a);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Iota — generate a sequence of values
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Returns a List of `count` values starting at `start` with a step of 1.
-public func iota(start: i64, count: usize) -> List[i64] {
-    let out = list_with_capacity(count);
-    let i: usize = 0;
-    while i < count {
-        out = push(out, start + (i as i64));
-        i = i + 1;
-    }
-    return out;
-}
-
-/// Returns a List of f64 values from `start` to `end` with `step`.
-public func arange(start: f64, end: f64, step: f64) -> List[f64] {
-    let out = list_new();
-    let v = start;
-    if step > 0.0 {
-        while v < end {
-            out = push(out, v);
-            v = v + step;
-        }
-    } else if step < 0.0 {
-        while v > end {
-            out = push(out, v);
-            v = v + step;
-        }
-    }
-    return out;
-}
-
-/// Returns a List of `count` evenly-spaced f64 values from `start` to `end` (inclusive).
-public func linspace(start: f64, end: f64, count: usize) -> List[f64] {
-    let out = list_with_capacity(count);
-    if count == 0 {
-        return out;
-    }
-    if count == 1 {
-        out = push(out, start);
-        return out;
-    }
-    let step = (end - start) / ((count - 1) as f64);
-    let i: usize = 0;
-    while i < count {
-        out = push(out, start + (i as f64) * step);
-        i = i + 1;
-    }
-    return out;
-}
+// `iota`, `arange` and `linspace`, which return a `List`, are in
+// `std.math.sequence`.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Degrees / Radians conversion

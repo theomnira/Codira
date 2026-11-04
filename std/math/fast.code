@@ -3,6 +3,18 @@
 // These trade precision for speed — useful in graphics, audio, and game loops.
 // Typical error bounds are noted per function.
 
+extern "codira-intrinsic" {
+    // Reinterpretation, which is no instruction at run time.
+    func __intrinsic_bitcast_f32_u32(value: f32) -> u32;
+    func __intrinsic_bitcast_u32_f32(bits: u32) -> f32;
+}
+
+// A quiet NaN, single precision: exponent all ones, top significand bit set
+// (0x7FC00000), as `std.math.math`'s `nan_f32` builds it.
+func quiet_nan_f32() -> f32 {
+    return __intrinsic_bitcast_u32_f32(2143289344);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Fast reciprocal square root (Quake III style)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -128,7 +140,7 @@ public func fast_exp2(x: f32) -> f32 {
 /// Fast approximate ln(x) (f32). Returns NaN for x <= 0.
 public func fast_log(x: f32) -> f32 {
     if x <= 0.0 as f32 {
-        return __intrinsic_nan_f32();
+        return quiet_nan_f32();
     }
     let bits = bitcast_f32_to_u32(x);
     let exponent = ((bits >> 23) & 0xFF) as i32 - 127;
@@ -168,7 +180,7 @@ public func fast_pow(base: f32, exp: f32) -> f32 {
         if base == 0.0 as f32 && exp > 0.0 as f32 {
             return 0.0 as f32;
         }
-        return __intrinsic_nan_f32();
+        return quiet_nan_f32();
     }
     return fast_exp(exp * fast_log(base));
 }

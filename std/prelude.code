@@ -91,6 +91,7 @@ public import root.format.repr.*;
 // ---- Math -------------------------------------------------------------------
 
 public import root.math.math.*;
+public import root.math.sequence.*;
 
 // =============================================================================
 // Not here yet

@@ -1,0 +1,61 @@
+// std/math/sequence.code
+// Sequences of evenly spaced numbers: `iota`, `arange` and `linspace`.
+//
+// Not importable yet: they return a `List`, and `std.collections.list` does
+// not check (its storage is a `Pointer[T]`, which needs the generic pointer
+// type of `std.memory.pointer`). They are kept apart from `std.math.math`
+// so that the rest of it can be imported meanwhile.
+
+import root.collections.list.*;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Iota — generate a sequence of values
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns a List of `count` values starting at `start` with a step of 1.
+public func iota(start: i64, count: usize) -> List[i64] {
+    let out = list_with_capacity(count);
+    let i: usize = 0;
+    while i < count {
+        out = push(out, start + (i as i64));
+        i = i + 1;
+    }
+    return out;
+}
+
+/// Returns a List of f64 values from `start` to `end` with `step`.
+public func arange(start: f64, end: f64, step: f64) -> List[f64] {
+    let out = list_new();
+    let v = start;
+    if step > 0.0 {
+        while v < end {
+            out = push(out, v);
+            v = v + step;
+        }
+    } else if step < 0.0 {
+        while v > end {
+            out = push(out, v);
+            v = v + step;
+        }
+    }
+    return out;
+}
+
+/// Returns a List of `count` evenly-spaced f64 values from `start` to `end` (inclusive).
+public func linspace(start: f64, end: f64, count: usize) -> List[f64] {
+    let out = list_with_capacity(count);
+    if count == 0 {
+        return out;
+    }
+    if count == 1 {
+        out = push(out, start);
+        return out;
+    }
+    let step = (end - start) / ((count - 1) as f64);
+    let i: usize = 0;
+    while i < count {
+        out = push(out, start + (i as f64) * step);
+        i = i + 1;
+    }
+    return out;
+}
