@@ -295,10 +295,11 @@ func main() -> f64 {
   they are always inferred from the arguments and the expected type. A
   parameter nothing determines (`func size[T]() -> i64` called as `size()`)
   is an error at the call.
-- A value of type `T` can be moved, copied, passed, returned and stored.
-  Anything more -- `a + b`, `a < b`, `-a`, `a.len()` -- needs a bound
-  (`where T: ...`), and bounds are not supported yet: it is a type error
-  saying so.
+- A value of type `T` can be moved, copied, passed, returned and stored,
+  and the methods of its bounds called (see "Traits and bounds" below).
+  Operators -- `a + b`, `a < b`, `-a` -- are not resolved through traits:
+  on a `T` they are a type error saying so; declare the operation as a
+  trait method and call that.
 - A generic type needs its arguments outside its own declaration: `b: Box`
   is an error, write `b: Box[i32]`.
 - Generics cross modules as source: a module calling another module's
@@ -312,6 +313,94 @@ func main() -> f64 {
   inside `f[T]`) has no finite set of instances and is reported.
 - The Cranelift backend (`codira run --jit`) does not compile generic
   functions; a program using them runs on LLVM.
+
+#### Traits and bounds
+
+A `trait` declares methods; a type implements it in an `extend` block that
+names it; a generic parameter bounded by it can call those methods. Every
+call is resolved at compile time, per instantiation (static dispatch, no
+vtables): `total(r)` for a `Rect` calls `Rect`'s `area` directly.
+
+```codira
+trait Shape {
+    func area(self) -> i64;                          // required
+    func describe(self) -> i64 { self.area() * 10 }  // default body
+}
+trait Named: Shape {                                 // supertrait
+    func id(self) -> i64;
+}
+trait Make {
+    func make() -> Self;                             // no `self`: associated
+}
+
+struct Rect { w: i64, h: i64 }
+struct Box[T] { v: T }
+
+extend Rect: Shape {                                 // the implementation
+    func area(self) -> i64 { self.w * self.h }       // `describe`: default
+}
+extend Rect: Named { func id(self) -> i64 { 7 } }
+extend Rect: Make { func make() -> Rect { Rect { w: 2, h: 5 } } }
+extend i64: Shape { func area(self) -> i64 { self * self } }
+extend Box[T: Shape]: Shape {                        // Box[T] is a Shape
+    func area(self) -> i64 { self.v.area() + 1 }     // when T is
+}
+
+func total[T: Shape](x: T) -> i64 { x.area() + x.describe() }
+func both[T](x: T) -> i64 where T: Named { x.id() + x.area() }
+func fresh[T: Shape + Make](x: T) -> i64 { T.make().area() + x.area() }
+```
+
+- Bounds: `[T: A + B]`, `where T: A + B` (only on the function's own
+  parameters), and on an `extend` block's parameters, `extend Box[T: A]`,
+  which hold in all its methods (with or without a trait after the `:`).
+  A bound gives `T` its traits' methods and their supertraits' methods;
+  `T.make()` calls an associated function of a bound. A method name two
+  bounds both declare is an error at the call.
+- At every call of a bounded function, the type each parameter stands for
+  must implement its bounds: ``the type `Circle` does not implement the
+  trait `Shape`, which `total` requires of its parameter `T` ``. An
+  integer literal is `i32` unless something says otherwise, so with only
+  `extend i64: Shape`, `total(5)` is that error; write `let n: i64 = 5`.
+- Implementations are checked: every method without a default present,
+  each method's signature equal to the trait's with `Self` read as the
+  extended type, no other methods in the block, every supertrait
+  implemented, and at most one implementation of a trait per type (two
+  generic implementations whose types can overlap, `Box[T]` and
+  `Box[i64]`, count as two).
+- What can implement a trait: structs, classes, enums, generic structs
+  and classes (`extend Box[T: Shape]: Shape`), and the integer and float
+  types, `bool` and `str`. A struct, class or enum is extended in its own
+  package (as for any `extend`); a primitive type only in the package that
+  declares the trait. A trait method is called like any method on a
+  concrete type, `r.area()`, including a default one it does not override,
+  `r.describe()`; methods of a trait implementation are visible wherever
+  the type is.
+- A trait and its methods cross modules like other items: `import
+  shapes.{Shape, total}`; the program implementing `Shape` and calling
+  `total` instantiates it.
+- `@noalloc`, `@nopanic`, `@noblock`, `@realtime`: the analysis runs once
+  per generic body, before an implementation is chosen, so a trait method
+  called on a type parameter -- including inside a default body, which is
+  written in terms of `Self` -- is treated as having every effect. A
+  promise-keeping function must call the implementation directly
+  (`r.area()`), not through a bound. The verifier likewise knows nothing
+  about the result of a call through a bound.
+- Not supported, each a clear error: generic traits (`trait Iterable[E]`)
+  and so a bound with arguments (`T: Iterable[i64]`); generic methods in a
+  trait; `requires`/`ensures` on a trait method (put them on the
+  implementations); a `where` clause on a trait; bounds on a struct's own
+  parameters (`struct Box[T: Shape]`: bound the `extend` instead); a trait
+  named on a declaration (`struct P: Shape`: write `extend P: Shape`); a
+  trait used as a type (`x: Shape`: there are no trait objects or dynamic
+  dispatch); operators on a type parameter. There are no associated types
+  or constants, no blanket implementations (`extend T: Shape`), no
+  negative or specialised implementations, and one type cannot implement
+  two traits that declare a method of the same name (a type's methods
+  share one namespace). Generic enums do not exist, so `Option[T]`-style
+  traits cannot be written yet.
+- `codira run --jit` (Cranelift) does not compile method calls or generic
+  functions: it says so, and the program runs on LLVM.
 
 ### Optional types
 
@@ -1718,8 +1807,14 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   enums in fields, arrays, parameters and results, across modules and hot
   reload (see "Enums & pattern matching" for the limits)
 - generic functions, structs and classes, monomorphised per instantiation
-  (see "Generics" above for the limits: no bounds, so a `T` can only be
-  moved and stored; generic functions are not exported to the host)
+  (see "Generics" above for the limits; generic functions are not exported
+  to the host)
+- traits with static dispatch: `trait` declarations with required and
+  default methods and supertraits, `extend Type: Trait` for structs,
+  classes, enums, generic structs and primitive types, bounds
+  (`[T: A + B]`, `where`, `extend Box[T: A]`), trait-method calls resolved
+  per instantiation (see "Traits and bounds" for the limits: no generic
+  traits, associated types, trait objects or operators on a `T`)
 - imports and visibility (`public`/`internal`/`private`)
 - algebraic effects and structured concurrency (see below)
 - function values: named functions as values, closures with by-value
@@ -1834,8 +1929,8 @@ types").
 
 Parsed but **not yet lowered** -- the compiler stops with "... is not
 supported by the code generator yet" naming the construct: postfix `^`. Not available at
-all yet: generic enums, `trait` (and so generic bounds), `String`, and using the
-standard library from a program.
+all yet: generic enums, generic traits, trait objects (dynamic dispatch),
+`String`, and using the standard library from a program.
 
 ---
 
