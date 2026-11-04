@@ -44,7 +44,17 @@
 // Associated/instance-call syntax (`opt.unwrap()`) is not confirmed to
 // resolve for free functions outside `extend` either, so callers should use
 // ordinary call syntax, e.g. `unwrap(my_optional)`.
+//
+// The language now has optional types of its own (`T?`, `nil`, `if let`),
+// which are what new code should use; this module is the library spelling.
+// `unwrap` and `expect` call `panic`, and `std.sys.terminate` cannot be
+// built until the code generator compiles functions returning `Never`, so
+// until then this module checks when imported but does not build.
 // =============================================================================
+
+// No standard-library module relies on the prelude; each imports what it
+// uses, so that a program (which has no prelude) can import it.
+import root.sys.terminate.{panic};
 
 public struct Optional[T] {
     value: T,
@@ -97,7 +107,7 @@ public func unwrap_or[T](opt: Optional[T], default: T) -> T {
 }
 
 // Returns the contained value. Panics with a custom message if None.
-public func expect[T](opt: Optional[T], msg: String) -> T {
+public func expect[T](opt: Optional[T], msg: str) -> T {
     if !opt.has_value {
         panic(msg)
     }
