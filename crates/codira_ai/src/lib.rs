@@ -15,6 +15,7 @@
 //! | [`tensor`] | strided N-d tensors, views, broadcasting, reductions, blocked matmul |
 //! | [`autograd`] | tape-based reverse mode, custom gradients, gradient checking, dual numbers |
 //! | [`nn`] | parameters, initialisers, Linear, Embedding, LayerNorm, MLP, attention, losses |
+//! | [`optim`] | SGD with momentum, Adam, AdamW, cosine schedule with warmup, gradient clipping |
 //!
 //! # Status
 //!
@@ -26,6 +27,7 @@ pub mod autograd;
 pub mod error;
 pub mod float;
 pub mod nn;
+pub mod optim;
 pub mod rng;
 pub mod tensor;
 
