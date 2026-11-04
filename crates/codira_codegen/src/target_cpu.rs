@@ -98,8 +98,17 @@ pub fn resolve_target_cpu(target: &Target, cpu: &str) -> Result<Target, TargetCp
         let name = TargetMachine::get_host_cpu_name().to_string();
         // Validate the host's own name too: an LLVM older than the CPU
         // reports a name its tables may not have.
-        cpu_features(&triple, &name)?;
-        let features = TargetMachine::get_host_cpu_features().to_string();
+        let table_features = cpu_features(&triple, &name)?;
+        // LLVM reads the host's features where the OS says what they are
+        // (x86's CPUID, Linux's /proc/cpuinfo). On macOS AArch64 it reports
+        // none, and the CPU's name (apple-m1, ...) is all there is to go by,
+        // so its features are the ones LLVM's table gives that CPU.
+        let host_features = TargetMachine::get_host_cpu_features().to_string();
+        let features = if host_features.is_empty() {
+            table_features
+        } else {
+            host_features
+        };
         (name, features)
     } else {
         let features = cpu_features(&triple, cpu)?;

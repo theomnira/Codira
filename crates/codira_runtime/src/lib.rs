@@ -61,7 +61,7 @@ pub use codira_memory::{Field, FieldData, HasStaticType, PointerType, StructType
 use codira_project::LOCKFILE_NAME;
 use dispatch_table::DispatchTable;
 use garbage_collector::GarbageCollector;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use notify::{
     event::{ModifyKind, RenameMode},
     Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
@@ -915,12 +915,16 @@ fn drain_watcher_events(
                                 renamed_files.insert(tracker, path);
                             }
                             // Without a tracker the two halves of a rename
-                            // cannot be matched up.
+                            // cannot be matched up. macOS's FSEvents reports
+                            // every rename so, as `RenameMode::Any` for each
+                            // path, the compiler's rename of a new library
+                            // onto its path included. The path exists (it was
+                            // just canonicalized), so whatever was renamed
+                            // onto it, the file there has new contents, as in
+                            // the `To` case. The other half, the temporary
+                            // file, is gone or skipped above.
                             (None, _, None) => {
-                                warn!(
-                                    "Ignoring a rename event without a tracker for {}",
-                                    path.to_string_lossy()
-                                );
+                                assemblies_to_relink.insert(path.clone(), path);
                             }
                         }
                     }
