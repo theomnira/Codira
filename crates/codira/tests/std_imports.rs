@@ -12,11 +12,12 @@
 //!   one writes and reads back a file through `std.fs.fs`; one uses
 //!   `std.memory.region`, whose functions take and return a value struct.
 //! - Programs import `std.bit`, `std.math.constants`, `std.math.fast`,
-//!   `std.hashlib.hash` and `std.base64.base64` and check what they print
-//!   against values computed independently: bit operations exactly, the
-//!   constants as the IEEE 754 values Rust has, the fast approximations
+//!   `std.hashlib.hash`, `std.base64.base64` and `std.random.rng` and check
+//!   what they print against values computed independently: bit operations
+//!   exactly, the constants as the IEEE 754 values Rust has, the fast approximations
 //!   against Rust's libm within the error each states, FNV-1a and the
-//!   base16/32/64 encodings against the published test vectors.
+//!   base16/32/64 encodings against the published test vectors, the
+//!   generator against a reference xoshiro256**.
 //! - `std.math.math`, `std.time.time`, `std.complex.complex` and
 //!   `std.sys.terminate` check when imported but cannot be built yet (the
 //!   code generator panics on a function returning `Never`, which `panic`
@@ -757,6 +758,90 @@ public func main() {{
         &out[7 * 6..],
         ["true", "true", "true", "0", "0", "0", "true", "344", "16"]
     );
+}
+
+/// `std.random.rng` against a reference xoshiro256** seeded by SplitMix64,
+/// written here from the published algorithms. (Not cryptographic, and not
+/// tested as if it were: only that it is that generator.)
+#[test]
+fn std_random_rng_is_xoshiro256_starstar() {
+    let program = r#"
+import std.random.rng.{rng_seeded, rng_next_u64, rng_next_f64, rng_range_i64, rng_next_bool}
+
+public func main() {
+    let r = rng_seeded(0)
+    var i = 0
+    while i < 5 { println(rng_next_u64(r)); i += 1 }
+    let q = rng_seeded(0xDEADBEEF)
+    println(rng_next_u64(q))
+    println(rng_next_f64(q))
+    var lo: i64 = 100
+    var hi: i64 = -100
+    var sum: i64 = 0
+    i = 0
+    while i < 20000 {
+        let v = rng_range_i64(q, -3, 3)
+        if v < lo { lo = v }
+        if v > hi { hi = v }
+        sum += v
+        i += 1
+    }
+    println(lo)
+    println(hi)
+    println(sum)
+    println(rng_range_i64(q, 5, 5))
+    println(rng_next_bool(q) || true)
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    let out = lines(&stdout);
+
+    struct Xoshiro([u64; 4]);
+    impl Xoshiro {
+        fn seeded(seed: u64) -> Self {
+            let mut x = seed;
+            let mut next = || {
+                x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+                let mut z = x;
+                z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+                z ^ (z >> 31)
+            };
+            Xoshiro([next(), next(), next(), next()])
+        }
+        fn next(&mut self) -> u64 {
+            let s = &mut self.0;
+            let result = s[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
+            let t = s[1] << 17;
+            s[2] ^= s[0];
+            s[3] ^= s[1];
+            s[1] ^= s[2];
+            s[0] ^= s[3];
+            s[2] ^= t;
+            s[3] = s[3].rotate_left(45);
+            result
+        }
+        fn range(&mut self, low: i64, high: i64) -> i64 {
+            let span = (high as u64).wrapping_sub(low as u64).wrapping_add(1);
+            let limit = u64::MAX - (u64::MAX % span);
+            loop {
+                let x = self.next();
+                if x < limit {
+                    return (low as u64).wrapping_add(x % span) as i64;
+                }
+            }
+        }
+    }
+
+    let mut r = Xoshiro::seeded(0);
+    let want: Vec<String> = (0..5).map(|_| r.next().to_string()).collect();
+    assert_eq!(&out[..5], want);
+    let mut q = Xoshiro::seeded(0xDEAD_BEEF);
+    assert_eq!(out[5], q.next().to_string());
+    let f = (q.next() >> 11) as f64 / 9_007_199_254_740_992.0;
+    assert_eq!(out[6].parse::<f64>().unwrap(), f);
+    let sum: i64 = (0..20000).map(|_| q.range(-3, 3)).sum();
+    assert_eq!(&out[7..], ["-3", "3", &sum.to_string(), "5", "true"]);
 }
 
 // The tests below are ignored: each of these modules calls `panic`, which

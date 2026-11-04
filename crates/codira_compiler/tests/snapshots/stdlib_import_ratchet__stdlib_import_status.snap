@@ -3,7 +3,7 @@ source: crates/codira_compiler/tests/stdlib_import_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-11 of 88 std modules are importable from a program
+12 of 89 std modules are importable from a program
 
 importable:
   std.base64.base64
@@ -17,6 +17,7 @@ importable:
   std.math.fast
   std.memory.page
   std.memory.region
+  std.random.rng
 
 blocked:
 std.ai.algorithm.functional
@@ -181,7 +182,7 @@ std.pathlib.path
 std.prelude
     check (1019 diagnostics): std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
 std.random.random
-    check (83 diagnostics): std/random/random.code:33: attempted to access a non-existent field in a struct. `_global_rng.s0`
+    check (83 diagnostics): std/random/random.code:41: attempted to access a non-existent field in a struct. `_global_rng.s0`
     needs: module-level mutable state (its generator is a global); and the growable `Array`
 std.sys.arg
     check (134 diagnostics): std/sys/arg.code:36: undefined value `__intrinsic_argc`

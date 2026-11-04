@@ -1,0 +1,96 @@
+// std/random/rng.code
+// A seeded pseudo-random generator with explicit state: xoshiro256**
+// (Blackman and Vigna), its state filled from a 64-bit seed by SplitMix64.
+//
+// NOT CRYPTOGRAPHIC. The output is predictable from a few values of it, and
+// the seed is whatever the caller passes: never use it for keys, tokens,
+// nonces, passwords or anything an adversary must not guess. It is for
+// simulations, tests, sampling and games, where the same seed giving the
+// same sequence on every platform is the point.
+//
+// `std.random.random` has the same xoshiro256** step behind module-level
+// functions (`random_ui64()`, `randint(..)`) and a global state seeded from
+// the system; it is not importable yet, because the language has no
+// module-level state. (Its `seed` chains SplitMix64's mixing function
+// through its own outputs instead of stepping SplitMix64, so the same seed
+// gives a different sequence there.) Here the state is a `Rng` the caller holds (a class,
+// so the functions advance it in place). There is no seeding from system
+// entropy here: the caller chooses the seed.
+
+public class Rng {
+    var s0: u64,
+    var s1: u64,
+    var s2: u64,
+    var s3: u64,
+}
+
+// One SplitMix64 output for the state `x` (the state then advances by the
+// golden-ratio increment).
+func splitmix64_mix(x: u64) -> u64 {
+    var z = x;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EB;
+    return z ^ (z >> 31);
+}
+
+// A generator whose state is the first four SplitMix64 outputs from `seed`,
+// the seeding the xoshiro authors recommend. Every seed, 0 included, gives
+// a state that is not all zeros.
+public func rng_seeded(seed: u64) -> Rng {
+    let g: u64 = 0x9E3779B97F4A7C15;
+    return Rng {
+        s0: splitmix64_mix(seed + g),
+        s1: splitmix64_mix(seed + 2 * g),
+        s2: splitmix64_mix(seed + 3 * g),
+        s3: splitmix64_mix(seed + 4 * g),
+    };
+}
+
+func rotl(x: u64, k: u64) -> u64 {
+    return (x << k) | (x >> (64 - k));
+}
+
+// The next 64 bits (one xoshiro256** step), uniformly distributed.
+public func rng_next_u64(r: Rng) -> u64 {
+    let result = rotl(r.s1 * 5, 7) * 9;
+    let t = r.s1 << 17;
+    r.s2 = r.s2 ^ r.s0;
+    r.s3 = r.s3 ^ r.s1;
+    r.s1 = r.s1 ^ r.s2;
+    r.s0 = r.s0 ^ r.s3;
+    r.s2 = r.s2 ^ t;
+    r.s3 = rotl(r.s3, 45);
+    return result;
+}
+
+// A uniformly distributed f64 in [0, 1): the top 53 bits, scaled.
+public func rng_next_f64(r: Rng) -> f64 {
+    let bits = rng_next_u64(r) >> 11;
+    return (bits as f64) * (1.0 / 9007199254740992.0);
+}
+
+// A uniformly distributed integer in [low, high], both included, by
+// rejection sampling (no modulo bias). `low` when `low >= high`.
+public func rng_range_i64(r: Rng, low: i64, high: i64) -> i64 {
+    if low >= high {
+        return low;
+    }
+    // The count of values, modulo 2^64: 0 means all 2^64 of them.
+    let span = ((high as u64) - (low as u64)) + 1;
+    if span == 0 {
+        return rng_next_u64(r) as i64;
+    }
+    // The largest multiple of `span` that fits; draws at or above it are
+    // rejected so every residue is equally likely.
+    let limit = 0xFFFFFFFFFFFFFFFF - (0xFFFFFFFFFFFFFFFF % span);
+    var x = rng_next_u64(r);
+    while x >= limit {
+        x = rng_next_u64(r);
+    }
+    return ((low as u64) + (x % span)) as i64;
+}
+
+// true with probability 1/2.
+public func rng_next_bool(r: Rng) -> bool {
+    return (rng_next_u64(r) >> 63) == 1;
+}

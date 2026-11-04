@@ -1,8 +1,16 @@
 // std/random/random.code
 // Pseudo-random number generation for Codira.
-// Implements a xoshiro256** generator with a SplitMix64 seeder.
-// Not cryptographically secure; suitable for simulations, games, and general
-// purpose randomness.
+// Implements a xoshiro256** generator with a SplitMix64-style seeder (`seed`
+// chains SplitMix64's mixing function through its own outputs rather than
+// stepping SplitMix64's state).
+// NOT CRYPTOGRAPHIC: predictable from its output; never for keys, tokens,
+// nonces or passwords. Suitable for simulations, games, and general purpose
+// randomness.
+//
+// Not importable yet: its generator state is a module-level global, which
+// the language does not have, and it is written against the growable
+// `Array`. `std.random.rng` is the same generator with the state held by
+// the caller, and is importable.
 
 // ---------------------------------------------------------------------------
 // RngState
