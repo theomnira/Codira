@@ -132,7 +132,9 @@ pub fn link_mode() -> LinkMode {
 }
 
 /// How LLD is run when it is run: the requested mode, except that `Direct`
-/// leaves the choice between in-process and spawned to the build.
+/// leaves the choice between in-process and spawned to the build. Only the
+/// in-process path (Windows) asks.
+#[cfg(all(feature = "in-process-lld", windows))]
 fn lld_mode() -> LinkMode {
     match link_mode() {
         LinkMode::Direct => default_lld_mode(),

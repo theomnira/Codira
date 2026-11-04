@@ -637,6 +637,7 @@ fn resolve_native_symbol(name: &str) -> Option<*const c_void> {
         let this = libloading::os::unix::Library::this();
         // SAFETY: as above -- a lookup neither executes nor takes ownership.
         let symbol = unsafe { this.get::<*const c_void>(name.as_bytes()) }.ok()?;
-        Some(unsafe { *symbol })
+        // Copying the address out of the symbol reads nothing behind it.
+        Some(*symbol)
     }
 }
