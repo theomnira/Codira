@@ -1252,6 +1252,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "codira_mcode"
+version = "0.6.0-dev"
+dependencies = [
+ "codira_smt",
+]
+
+[[package]]
 name = "codira_memory"
 version = "0.6.0-dev"
 dependencies = [
@@ -1374,6 +1381,14 @@ name = "codira_smt"
 version = "0.6.0-dev"
 dependencies = [
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "codira_superopt"
+version = "0.6.0-dev"
+dependencies = [
+ "codira_mcode",
+ "codira_smt",
 ]
 
 [[package]]
