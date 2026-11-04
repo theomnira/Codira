@@ -307,3 +307,70 @@ impl ast::TypeAliasDef {
         TextRange::new(start, end)
     }
 }
+
+impl ast::GenericParam {
+    /// Every bound of the parameter, in order: `A` and `B` of `T: A + B`.
+    ///
+    /// `bound()` only returns the first; a `+`-separated list is a sequence
+    /// of sibling `TYPE_REF`s.
+    pub fn bounds(&self) -> impl Iterator<Item = ast::TypeRef> {
+        self.syntax().children().filter_map(ast::TypeRef::cast)
+    }
+}
+
+impl ast::WherePred {
+    /// The constrained type: `T` of `where T: A + B`.
+    pub fn subject(&self) -> Option<ast::TypeRef> {
+        self.syntax().children().find_map(ast::TypeRef::cast)
+    }
+
+    /// The bounds of the predicate: `A` and `B` of `where T: A + B`.
+    ///
+    /// The generated `bound()` returns the first `TYPE_REF` child, which is
+    /// the subject, not a bound.
+    pub fn bounds(&self) -> impl Iterator<Item = ast::TypeRef> {
+        self.syntax()
+            .children()
+            .filter_map(ast::TypeRef::cast)
+            .skip(1)
+    }
+}
+
+impl ast::GenericArgList {
+    /// The arguments, each with the bounds written after it.
+    ///
+    /// In `extend Box[T: Show + Eq, U]` the argument list holds the type
+    /// references `T`, `Show`, `Eq` and `U` as siblings, separated by `:`,
+    /// `+` and `,` tokens. The generated `generic_args()` returns all four;
+    /// this tells the arguments (`T`, `U`) from their bounds (`Show`, `Eq`
+    /// for `T`, none for `U`).
+    pub fn args_with_bounds(&self) -> Vec<(ast::TypeRef, Vec<ast::TypeRef>)> {
+        let mut args: Vec<(ast::TypeRef, Vec<ast::TypeRef>)> = Vec::new();
+        let mut in_bounds = false;
+        for child in self.syntax().children_with_tokens() {
+            match child {
+                NodeOrToken::Token(token) => match token.kind() {
+                    T![:] => in_bounds = true,
+                    T![,] => in_bounds = false,
+                    _ => {}
+                },
+                NodeOrToken::Node(node) => {
+                    let Some(type_ref) = ast::TypeRef::cast(node) else {
+                        continue;
+                    };
+                    match args.last_mut() {
+                        Some((_, bounds)) if in_bounds => bounds.push(type_ref),
+                        _ => args.push((type_ref, Vec::new())),
+                    }
+                }
+            }
+        }
+        args
+    }
+
+    /// The arguments without their bounds: `T` and `U` of
+    /// `Box[T: Show, U]`. See [`ast::GenericArgList::args_with_bounds`].
+    pub fn args(&self) -> impl Iterator<Item = ast::TypeRef> {
+        self.args_with_bounds().into_iter().map(|(arg, _)| arg)
+    }
+}

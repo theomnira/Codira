@@ -43,9 +43,9 @@ fn generic_param(p: &mut Parser<'_>) {
 ///
 /// A single bound was already accepted; the `+` form is what
 /// `std/sys/terminate.code` writes and is the ordinary way to require more
-/// than one conformance. Bounds are parsed but not yet checked -- nothing
-/// resolves a conformance -- so this makes the signature readable rather
-/// than enforced.
+/// than one conformance. Each bound is its own `TYPE_REF` child of the
+/// enclosing node; `codira_hir` resolves each to a trait (see
+/// `codira_hir::traits`).
 fn bound_list(p: &mut Parser<'_>) {
     types::type_(p);
     while p.eat(T![+]) {
@@ -104,7 +104,10 @@ fn generic_arg(p: &mut Parser<'_>) {
     }
 }
 
-/// Parses an optional `where` clause: `where T: Comparable, U: Show`.
+/// Parses an optional `where` clause: `where T: Comparable, U: Show + Eq`.
+///
+/// A predicate takes the same `+`-separated bound list as a parameter in
+/// `[T: A + B]`, so the two spellings of a bound accept the same bounds.
 pub(super) fn opt_where_clause(p: &mut Parser<'_>) {
     if !p.at(T![where]) {
         return;
@@ -115,7 +118,7 @@ pub(super) fn opt_where_clause(p: &mut Parser<'_>) {
         let pred = p.start();
         types::type_(p);
         if p.eat(T![:]) {
-            types::type_(p);
+            bound_list(p);
         }
         pred.complete(p, WHERE_PRED);
         if !p.eat(T![,]) {
