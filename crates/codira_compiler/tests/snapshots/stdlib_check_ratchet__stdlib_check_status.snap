@@ -3,8 +3,8 @@ source: crates/codira_compiler/tests/stdlib_check_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-12 of 83 std files check clean
-0 syntax, 2648 semantic
+21 of 88 std files check clean
+0 syntax, 2595 semantic
 
    0 syntax     0 semantic  ai/algorithm/functional.code
    0 syntax    10 semantic  ai/algorithm/reduction.code
@@ -18,9 +18,10 @@ snapshot_kind: text
    0 syntax    10 semantic  ai/tensor/raw.code
    0 syntax     1 semantic  ai/tensor/shape.code
    0 syntax     7 semantic  atomic/atomic.code
-   0 syntax    72 semantic  base64/base64.code
-   0 syntax    10 semantic  bit/bit.code
-   0 syntax    20 semantic  bit/mask.code
+   0 syntax     0 semantic  base64/base64.code
+   0 syntax    72 semantic  base64/base64_string.code
+   0 syntax     0 semantic  bit/bit.code
+   0 syntax     0 semantic  bit/mask.code
    0 syntax     8 semantic  builtin/bool.code
    0 syntax   262 semantic  builtin/dtype.code
    0 syntax    23 semantic  builtin/error.code
@@ -47,7 +48,8 @@ snapshot_kind: text
    0 syntax    91 semantic  collections/set.code
    0 syntax    17 semantic  collections/span.code
    0 syntax    55 semantic  collections/string.code
-   0 syntax     3 semantic  complex/complex.code
+   0 syntax     0 semantic  complex/complex.code
+   0 syntax     3 semantic  complex/complex_string.code
    0 syntax     0 semantic  crypto/hash.code
    0 syntax     0 semantic  db/db.code
    0 syntax    44 semantic  ffi/cstring.code
@@ -61,12 +63,14 @@ snapshot_kind: text
    0 syntax   172 semantic  gpu/intrinsics.code
    0 syntax    11 semantic  gpu/profiler.code
    0 syntax    75 semantic  gpu/warp.code
-   0 syntax    18 semantic  hashlib/hash.code
+   0 syntax     0 semantic  hashlib/hash.code
    0 syntax    31 semantic  hashlib/hasher.code
-   0 syntax     4 semantic  math/constants.code
-   0 syntax     2 semantic  math/fast.code
+   0 syntax     1 semantic  hashlib/string_hash.code
+   0 syntax     0 semantic  math/constants.code
+   0 syntax     0 semantic  math/fast.code
    0 syntax     0 semantic  math/math.code
    0 syntax    18 semantic  math/polynomial.code
+   0 syntax     0 semantic  math/sequence.code
    0 syntax    23 semantic  memory/alloc.code
    0 syntax    31 semantic  memory/arc_pointer.code
    0 syntax    22 semantic  memory/memory.code
@@ -83,9 +87,10 @@ snapshot_kind: text
    0 syntax     0 semantic  prelude.code
    0 syntax    81 semantic  random/random.code
    0 syntax    67 semantic  sys/arg.code
+   0 syntax     4 semantic  sys/assert_compare.code
    0 syntax    35 semantic  sys/info.code
    0 syntax    67 semantic  sys/intrinsics.code
-   0 syntax     4 semantic  sys/terminate.code
+   0 syntax     0 semantic  sys/terminate.code
    0 syntax    34 semantic  testing/suite.code
    0 syntax    50 semantic  testing/testing.code
    0 syntax     0 semantic  time/time.code

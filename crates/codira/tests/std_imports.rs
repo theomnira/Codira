@@ -11,6 +11,16 @@
 //! - A program computes a SHA-256 through `std.crypto.hash` and prints it;
 //!   one writes and reads back a file through `std.fs.fs`; one uses
 //!   `std.memory.region`, whose functions take and return a value struct.
+//! - Programs import `std.bit`, `std.math.constants`, `std.math.fast`,
+//!   `std.hashlib.hash` and `std.base64.base64` and check what they print
+//!   against values computed independently: bit operations exactly, the
+//!   constants as the IEEE 754 values Rust has, the fast approximations
+//!   against Rust's libm within the error each states, FNV-1a and the
+//!   base16/32/64 encodings against the published test vectors.
+//! - `std.math.math`, `std.time.time`, `std.complex.complex` and
+//!   `std.sys.terminate` check when imported but cannot be built yet (the
+//!   code generator panics on a function returning `Never`, which `panic`
+//!   is); their tests are written and ignored until it does not.
 //! - A program importing a standard-library module with errors does not
 //!   build, and the errors are reported against the standard-library file.
 
@@ -264,20 +274,22 @@ public func fs_ok() -> i64 { 7 }
 #[test]
 fn importing_a_std_module_with_errors_reports_them_against_the_std_file() {
     let program = r#"
-import std.math.fast.{fast_sqrt}
+import std.collections.list.{list_new}
 
-public func main() {
-    println(fast_sqrt(4.0))
-}
+public func main() {}
 "#;
     let dir = package_with(&[("mod.code", program)]);
     let output = codira(dir.path(), "build", &std_dir());
     let stderr = text(&output.stderr);
     assert!(!output.status.success(), "{stderr}");
-    assert!(stderr.contains("--> std/math/fast.code:"), "{stderr}");
+    assert!(
+        stderr.contains("--> std/collections/list.code:"),
+        "{stderr}"
+    );
     assert!(
         stderr.contains(
-            "error: the standard-library module `std.math.fast` (std/math/fast.code) has"
+            "error: the standard-library module `std.collections.list` \
+             (std/collections/list.code) has"
         ),
         "{stderr}"
     );
@@ -361,4 +373,588 @@ public func main() { println(1) }
         .filter(|name| name.ends_with(".codiralib"))
         .collect();
     assert_eq!(libraries, ["mod.codiralib"]);
+}
+
+/// `bytes("...")`: the bytes of a string literal as a `[u8]`, and
+/// `same(a, "...")`: whether a `[u8]` holds exactly those bytes.
+const BYTES: &str = r#"
+extern "codira-intrinsic" {
+    func str_data(s: str) -> usize;
+    func str_len(s: str) -> usize;
+    func load_u8(addr: usize) -> u8;
+}
+
+func bytes(s: str) -> [u8] {
+    var out = array_filled(0 as u8, str_len(s))
+    var i: usize = 0
+    while i < str_len(s) {
+        out[i] = load_u8(str_data(s) + i)
+        i += 1
+    }
+    out
+}
+
+func same(a: [u8], s: str) -> bool {
+    let b = bytes(s)
+    if a.len() != b.len() { return false }
+    var i: usize = 0
+    while i < a.len() {
+        if a[i] != b[i] { return false }
+        i += 1
+    }
+    true
+}
+"#;
+
+/// The lines of `stdout` that are not empty.
+fn lines(stdout: &str) -> Vec<&str> {
+    stdout.lines().filter(|l| !l.is_empty()).collect()
+}
+
+#[test]
+fn std_bit_operations_are_exact() {
+    let program = r#"
+import std.bit.bit.{count_leading_zeros, count_leading_zeros_u32, count_trailing_zeros,
+                    pop_count, pop_count_u32, bit_reverse, bit_reverse_u32, byte_swap,
+                    byte_swap_u32, byte_swap_u16, bit_width, bit_ceil, bit_ceil_u32,
+                    bit_floor, rotate_bits_left, rotate_bits_right, rotate_bits_left_u32,
+                    is_power_of_two}
+import std.bit.mask.{create_mask, create_mask_u32, extract_bits, insert_bits, bit_select,
+                     set_bit, clear_bit, toggle_bit, test_bit, lowest_set_bit,
+                     highest_set_bit, clear_lowest_set_bit, mask_up_to_bit}
+
+public func main() {
+    println(count_leading_zeros(0))
+    println(count_leading_zeros(1))
+    println(count_leading_zeros(0x00F0000000000000))
+    println(count_leading_zeros_u32(0x00010000))
+    println(count_trailing_zeros(0))
+    println(count_trailing_zeros(0x80))
+    println(pop_count(0xFFFFFFFFFFFFFFFF))
+    println(pop_count(0x00FF00FF))
+    println(pop_count_u32(0xF0F0F0F0))
+    println(bit_reverse(1))
+    println(bit_reverse_u32(0x00000003))
+    println(byte_swap(0x0102030405060708))
+    println(byte_swap_u32(0x11223344))
+    println(byte_swap_u16(0xABCD))
+    println(bit_width(0))
+    println(bit_width(255))
+    println(bit_width(256))
+    println(bit_ceil(0))
+    println(bit_ceil(5))
+    println(bit_ceil(1024))
+    println(bit_ceil_u32(1025))
+    println(bit_floor(0))
+    println(bit_floor(1000))
+    println(rotate_bits_left(0x8000000000000001, 1))
+    println(rotate_bits_right(1, 1))
+    println(rotate_bits_left(0x0123456789ABCDEF, 64))
+    println(rotate_bits_left_u32(0x80000001, 4))
+    println(is_power_of_two(0))
+    println(is_power_of_two(4096))
+    println(is_power_of_two(4097))
+    println(create_mask(4, 8))
+    println(create_mask(0, 64))
+    println(create_mask_u32(28, 4))
+    println(extract_bits(0xABCD, 8, 4))
+    println(insert_bits(0xFF00, 0xA, 4, 4))
+    println(bit_select(0xFF00, 0x1234, 0xABCD))
+    println(set_bit(0, 63))
+    println(clear_bit(0xFF, 0))
+    println(toggle_bit(0b1010, 1))
+    println(test_bit(5, 2))
+    println(test_bit(5, 1))
+    println(lowest_set_bit(0xB4))
+    println(lowest_set_bit(0))
+    println(highest_set_bit(0xB4))
+    println(clear_lowest_set_bit(0xB4))
+    println(mask_up_to_bit(3))
+    println(mask_up_to_bit(63))
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    let expected: Vec<String> = vec![
+        "64".into(),
+        "63".into(),
+        0x00F0_0000_0000_0000u64.leading_zeros().to_string(),
+        0x0001_0000u32.leading_zeros().to_string(),
+        "64".into(),
+        "7".into(),
+        "64".into(),
+        "16".into(),
+        "16".into(),
+        1u64.reverse_bits().to_string(),
+        3u32.reverse_bits().to_string(),
+        0x0102_0304_0506_0708u64.swap_bytes().to_string(),
+        0x1122_3344u32.swap_bytes().to_string(),
+        0xABCDu16.swap_bytes().to_string(),
+        "0".into(),
+        "8".into(),
+        "9".into(),
+        "1".into(),
+        "8".into(),
+        "1024".into(),
+        "2048".into(),
+        "0".into(),
+        "512".into(),
+        0x8000_0000_0000_0001u64.rotate_left(1).to_string(),
+        1u64.rotate_right(1).to_string(),
+        0x0123_4567_89AB_CDEFu64.to_string(),
+        0x8000_0001u32.rotate_left(4).to_string(),
+        "false".into(),
+        "true".into(),
+        "false".into(),
+        0xFF0u64.to_string(),
+        u64::MAX.to_string(),
+        0xF000_0000u32.to_string(),
+        "11".into(),
+        0xFFA0u64.to_string(),
+        ((0x1234u64 & 0xFF00) | (0xABCD & !0xFF00u64)).to_string(),
+        (1u64 << 63).to_string(),
+        "254".into(),
+        "8".into(),
+        "true".into(),
+        "false".into(),
+        "4".into(),
+        "0".into(),
+        "128".into(),
+        0xB0u64.to_string(),
+        "15".into(),
+        u64::MAX.to_string(),
+    ];
+    assert_eq!(lines(&stdout), expected);
+}
+
+#[test]
+fn std_math_constants_are_the_ieee_values() {
+    let program = r#"
+import std.math.constants.{PI, TAU, E, F64_EPSILON, F64_MIN_POSITIVE, F64_MAX, F32_MAX,
+                           INF, NEG_INF, NAN, I64_MIN, U64_MAX, I32_MAX}
+
+public func main() {
+    println(PI())
+    println(TAU())
+    println(E())
+    println(F64_EPSILON())
+    println(F64_MIN_POSITIVE())
+    println(F64_MAX())
+    println(F32_MAX())
+    println(INF() > F64_MAX())
+    println(NEG_INF() < -F64_MAX())
+    println(NAN() != NAN())
+    println(I64_MIN())
+    println(U64_MAX())
+    println(I32_MAX())
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    let out = lines(&stdout);
+    let f = |i: usize| out[i].parse::<f64>().unwrap();
+    assert_eq!(f(0), std::f64::consts::PI);
+    assert_eq!(f(1), std::f64::consts::TAU);
+    assert_eq!(f(2), std::f64::consts::E);
+    assert_eq!(f(3), f64::EPSILON);
+    assert_eq!(f(4), f64::MIN_POSITIVE);
+    assert_eq!(f(5), f64::MAX);
+    assert_eq!(out[6].parse::<f32>().unwrap(), f32::MAX);
+    assert_eq!(&out[7..10], ["true", "true", "true"]);
+    assert_eq!(out[10], i64::MIN.to_string());
+    assert_eq!(out[11], u64::MAX.to_string());
+    assert_eq!(out[12], i32::MAX.to_string());
+}
+
+/// Each fast approximation, over a grid of inputs, against Rust's libm,
+/// within the error its comment states.
+#[test]
+fn std_math_fast_is_within_its_stated_error() {
+    let program = r#"
+import std.math.fast.{fast_rsqrt, fast_sqrt, fast_sin, fast_cos, fast_exp, fast_log,
+                      fast_ipow_f64}
+
+public func main() {
+    var i: i64 = -400
+    while i <= 400 {
+        let x = (i as f32) * (0.01 as f32)
+        print(x) print(" ") print(fast_sin(x)) print(" ") print(fast_cos(x)) print(" ")
+        println(fast_exp(x))
+        i += 1
+    }
+    var j: i64 = 1
+    while j <= 1000 {
+        let y = (j as f32) * (0.0137 as f32)
+        print(y) print(" ") print(fast_log(y)) print(" ") print(fast_rsqrt(y)) print(" ")
+        println(fast_sqrt(y))
+        j += 1
+    }
+    println(fast_sin(100.0 as f32))
+    println(fast_exp(-50.0 as f32))
+    println(fast_exp(50.0 as f32))
+    println(fast_log(1.0e30 as f32))
+    println(fast_ipow_f64(2.0, 10))
+    println(fast_ipow_f64(1.5, 3))
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    let out = lines(&stdout);
+    let nums = |line: &str| -> Vec<f64> {
+        line.split(' ')
+            .map(|n| f64::from(n.parse::<f32>().unwrap()))
+            .collect()
+    };
+    let (mut sin, mut cos, mut exp) = (0f64, 0f64, 0f64);
+    for line in &out[..801] {
+        let v = nums(line);
+        sin = sin.max((v[1] - v[0].sin()).abs());
+        cos = cos.max((v[2] - v[0].cos()).abs());
+        exp = exp.max(((v[3] - v[0].exp()) / v[0].exp()).abs());
+    }
+    let (mut log, mut rsqrt, mut sqrt) = (0f64, 0f64, 0f64);
+    for line in &out[801..1801] {
+        let v = nums(line);
+        log = log.max((v[1] - v[0].ln()).abs());
+        rsqrt = rsqrt.max(((v[2] - 1.0 / v[0].sqrt()) * v[0].sqrt()).abs());
+        sqrt = sqrt.max(((v[3] - v[0].sqrt()) / v[0].sqrt()).abs());
+    }
+    // The bounds std/math/fast.code states.
+    assert!(sin < 7e-5, "fast_sin: {sin}");
+    assert!(cos < 7e-5, "fast_cos: {cos}");
+    assert!(exp < 1e-4, "fast_exp: {exp}");
+    assert!(log < 5.4e-4, "fast_log: {log}");
+    assert!(rsqrt < 1.75e-3, "fast_rsqrt: {rsqrt}");
+    assert!(sqrt < 1.75e-3, "fast_sqrt: {sqrt}");
+
+    let tail = |i: usize| f64::from(out[1801 + i].parse::<f32>().unwrap());
+    assert!((tail(0) - 100f64.sin()).abs() < 7e-5, "{}", tail(0));
+    assert!(((tail(1) - (-50f64).exp()) / (-50f64).exp()).abs() < 1e-4);
+    assert!(((tail(2) - 50f64.exp()) / 50f64.exp()).abs() < 1e-4);
+    assert!((tail(3) - 1.0e30f64.ln()).abs() < 5.4e-4 + 1e-5);
+    assert_eq!(&out[1805..], ["1024.0", "3.375"]);
+}
+
+/// `std.hashlib.hash` is FNV-1a (64-bit), which is not cryptographic; the
+/// vectors are FNV-1a's published ones.
+#[test]
+fn std_hashlib_hash_is_fnv1a() {
+    let program = format!(
+        "{BYTES}
+import std.hashlib.hash.{{hash_bytes, hash_u64, hash_i64, hash_f64, hash_bool, combine_hash,
+                         combine_hash_ordered, combine_hash_unordered, Hashable, hash}}
+
+struct Id {{ v: u64 }}
+extend Id: Hashable {{ func hash_value(self) -> u64 {{ hash_u64(self.v) }} }}
+
+public func main() {{
+    println(hash_bytes(bytes(\"\")))
+    println(hash_bytes(bytes(\"a\")))
+    println(hash_bytes(bytes(\"foobar\")))
+    println(hash_u64(0x0807060504030201))
+    println(hash_i64(-1) == hash_u64(0xFFFFFFFFFFFFFFFF))
+    println(hash_f64(0.0) == hash_f64(-0.0))
+    let nan: f64 = 0.0 / 0.0
+    println(hash_f64(nan) == hash_f64(-nan))
+    println(hash_bool(true) == hash_u64(1))
+    println(combine_hash(1, 2))
+    let hs: [u64] = [1, 2, 3]
+    let rev: [u64] = [3, 2, 1]
+    println(combine_hash_ordered(hs) == combine_hash_ordered(rev))
+    println(combine_hash_unordered(hs) == combine_hash_unordered(rev))
+    println(hash(Id {{ v: 7 }}) == hash_u64(7))
+}}
+"
+    );
+    let (_dir, stdout) = run_ok(&[("mod.code", &program)]);
+    let fnv1a = |data: &[u8]| {
+        data.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+            (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3)
+        })
+    };
+    let combine = |seed: u64, value: u64| {
+        seed ^ value
+            .wrapping_add(0x9E37_79B9_7F4A_7C15)
+            .wrapping_add(seed << 6)
+            .wrapping_add(seed >> 2)
+    };
+    assert_eq!(
+        lines(&stdout),
+        [
+            0xcbf2_9ce4_8422_2325u64.to_string(),
+            0xaf63_dc4c_8601_ec8cu64.to_string(),
+            0x8594_4171_f739_67e8u64.to_string(),
+            fnv1a(&[1, 2, 3, 4, 5, 6, 7, 8]).to_string(),
+            "true".into(),
+            "true".into(),
+            "true".into(),
+            "true".into(),
+            combine(1, 2).to_string(),
+            "false".into(),
+            "true".into(),
+            "true".into(),
+        ]
+    );
+}
+
+/// Base64, base32 and base16 of the standard's test strings ("", "f",
+/// "fo", ..., "foobar"; RFC 4648, section 10), both ways.
+#[test]
+fn std_base64_matches_the_standard_test_vectors() {
+    let vectors: [(&str, &str, &str, &str); 7] = [
+        ("", "", "", ""),
+        ("f", "Zg==", "MY======", "66"),
+        ("fo", "Zm8=", "MZXQ====", "666F"),
+        ("foo", "Zm9v", "MZXW6===", "666F6F"),
+        ("foob", "Zm9vYg==", "MZXW6YQ=", "666F6F62"),
+        ("fooba", "Zm9vYmE=", "MZXW6YTB", "666F6F6261"),
+        ("foobar", "Zm9vYmFy", "MZXW6YTBOI======", "666F6F626172"),
+    ];
+    let mut main = String::new();
+    for (plain, b64, b32, b16) in vectors {
+        for (encode, decode, encoded) in [
+            ("b64_encode", "b64_decode", b64),
+            ("b32_encode", "b32_decode", b32),
+            ("b16_encode", "b16_decode", b16),
+        ] {
+            main.push_str(&format!(
+                "    println(same({encode}(bytes(\"{plain}\")), \"{encoded}\"))\n    \
+                 println(same({decode}(bytes(\"{encoded}\")), \"{plain}\"))\n"
+            ));
+        }
+    }
+    let program = format!(
+        "{BYTES}
+import std.base64.base64.{{b64_encode, b64_decode, b32_encode, b32_decode, b16_encode,
+                           b16_decode, b64_encoded_len, b32_encoded_len}}
+
+public func main() {{
+{main}
+    // Lower-case hex and base32, and line breaks in base64, are accepted.
+    println(same(b16_decode(bytes(\"666f6F\")), \"foo\"))
+    println(same(b64_decode(bytes(\"Zm9v\\nYmFy\\n\")), \"foobar\"))
+    println(same(b32_decode(bytes(\"mzxw6ytboi======\")), \"foobar\"))
+    // Invalid: odd-length or non-hex base16, `=` opening a base64 group.
+    println(b16_decode(bytes(\"666\")).len())
+    println(b16_decode(bytes(\"6G\")).len())
+    println(b64_decode(bytes(\"=Zm9\")).len())
+    // Every byte value survives a round trip.
+    var all = array_filled(0 as u8, 256)
+    var i: usize = 0
+    while i < 256 {{ all[i] = i as u8; i += 1 }}
+    let back = b64_decode(b64_encode(all))
+    var ok = back.len() == 256
+    i = 0
+    while ok && i < 256 {{ ok = back[i] == all[i]; i += 1 }}
+    println(ok)
+    println(b64_encoded_len(256))
+    println(b32_encoded_len(6))
+}}
+"
+    );
+    let (_dir, stdout) = run_ok(&[("mod.code", &program)]);
+    let out = lines(&stdout);
+    assert_eq!(out.len(), 7 * 6 + 9, "{stdout}");
+    assert!(out[..7 * 6].iter().all(|l| *l == "true"), "{stdout}");
+    assert_eq!(
+        &out[7 * 6..],
+        ["true", "true", "true", "0", "0", "0", "true", "344", "16"]
+    );
+}
+
+// The tests below are ignored: each of these modules calls `panic`, which
+// returns `Never`, and the code generator panics on a function returning
+// `Never` ("could not convert return value"). The modules check when
+// imported; the tests were run with `panic` returning unit instead, and run
+// as written once the code generator compiles `Never`.
+
+#[test]
+#[ignore = "the code generator panics on a function returning Never"]
+fn std_math_math_matches_libm() {
+    let program = r#"
+import std.math.math.{sin, cos, tan, sqrt, exp, log, log2, log10, pow, atan2, asin, cbrt,
+                      floor, ceil, round, trunc, abs, hypot, gcd, lcm, factorial, ipow,
+                      ilog2, isnan, isinf, isfinite, inf, nan, lerp, to_radians}
+
+public func main() {
+    println(sin(0.5))
+    println(cos(0.5))
+    println(tan(0.5))
+    println(sqrt(2.0))
+    println(exp(1.0))
+    println(log(10.0))
+    println(log2(1024.0))
+    println(log10(0.001))
+    println(pow(2.0, 0.5))
+    println(atan2(1.0, -1.0))
+    println(asin(0.5))
+    println(cbrt(27.0))
+    println(floor(-2.5))
+    println(ceil(-2.5))
+    println(round(-2.5))
+    println(trunc(-2.7))
+    println(abs(-3.0))
+    println(hypot(3.0, 4.0))
+    println(gcd(48, -18))
+    println(lcm(4, 6))
+    println(factorial(20))
+    println(ipow(3, 13))
+    println(ilog2(1025))
+    println(isnan(nan()))
+    println(isinf(-inf()))
+    println(isfinite(1.0))
+    println(lerp(2.0, 4.0, 0.25))
+    println(to_radians(180.0))
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    let out = lines(&stdout);
+    let f = |i: usize| out[i].parse::<f64>().unwrap();
+    // Within two units in the last place of Rust's libm.
+    let close = |got: f64, want: f64| (got - want).abs() <= 4.5e-16 * want.abs().max(1.0);
+    let want = [
+        0.5f64.sin(),
+        0.5f64.cos(),
+        0.5f64.tan(),
+        2f64.sqrt(),
+        1f64.exp(),
+        10f64.ln(),
+        10.0,
+        -3.0,
+        2f64.sqrt(),
+        1f64.atan2(-1.0),
+        0.5f64.asin(),
+        3.0,
+        -3.0,
+        -2.0,
+        -3.0,
+        -2.0,
+        3.0,
+        5.0,
+    ];
+    for (i, want) in want.into_iter().enumerate() {
+        assert!(close(f(i), want), "line {i}: {} != {want}", out[i]);
+    }
+    let pi = std::f64::consts::PI.to_string();
+    assert_eq!(
+        &out[18..],
+        [
+            "6",
+            "12",
+            "2432902008176640000",
+            "1594323",
+            "10",
+            "true",
+            "true",
+            "true",
+            "2.5",
+            pi.as_str(),
+        ]
+    );
+}
+
+#[test]
+#[ignore = "the code generator panics on a function returning Never"]
+fn std_time_measures_and_sleeps() {
+    let program = r#"
+import std.time.time.{duration_from_secs, duration_from_millis, duration_from_nanos,
+                      duration_as_micros, duration_as_secs_f64, duration_subsec_nanos,
+                      duration_add, duration_sub, duration_mul, duration_div, duration_lt,
+                      duration_as_nanos, instant_now, instant_elapsed, sleep_ms, now}
+
+public func main() {
+    let d = duration_add(duration_from_secs(1), duration_from_millis(750))
+    println(duration_as_micros(d))
+    println(duration_as_secs_f64(d))
+    println(duration_subsec_nanos(duration_from_nanos(3000000123)))
+    println(duration_as_nanos(duration_sub(duration_from_millis(1), duration_from_millis(2))))
+    println(duration_as_nanos(duration_div(duration_mul(d, 4), 7)))
+    println(duration_lt(duration_from_millis(1), d))
+    let start = instant_now()
+    sleep_ms(20)
+    println(duration_as_nanos(instant_elapsed(start)) >= 20000000)
+    println(now())
+}
+"#;
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    let out = lines(&stdout);
+    assert_eq!(
+        &out[..7],
+        ["1750000", "1.75", "123", "0", "1000000000", "true", "true"]
+    );
+    let now: f64 = out[7].parse().unwrap();
+    assert!(now >= before && now < before + 600.0, "{now} {before}");
+}
+
+#[test]
+#[ignore = "the code generator panics on a function returning Never"]
+fn std_complex_arithmetic() {
+    let program = r#"
+import std.complex.complex.{complex_new, complex_i, complex_mul, complex_div, complex_powi,
+                            complex_norm, complex_arg, complex_sqrt, complex_inv}
+
+public func main() {
+    let ii = complex_mul(complex_i(), complex_i())
+    println(ii.real)
+    println(ii.imag)
+    let q = complex_div(complex_new(1.0, 2.0), complex_new(3.0, 4.0))
+    println(q.real)
+    println(q.imag)
+    let p = complex_powi(complex_new(1.0, 1.0), -2)
+    println(p.real)
+    println(p.imag)
+    println(complex_norm(complex_new(3.0, 4.0)))
+    println(complex_arg(complex_new(0.0, 1.0)))
+    let r = complex_sqrt(complex_new(-4.0, 0.0))
+    println(r.real)
+    println(r.imag)
+    let inv = complex_inv(complex_new(0.0, 2.0))
+    println(inv.real)
+    println(inv.imag)
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    let out = lines(&stdout);
+    // i*i = -1; (1+2i)/(3+4i) = (11+2i)/25; (1+i)^-2 = 1/(2i) = -i/2;
+    // sqrt(-4) = 2i; 1/(2i) = -i/2.
+    let want = [
+        -1.0,
+        0.0,
+        0.44,
+        0.08,
+        0.0,
+        -0.5,
+        5.0,
+        std::f64::consts::FRAC_PI_2,
+        0.0,
+        2.0,
+        0.0,
+        -0.5,
+    ];
+    for (i, w) in want.into_iter().enumerate() {
+        let got: f64 = out[i].parse().unwrap();
+        assert!((got - w).abs() <= 1e-15, "line {i}: {got} != {w}");
+    }
+}
+
+#[test]
+#[ignore = "the code generator panics on a function returning Never"]
+fn std_sys_terminate_panics_with_its_message() {
+    let program = r#"
+import std.sys.terminate.{panic, assert, write_stderr}
+
+public func main() {
+    assert(1 + 1 == 2)
+    println(1)
+    write_stderr("to stderr\n")
+    panic("boom")
+}
+"#;
+    let dir = package_with(&[("mod.code", program)]);
+    let output = codira(dir.path(), "run", &std_dir());
+    assert!(!output.status.success());
+    assert_eq!(text(&output.stdout), "1\n");
+    let stderr = text(&output.stderr);
+    assert!(stderr.contains("to stderr\npanic: boom\n"), "{stderr}");
 }

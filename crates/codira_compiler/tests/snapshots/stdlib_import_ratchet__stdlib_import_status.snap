@@ -3,12 +3,18 @@ source: crates/codira_compiler/tests/stdlib_import_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-5 of 83 std modules are importable from a program
+11 of 88 std modules are importable from a program
 
 importable:
+  std.base64.base64
+  std.bit.bit
+  std.bit.mask
   std.builtin.type_aliases
   std.crypto.hash
   std.fs.fs
+  std.hashlib.hash
+  std.math.constants
+  std.math.fast
   std.memory.page
   std.memory.region
 
@@ -37,12 +43,8 @@ std.ai.tensor.shape
     check (1 diagnostic): std/ai/tensor/shape.code:95: undefined value `MAX_RANK`
 std.atomic.atomic
     check (1 diagnostic): std/atomic/atomic.code:25: undefined type `String`
-std.base64.base64
-    check (77 diagnostics): std/base64/base64.code:17: undefined type `Array[u8]`
-std.bit.bit
-    check (10 diagnostics): std/bit/bit.code:192: mismatched type `width`
-std.bit.mask
-    check (20 diagnostics): std/bit/mask.code:18: mismatched type `width`
+std.base64.base64_string
+    check (77 diagnostics): std/base64/base64_string.code:24: undefined type `Array[u8]`
 std.builtin.bool
     check (22 diagnostics): std/builtin/bool.code:132: undefined type `String`
 std.builtin.dtype
@@ -94,7 +96,9 @@ std.collections.span
 std.collections.string
     check (75 diagnostics): std/collections/string.code:10: undefined type `Pointer[u8]`
 std.complex.complex
-    check (3 diagnostics): std/complex/complex.code:187: undefined value `panic`
+    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
+std.complex.complex_string
+    check (78 diagnostics): std/complex/complex_string.code:17: cannot apply binary operator `float_to_string(z.real) + "+"`
 std.db.db
     check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
 std.ffi.cstring
@@ -106,29 +110,27 @@ std.format.format
 std.format.repr
     check (55 diagnostics): std/format/repr.code:15: undefined type `String`
 std.gpu.globals
-    check (121 diagnostics): std/gpu/globals.code:44: method `is_nvidia_gpu` does not exist `info.is_nvidia_gpu()`
+    check (108 diagnostics): std/gpu/globals.code:44: method `is_nvidia_gpu` does not exist `info.is_nvidia_gpu()`
 std.gpu.host_info
-    check (61 diagnostics): std/gpu/host_info.code:44: undefined type `String`
+    check (48 diagnostics): std/gpu/host_info.code:44: undefined type `String`
 std.gpu.id
-    check (502 diagnostics): std/gpu/id.code:32: undefined type `StringLiteral`
+    check (479 diagnostics): std/gpu/id.code:32: undefined type `StringLiteral`
 std.gpu.intrinsics
-    check (676 diagnostics): std/gpu/intrinsics.code:69: undefined type `StringLiteral`
+    check (653 diagnostics): std/gpu/intrinsics.code:69: undefined type `StringLiteral`
 std.gpu.profiler
-    check (16 diagnostics): std/gpu/profiler.code:32: undefined type `String`
+    check (15 diagnostics): std/gpu/profiler.code:32: undefined type `String`
 std.gpu.warp
-    check (502 diagnostics): std/gpu/warp.code:49: mismatched type `{ if info.is_nvidia_gpu() { return intrinsics.llvm_intrinsic...`
-std.hashlib.hash
-    check (19 diagnostics): std/hashlib/hash.code:19: a trait is not a type: values of a trait type (dynamic dispatch) are not supported; take a generic parameter bounded by the trait instead (`[T: Trait]`) `Hashable`
+    check (479 diagnostics): std/gpu/warp.code:49: mismatched type `{ if info.is_nvidia_gpu() { return intrinsics.llvm_intrinsic...`
 std.hashlib.hasher
     check (34 diagnostics): std/hashlib/hasher.code:14: undefined type `Array[u8]`
-std.math.constants
-    check (4 diagnostics): std/math/constants.code:154: undefined value `__intrinsic_inf_f64`
-std.math.fast
-    check (4 diagnostics): std/math/fast.code:131: undefined value `__intrinsic_nan_f32`
+std.hashlib.string_hash
+    check (76 diagnostics): std/hashlib/string_hash.code:16: method `as_bytes` does not exist `value.as_bytes()`
 std.math.math
-    check (13 diagnostics): std/math/math.code:601: undefined value `panic`
+    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
 std.math.polynomial
     check (52 diagnostics): std/math/polynomial.code:19: undefined type `List[f64]`
+std.math.sequence
+    check (55 diagnostics): std/collections/list.code:10: undefined type `Pointer[T]`
 std.memory.alloc
     check (92 diagnostics): std/memory/alloc.code:59: mismatched type `0`
 std.memory.arc_pointer
@@ -152,20 +154,22 @@ std.os.process
 std.pathlib.path
     check (75 diagnostics): std/pathlib/path.code:12: undefined type `String`
 std.prelude
-    check (1037 diagnostics): std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
+    check (1020 diagnostics): std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
 std.random.random
     check (83 diagnostics): std/random/random.code:33: attempted to access a non-existent field in a struct. `_global_rng.s0`
 std.sys.arg
     check (134 diagnostics): std/sys/arg.code:36: undefined value `__intrinsic_argc`
+std.sys.assert_compare
+    check (22 diagnostics): std/sys/assert_compare.code:20: cannot apply `==` to a value of generic type `T`: operators on a type parameter are not supported; declare the operation as a method of a trait, bound `T` by it (`T: Trait`) and call the method `a == b`
 std.sys.info
     check (40 diagnostics): std/sys/info.code:42: undefined type `String`
 std.sys.intrinsics
     check (181 diagnostics): std/sys/intrinsics.code:40: undefined trait `StringLiteral`
 std.sys.terminate
-    check (19 diagnostics): std/sys/terminate.code:213: undefined trait `EqualityComparable`
+    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
 std.testing.suite
     check (38 diagnostics): std/testing/suite.code:11: undefined type `String`
 std.testing.testing
     check (62 diagnostics): std/testing/testing.code:11: undefined type `String`
 std.time.time
-    check (1 diagnostic): std/time/time.code:103: undefined value `panic`
+    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
