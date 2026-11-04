@@ -118,10 +118,24 @@ pub(crate) fn check_library(
             library.display()
         )
     })?;
+    // One line per distinct note, naming the functions it applies to.
+    let mut grouped: Vec<(&str, Vec<&str>)> = Vec::new();
     for function in &report.functions {
         for note in &function.notes {
-            notes.push(format!("`{}`: {note}", function.name));
+            match grouped.iter_mut().find(|(text, _)| text == note) {
+                Some((_, names)) => names.push(&function.name),
+                None => grouped.push((note, vec![&function.name])),
+            }
         }
+    }
+    for (note, names) in grouped {
+        let shown: Vec<String> = names.iter().take(4).map(|n| format!("`{n}`")).collect();
+        let more = if names.len() > shown.len() {
+            format!(" and {} more", names.len() - shown.len())
+        } else {
+            String::new()
+        };
+        notes.push(format!("{}{more}: {note}", shown.join(", ")));
     }
     Ok((report, notes))
 }
