@@ -1103,6 +1103,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "codira_ctcheck"
+version = "0.6.0-dev"
+dependencies = [
+ "iced-x86",
+ "object 0.36.5",
+ "yaxpeax-arch",
+ "yaxpeax-arm",
+]
+
+[[package]]
 name = "codira_db"
 version = "0.6.0-dev"
 dependencies = [
@@ -2869,6 +2879,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f31827a206f56af32e590ba56d5d2d085f558508192593743f16b2306495269f"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "iced-x86"
+version = "1.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c23ad4d19dca41180e835ef6fbd2c1ee655777eca086ad80dd517e0513322879"
+dependencies = [
+ "lazy_static",
 ]
 
 [[package]]
@@ -6370,6 +6389,25 @@ name = "yasna"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
+
+[[package]]
+name = "yaxpeax-arch"
+version = "0.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fb869f86d5a365bf741d9df773f7a5347757b1c466b7383b74989324785ef36b"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "yaxpeax-arm"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "79f8d9808ad0b7e434882c66e50704138e7c0bdf3408a9f3159c50603dc3168c"
+dependencies = [
+ "bitvec",
+ "yaxpeax-arch",
+]
 
 [[package]]
 name = "yoke"
