@@ -35,6 +35,12 @@ it, and one source can target CPUs, GPUs, quantum processors and more.
   `@noblock` and `@realtime` are proven over the whole call graph; a broken
   promise is reported with the chain of calls behind it.
 
+- **Semantic envelopes** (experimental) - `@envelope(allocation: none,
+  foreign: none, concurrency: none, secrecy: none, ..)` states what a
+  function may do and is checked through its whole call graph;
+  `codira envelope --json` reports every function's inferred envelope.
+  Keys the compiler cannot check yet are rejected, not ignored.
+
 - **Units of measure** - `f64 unit(m / s)` is checked at compile time and
   erased, so it costs nothing at run time.
 
@@ -69,6 +75,10 @@ it, and one source can target CPUs, GPUs, quantum processors and more.
 - **Tooling** - a language server, a build daemon that keeps the compiler
   warm, `codira test`, `codira query` (search by what code returns) and
   `codira quantum`.
+
+Research and experimental work is organised by the Codira Frontier Systems
+Laboratory ([`lab/`](lab/README.md)): its tiers, workstreams, RFCs and an
+honest inventory of what exists ([`lab/STATUS.md`](lab/STATUS.md)).
 
 What runs end to end today, and what is parsed but not yet compiled, is
 listed precisely in [`agents/USING_CODIRA.md`](agents/USING_CODIRA.md)
