@@ -41,6 +41,16 @@ it, and one source can target CPUs, GPUs, quantum processors and more.
   `codira envelope --json` reports every function's inferred envelope.
   Keys the compiler cannot check yet are rejected, not ignored.
 
+- **Native storage and AI engines** (experimental, Rust crates the runtime
+  will expose to `std.db` and `std.ai`; not callable from Codira yet) -
+  `codira_db`: a write-ahead-logged, snapshot-isolation transactional store
+  tested by crashing a workload at every storage operation; `codira_ai`:
+  strided tensors, tape-based reverse-mode autodiff with every gradient rule
+  checked numerically, attention and transformer layers, Adam/AdamW, INT8
+  weights and a BPE tokenizer. Limits and measurements:
+  [`lab/rfcs/0002-codira-db.md`](lab/rfcs/0002-codira-db.md),
+  [`lab/rfcs/0003-codira-ai.md`](lab/rfcs/0003-codira-ai.md).
+
 - **Units of measure** - `f64 unit(m / s)` is checked at compile time and
   erased, so it costs nothing at run time.
 
