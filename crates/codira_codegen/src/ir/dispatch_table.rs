@@ -448,7 +448,17 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
 
         // If the function is not yet contained in the table, add it
         if !self.function_to_idx.contains_key(&function) {
-            let name = function.full_name(self.db);
+            // An `extern` function is a runtime service or another
+            // library's symbol, which the runtime finds by its own name,
+            // whatever module declares it: `codira_fs_open` declared in
+            // `std/fs/fs.code` is still `codira_fs_open`, not
+            // `fs::fs::std::codira_fs_open`. (Only root-module declarations
+            // used to work.)
+            let name = if function.is_extern(self.db) {
+                function.name(self.db).to_string()
+            } else {
+                function.full_name(self.db)
+            };
             let hir_type = function.ty(self.db);
             let sig = hir_type.callable_sig(self.db).unwrap();
             // The runtime populates dispatch table slots from each module's
