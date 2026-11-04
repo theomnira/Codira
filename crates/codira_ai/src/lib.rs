@@ -13,6 +13,7 @@
 //! | module | contents |
 //! |--------|----------|
 //! | [`tensor`] | strided N-d tensors, views, broadcasting, reductions, blocked matmul |
+//! | [`autograd`] | tape-based reverse mode, custom gradients, gradient checking, dual numbers |
 //!
 //! # Status
 //!
@@ -20,11 +21,13 @@
 //! Codira program can reach this crate yet: the runtime C ABI binding is
 //! future work owned by the runtime workstream.
 
+pub mod autograd;
 pub mod error;
 pub mod float;
 pub mod rng;
 pub mod tensor;
 
+pub use autograd::{Graph, Var};
 pub use error::{Result, TensorError};
 pub use float::Float;
 pub use rng::Rng;
