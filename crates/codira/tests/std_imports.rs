@@ -369,7 +369,7 @@ public func main() { println(1) }
     assert_eq!(text(&output.stdout), "1\n");
     let libraries: Vec<String> = std::fs::read_dir(dir.path().join("target"))
         .unwrap()
-        .filter_map(|e| e.ok())
+        .filter_map(Result::ok)
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|name| name.ends_with(".codiralib"))
         .collect();
@@ -760,42 +760,11 @@ public func main() {{
     );
 }
 
-/// `std.random.rng` against a reference xoshiro256** seeded by SplitMix64,
+/// `std.random.rng` against a reference `xoshiro256**` seeded by `SplitMix64`,
 /// written here from the published algorithms. (Not cryptographic, and not
 /// tested as if it were: only that it is that generator.)
 #[test]
 fn std_random_rng_is_xoshiro256_starstar() {
-    let program = r#"
-import std.random.rng.{rng_seeded, rng_next_u64, rng_next_f64, rng_range_i64, rng_next_bool}
-
-public func main() {
-    let r = rng_seeded(0)
-    var i = 0
-    while i < 5 { println(rng_next_u64(r)); i += 1 }
-    let q = rng_seeded(0xDEADBEEF)
-    println(rng_next_u64(q))
-    println(rng_next_f64(q))
-    var lo: i64 = 100
-    var hi: i64 = -100
-    var sum: i64 = 0
-    i = 0
-    while i < 20000 {
-        let v = rng_range_i64(q, -3, 3)
-        if v < lo { lo = v }
-        if v > hi { hi = v }
-        sum += v
-        i += 1
-    }
-    println(lo)
-    println(hi)
-    println(sum)
-    println(rng_range_i64(q, 5, 5))
-    println(rng_next_bool(q) || true)
-}
-"#;
-    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
-    let out = lines(&stdout);
-
     struct Xoshiro([u64; 4]);
     impl Xoshiro {
         fn seeded(seed: u64) -> Self {
@@ -832,6 +801,37 @@ public func main() {
             }
         }
     }
+
+    let program = r#"
+import std.random.rng.{rng_seeded, rng_next_u64, rng_next_f64, rng_range_i64, rng_next_bool}
+
+public func main() {
+    let r = rng_seeded(0)
+    var i = 0
+    while i < 5 { println(rng_next_u64(r)); i += 1 }
+    let q = rng_seeded(0xDEADBEEF)
+    println(rng_next_u64(q))
+    println(rng_next_f64(q))
+    var lo: i64 = 100
+    var hi: i64 = -100
+    var sum: i64 = 0
+    i = 0
+    while i < 20000 {
+        let v = rng_range_i64(q, -3, 3)
+        if v < lo { lo = v }
+        if v > hi { hi = v }
+        sum += v
+        i += 1
+    }
+    println(lo)
+    println(hi)
+    println(sum)
+    println(rng_range_i64(q, 5, 5))
+    println(rng_next_bool(q) || true)
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    let out = lines(&stdout);
 
     let mut r = Xoshiro::seeded(0);
     let want: Vec<String> = (0..5).map(|_| r.next().to_string()).collect();

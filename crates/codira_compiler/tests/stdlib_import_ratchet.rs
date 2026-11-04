@@ -286,7 +286,9 @@ fn stdlib_import_status_is_stable() {
             .location()
             .map(|l| format!(" (in {})", l.file()))
             .unwrap_or_default();
-        let mut last = LAST_PANIC.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last = LAST_PANIC
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         // The first panic is the cause; "a scoped thread panicked" follows.
         if last.is_none() {
             *last = Some(format!("{message}{location}"));
