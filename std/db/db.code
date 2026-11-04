@@ -1,0 +1,241 @@
+// =============================================================================
+// std/db/db.code — Durable key-value transactions over the codira_db engine
+// =============================================================================
+//
+// Copyright (c) 2026 Omnira CJSC
+// Author: Tunjay Akbarli
+// Date: November 4, 2026
+//
+// Functionality:
+// - The key-value layer of the native storage engine (crates/codira_db,
+//   lab/rfcs/0002) over the runtime's database services
+//   (codira_runtime::native_db, lab/rfcs/0007): open a database directory
+//   with an fsync policy, begin a snapshot-isolation transaction, get, put
+//   and delete byte-string keys, commit (with a distinct code for a
+//   write-write conflict), abort, checkpoint and close.
+//
+// What this is: a crash-safe, in-memory ordered key-value store. A database
+// is a directory holding a checksummed write-ahead log and a snapshot. With
+// DB_FSYNC_ALWAYS or DB_FSYNC_ON_COMMIT, a commit that returned a timestamp
+// survives a crash, and recovery after a crash at any point yields exactly a
+// prefix of the committed transactions (tested by crash injection at every
+// storage operation in crates/codira_db/tests/crash.rs; testing, not proof).
+//
+// What this is NOT (yet):
+// - Not serializable. Isolation is snapshot isolation: each transaction reads
+//   the state as of `db_begin` plus its own writes, and the later of two
+//   transactions that write the same key fails to commit with
+//   DB_ERR_CONFLICT (first committer wins). Write skew is possible: two
+//   transactions that read overlapping keys and write disjoint ones both
+//   commit. Make the read dependency a write (write a common key) when that
+//   matters.
+// - Not for data larger than memory: the whole data set lives in memory.
+// - Not multi-process: one process per directory. The runtime refuses a
+//   second open of a directory within one process (DB_ERR_ALREADY_OPEN), but
+//   there is no lock file, and two processes opening one directory corrupt
+//   it.
+// - No range scans, typed tables, schemas or migrations here yet: the engine
+//   has them (Txn::scan, codira_db::table), the runtime does not expose them.
+// - Tested on x86-64 Linux only.
+//
+// Handles. A database handle and a transaction handle are i64 values the
+// runtime hands out, positive on success; a negative value is a DB_ERR_*
+// code. The runtime keeps generation-checked tables with a kind tag, so a
+// closed, committed, forged or wrong-kind handle is refused
+// (DB_ERR_BAD_HANDLE). Bare i64, not structs, for the reason std/fs gives
+// (lab/rfcs/0004 §12).
+//
+// Every transaction ends with `db_commit` or `db_abort`; until then
+// `db_close` refuses with DB_ERR_BUSY and the database stays open. Commit
+// and abort end the transaction whatever they return.
+//
+// Errors. `db_commit` returning DB_ERR_IO means the log write or flush
+// failed: the commit may or may not have happened, and the database is
+// poisoned (every later commit, checkpoint and close returns
+// DB_ERR_POISONED). Reopen it to find out what survived; do not retry the
+// commit on the same handle. After an fsync failure on Linux, retrying
+// is unsafe (the kernel may have dropped the dirty pages).
+//
+// Keys and values are raw bytes (addresses as usize, or `str` through the
+// *_str functions), up to 1 GiB each; the runtime copies them. `db_get`
+// copies a value into a caller buffer and returns its length, or
+// DB_ERR_BUFFER_TOO_SMALL (writing nothing) when it does not fit:
+// `db_value_len` gives the size to allocate.
+//
+// Effects: every function here may block (commit and checkpoint fsync;
+// open runs recovery; all take the runtime's table locks) and allocates in
+// the runtime, so none is `@noblock` or `@noalloc`. The runtime services are
+// `extern`, so the effect analysis counts them as every effect; no assertion
+// is made.
+// =============================================================================
+
+import root.builtin.types.*;
+
+extern "C" {
+    func codira_db_open(path_addr: usize, path_len: usize, fsync: u32, checkpoint_wal_bytes: i64) -> i64;
+    func codira_db_begin(db: i64) -> i64;
+    func codira_db_value_len(txn: i64, key_addr: usize, key_len: usize) -> i64;
+    func codira_db_get(txn: i64, key_addr: usize, key_len: usize, buf_addr: usize, buf_len: usize) -> i64;
+    func codira_db_put(txn: i64, key_addr: usize, key_len: usize, val_addr: usize, val_len: usize) -> i32;
+    func codira_db_delete(txn: i64, key_addr: usize, key_len: usize) -> i32;
+    func codira_db_commit(txn: i64) -> i64;
+    func codira_db_abort(txn: i64) -> i32;
+    func codira_db_checkpoint(db: i64) -> i32;
+    func codira_db_close(db: i64) -> i32;
+    func codira_db_last_os_error() -> i32;
+}
+
+extern "codira-intrinsic" {
+    func str_data(s: str) -> usize;
+    func str_len(s: str) -> usize;
+}
+
+// Fsync policies for db_open.
+// `db_commit` returns after fsync of the log: a returned commit survives a
+// crash.
+public func DB_FSYNC_ALWAYS() -> u32 { return 0; }
+// `db_commit` returns after fdatasync of the log: the same crash guarantee,
+// usually cheaper.
+public func DB_FSYNC_ON_COMMIT() -> u32 { return 1; }
+// `db_commit` never flushes; only db_checkpoint and db_close do. A crash may
+// lose commits that returned. For tests and bulk loads.
+public func DB_FSYNC_NEVER() -> u32 { return 2; }
+
+// Error codes (always negative).
+// An unexpected internal failure.
+public func DB_ERR_OTHER() -> i64 { return -1; }
+// The key has no value in the transaction's view.
+public func DB_ERR_NOT_FOUND() -> i64 { return -2; }
+// A write-write conflict at commit: another transaction committed a write to
+// one of this transaction's keys first. Nothing was written; retry from
+// db_begin.
+public func DB_ERR_CONFLICT() -> i64 { return -3; }
+// The storage failed; from commit or checkpoint the database is now
+// poisoned and the commit's outcome unknown. db_last_os_error says why.
+public func DB_ERR_IO() -> i64 { return -4; }
+// Recovery found a corrupt log or snapshot (not a torn tail, which it
+// discards).
+public func DB_ERR_CORRUPTION() -> i64 { return -5; }
+// An earlier I/O failure poisoned the database; reopen it.
+public func DB_ERR_POISONED() -> i64 { return -6; }
+// A key or value over 1 GiB.
+public func DB_ERR_TOO_LARGE() -> i64 { return -7; }
+// A bad policy, threshold, address or length; an empty path or one with NUL.
+public func DB_ERR_INVALID_ARGUMENT() -> i64 { return -8; }
+// Not an open database or transaction of the expected kind.
+public func DB_ERR_BAD_HANDLE() -> i64 { return -9; }
+// The value does not fit the buffer; nothing was written (see db_value_len).
+public func DB_ERR_BUFFER_TOO_SMALL() -> i64 { return -10; }
+// db_close: transactions are still open (or another thread is in a call on
+// the database); it stays open.
+public func DB_ERR_BUSY() -> i64 { return -11; }
+// The directory is already open as a database in this process.
+public func DB_ERR_ALREADY_OPEN() -> i64 { return -12; }
+// The runtime's table of databases or transactions is full.
+public func DB_ERR_TOO_MANY_OPEN() -> i64 { return -13; }
+// The path is longer than 4096 bytes.
+public func DB_ERR_PATH_TOO_LONG() -> i64 { return -14; }
+// The path is not valid UTF-8.
+public func DB_ERR_PATH_NOT_UTF8() -> i64 { return -15; }
+// Reserved for the engine's typed tables; never returned by these functions.
+public func DB_ERR_SCHEMA() -> i64 { return -16; }
+
+// Whether a result is a success (a handle, a length, a timestamp or 0), not a
+// DB_ERR_* code.
+public func db_ok(result: i64) -> bool {
+    return result >= 0;
+}
+
+// Whether a db_commit result is the retryable write-write conflict.
+public func db_is_conflict(result: i64) -> bool {
+    return result == DB_ERR_CONFLICT();
+}
+
+// Open (creating it if needed) the database in directory `path`, running
+// crash recovery. `checkpoint_wal_bytes` > 0 checkpoints automatically once
+// the log reaches that size; 0 checkpoints only on db_checkpoint. Returns a
+// database handle or a DB_ERR_* code.
+public func db_open(path: str, fsync: u32, checkpoint_wal_bytes: i64) -> i64 {
+    return codira_db_open(str_data(path), str_len(path), fsync, checkpoint_wal_bytes);
+}
+
+// Start a transaction reading everything committed so far. Returns a
+// transaction handle or a DB_ERR_* code.
+public func db_begin(db: i64) -> i64 {
+    return codira_db_begin(db);
+}
+
+// Copy the value of the key at `key..key + key_len` into `buf` (room for
+// `len` bytes). Returns the value's length, DB_ERR_NOT_FOUND,
+// DB_ERR_BUFFER_TOO_SMALL (nothing written) or another DB_ERR_* code.
+public func db_get(txn: i64, key: usize, key_len: usize, buf: usize, len: usize) -> i64 {
+    return codira_db_get(txn, key, key_len, buf, len);
+}
+
+// db_get with a string key.
+public func db_get_str(txn: i64, key: str, buf: usize, len: usize) -> i64 {
+    return codira_db_get(txn, str_data(key), str_len(key), buf, len);
+}
+
+// The length of the value of the key at `key..key + key_len`, or
+// DB_ERR_NOT_FOUND or another DB_ERR_* code.
+public func db_value_len(txn: i64, key: usize, key_len: usize) -> i64 {
+    return codira_db_value_len(txn, key, key_len);
+}
+
+// db_value_len with a string key.
+public func db_value_len_str(txn: i64, key: str) -> i64 {
+    return codira_db_value_len(txn, str_data(key), str_len(key));
+}
+
+// Set a key to a value when the transaction commits (both are copied now).
+// Returns 0 or a DB_ERR_* code.
+public func db_put(txn: i64, key: usize, key_len: usize, value: usize, value_len: usize) -> i32 {
+    return codira_db_put(txn, key, key_len, value, value_len);
+}
+
+// db_put with a string key and a string value.
+public func db_put_str(txn: i64, key: str, value: str) -> i32 {
+    return codira_db_put(txn, str_data(key), str_len(key), str_data(value), str_len(value));
+}
+
+// Delete a key when the transaction commits (a missing key is not an
+// error). Returns 0 or a DB_ERR_* code.
+public func db_delete(txn: i64, key: usize, key_len: usize) -> i32 {
+    return codira_db_delete(txn, key, key_len);
+}
+
+// db_delete with a string key.
+public func db_delete_str(txn: i64, key: str) -> i32 {
+    return codira_db_delete(txn, str_data(key), str_len(key));
+}
+
+// Commit. Returns the commit timestamp (>= 1; a transaction that wrote
+// nothing returns its snapshot's, >= 0), DB_ERR_CONFLICT, DB_ERR_IO,
+// DB_ERR_POISONED or another DB_ERR_* code. The transaction is over in
+// every case.
+public func db_commit(txn: i64) -> i64 {
+    return codira_db_commit(txn);
+}
+
+// Discard the transaction. Returns 0 or DB_ERR_BAD_HANDLE.
+public func db_abort(txn: i64) -> i32 {
+    return codira_db_abort(txn);
+}
+
+// Write a snapshot and delete the log files it replaces. Returns 0 or a
+// DB_ERR_* code (DB_ERR_IO poisons the database).
+public func db_checkpoint(db: i64) -> i32 {
+    return codira_db_checkpoint(db);
+}
+
+// Flush the log and close. Returns 0, DB_ERR_BUSY (transactions are open;
+// still open) or another DB_ERR_* code (the handle is gone).
+public func db_close(db: i64) -> i32 {
+    return codira_db_close(db);
+}
+
+// The raw OS error number of this thread's last DB_ERR_IO, or 0.
+public func db_last_os_error() -> i32 {
+    return codira_db_last_os_error();
+}
