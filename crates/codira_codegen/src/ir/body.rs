@@ -353,34 +353,41 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         let ret_value = self.gen_call(None, self.hir_function, &args);
 
-        let call_return_type = &self.infer[self.body.body_expr()];
-        if !call_return_type.is_never() {
-            let fn_ret_type = self
-                .hir_function
-                .ty(self.db)
-                .callable_sig(self.db)
-                .unwrap()
-                .ret()
-                .clone();
-
-            if fn_ret_type.is_empty() {
-                self.builder
-                    .build_return(None)
-                    .expect("failed to build return");
-            } else if let Some(value) = ret_value {
-                let ret_value = if let Some(hir_struct) = fn_ret_type.as_struct() {
-                    if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
-                        self.gen_struct_alloc_on_heap(&fn_ret_type, value.into_struct_value())
-                    } else {
-                        value
-                    }
+        // What the wrapper returns is decided by the function's declared
+        // result, never by the type of its body expression: a body ending
+        // in `return x;` is a block of type `never` although the function
+        // returns `x`, and reading the body's type here left the wrapper
+        // without a terminator -- invalid IR that crashed LLVM's optimizer
+        // for every `public` function with a value-struct parameter or
+        // result whose body ended that way.
+        let fn_ret_type = fn_sig.ret().clone();
+        if fn_ret_type.is_never() {
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable");
+        } else if fn_ret_type.is_empty() {
+            self.builder
+                .build_return(None)
+                .expect("failed to build return");
+        } else if let Some(value) = ret_value {
+            let ret_value = if let Some(hir_struct) = fn_ret_type.as_struct() {
+                if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
+                    self.gen_struct_alloc_on_heap(&fn_ret_type, value.into_struct_value())
                 } else {
                     value
-                };
-                self.builder
-                    .build_return(Some(&ret_value))
-                    .expect("failed to build return");
-            }
+                }
+            } else {
+                value
+            };
+            self.builder
+                .build_return(Some(&ret_value))
+                .expect("failed to build return");
+        } else {
+            // The call produced no value although the function's type says
+            // it returns one: the callee cannot return normally.
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable");
         }
     }
 
