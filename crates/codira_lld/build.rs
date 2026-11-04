@@ -312,15 +312,28 @@ fn main() {
         println!("cargo:rustc-link-lib=msvcrtd");
     }
 
-    println!("cargo:rustc-link-lib=static=lldCOFF");
-    println!("cargo:rustc-link-lib=static=lldCommon");
-    println!("cargo:rustc-link-lib=static=lldELF");
-    println!("cargo:rustc-link-lib=static=lldMachO");
-    println!("cargo:rustc-link-lib=static=lldMinGW");
-    println!("cargo:rustc-link-lib=static=lldWasm");
-
-    if cfg!(target_os = "macos") {
-        println!("cargo:rustc-link-lib=dylib=xar");
+    // LLD's libraries are static where LLVM's are, and shared where LLD was
+    // built as shared libraries (Homebrew's lld formula). Static ones are
+    // preferred when both are there. (LLD stopped using libxar with LLVM 15,
+    // so it is not linked.)
+    let lib_dirs: Vec<PathBuf> = std::iter::once(PathBuf::from(libdir.trim()))
+        .chain(lld_prefix.iter().map(|prefix| prefix.join("lib")))
+        .collect();
+    let has = |file: &str| lib_dirs.iter().any(|dir| dir.join(file).is_file());
+    for name in ["lldCOFF", "lldCommon", "lldELF", "lldMachO", "lldMinGW", "lldWasm"] {
+        let kind = if target_env_is("msvc") {
+            "static"
+        } else if has(&format!("lib{name}.a")) {
+            "static"
+        } else if has(&format!("lib{name}{}", target_dylib_extension())) {
+            "dylib"
+        } else {
+            panic!(
+                "LLD's library {name} is in none of {lib_dirs:?}; set CODIRA_LLD_PREFIX to the \
+                 directory LLD is installed in"
+            );
+        };
+        println!("cargo:rustc-link-lib={kind}={name}");
     }
 
     if cfg!(not(target_os = "windows")) {

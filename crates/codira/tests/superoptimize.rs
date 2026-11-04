@@ -61,6 +61,8 @@ fn codira(dir: &Path, args: &[&str]) -> std::process::Output {
         .expect("failed to spawn codira")
 }
 
+// Only the x86-64 Linux tests run the library they built.
+#[cfg(all(target_arch = "x86_64", target_os = "linux"))]
 fn start(dir: &Path) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_codira"))
         .arg("start")

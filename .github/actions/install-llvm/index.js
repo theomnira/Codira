@@ -34,6 +34,13 @@ async function execute(cmd) {
             const installScript = path.join(__dirname, "../../../../scripts/install-llvm.sh");
             // run via sudo bash so the script doesn't need the executable bit set
             await exec.exec('sudo', ['bash', installScript]);
+            // apt.llvm.org's packages put the unversioned executables (ld.lld,
+            // llvm-config, ...) only in /usr/lib/llvm-22/bin. Exported as on
+            // the other platforms: codira finds the LLD it spawns there or on
+            // PATH.
+            const llvmPath = "/usr/lib/llvm-22";
+            core.addPath(`${llvmPath}/bin`)
+            core.exportVariable('LLVM_SYS_221_PREFIX', llvmPath)
         } else if (isMacOS) {
             // Codira targets LLVM 22.1 (`inkwell`'s `llvm22-1` feature); llvm@14
             // is the wrong major version entirely and would fail the same way
