@@ -177,8 +177,11 @@ impl GenericBounds {
                 BoundRef::Trait(trait_) => self.bounds.push(Bound { param, trait_ }),
                 BoundRef::Type => {}
                 BoundRef::Error(message) => {
-                    self.diagnostics
-                        .push((file, AstPtr::new(&type_ref).syntax_node_ptr(), message))
+                    self.diagnostics.push((
+                        file,
+                        AstPtr::new(&type_ref).syntax_node_ptr(),
+                        message,
+                    ));
                 }
             }
         }
