@@ -636,6 +636,35 @@ fn if_statement() {
     );
 }
 
+/// An `if` without `else` whose `then` branch is an `if`/`else`, in the
+/// `else` branch of another `if`: the outer `if` once took the inner one's
+/// unit `phi` as its branch value, from a block it does not dominate, which
+/// the module verifier rejects at `-O 0` ("Instruction does not dominate all
+/// uses!"). An `if` without `else` has the unit value.
+#[test]
+fn nested_if_without_else_unoptimized() {
+    test_snapshot_unoptimized(
+        "nested_if_without_else_unoptimized",
+        r#"
+    public func f(a: bool, b: bool, c: bool) -> i32 {
+        var n = 0
+        if a {
+            n = 1
+        } else {
+            if b {
+                if c {
+                    n = 2
+                } else {
+                    n = 3
+                }
+            }
+        }
+        n
+    }
+    "#,
+    );
+}
+
 #[test]
 fn void_return() {
     test_snapshot(

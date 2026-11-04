@@ -2778,15 +2778,26 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         // Construct phi block if a value was returned
         if let Some(then_block_ir) = then_block_ir {
-            if let Some((Some(else_block_ir), else_block)) = else_ir_and_block {
-                let phi = self
-                    .builder
-                    .build_phi(then_block_ir.get_type(), "iftmp")
-                    .expect("failed to build phi");
-                phi.add_incoming(&[(&then_block_ir, then_block), (&else_block_ir, else_block)]);
-                Some(phi.as_basic_value())
-            } else {
-                Some(then_block_ir)
+            match else_ir_and_block {
+                Some((Some(else_block_ir), else_block)) => {
+                    let phi = self
+                        .builder
+                        .build_phi(then_block_ir.get_type(), "iftmp")
+                        .expect("failed to build phi");
+                    phi.add_incoming(&[(&then_block_ir, then_block), (&else_block_ir, else_block)]);
+                    Some(phi.as_basic_value())
+                }
+                // The `else` branch never reaches the merge block, so only
+                // the `then` branch's value arrives there.
+                Some((None, _)) => Some(then_block_ir),
+                // Without `else` the `if` is a statement and its value is
+                // unit. The `then` branch's value must not stand in for it:
+                // the merge block is also reached straight from the
+                // condition, so that value (a `phi {}` of an inner `if`,
+                // say) does not dominate the merge block, and an enclosing
+                // `if` that took it as its own branch value built an
+                // invalid phi ("Instruction does not dominate all uses!").
+                None => Some(self.gen_empty()),
             }
         } else if let Some((else_block_ir, _else_block)) = else_ir_and_block {
             // If both the then and the else block never return, the entire if statement
