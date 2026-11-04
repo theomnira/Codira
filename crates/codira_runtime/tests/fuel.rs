@@ -16,7 +16,7 @@ use codira_test::CompileAndRunTestDriver;
 
 const SPIN: &str = r#"
     public func spin(n: i64) -> i64 {
-        let i = 0;
+        var i = 0;
         while i < n {
             i += 1;
         }
@@ -28,7 +28,7 @@ const SPIN: &str = r#"
     }
 
     public func forever() -> i64 {
-        let i = 0;
+        var i = 0;
         loop {
             i += 1;
         }

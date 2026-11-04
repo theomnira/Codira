@@ -24,8 +24,8 @@ const CHURN: &str = r#"
         // collector that runs inside the allocations below missed it, its
         // cell would be reused by a later `Node` and `keep.value` would change.
         let keep = Node { value: 7, twice: 14 };
-        let total = 0;
-        let i = 0;
+        var total = 0;
+        var i = 0;
         while i < n {
             let node = Node { value: i, twice: i * 2 };
             total += node.twice - node.value + keep.value;

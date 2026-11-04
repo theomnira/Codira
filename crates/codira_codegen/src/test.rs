@@ -547,31 +547,31 @@ fn update_operators() {
         "update_operators",
         r#"
     public func add(a:i32, b:i32) -> i32 {
-      let result = a
+      var result = a
       result += b
       result
     }
 
     public func subtract(a:i32, b:i32) -> i32 {
-      let result = a
+      var result = a
       result -= b
       result
     }
 
     public func multiply(a:i32, b:i32) -> i32 {
-      let result = a
+      var result = a
       result *= b
       result
     }
 
     public func divide(a:i32, b:i32) -> i32 {
-      let result = a
+      var result = a
       result /= b
       result
     }
 
     public func remainder(a:i32, b:i32) -> i32 {
-      let result = a
+      var result = a
       result %= b
       result
     }
@@ -673,9 +673,9 @@ fn fibonacci_loop() {
         "fibonacci_loop",
         r#"
     public func fibonacci(n:i32) -> i32 {
-        let a = 0;
-        let b = 1;
-        let i = 1;
+        var a = 0;
+        var b = 1;
+        var i = 1;
         loop {
             if i > n {
                 return a
@@ -1933,7 +1933,7 @@ fn print_builtin() {
 fn fuel_instrumentation_charges_function_entries_and_loop_back_edges() {
     let text = r#"
     public func spin(n: i64) -> i64 {
-        let i = 0;
+        var i = 0;
         while i < n {
             i += 1;
         }

@@ -581,8 +581,8 @@ public func clamp_usize(x: usize, lo: usize, hi: usize) -> usize {
 
 /// Greatest common divisor (Euclidean algorithm).
 public func gcd(a: i64, b: i64) -> i64 {
-    let x = abs_i64(a);
-    let y = abs_i64(b);
+    var x = abs_i64(a);
+    var y = abs_i64(b);
     while y != 0 {
         let t = y;
         y = x % y;
@@ -604,8 +604,8 @@ public func factorial(n: i64) -> i64 {
     if n < 0 {
         panic("factorial: negative input");
     }
-    let result: i64 = 1;
-    let i: i64 = 2;
+    var result: i64 = 1;
+    var i: i64 = 2;
     while i <= n {
         result = result * i;
         i = i + 1;
@@ -615,9 +615,9 @@ public func factorial(n: i64) -> i64 {
 
 /// Integer power: base^exp for non-negative exp. Uses fast exponentiation.
 public func ipow(base: i64, exp: u64) -> i64 {
-    let result: i64 = 1;
-    let b = base;
-    let e = exp;
+    var result: i64 = 1;
+    var b = base;
+    var e = exp;
     while e > 0 {
         if (e & 1) == 1 {
             result = result * b;
@@ -633,8 +633,8 @@ public func ilog2(x: u64) -> u32 {
     if x == 0 {
         panic("ilog2: zero");
     }
-    let n: u32 = 0;
-    let v = x;
+    var n: u32 = 0;
+    var v = x;
     while v > 1 {
         v = v >> 1;
         n = n + 1;
@@ -652,7 +652,7 @@ public func next_power_of_two_u64(x: u64) -> u64 {
     if x == 0 {
         return 1;
     }
-    let v = x - 1;
+    var v = x - 1;
     v = v | (v >> 1);
     v = v | (v >> 2);
     v = v | (v >> 4);

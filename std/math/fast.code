@@ -205,9 +205,9 @@ public func fast_pow(base: f32, exp: f32) -> f32 {
 
 /// Raises `base` to a non-negative integer power via squaring (exact).
 public func fast_ipow_f64(base: f64, exp: u32) -> f64 {
-    let result: f64 = 1.0;
-    let b = base;
-    let e = exp;
+    var result: f64 = 1.0;
+    var b = base;
+    var e = exp;
     while e > 0 {
         if (e & 1) == 1 {
             result = result * b;
@@ -220,9 +220,9 @@ public func fast_ipow_f64(base: f64, exp: u32) -> f64 {
 
 /// Same for f32.
 public func fast_ipow_f32(base: f32, exp: u32) -> f32 {
-    let result: f32 = 1.0 as f32;
-    let b = base;
-    let e = exp;
+    var result: f32 = 1.0 as f32;
+    var b = base;
+    var e = exp;
     while e > 0 {
         if (e & 1) == 1 {
             result = result * b;

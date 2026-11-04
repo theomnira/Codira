@@ -168,10 +168,10 @@ public func compressed_store[T, N: usize](
 //   // Load every 3rd float starting at base:
 //   let v = strided_load[f32, 4](base_ptr, 3);
 public func strided_load[T, N: usize](base: Pointer[T], stride: usize) -> SIMD[T, N] {
-    let result: SIMD[T, N];
+    var result: SIMD[T, N];
     let addr = base.address();
     let elem_stride = stride * __intrinsic_sizeof();
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         let elem_addr = addr + i * elem_stride;
         result = result.set(i, __intrinsic_load(elem_addr));
@@ -188,7 +188,7 @@ public func strided_store[T, N: usize](
 ) {
     let addr = base.address();
     let elem_stride = stride * __intrinsic_sizeof();
-    let i: usize = 0;
+    var i: usize = 0;
     while i < N {
         let elem_addr = addr + i * elem_stride;
         __intrinsic_store(elem_addr, values.get(i));

@@ -91,8 +91,8 @@ func _partition[T](data: Slice[T], cmp: func(T, T) -> i32) -> usize {
     _slice_swap(data, mid, last - 1);
     let pivot = data.get(last - 1);
 
-    let i: usize = 0;
-    let j: usize = last - 1;
+    var i: usize = 0;
+    var j: usize = last - 1;
     while true {
         i = i + 1;
         while cmp(data.get(i), pivot) < 0 {
@@ -136,7 +136,7 @@ public func stable_sort[T](data: Slice[T], cmp: func(T, T) -> i32) {
 
     // Allocate temporary buffer.
     let buf = Array.with_capacity(n);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < n {
         buf.push(data.get(i));
         i = i + 1;
@@ -190,16 +190,16 @@ func _merge[T](
     hi: usize,
 ) {
     // Copy both runs into buf.
-    let k: usize = lo;
+    var k: usize = lo;
     while k < hi {
         let ptr = buf.data();
         ptr.offset(k as isize).write(data.get(k));
         k = k + 1;
     }
 
-    let i: usize = lo;
-    let j: usize = mid;
-    let dest: usize = lo;
+    var i: usize = lo;
+    var j: usize = mid;
+    var dest: usize = lo;
     let data_ptr = data.data();
 
     while i < mid & j < hi {
@@ -236,7 +236,7 @@ public func partial_sort[T](data: Slice[T], k: usize, cmp: func(T, T) -> i32) {
     if k == 0 | n <= 1 {
         return;
     }
-    let count = k;
+    var count = k;
     if count > n {
         count = n;
     }
@@ -246,7 +246,7 @@ public func partial_sort[T](data: Slice[T], k: usize, cmp: func(T, T) -> i32) {
 
     // For each remaining element, if it's smaller than the heap root, swap
     // and sift down.
-    let i: usize = count;
+    var i: usize = count;
     while i < n {
         if cmp(data.get(i), data.get(0)) < 0 {
             _slice_swap(data, 0, i);
@@ -276,10 +276,10 @@ func _insertion_sort_impl[T](data: Slice[T], cmp: func(T, T) -> i32) {
         return;
     }
     let ptr = data.data();
-    let i: usize = 1;
+    var i: usize = 1;
     while i < n {
         let key = data.get(i);
-        let j: isize = (i as isize) - 1;
+        var j: isize = (i as isize) - 1;
         while j >= 0 & cmp(data.get(j as usize), key) > 0 {
             ptr.offset((j + 1) as isize).write(data.get(j as usize));
             j = j - 1;
@@ -299,7 +299,7 @@ func _heapsort_impl[T](data: Slice[T], cmp: func(T, T) -> i32) {
         return;
     }
     _build_max_heap(data, cmp);
-    let end: usize = n - 1;
+    var end: usize = n - 1;
     while end > 0 {
         _slice_swap(data, 0, end);
         _sift_down(data.subslice(0, end), cmp, 0);
@@ -309,7 +309,7 @@ func _heapsort_impl[T](data: Slice[T], cmp: func(T, T) -> i32) {
 
 func _build_max_heap[T](data: Slice[T], cmp: func(T, T) -> i32) {
     let n = data.len();
-    let i: isize = ((n / 2) as isize) - 1;
+    var i: isize = ((n / 2) as isize) - 1;
     while i >= 0 {
         _sift_down(data, cmp, i as usize);
         i = i - 1;
@@ -318,9 +318,9 @@ func _build_max_heap[T](data: Slice[T], cmp: func(T, T) -> i32) {
 
 func _sift_down[T](data: Slice[T], cmp: func(T, T) -> i32, start: usize) {
     let n = data.len();
-    let root: usize = start;
+    var root: usize = start;
     while root * 2 + 1 < n {
-        let child: usize = root * 2 + 1;
+        var child: usize = root * 2 + 1;
         if child + 1 < n & cmp(data.get(child), data.get(child + 1)) < 0 {
             child = child + 1;
         }
@@ -343,7 +343,7 @@ public func is_sorted[T](data: Slice[T], cmp: func(T, T) -> i32) -> bool {
     if n <= 1 {
         return true;
     }
-    let i: usize = 1;
+    var i: usize = 1;
     while i < n {
         if cmp(data.get(i - 1), data.get(i)) > 0 {
             return false;
@@ -366,8 +366,8 @@ public func is_sorted[T: Comparable](data: Slice[T]) -> bool {
 // be there if the slice were fully sorted.  Elements before `k` are <=,
 // elements after are >=.  Average O(n).
 public func nth_element[T](data: Slice[T], k: usize, cmp: func(T, T) -> i32) {
-    let lo: usize = 0;
-    let hi: usize = data.len();
+    var lo: usize = 0;
+    var hi: usize = data.len();
     while lo < hi {
         let sub = data.subslice(lo, hi);
         let pivot = _partition(sub, cmp);

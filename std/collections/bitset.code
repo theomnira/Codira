@@ -22,7 +22,7 @@ public func bitset_new(capacity: usize) -> BitSet {
     let nw = (capacity + BITS_PER_WORD - 1) / BITS_PER_WORD;
     let words = heap_alloc(nw);
     // Zero all words
-    let i: usize = 0;
+    var i: usize = 0;
     while i < nw {
         raw_store(words, i, 0 as u64);
         i = i + 1;
@@ -33,7 +33,7 @@ public func bitset_new(capacity: usize) -> BitSet {
 /// Creates a BitSet with all bits in [0, capacity) set to 1.
 public func bitset_full(capacity: usize) -> BitSet {
     let bs = bitset_new(capacity);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < bs.num_words {
         raw_store(bs.words, i, 0xFFFFFFFFFFFFFFFF as u64);
         i = i + 1;
@@ -109,7 +109,7 @@ public func toggle(this: BitSet, index: usize) -> BitSet {
 
 /// Sets all bits to 0.
 public func clear(this: BitSet) -> BitSet {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.num_words {
         raw_store(this.words, i, 0 as u64);
         i = i + 1;
@@ -121,8 +121,8 @@ public func clear(this: BitSet) -> BitSet {
 
 /// Returns the number of bits that are set (popcount).
 public func count(this: BitSet) -> usize {
-    let total: usize = 0;
-    let i: usize = 0;
+    var total: usize = 0;
+    var i: usize = 0;
     while i < this.num_words {
         total = total + popcount64(raw_load(this.words, i));
         i = i + 1;
@@ -133,8 +133,8 @@ public func count(this: BitSet) -> usize {
 /// Hardware-assisted population count for a 64-bit word.
 func popcount64(x: u64) -> usize {
     // Kernighan's bit-counting algorithm
-    let v = x;
-    let c: usize = 0;
+    var v = x;
+    var c: usize = 0;
     while v != 0 {
         v = v & (v - 1);
         c = c + 1;
@@ -144,7 +144,7 @@ func popcount64(x: u64) -> usize {
 
 /// Returns true if at least one bit is set.
 public func any(this: BitSet) -> bool {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.num_words {
         if raw_load(this.words, i) != 0 {
             return true;
@@ -173,7 +173,7 @@ public func bitset_union(a: BitSet, b: BitSet) -> BitSet {
         panic("BitSet.union: capacity mismatch");
     }
     let out = bitset_new(a.capacity);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < a.num_words {
         raw_store(out.words, i, raw_load(a.words, i) | raw_load(b.words, i));
         i = i + 1;
@@ -187,7 +187,7 @@ public func bitset_intersection(a: BitSet, b: BitSet) -> BitSet {
         panic("BitSet.intersection: capacity mismatch");
     }
     let out = bitset_new(a.capacity);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < a.num_words {
         raw_store(out.words, i, raw_load(a.words, i) & raw_load(b.words, i));
         i = i + 1;
@@ -201,7 +201,7 @@ public func bitset_difference(a: BitSet, b: BitSet) -> BitSet {
         panic("BitSet.difference: capacity mismatch");
     }
     let out = bitset_new(a.capacity);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < a.num_words {
         raw_store(out.words, i, raw_load(a.words, i) & ~raw_load(b.words, i));
         i = i + 1;
@@ -215,7 +215,7 @@ public func bitset_symmetric_difference(a: BitSet, b: BitSet) -> BitSet {
         panic("BitSet.symmetric_difference: capacity mismatch");
     }
     let out = bitset_new(a.capacity);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < a.num_words {
         raw_store(out.words, i, raw_load(a.words, i) ^ raw_load(b.words, i));
         i = i + 1;
@@ -226,7 +226,7 @@ public func bitset_symmetric_difference(a: BitSet, b: BitSet) -> BitSet {
 /// Bitwise NOT — complement of the bitset.
 public func bitset_complement(this: BitSet) -> BitSet {
     let out = bitset_new(this.capacity);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.num_words {
         raw_store(out.words, i, ~raw_load(this.words, i));
         i = i + 1;
@@ -246,7 +246,7 @@ public func bitset_is_subset(a: BitSet, b: BitSet) -> bool {
     if a.capacity != b.capacity {
         panic("BitSet.is_subset: capacity mismatch");
     }
-    let i: usize = 0;
+    var i: usize = 0;
     while i < a.num_words {
         let wa = raw_load(a.words, i);
         let wb = raw_load(b.words, i);
@@ -267,8 +267,8 @@ public func bitset_is_superset(a: BitSet, b: BitSet) -> bool {
 
 /// Returns a List of all set bit indices.
 public func to_indices(this: BitSet) -> List[usize] {
-    let out = list_new();
-    let i: usize = 0;
+    var out = list_new();
+    var i: usize = 0;
     while i < this.capacity {
         if get(this, i) {
             out = push(out, i);

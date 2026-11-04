@@ -262,8 +262,8 @@ fn perform_inside_a_loop() {
     }
 
     func sum(n: i32) uses Gen -> i32 {
-        let total = 0;
-        let i = 0;
+        var total = 0;
+        var i = 0;
         while i < n {
             total += perform Gen.next(i);
             i += 1;

@@ -14,8 +14,8 @@ import root.collections.list.*;
 
 /// Returns a List of `count` values starting at `start` with a step of 1.
 public func iota(start: i64, count: usize) -> List[i64] {
-    let out = list_with_capacity(count);
-    let i: usize = 0;
+    var out = list_with_capacity(count);
+    var i: usize = 0;
     while i < count {
         out = push(out, start + (i as i64));
         i = i + 1;
@@ -25,8 +25,8 @@ public func iota(start: i64, count: usize) -> List[i64] {
 
 /// Returns a List of f64 values from `start` to `end` with `step`.
 public func arange(start: f64, end: f64, step: f64) -> List[f64] {
-    let out = list_new();
-    let v = start;
+    var out = list_new();
+    var v = start;
     if step > 0.0 {
         while v < end {
             out = push(out, v);
@@ -43,7 +43,7 @@ public func arange(start: f64, end: f64, step: f64) -> List[f64] {
 
 /// Returns a List of `count` evenly-spaced f64 values from `start` to `end` (inclusive).
 public func linspace(start: f64, end: f64, count: usize) -> List[f64] {
-    let out = list_with_capacity(count);
+    var out = list_with_capacity(count);
     if count == 0 {
         return out;
     }
@@ -52,7 +52,7 @@ public func linspace(start: f64, end: f64, count: usize) -> List[f64] {
         return out;
     }
     let step = (end - start) / ((count - 1) as f64);
-    let i: usize = 0;
+    var i: usize = 0;
     while i < count {
         out = push(out, start + (i as f64) * step);
         i = i + 1;

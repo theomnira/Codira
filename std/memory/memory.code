@@ -120,7 +120,7 @@ public func memeq(a: usize, b: usize, count: usize) -> bool {
 // Search for the first occurrence of byte `value` in `count` bytes
 // starting at `src`.  Returns the byte offset, or -1 if not found.
 public func memchr(src: usize, value: u8, count: usize) -> isize {
-    let i: usize = 0;
+    var i: usize = 0;
     while i < count {
         let byte_val = __intrinsic_load(src + i);
         if byte_val == value {
@@ -136,7 +136,7 @@ public func memrchr(src: usize, value: u8, count: usize) -> isize {
     if count == 0 {
         return -1;
     }
-    let i: usize = count;
+    var i: usize = count;
     while i > 0 {
         i = i - 1;
         let byte_val = __intrinsic_load(src + i);
@@ -162,8 +162,8 @@ public func secure_zero(dest: usize, count: usize) {
 // Returns true if all bytes are equal.  Timing does not depend on the
 // data, preventing timing side-channel attacks.
 public func constant_time_eq(a: usize, b: usize, count: usize) -> bool {
-    let diff: u8 = 0;
-    let i: usize = 0;
+    var diff: u8 = 0;
+    var i: usize = 0;
     while i < count {
         let byte_a = __intrinsic_load(a + i);
         let byte_b = __intrinsic_load(b + i);

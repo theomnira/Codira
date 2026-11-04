@@ -15,7 +15,7 @@ use codira_test::CompileAndRunTestDriver;
 
 const SOURCE: &str = r"
     func produce(dest: Channel[i64], from: i64, count: i64) {
-        let i = 0;
+        var i = 0;
         while i < count {
             dest <- from + i;
             i += 1;
@@ -30,8 +30,8 @@ const SOURCE: &str = r"
             spawn produce(a, 0, n);
             spawn produce(b, 1000, n);
             spawn produce(c, 1000000, n);
-            let total = 0;
-            let got = 0;
+            var total = 0;
+            var got = 0;
             while got < 3 * n {
                 select {
                     v = <-a -> total += v,
@@ -50,9 +50,9 @@ const SOURCE: &str = r"
             let b = channel(1);
             a <- 1;
             b <- 2;
-            let from_a = 0;
-            let from_b = 0;
-            let i = 0;
+            var from_a = 0;
+            var from_b = 0;
+            var i = 0;
             while i < rounds {
                 select {
                     v = <-a -> {
@@ -86,9 +86,9 @@ const SOURCE: &str = r"
     public func try_send() -> i32 {
         scope {
             let a = channel(1);
-            let sent = 0;
-            let skipped = 0;
-            let i = 0;
+            var sent = 0;
+            var skipped = 0;
+            var i = 0;
             while i < 3 {
                 select {
                     a <- i -> sent += 1,
@@ -101,7 +101,7 @@ const SOURCE: &str = r"
     }
 
     func double(input: Channel[i32], output: Channel[i32], n: i32) {
-        let i = 0;
+        var i = 0;
         while i < n {
             let x = <-input;
             output <- x * 2;
@@ -114,9 +114,9 @@ const SOURCE: &str = r"
             let input = channel(1);
             let output = channel(1);
             spawn double(input, output, n);
-            let next = 0;
-            let received = 0;
-            let total = 0;
+            var next = 0;
+            var received = 0;
+            var total = 0;
             while received < n {
                 if next < n {
                     select {
@@ -148,7 +148,7 @@ const SOURCE: &str = r"
             let a = channel(1);
             let b = channel(1);
             let results = channel(64);
-            let i = 0;
+            var i = 0;
             while i < n {
                 spawn first_of(a, b, results);
                 i += 1;
@@ -162,7 +162,7 @@ const SOURCE: &str = r"
                 };
                 i += 1;
             };
-            let total = 0;
+            var total = 0;
             i = 0;
             while i < n {
                 total += <-results;

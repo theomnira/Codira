@@ -107,7 +107,7 @@ extend Layout {
 extend Layout {
     public func extend(self, other: Layout) -> (Layout, usize) {
         let offset = (self.size + other.align - 1) & (0 - other.align);
-        let new_align = self.align;
+        var new_align = self.align;
         if other.align > new_align {
             new_align = other.align;
         }

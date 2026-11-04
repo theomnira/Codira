@@ -129,7 +129,7 @@ public func main() -> i32 {
 
 const TASKS: &str = r"
 func produce(dest: Channel[i64], from: i64, count: i64) {
-    let i = 0;
+    var i = 0;
     while i < count {
         dest <- from + i;
         i += 1;
@@ -141,8 +141,8 @@ public func producers() -> i64 {
         let ch = channel(8);
         spawn produce(ch, 0, 100);
         spawn produce(ch, 1000, 100);
-        let total = 0;
-        let n = 0;
+        var total = 0;
+        var n = 0;
         while n < 200 {
             total += <-ch;
             n += 1;

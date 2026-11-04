@@ -29,7 +29,7 @@ public func deque_with_capacity[T](cap: usize) -> Deque[T] {
 }
 
 func next_power_of_two_deque(n: usize) -> usize {
-    let p: usize = 1;
+    var p: usize = 1;
     while p < n {
         p = p * 2;
     }
@@ -48,7 +48,7 @@ func deque_grow[T](this: Deque[T]) -> Deque[T] {
     let new_cap = this.cap * 2;
     let new_buf = heap_alloc(new_cap);
     // Linearise the old circular buffer into the new buffer
-    let i: usize = 0;
+    var i: usize = 0;
     while i < this.len {
         let src_idx = wrap(this.head + i, this.cap);
         raw_store(new_buf, i, raw_load(this.buf, src_idx));
@@ -91,7 +91,7 @@ public func back[T](this: Deque[T]) -> T {
 
 /// Pushes an element to the back.
 public func push_back[T](this: Deque[T], value: T) -> Deque[T] {
-    let out = this;
+    var out = this;
     if out.len == out.cap {
         out = deque_grow(out);
     }
@@ -103,7 +103,7 @@ public func push_back[T](this: Deque[T], value: T) -> Deque[T] {
 
 /// Pushes an element to the front.
 public func push_front[T](this: Deque[T], value: T) -> Deque[T] {
-    let out = this;
+    var out = this;
     if out.len == out.cap {
         out = deque_grow(out);
     }
@@ -171,8 +171,8 @@ public func clear[T](this: Deque[T]) -> Deque[T] {
 
 /// Converts the deque into a List[T] (front-to-back order).
 public func deque_to_list[T](this: Deque[T]) -> List[T] {
-    let out = list_with_capacity(this.len);
-    let i: usize = 0;
+    var out = list_with_capacity(this.len);
+    var i: usize = 0;
     while i < this.len {
         out = push(out, deque_get(this, i));
         i = i + 1;

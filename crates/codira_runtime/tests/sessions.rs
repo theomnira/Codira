@@ -106,8 +106,8 @@ const SOURCE: &str = r"
     }
 
     public func many_sessions(n: i64) -> i64 {
-        let total = 0;
-        let i = 0;
+        var total = 0;
+        var i = 0;
         while i < n {
             total += add(i, i);
             i += 1;
