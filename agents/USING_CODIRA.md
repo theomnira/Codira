@@ -889,10 +889,39 @@ public func equal(a: u64, b: u64) -> bool {
   constant-time. `ct_select(c, a, b)` chooses without a branch.
 - What is guaranteed: those source rules, and that `ct_select` becomes one
   LLVM `select` marked `!unpredictable` with no conditional branch (checked
-  in tests at `-O0`, `-O2`, `-O3`). What is not: the LLVM backend may still
-  lower a `select` to a branch (`!unpredictable` asks it not to); multiplies,
-  shifts and loads at public addresses are assumed constant-time; speculative
-  execution is out of scope.
+  in tests at `-O0`, `-O2`, `-O3`). The IR is not the machine code: the LLVM
+  backend may still lower a `select` to a branch, and does -- at `-O0` on
+  x86-64 a `ct_select` on `u8`/`i8` becomes a conditional jump on the secret
+  condition, and a `bool` one a select of two stack addresses followed by a
+  load.
+- `codira build --check-constant-time` (alias `--check-ct`, off by default)
+  checks the machine code. After linking, it disassembles each `oblivious` /
+  `@constant_time` function of the library (found by its symbol) and fails
+  the build, naming the function and each offending instruction (address and
+  disassembly), on: (a) any conditional branch -- even on a public value, such
+  as a loop counter at `-O0`; the report says whether the condition was traced
+  to a secret; any indirect branch; (b) a variable-time instruction: integer
+  and floating-point division and square root, x87 remainder/transcendental
+  instructions (`AArch64`: `udiv`, `sdiv`, `fdiv`, `fsqrt`), and a `rep`
+  string instruction whose count is secret; (c) a call to anything but
+  another function the check covers; (d) x86-64 only: a load or store whose
+  address register a taint analysis traces to a secret parameter (through
+  registers, flags and stack slots). Rule (d) starts from the registers the
+  calling convention passes `secret` parameters in, so it covers functions
+  whose parameters and result are integers, `bool`s or floats; a secret
+  reached through a pointer (an array, a struct) is not seen there and is
+  covered only by the source rule, and the build prints a note for each
+  function this applies to. A function the optimizer inlined everywhere and
+  removed has no code of its own and is reported as not checked.
+- What the machine-code check is not: a proof of constant-time execution.
+  It has been run only on x86-64 Linux (ELF); the `AArch64` decoder is unit
+  tested on instruction encodings, never on a built library, and checks
+  rules (a)-(c) only; Mach-O and PE libraries are read but call targets
+  through their stubs are not resolved, so calls there are reported.
+  Multiplies, shifts, `cmov` and loads at public addresses are assumed
+  constant-time; other micro-architectural effects (cache banks, subnormal
+  floats, frequency) are not modelled; speculative execution is out of
+  scope.
 
 ### Units of measure
 

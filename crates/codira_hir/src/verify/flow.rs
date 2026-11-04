@@ -69,6 +69,13 @@
 //! public addresses are assumed constant-time, which holds on mainstream
 //! x86-64 and `AArch64` cores but is not universal. Speculative execution is
 //! out of scope. A checked function is constant-time *at the source level*.
+//!
+//! `codira build --check-constant-time` (`codira_ctcheck`) checks the
+//! machine code of these functions afterwards, for specific rules only
+//! (conditional branches, variable-time instructions, unchecked calls and,
+//! on x86-64, secret-dependent addresses); see that crate for what it does
+//! not check. It does find lowered branches: at `-O0` on x86-64 a
+//! `ct_select` on 8-bit integers becomes a jump on the condition.
 
 use std::sync::Arc;
 
