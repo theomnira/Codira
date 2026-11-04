@@ -180,11 +180,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         //
         // Not for an instance of a generic function: the fold lowers the
         // declaration's body, which is written in terms of its parameters.
-        if let Some(eidos) = self
-            .eidos
-            .as_ref()
-            .filter(|_| !runtime_checks && !self.instance.is_generic())
-        {
+        if let Some(eidos) = self.eidos.as_ref().filter(|_| {
+            !runtime_checks
+                && !self.instance.is_generic()
+                && !self.instance.sig(self.db).ret().is_never()
+        }) {
             if let Some(value) = crate::eidos_fold::fold_to_constant(
                 self.db,
                 self.hir_function,
@@ -366,9 +366,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // result whose body ended that way.
         let fn_ret_type = fn_sig.ret().clone();
         if fn_ret_type.is_never() {
-            self.builder
-                .build_unreachable()
-                .expect("failed to build unreachable");
+            // `gen_call` has ended the block with `unreachable` already.
         } else if fn_ret_type.is_empty() {
             self.builder
                 .build_return(None)
@@ -2539,6 +2537,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .build_indirect_call(fn_type, asm, args, &function.name(self.db).to_string())
             .expect("failed to build inline assembly call");
 
+        if ret.is_never() {
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable after assembly returning `never`");
+            return None;
+        }
         call.try_as_basic_value()
             .basic()
             .or_else(|| match self.infer[expr].interned() {
@@ -2686,6 +2690,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             self.gen_abort_check();
         }
 
+        // A call to a function returning `never` does not come back (an
+        // abort out of a `uses` callee has just been branched away by the
+        // check above): nothing follows it.
+        if sig.ret().is_never() {
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable after a call returning `never`");
+            return None;
+        }
+
         if through_table {
             if let Some(hir_struct) = sig.ret().as_struct() {
                 if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
@@ -2794,7 +2808,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         _expr: ExprId,
         ret_expr: Option<ExprId>,
     ) -> Option<BasicValueEnum<'ink>> {
-        let ret_value = ret_expr.and_then(|expr| self.gen_expr(expr));
+        let ret_value = match ret_expr {
+            Some(expr) => {
+                // `return f()` where `f` never returns: nothing is left to
+                // return, and the block is already terminated.
+                Some(self.gen_expr(expr)?)
+            }
+            None => None,
+        };
 
         // Every task of every open scope finishes before the function does.
         self.gen_end_scopes(0);

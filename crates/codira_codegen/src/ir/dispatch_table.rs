@@ -480,11 +480,7 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
                 .iter()
                 .map(|arg| self.hir_types.type_id(arg))
                 .collect();
-            let ret_type = if sig.ret().is_empty() {
-                <()>::type_id().clone()
-            } else {
-                self.hir_types.type_id(sig.ret())
-            };
+            let ret_type = self.hir_types.ret_type_id(sig.ret());
 
             let prototype = FunctionPrototype {
                 name,

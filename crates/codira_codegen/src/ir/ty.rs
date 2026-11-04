@@ -305,9 +305,14 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             ))
             .collect();
 
+        // A function returning `never` returns nothing: it is `void` in
+        // LLVM, carries `noreturn` (see `ir::function::mark_noreturn`), and
+        // every call to it is followed by `unreachable`.
         let return_type = ty.ret();
         match return_type.interned() {
-            TyKind::Tuple(0, _) => self.context.void_type().fn_type(&param_tys, false),
+            TyKind::Tuple(0, _) | TyKind::Never => {
+                self.context.void_type().fn_type(&param_tys, false)
+            }
             _ => self
                 .get_basic_type(return_type)
                 .expect("could not convert return value")
@@ -329,9 +334,12 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             })
             .collect();
 
+        // `never` is `void` here too, as in `get_function_type`.
         let return_type = ty.ret();
         match return_type.interned() {
-            TyKind::Tuple(0, _) => self.context.void_type().fn_type(&param_tys, false),
+            TyKind::Tuple(0, _) | TyKind::Never => {
+                self.context.void_type().fn_type(&param_tys, false)
+            }
             _ => self
                 .get_public_basic_type(return_type)
                 .expect("could not convert return value")
@@ -487,6 +495,20 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             );
         }
         self.context.struct_type(&tuple_ir_types, false)
+    }
+
+    /// The `TypeInfo` of a function's result in its reflected signature:
+    /// `()` for unit and for `never`, which are both `void` in LLVM, so the
+    /// signature a caller expects (`ir::dispatch_table`) and the one a
+    /// definition -- compiled, or registered by the runtime -- declares
+    /// agree. That `never` does not return is in the code (`noreturn`,
+    /// `unreachable` after each call), not in the signature check.
+    pub fn ret_type_id(&self, ret: &Ty) -> Arc<TypeId> {
+        if ret.is_empty() || ret.is_never() {
+            <()>::type_id().clone()
+        } else {
+            self.type_id(ret)
+        }
     }
 
     /// Returns a `TypeInfo` for the specified `ty`
