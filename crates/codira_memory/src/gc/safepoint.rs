@@ -533,9 +533,7 @@ pub unsafe fn restore(checkpoint: ThreadCheckpoint) {
         _ => {}
     }
     DEPTH.with(|depth| depth.set(checkpoint.depth));
-    record
-        .active
-        .store(checkpoint.depth > 0, Ordering::Relaxed);
+    record.active.store(checkpoint.depth > 0, Ordering::Relaxed);
     record.low.store(checkpoint.low, Ordering::Relaxed);
 }
 

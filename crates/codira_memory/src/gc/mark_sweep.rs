@@ -261,12 +261,18 @@ where
             Err(err @ AllocError::LimitExceeded { .. }) => {
                 // Collecting needs this thread to be able to park; a thread
                 // that is exiting cannot.
-                if safepoint::is_running() && self.try_collect().is_ok() {
-                    self.emergency_collections.fetch_add(1, Ordering::Relaxed);
-                    self.heap.alloc(ty, layout)
-                } else {
-                    Err(err)
+                if !safepoint::is_running() {
+                    return Err(err);
                 }
+                // Retry while the world is still stopped: otherwise the
+                // other threads, resumed first, could use up what the
+                // collection freed before this thread gets any of it.
+                self.collect_stopped_then(|| self.heap.alloc(ty, layout))
+                    .map_err(|CollectRefused| err)
+                    .and_then(|(_, result)| {
+                        self.emergency_collections.fetch_add(1, Ordering::Relaxed);
+                        result
+                    })
             }
             result => result,
         }
@@ -290,16 +296,27 @@ where
     /// cannot be scanned, so collecting could free objects only it refers
     /// to.
     pub fn try_collect(&self) -> Result<bool, CollectRefused> {
+        self.collect_stopped_then(|| ()).map(|(freed, ())| freed)
+    }
+
+    /// Stops the world, collects, and runs `then` before resuming the
+    /// other threads. Returns whether memory was reclaimed and what `then`
+    /// returned.
+    fn collect_stopped_then<R>(
+        &self,
+        then: impl FnOnce() -> R,
+    ) -> Result<(bool, R), CollectRefused> {
         safepoint::stop_the_world(|world| {
             if world.has_unscannable_threads() {
                 return Err(CollectRefused);
             }
             let mut words = world.stack_words();
-            Ok(if words.is_empty() {
+            let freed = if words.is_empty() {
                 self.collect_impl(None)
             } else {
                 self.collect_impl(Some(&mut words))
-            })
+            };
+            Ok((freed, then()))
         })
     }
 

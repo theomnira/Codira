@@ -427,7 +427,11 @@ fn emergency_collection_scans_every_thread_in_codira_code() {
     }
     assert!(gc.emergency_collections() > 0);
     done.wait();
-    assert_eq!(other.join().unwrap(), 33, "the other thread's object was freed");
+    assert_eq!(
+        other.join().unwrap(),
+        33,
+        "the other thread's object was freed"
+    );
 }
 
 #[test]
