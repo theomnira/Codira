@@ -39,9 +39,12 @@
 //! stack. Those frames cannot change while the thread is parked, because the
 //! thread only runs code deeper on the stack until it is running again.
 //!
-//! Every word is ordered through `SeqCst` accesses of the per-thread
-//! `running` flag and the global stop flag (a Dekker-style handshake), so the
-//! allocation fast path costs a thread-local read and one relaxed load.
+//! A thread that starts running stores its per-thread `running` flag and
+//! then reads the global stop flag, both `SeqCst`; a collector stores the
+//! stop flag and then reads every `running` flag, both `SeqCst` (a
+//! Dekker-style handshake), so the two never both proceed. Stopping only
+//! needs a release store. The allocation fast path costs a thread-local read
+//! and one relaxed load.
 //!
 //! # What this does not cover
 //!
@@ -79,6 +82,10 @@ static REGISTRY: Mutex<Registry> = const_mutex(Registry {
 /// Signalled whenever a thread parks while a stop is requested, and when a
 /// stop ends.
 static CHANGED: Condvar = Condvar::new();
+
+/// How often a collector waiting for threads to park re-checks without
+/// being woken.
+const STOP_POLL: std::time::Duration = std::time::Duration::from_millis(1);
 
 struct Registry {
     records: Vec<Arc<Record>>,
@@ -209,10 +216,17 @@ fn make_running(record: &Record) {
 }
 
 /// Makes the current thread stop running, telling a waiting collector.
+///
+/// The store only needs release ordering (what the thread wrote before it,
+/// its stack range included, must be visible to a collector that sees it).
+/// Without a full fence the check of the stop flag below may miss a stop
+/// that was just requested, so the collector does not rely on being woken:
+/// it re-checks every [`STOP_POLL`].
+#[inline]
 fn make_idle(record: &Record) {
     MODE.with(|mode| mode.set(IDLE));
-    record.running.store(false, Ordering::SeqCst);
-    if STOP.load(Ordering::SeqCst) {
+    record.running.store(false, Ordering::Release);
+    if STOP.load(Ordering::Relaxed) {
         let _registry = REGISTRY.lock();
         CHANGED.notify_all();
     }
@@ -457,7 +471,9 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
             .iter()
             .any(|record| record.running.load(Ordering::SeqCst))
         {
-            CHANGED.wait(&mut registry);
+            // Woken when a thread parks; the timeout covers a wake-up a
+            // thread could not know was needed (see `make_idle`).
+            CHANGED.wait_for(&mut registry, STOP_POLL);
         }
         let world = World::snapshot(&registry);
         drop(registry);
