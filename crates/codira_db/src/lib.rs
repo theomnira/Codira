@@ -12,6 +12,8 @@
 //! - Atomic checkpoints and log truncation ([`Db::checkpoint`]).
 //! - A storage abstraction with a fault-injecting implementation for crash
 //!   tests ([`Storage`], [`fault::FaultStorage`]).
+//! - Typed tables with a stored schema version and an add-column migration
+//!   ([`table`]).
 //!
 //! # Guarantee
 //!
@@ -44,6 +46,7 @@ mod error;
 pub mod fault;
 mod snapshot;
 mod storage;
+pub mod table;
 mod wal;
 
 pub use codec::MAX_LEN;
