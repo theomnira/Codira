@@ -777,9 +777,22 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let then_ir = self.opt_deref_value(*then_value, then_ir);
         let else_ir = self.gen_expr(*else_value)?;
         let else_ir = self.opt_deref_value(*else_value, else_ir);
+        // The x86-64 back end has no conditional move for 8-bit registers,
+        // and at -O0 it lowers an 8-bit `select` through a pseudo-instruction
+        // that becomes a conditional jump on the condition. Selecting on
+        // integers of at least 32 bits keeps it a `cmov`, so narrower
+        // integers and `bool` are widened (`ct_select` takes only integers
+        // and `bool`).
+        let (then_wide, else_wide, restore) = self.ct_select_operands(then_ir, else_ir);
+        // Without these `freeze`s the -O0 back end folds a `select` of two
+        // loads into a load from a `select` of their addresses, which is a
+        // memory access at a secret-dependent address. `freeze` does not
+        // change a value that is neither `undef` nor poison.
+        let then_wide = self.freeze(then_wide, "ct_select.then");
+        let else_wide = self.freeze(else_wide, "ct_select.else");
         let selected = self
             .builder
-            .build_select(condition, then_ir, else_ir, "ct_select")
+            .build_select(condition, then_wide, else_wide, "ct_select")
             .expect("failed to build ct_select");
         if let Some(instruction) = inkwell::values::BasicValue::as_instruction_value(&selected) {
             let kind = self.context.get_kind_id("unpredictable");
@@ -788,7 +801,62 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .set_metadata(empty, kind)
                 .expect("an empty node is valid `!unpredictable` metadata");
         }
-        Some(selected)
+        Some(restore(self, selected))
+    }
+
+    /// Emits `freeze value` (inkwell 0.10 has no builder method for it).
+    fn freeze(&self, value: BasicValueEnum<'ink>, name: &str) -> BasicValueEnum<'ink> {
+        use inkwell::values::AsValueRef;
+        let name = std::ffi::CString::new(name).expect("a name without NUL bytes");
+        // Safety: the builder is positioned in a function body, `value` is a
+        // first-class value of this context, and `freeze` returns a value of
+        // the same type.
+        unsafe {
+            BasicValueEnum::new(llvm_sys::core::LLVMBuildFreeze(
+                self.builder.as_mut_ptr(),
+                value.as_value_ref(),
+                name.as_ptr(),
+            ))
+        }
+    }
+
+    /// Operands for `ct_select`'s `select`, and how to turn its result back
+    /// into the original type (see [`Self::gen_ct_select`]).
+    #[allow(clippy::type_complexity)]
+    fn ct_select_operands(
+        &self,
+        then_ir: BasicValueEnum<'ink>,
+        else_ir: BasicValueEnum<'ink>,
+    ) -> (
+        BasicValueEnum<'ink>,
+        BasicValueEnum<'ink>,
+        Box<dyn Fn(&Self, BasicValueEnum<'ink>) -> BasicValueEnum<'ink> + 'ink>,
+    ) {
+        match (then_ir, else_ir) {
+            (BasicValueEnum::IntValue(a), BasicValueEnum::IntValue(b))
+                if a.get_type().get_bit_width() < 32 =>
+            {
+                let narrow = a.get_type();
+                let wide = self.context.i32_type();
+                let widen = |v: inkwell::values::IntValue<'ink>| -> BasicValueEnum<'ink> {
+                    self.builder
+                        .build_int_z_extend(v, wide, "ct_select.wide")
+                        .expect("failed to widen a ct_select operand")
+                        .into()
+                };
+                (
+                    widen(a),
+                    widen(b),
+                    Box::new(move |this: &Self, r: BasicValueEnum<'ink>| {
+                        this.builder
+                            .build_int_truncate(r.into_int_value(), narrow, "ct_select.narrow")
+                            .expect("failed to narrow a ct_select result")
+                            .into()
+                    }),
+                )
+            }
+            _ => (then_ir, else_ir, Box::new(|_: &Self, r| r)),
+        }
     }
 
     /// Generates IR for a builtin method: `len()` on an array or `str`, or

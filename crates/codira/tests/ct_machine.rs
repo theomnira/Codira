@@ -108,6 +108,13 @@ fn the_constant_time_examples_pass_at_every_level() {
 /// with no branch in the IR (what `tests/constant_time.rs` checks), but at
 /// `-O0` the x86-64 backend expands it into a conditional jump on the
 /// secret condition. The source checker accepts it.
+const SCALED: &str = r#"
+@constant_time
+func scaled(s: secret u64, p: u64, q: u64) -> secret u64 {
+    s ^ (p / q)
+}
+"#;
+
 const SELECT_U8: &str = r#"
 oblivious func sel_u8(c: bool, a: u8, b: u8) -> u8 {
     ct_select(c, a, b)
@@ -115,7 +122,10 @@ oblivious func sel_u8(c: bool, a: u8, b: u8) -> u8 {
 "#;
 
 #[test]
-fn an_8_bit_ct_select_is_branch_free_in_the_ir_but_branches_at_o0() {
+fn an_8_bit_ct_select_is_branch_free_at_every_level() {
+    // The x86-64 back end has no 8-bit conditional move; codegen widens the
+    // operands to 32 bits so that -O0 does not lower the select through a
+    // conditional jump on the secret condition (it used to: `jb`/`jl`).
     let project = tempfile::tempdir().unwrap();
     write_package(project.path(), SELECT_U8);
     assert_eq!(
@@ -126,27 +136,12 @@ fn an_8_bit_ct_select_is_branch_free_in_the_ir_but_branches_at_o0() {
     let start = ir.find("define i8 @sel_u8").expect("sel_u8 in the IR");
     let body = &ir[start..start + ir[start..].find("\n}").unwrap()];
     assert!(
-        body.contains("select") && body.contains("!unpredictable"),
+        body.contains("select i1") && body.contains("i32") && body.contains("!unpredictable"),
         "{body}"
     );
     assert!(!body.contains("br i1"), "{body}");
 
-    let (failing, message) = failing_functions(SELECT_U8, "0");
-    assert_eq!(failing, BTreeSet::from(["sel_u8".to_string()]), "{message}");
-    assert!(message.contains("conditional branch"), "{message}");
-    assert!(
-        message.contains("the condition is derived from a secret"),
-        "{message}"
-    );
-    // The instruction is named by address and disassembly.
-    assert!(
-        message
-            .lines()
-            .any(|l| l.trim_start().starts_with("0x") && l.contains(": j")),
-        "{message}"
-    );
-
-    for opt in ["2", "3"] {
+    for opt in ["0", "2", "3"] {
         let (failing, message) = failing_functions(SELECT_U8, opt);
         assert!(failing.is_empty(), "-O{opt}:\n{message}");
     }
@@ -175,27 +170,21 @@ func mask(s: secret u64, p: u64) -> secret u64 {
 }
 
 #[test]
-fn a_secret_dependent_address_is_caught_at_o0() {
-    // At -O0 a `bool` `ct_select` of two loaded locals becomes a select of
-    // their stack addresses and one load: the address depends on the
-    // secret condition.
+fn a_bool_ct_select_reads_no_secret_dependent_address_at_o0() {
+    // At -O0 the back end folded a `select` of two loaded locals into a load
+    // from a `select` of their stack addresses: an access at an address
+    // chosen by the secret. Codegen now freezes the operands, which keeps the
+    // select on values (a `cmov` between registers). The rule itself is
+    // tested on hand-built machine code in `codira_ctcheck`'s unit tests.
     let source = r#"
 oblivious func sel_bool(c: bool, a: bool, b: bool) -> bool {
     ct_select(c, a, b)
 }
 "#;
-    let (failing, message) = failing_functions(source, "0");
-    assert_eq!(
-        failing,
-        BTreeSet::from(["sel_bool".to_string()]),
-        "{message}"
-    );
-    assert!(
-        message.contains("memory access at a secret-dependent address"),
-        "{message}"
-    );
-    let (failing, message) = failing_functions(source, "2");
-    assert!(failing.is_empty(), "{message}");
+    for opt in ["0", "2"] {
+        let (failing, message) = failing_functions(source, opt);
+        assert!(failing.is_empty(), "-O{opt}:\n{message}");
+    }
 }
 
 #[test]
@@ -370,10 +359,9 @@ fn the_repository_oblivious_functions() {
     let mut sources = vec![("tests/circuits.rs operators", operator_corpus())];
     sources.extend(SOURCES.iter().map(|&(l, s)| (l, s.to_string())));
 
-    // What each level is known to report. `-O0`: an 8-bit `ct_select`
-    // becomes a branch on its secret condition; `mix` and `score` keep
+    // What each level is known to report. `-O0`: `mix` and `score` keep
     // their (public) loop branches.
-    let known_o0: BTreeSet<&str> = ["sel_i8", "sel_u8", "mix", "score"].into();
+    let known_o0: BTreeSet<&str> = ["mix", "score"].into();
 
     for opt in ["0", "2", "3"] {
         let mut all = BTreeSet::new();
@@ -416,7 +404,7 @@ fn the_library_entry_point_reports_every_function() {
     // `--certify` keeps the function symbols the check needs, without
     // running it.
     let project = tempfile::tempdir().unwrap();
-    write_package(project.path(), &format!("{EXAMPLES}{SELECT_U8}"));
+    write_package(project.path(), &format!("{EXAMPLES}{SELECT_U8}{SCALED}"));
     assert_eq!(
         build(project.path(), &["--certify", "-O", "0"]),
         Ok(ExitStatus::Success)
@@ -438,6 +426,7 @@ fn the_library_entry_point_reports_every_function() {
             spec("ct_max", vec![int(true), int(true)]),
             spec("ct_equal", vec![int(true), int(true)]),
             spec("sel_u8", vec![int(true), int(true), int(true)]),
+            spec("scaled", vec![int(true), int(false), int(false)]),
             spec("no_such_function", vec![]),
         ],
     )
@@ -447,11 +436,12 @@ fn the_library_entry_point_reports_every_function() {
     assert!(by_name("ct_max").passed(), "{report:#?}");
     assert!(by_name("ct_equal").passed(), "{report:#?}");
     assert!(by_name("ct_max").addresses_checked);
-    let sel = by_name("sel_u8");
-    assert_eq!(sel.violations.len(), 1, "{sel:#?}");
+    assert!(by_name("sel_u8").passed(), "{report:#?}");
+    let scaled = by_name("scaled");
+    assert_eq!(scaled.violations.len(), 1, "{scaled:#?}");
     assert_eq!(
-        sel.violations[0].rule,
-        codira_ctcheck::Rule::ConditionalBranch
+        scaled.violations[0].rule,
+        codira_ctcheck::Rule::VariableTime
     );
     let missing = by_name("no_such_function");
     assert!(!missing.was_checked());
