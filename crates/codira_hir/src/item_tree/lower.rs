@@ -22,10 +22,10 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{
-    diagnostics, AssociatedItem, Const, Effect, Enum, Field, Fields, Function, FunctionFlags, Trait,
+    diagnostics, AssociatedItem, Const, Effect, Enum, Field, Fields, Function, FunctionFlags,
     GenericParamData, IdRange, Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities,
-    LocalItemTreeId, ModItem, Param, ParamAstId, RawVisibilityId, Session, Struct, TypeAlias,
-    INTRINSIC_ABI,
+    LocalItemTreeId, ModItem, Param, ParamAstId, RawVisibilityId, Session, Struct, Trait,
+    TypeAlias, INTRINSIC_ABI,
 };
 use crate::{
     item_tree::Import,
@@ -153,8 +153,7 @@ impl Context {
             ast::ModuleItemKind::TraitDef(ast) => self.lower_trait(&ast).map(Into::into),
             // `macro` and `supervisor` blocks are fully parsed (see
             // `codira_syntax`) but not lowered into name-resolvable HIR items.
-            ast::ModuleItemKind::MacroDef(_)
-            | ast::ModuleItemKind::SupervisorDef(_) => None,
+            ast::ModuleItemKind::MacroDef(_) | ast::ModuleItemKind::SupervisorDef(_) => None,
             ast::ModuleItemKind::ExternBlock(ast) => Some(self.lower_extern_block(&ast)),
         }
     }

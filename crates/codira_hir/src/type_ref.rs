@@ -148,9 +148,7 @@ impl TypeRefMapBuilder {
                         // `args`, not `generic_args`: in `extend Box[T: Show]`
                         // the bound `Show` is a sibling of `T` in the list,
                         // and is not an argument of `Box`.
-                        list.args()
-                            .map(|arg| self.alloc_from_node(&arg))
-                            .collect()
+                        list.args().map(|arg| self.alloc_from_node(&arg)).collect()
                     })
                     .unwrap_or_default();
 

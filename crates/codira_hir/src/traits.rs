@@ -58,8 +58,8 @@ use crate::{
     mono,
     name::AsName,
     resolve::{HasResolver, Resolver},
-    DiagnosticSink, Function, HasSource, HirDatabase, HirDisplay, Name, Package, Path, Substitution,
-    Trait, Ty, TyKind,
+    DiagnosticSink, Function, HasSource, HirDatabase, HirDisplay, Name, Package, Path,
+    Substitution, Trait, Ty, TyKind,
 };
 
 /// How deeply `implements` may recurse through the bounds of generic
@@ -176,11 +176,10 @@ impl GenericBounds {
             match resolve_bound(db, resolver, &type_ref) {
                 BoundRef::Trait(trait_) => self.bounds.push(Bound { param, trait_ }),
                 BoundRef::Type => {}
-                BoundRef::Error(message) => self.diagnostics.push((
-                    file,
-                    AstPtr::new(&type_ref).syntax_node_ptr(),
-                    message,
-                )),
+                BoundRef::Error(message) => {
+                    self.diagnostics
+                        .push((file, AstPtr::new(&type_ref).syntax_node_ptr(), message))
+                }
             }
         }
     }
@@ -194,7 +193,9 @@ pub(crate) fn function_bounds_query(db: &dyn HirDatabase, id: FunctionId) -> Arc
     let mut result = GenericBounds::default();
     match id.lookup(db).container {
         ItemContainerId::ImplId(impl_id) => {
-            result.bounds.extend(db.impl_bounds(impl_id).bounds.iter().copied());
+            result
+                .bounds
+                .extend(db.impl_bounds(impl_id).bounds.iter().copied());
         }
         ItemContainerId::TraitId(trait_id) => {
             let trait_ = Trait::from(trait_id);
@@ -230,9 +231,9 @@ pub(crate) fn function_bounds_query(db: &dyn HirDatabase, id: FunctionId) -> Arc
                 .and_then(trait_path)
                 .and_then(|path| path.as_ident().cloned())
                 .and_then(|name| {
-                    params.iter().position(|p| {
-                        p.name().map(|n| n.as_name()).as_ref() == Some(&name)
-                    })
+                    params
+                        .iter()
+                        .position(|p| p.name().map(|n| n.as_name()).as_ref() == Some(&name))
                 });
             match own {
                 Some(index) => {
@@ -390,13 +391,13 @@ fn all_trait_impls(db: &dyn HirDatabase) -> Vec<Arc<TraitImpls>> {
 /// `Box[i32]` with `T = i32`.
 pub(crate) fn match_ty(pattern: &Ty, ty: &Ty, map: &mut FxHashMap<TypeParamId, Ty>) -> bool {
     match (pattern.interned(), ty.interned()) {
-        (TyKind::TypeParam(p, _), _) => match map.get(p) {
-            Some(bound) => bound == ty,
-            None => {
-                map.insert(*p, ty.clone());
-                true
+        (TyKind::TypeParam(p, _), _) => {
+            if let Some(bound) = map.get(p) {
+                return bound == ty;
             }
-        },
+            map.insert(*p, ty.clone());
+            true
+        }
         (TyKind::Struct(a, xs), TyKind::Struct(b, ys)) if a == b => match_all(xs, ys, map),
         (TyKind::Enum(a, xs), TyKind::Enum(b, ys)) if a == b => match_all(xs, ys, map),
         (TyKind::Tuple(n, xs), TyKind::Tuple(m, ys)) if n == m => match_all(xs, ys, map),
@@ -514,7 +515,11 @@ pub fn resolve_method(
             let args = f
                 .generic_environment(db)
                 .iter()
-                .map(|p| map.get(p).cloned().unwrap_or_else(|| TyKind::Unknown.intern()))
+                .map(|p| {
+                    map.get(p)
+                        .cloned()
+                        .unwrap_or_else(|| TyKind::Unknown.intern())
+                })
                 .collect();
             return Some((f, args));
         }
@@ -819,9 +824,13 @@ pub(crate) fn struct_bound_diagnostics(
                 message: format!(
                     "bounds on the parameters of a struct are not supported yet: bound `{}` \
                      on the `extend` block that needs it instead (`extend {}[{}: {}]`)",
-                    param.name().map_or_else(String::new, |n| n.text().to_string()),
+                    param
+                        .name()
+                        .map_or_else(String::new, |n| n.text().to_string()),
                     strukt.name(db),
-                    param.name().map_or_else(String::new, |n| n.text().to_string()),
+                    param
+                        .name()
+                        .map_or_else(String::new, |n| n.text().to_string()),
                     bound.syntax().text()
                 ),
             });

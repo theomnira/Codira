@@ -97,6 +97,9 @@ macro_rules! impl_intern {
 
 /// Represents an id of an item inside a item container such as a module or a
 /// `impl` block.
+// Named after the id type each wraps, like the other id enums here (see
+// `GenericDefId`).
+#[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ItemContainerId {
     ModuleId(ModuleId),
@@ -357,7 +360,7 @@ impl TypeParamId {
             // (see `resolve::impl_generic_param`), so none is ever owned by
             // the block itself.
             GenericDefId::ImplId(_) => None,
-            GenericDefId::TraitId(_) => (index == 0).then(|| crate::name![Self]),
+            GenericDefId::TraitId(_) => (index == 0).then_some(crate::name![Self]),
         }
     }
 }

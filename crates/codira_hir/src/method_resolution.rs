@@ -436,9 +436,9 @@ impl<'db> MethodResolutionCtx<'db> {
         if let Some(visible_from) = self.visible_from {
             if !crate::traits::is_trait_impl(self.db, impl_id)
                 && !self
-                .db
-                .function_visibility(fun_id)
-                .is_visible_from(self.db, visible_from)
+                    .db
+                    .function_visibility(fun_id)
+                    .is_visible_from(self.db, visible_from)
             {
                 return IsValidCandidate::NotVisible;
             }

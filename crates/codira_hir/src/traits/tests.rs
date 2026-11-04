@@ -231,6 +231,8 @@ fn unsupported_trait_forms_are_reported() {
     func f[T: Undefined](x: T) {}
     func g[T](x: T) where i64: Show {}
     func h[T: Iterable[i64]](x: T) {}
+    func k(x: Show) {}
+    struct Holder { s: Show }
     "#
     ));
 }
@@ -258,10 +260,10 @@ fn instance_calls(fixture: &str) -> String {
         calls.sort_by_key(|(e, _)| u32::from(e.into_raw()));
         for (expr, callee) in calls {
             let callee = crate::Function::from(callee);
-            let args = infer
-                .instantiation(expr)
-                .map(|args| mono::Instance::new(callee, args.clone()).name(&db))
-                .unwrap_or_else(|| callee.full_name(&db));
+            let args = infer.instantiation(expr).map_or_else(
+                || callee.full_name(&db),
+                |args| mono::Instance::new(callee, args.clone()).name(&db),
+            );
             let owner = match callee.trait_container(&db) {
                 Some(t) => format!(" (trait {})", t.name(&db)),
                 None => String::new(),

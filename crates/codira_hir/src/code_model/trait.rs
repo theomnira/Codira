@@ -28,7 +28,8 @@ use crate::{
     name,
     resolve::HasResolver,
     visibility::RawVisibility,
-    DefDatabase, DiagnosticSink, Function, HasSource, HasVisibility, HirDatabase, Name, Ty, TyKind, Visibility,
+    DefDatabase, DiagnosticSink, Function, HasSource, HasVisibility, HirDatabase, Name, Ty, TyKind,
+    Visibility,
 };
 
 /// A `trait` declaration.

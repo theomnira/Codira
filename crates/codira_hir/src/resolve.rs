@@ -512,14 +512,12 @@ impl Scope {
             Scope::Impl(i) => {
                 visitor(name![Self], ScopeDef::ImplSelfType(*i));
             }
-            // Like a generic parameter, a trait's `Self` is a type, which
-            // name completion (value namespace) does not offer.
-            Scope::Trait(_) => {}
-            // Generic parameters are intentionally not offered here.
-            // `visit_names` feeds name *completion*, which works in the
-            // value namespace; a type parameter is not a value, and
-            // `ScopeDef` has no way to describe one.
-            Scope::GenericParams(_) => {}
+            // Generic parameters (and a trait's `Self`, which is one) are
+            // intentionally not offered here. `visit_names` feeds name
+            // *completion*, which works in the value namespace; a type
+            // parameter is not a value, and `ScopeDef` has no way to
+            // describe one.
+            Scope::GenericParams(_) | Scope::Trait(_) => {}
             Scope::Expr(scope) => scope
                 .expr_scopes
                 .entries(scope.scope_id)
