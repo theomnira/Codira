@@ -13,9 +13,13 @@
 //! `std.sys.terminate` fails to load ("missing dependencies"). They are
 //! registered by name, not exported, so the two never clash at link time.
 //!
-//! `codira_abort` and `codira_exit` do not return. They are registered with
-//! a unit return because the dispatch table describes a call's ABI, and a
-//! call that never returns has the ABI of one that returns nothing.
+//! `codira_abort` and `codira_exit` do not return: `std.sys.terminate`
+//! declares them `-> Never`. They are registered with a unit return because
+//! that is what the compiler makes of a `never` result: the function is
+//! `void` (and `noreturn`) in LLVM, and its reflected signature names `()`
+//! as the result, so the signature check at load time compares `()` with
+//! `()`. That the call does not come back is in the caller's code (an
+//! `unreachable` after it), not in the signature.
 
 use std::io::Write;
 
@@ -77,6 +81,20 @@ mod tests {
         write_stderr(0, 0);
         write_stderr(0, 16);
         write_stderr(b"ignored".as_ptr() as usize, 0);
+    }
+
+    #[test]
+    fn the_non_returning_hooks_have_the_signature_of_a_never_result() {
+        // The compiler gives a function returning `never` the result `()`
+        // in its reflected signature; these must match it, or a program
+        // calling them fails to load with a mismatched signature.
+        let unit = <() as codira_memory::HasStaticType>::type_info().clone();
+        for definition in functions() {
+            let name = definition.prototype.name.as_str();
+            if matches!(name, "codira_abort" | "codira_exit") {
+                assert_eq!(definition.prototype.signature.return_type, unit, "{name}");
+            }
+        }
     }
 
     #[test]
