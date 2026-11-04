@@ -946,6 +946,35 @@ limits as `@noalloc` and the other attributes, not about machine code.
 Design and status: `lab/rfcs/0001-semantic-envelope.md`. Example:
 `examples/envelope`.
 
+**Package envelope.** An `[envelope]` table in `codira.toml` takes the same
+keys and values (strings, or `true`/`false` for `blocking` and `panic`):
+
+```toml
+[envelope]
+allocation = "none"
+blocking = false
+foreign = "none"
+```
+
+Every `public` function of the package must fit it: `codira check` reports
+each one that does not, with the call chain to the cause, and `codira build`
+refuses to build (it checks before compiling, so no library is written).
+Non-public functions are covered exactly as far as a public function reaches
+them, because a function's inferred envelope includes everything it calls; a
+private function no public one calls is not constrained. Unknown, unchecked
+and repeated keys are errors, as for the attribute. `codira envelope` shows
+the package envelope and whether it is met (`package_envelope` in the JSON),
+and `--check` fails when it is not. Only `check`, `build` and `envelope`
+enforce it today (`codira run` and `codira test` do not), and a rebuild under
+`codira build --watch` does not re-check it.
+
+**In certificates and `api-diff`.** `codira build --certify` records every
+function's inferred envelope in its proof certificate, and `codira certify`
+re-derives it from the source (see "Proof certificates"). `codira api-diff`
+treats a public function whose inferred envelope *widened* (a key moved to
+its allowing value, for instance because a private callee started
+allocating) as a major change, and one that narrowed as a minor change.
+
 ### Modules & imports
 
 ```codira
@@ -1117,11 +1146,12 @@ runs load them directly. `main` may return nothing (exit code 0), an integer
 
 ```bash
 codira build --certify                     # also writes target/mod.codiralib.cert.json
-codira certify target/mod.codiralib        # re-checks it without the compiler
+codira certify target/mod.codiralib        # re-checks it (envelopes aside, without the compiler)
 codira certify target/                     # every library in a directory
 codira build --exe --certify -o app.exe    # the certificates travel inside the executable
 codira certify app.exe
 codira certify target/mod.codiralib --source-dir src   # also match the source text
+codira certify lib.codiralib --require-envelopes        # fail unless envelopes are re-derived
 ```
 
 The certificate (a JSON sidecar, `<library>.cert.json`) lists every function
@@ -1132,8 +1162,9 @@ for it, each as the self-contained SMT-LIB2 queries Z3 decided (premise
 asserted, then the negated goal; `unsat` = proven) or the reason it is not
 proven. The whole library file is hashed too.
 
-`codira certify` uses Z3 and the certificate reader only -- no parser, type
-checker, verifier or code generator. It fails (exit 1) when the library is not
+Apart from re-deriving envelopes (below), `codira certify` uses Z3 and the
+certificate reader only -- no parser, type checker, verifier or code
+generator. It fails (exit 1) when the library is not
 the hashed file, when a function's code bytes or symbol position differ (the
 failing function is named), when a query contains anything but declarations
 and assertions, or when Z3 under the checker's own `--rlimit` does not answer
@@ -1141,6 +1172,22 @@ and assertions, or when Z3 under the checker's own `--rlimit` does not answer
 obligations the certificate records as unproven (a `@runtime_checked`
 `requires` the solver could not decide; `--deny-unproven` makes them fail) and
 proofs that hold only because their path condition is unsatisfiable.
+
+**Envelopes.** The format is `codira-certificate/2`: each function also
+records its inferred semantic envelope (key to value, e.g. `"allocation":
+"none"`; see "Semantic envelopes"), computed from the source at build time.
+`codira-certificate/1` files are still read and checked; they carry no
+envelopes, and the check says so. Re-deriving an envelope needs the
+compiler's front end, so this one step is the exception to "no compiler":
+when `codira certify` finds the package source (`--source-dir`,
+`--manifest-path`, or the `codira.toml` in the artifact's directory or a
+parent), it recomputes every function's envelope and fails if any recorded
+one differs, naming the function and key. Without a source it reports the
+envelopes as not re-derived and passes; `--require-envelopes` makes that a
+failure. What this certifies is the source-level effect analysis result
+recorded at build time, and that today's analysis of today's source agrees
+with it -- not anything about the machine code, and nothing enforced at
+run time.
 
 What a passing check establishes, and what it does not:
 
