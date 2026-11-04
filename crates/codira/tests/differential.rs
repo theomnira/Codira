@@ -267,6 +267,20 @@ fn statement_span(lines: &[String], i: usize) -> Option<std::ops::Range<usize>> 
     if trimmed.is_empty() || trimmed.starts_with('}') || indent(line) == 0 {
         return None;
     }
+    // A loop counter's increment (`i3 += 1i32`) and the test that leaves a
+    // `loop` on it (`if i3 >= 7i32 {`) are what bound the loop: deleting
+    // either would make the program run until the timeout.
+    let counter =
+        trimmed.starts_with(['i', 'j']) && trimmed[1..].starts_with(|c: char| c.is_ascii_digit());
+    let guard = trimmed
+        .strip_prefix("if ")
+        .is_some_and(|rest| rest.starts_with(['i', 'j']) && rest.contains(" >= "));
+    // The `break` inside such a test is protected for the same reason; a
+    // conditional `break` can still go, with the `if` that holds it.
+    let exit = trimmed == "break" || trimmed.starts_with("break ");
+    if (counter && trimmed.ends_with(" += 1i32")) || guard || exit {
+        return None;
+    }
     if !line.ends_with('{') {
         return Some(i..i + 1);
     }
@@ -416,11 +430,30 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+/// The generator configuration: the default, plus the switches named in
+/// `CODIRA_DIFF_ENABLE` (comma-separated: `float_to_narrow_int`,
+/// `calls_in_print_args`, `print_in_constant_functions`), which turn back on
+/// constructs left out because of known divergences -- to check whether one
+/// is fixed, or to reproduce a seed reported before its exclusion was added.
+fn config() -> Config {
+    let mut cfg = Config::default();
+    let enable = std::env::var("CODIRA_DIFF_ENABLE").unwrap_or_default();
+    for name in enable.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+        match name {
+            "float_to_narrow_int" => cfg.float_to_narrow_int = true,
+            "calls_in_print_args" => cfg.calls_in_print_args = true,
+            "print_in_constant_functions" => cfg.print_in_constant_functions = true,
+            other => panic!("CODIRA_DIFF_ENABLE: unknown switch `{other}`"),
+        }
+    }
+    cfg
+}
+
 /// Runs `count` seeds from `base` on `threads` threads, and fails with every
 /// failure found, grouped by signature. With `minimise`, the first program of
 /// each signature is reduced (one per signature, to keep the time bounded).
 fn run_seeds(base: u64, count: u64, threads: usize, minimise: bool) {
-    let cfg = Config::default();
+    let cfg = config();
     let next = AtomicUsize::new(0);
     let failures = std::sync::Mutex::new(Vec::new());
     let known = std::sync::Mutex::new(Vec::new());
@@ -686,4 +719,39 @@ fn known_divergence_print_argument_order() {
         "the print argument order divergence changed or was fixed: update this \
          test, the generator"
     );
+}
+
+/// KNOWN DIVERGENCE (wrong code on the LLVM path): the Eidos constant fold
+/// drops output.
+///
+/// In a release-mode build (the default for `codira run` and `codira
+/// build`), `crates/codira_codegen/src/eidos_fold.rs` replaces a function
+/// without parameters whose result evaluates to a constant by `ret
+/// <constant>`. It does not check that the body is free of side effects, so
+/// the `println` in `g` -- reached through `f`, whose result does not depend
+/// on `g`'s -- is never executed. `--mode dev` (no Eidos) and the Cranelift
+/// backend print it. The fold's documentation says a declined fold is "never
+/// a wrong answer"; this is a wrong answer. Found by `many_programs` (seed
+/// base `0x5eed0000`, 7 of 10,000 programs). The generator keeps functions
+/// without parameters from printing by default
+/// (`Config::print_in_constant_functions`).
+#[test]
+fn known_divergence_eidos_fold_drops_output() {
+    let source = "func g() -> i8 {\n    println(\"side effect\")\n    1i8\n}\n\
+                  func f() -> i64 {\n    let unused: i8 = g()\n    7i64\n}\n\
+                  public func main() {\n    println(f())\n}\n";
+    let jit = run(source, Backend::Cranelift);
+    assert!(ran_on_cranelift(&jit), "{}", jit.stderr);
+    assert_eq!(jit.stdout, "side effect\n7\n");
+    for backend in [Backend::LlvmDefault, Backend::LlvmO0] {
+        let llvm = run(source, backend);
+        assert_eq!(
+            llvm.stdout,
+            "7\n",
+            "{}: the Eidos fold divergence changed or was fixed: update this test, \
+             the generator and RFC 0008\n{}",
+            backend.name(),
+            llvm.stderr
+        );
+    }
 }

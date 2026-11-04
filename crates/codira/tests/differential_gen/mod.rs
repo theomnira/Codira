@@ -37,10 +37,11 @@
 //!   `differential.rs`).
 //!   Generated programs print `(x as i64)` and `((x * 4096.0) as i64)` of
 //!   each float result instead, which still compares the float arithmetic.
-//! - Two more constructs are left out by default because of known
+//! - Three more constructs are left out by default because of known
 //!   divergences, each behind a `Config` switch so they can be turned back on
-//!   once fixed: float-to-8/16-bit casts (`float_to_narrow_int`) and calls in
-//!   `println` arguments (`calls_in_print_args`).
+//!   once fixed: float-to-8/16-bit casts (`float_to_narrow_int`), calls in
+//!   `println` arguments (`calls_in_print_args`), and printing from a
+//!   function without parameters (`print_in_constant_functions`).
 
 use std::fmt::Write as _;
 
@@ -179,6 +180,13 @@ pub struct Config {
     /// differently (known divergence 4, pinned by
     /// `known_divergence_print_argument_order`).
     pub calls_in_print_args: bool,
+    /// Let a function without parameters print (itself or through a call).
+    /// Off by default: the LLVM path's Eidos constant fold replaces such a
+    /// function by its constant result and drops the printing (known
+    /// divergence 5, pinned by `known_divergence_eidos_fold_drops_output`).
+    /// Functions without parameters are still generated, so the fold itself
+    /// stays under test.
+    pub print_in_constant_functions: bool,
 }
 
 impl Default for Config {
@@ -189,6 +197,7 @@ impl Default for Config {
             cost_budget: 20_000,
             float_to_narrow_int: false,
             calls_in_print_args: false,
+            print_in_constant_functions: false,
         }
     }
 }
@@ -249,6 +258,8 @@ struct Sig {
     params: Vec<Ty>,
     ret: Ty,
     cost: u64,
+    /// Prints, itself or through a function it calls.
+    prints: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -276,6 +287,11 @@ struct Gen<'c> {
     /// Generating the arguments of a `println` (see
     /// `Config::calls_in_print_args`).
     in_print: bool,
+    /// The current function may print (see
+    /// `Config::print_in_constant_functions`).
+    may_print: bool,
+    /// The current function prints, itself or through a call.
+    prints: bool,
 }
 
 /// Generates the program for `seed`.
@@ -292,6 +308,8 @@ pub fn generate(seed: u64, cfg: &Config) -> Program {
         ret: Ty::I32,
         depth: 1,
         in_print: false,
+        may_print: true,
+        prints: false,
     };
     let count = 1 + usize::try_from(gen.rng.below(cfg.max_functions as u64)).unwrap();
     let mut functions = Vec::with_capacity(count);
@@ -366,6 +384,8 @@ impl Gen<'_> {
         self.cost = 1;
         self.ret = ret;
         self.depth = 1;
+        self.may_print = !params.is_empty() || self.cfg.print_in_constant_functions;
+        self.prints = false;
         let count = 2 + self.rng.below(8);
         let mut stmts = Vec::new();
         for _ in 0..count {
@@ -377,6 +397,7 @@ impl Gen<'_> {
             params,
             ret,
             cost: self.cost,
+            prints: self.prints,
         });
         GenFn {
             header,
@@ -503,7 +524,8 @@ impl Gen<'_> {
                     let value = self.expr(self.ret, 2);
                     return format!("{ind}if {cond} {{\n{ind}    return {value}\n{ind}}}\n");
                 }
-                15..=16 => {
+                15..=16 if self.may_print => {
+                    self.prints = true;
                     let ty = self.any_ty();
                     self.in_print = !self.cfg.calls_in_print_args;
                     let mut value = self.expr(ty, 2);
@@ -642,13 +664,18 @@ impl Gen<'_> {
         let candidates: Vec<Sig> = self
             .sigs
             .iter()
-            .filter(|s| s.ret == ty && self.mult.saturating_mul(s.cost + 1) <= room)
+            .filter(|s| {
+                s.ret == ty
+                    && (self.may_print || !s.prints)
+                    && self.mult.saturating_mul(s.cost + 1) <= room
+            })
             .cloned()
             .collect();
         if candidates.is_empty() {
             return None;
         }
         let sig = self.rng.pick(&candidates).clone();
+        self.prints |= sig.prints;
         self.cost += self.mult * (sig.cost + 1);
         let args: Vec<String> = sig
             .params
