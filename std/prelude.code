@@ -85,6 +85,7 @@ public import root.memory.unsafe_pointer.*;
 // ---- Hashing and formatting -------------------------------------------------
 
 public import root.hashlib.hash.*;
+public import root.hashlib.string_hash.*;
 public import root.hashlib.hasher.*;
 public import root.format.repr.*;
 

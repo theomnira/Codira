@@ -1,0 +1,17 @@
+// std/hashlib/string_hash.code
+// Hashing a `String` (FNV-1a over its UTF-8 bytes). Not cryptographic.
+//
+// Not importable yet: `String` (`std.collections.string`) does not check.
+// Kept apart from `std.hashlib.hash` so that the rest of it can be imported
+// meanwhile.
+
+import root.hashlib.hash.{hash_bytes};
+import root.collections.string.*;
+
+// ---------------------------------------------------------------------------
+// hash_string
+// Hashes a string by hashing its UTF-8 byte representation.
+// ---------------------------------------------------------------------------
+public func hash_string(value: String) -> u64 {
+    return hash_bytes(value.as_bytes());
+}
