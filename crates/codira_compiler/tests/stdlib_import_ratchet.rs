@@ -49,18 +49,6 @@ use codira_compiler::{Config, Driver, OptimizationLevel, Target};
 /// is missing, not what is wrong with the module. Only for modules that
 /// are blocked; a module that becomes importable must lose its entry.
 const KNOWN_BLOCKERS: &[(&str, &str)] = &[
-    // Check clean when imported; blocked by the code generator alone.
-    (
-        "sys.terminate",
-        "the code generator to compile a function returning `Never` (`panic`, `exit`, `abort`)",
-    ),
-    ("math.math", "std.sys.terminate (it calls `panic`)"),
-    ("time.time", "std.sys.terminate (it calls `panic`)"),
-    ("complex.complex", "std.sys.terminate (it calls `panic`)"),
-    (
-        "collections.optional",
-        "std.sys.terminate (it calls `panic`)",
-    ),
     // What the compiler does not have yet.
     (
         "sys.assert_compare",

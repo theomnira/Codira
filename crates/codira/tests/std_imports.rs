@@ -18,10 +18,10 @@
 //!   against Rust's libm within the error each states, FNV-1a and the
 //!   base16/32/64 encodings against the published test vectors, the
 //!   generator against a reference xoshiro256**.
-//! - `std.math.math`, `std.time.time`, `std.complex.complex` and
-//!   `std.sys.terminate` check when imported but cannot be built yet (the
-//!   code generator panics on a function returning `Never`, which `panic`
-//!   is); their tests are written and ignored until it does not.
+//! - `std.math.math` against Rust's libm, `std.time.time`'s durations,
+//!   clocks and sleep, `std.complex.complex` against exact values, and
+//!   `std.sys.terminate`'s `panic` (its message on standard error and an
+//!   abnormal exit): all four call `panic`, which returns `Never`.
 //! - A program importing a standard-library module with errors does not
 //!   build, and the errors are reported against the standard-library file.
 
@@ -844,14 +844,11 @@ public func main() {
     assert_eq!(&out[7..], ["-3", "3", &sum.to_string(), "5", "true"]);
 }
 
-// The tests below are ignored: each of these modules calls `panic`, which
-// returns `Never`, and the code generator panics on a function returning
-// `Never` ("could not convert return value"). The modules check when
-// imported; the tests were run with `panic` returning unit instead, and run
-// as written once the code generator compiles `Never`.
+// Each of the modules below calls `panic`, which returns `Never`: a
+// function the code generator compiles as `void` and `noreturn`, with
+// `unreachable` after every call to it.
 
 #[test]
-#[ignore = "the code generator panics on a function returning Never"]
 fn std_math_math_matches_libm() {
     let program = r#"
 import std.math.math.{sin, cos, tan, sqrt, exp, log, log2, log10, pow, atan2, asin, cbrt,
@@ -936,7 +933,6 @@ public func main() {
 }
 
 #[test]
-#[ignore = "the code generator panics on a function returning Never"]
 fn std_time_measures_and_sleeps() {
     let program = r#"
 import std.time.time.{duration_from_secs, duration_from_millis, duration_from_nanos,
@@ -973,7 +969,6 @@ public func main() {
 }
 
 #[test]
-#[ignore = "the code generator panics on a function returning Never"]
 fn std_complex_arithmetic() {
     let program = r#"
 import std.complex.complex.{complex_new, complex_i, complex_mul, complex_div, complex_powi,
@@ -1024,7 +1019,6 @@ public func main() {
 }
 
 #[test]
-#[ignore = "the code generator panics on a function returning Never"]
 fn std_sys_terminate_panics_with_its_message() {
     let program = r#"
 import std.sys.terminate.{panic, assert, write_stderr}
@@ -1042,4 +1036,32 @@ public func main() {
     assert_eq!(text(&output.stdout), "1\n");
     let stderr = text(&output.stderr);
     assert!(stderr.contains("to stderr\npanic: boom\n"), "{stderr}");
+}
+
+#[test]
+fn std_collections_optional_unwraps_and_panics_on_none() {
+    let program = r#"
+import std.collections.optional.{some, none, is_some, is_none, unwrap, unwrap_or, or_opt}
+
+public func main() {
+    let a = some(41)
+    let b = none(0)
+    println(is_some(a))
+    println(is_none(b))
+    println(unwrap(a) + 1)
+    println(unwrap_or(b, 7))
+    println(unwrap(or_opt(b, some(9))))
+    unwrap(b)
+    println(2)
+}
+"#;
+    let dir = package_with(&[("mod.code", program)]);
+    let output = codira(dir.path(), "run", &std_dir());
+    assert!(!output.status.success());
+    assert_eq!(text(&output.stdout), "true\ntrue\n42\n7\n9\n");
+    let stderr = text(&output.stderr);
+    assert!(
+        stderr.contains("panic: Optional.unwrap: called on None\n"),
+        "{stderr}"
+    );
 }

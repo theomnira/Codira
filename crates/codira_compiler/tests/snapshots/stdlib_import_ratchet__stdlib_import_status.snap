@@ -3,21 +3,26 @@ source: crates/codira_compiler/tests/stdlib_import_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-12 of 89 std modules are importable from a program
+17 of 89 std modules are importable from a program
 
 importable:
   std.base64.base64
   std.bit.bit
   std.bit.mask
   std.builtin.type_aliases
+  std.collections.optional
+  std.complex.complex
   std.crypto.hash
   std.fs.fs
   std.hashlib.hash
   std.math.constants
   std.math.fast
+  std.math.math
   std.memory.page
   std.memory.region
   std.random.rng
+  std.sys.terminate
+  std.time.time
 
 blocked:
 std.ai.algorithm.functional
@@ -99,9 +104,6 @@ std.collections.linked_list
 std.collections.list
     check (55 diagnostics): std/collections/list.code:10: undefined type `Pointer[T]`
     needs: `Pointer[T]` (std.memory.pointer)
-std.collections.optional
-    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
-    needs: std.sys.terminate (it calls `panic`)
 std.collections.set
     check (97 diagnostics): std/collections/set.code:24: undefined type `Pointer[SetEntry[T]]`
     needs: `Pointer[T]` (std.memory.pointer)
@@ -111,9 +113,6 @@ std.collections.span
 std.collections.string
     check (75 diagnostics): std/collections/string.code:10: undefined type `Pointer[u8]`
     needs: `Pointer[u8]` (std.memory.pointer)
-std.complex.complex
-    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
-    needs: std.sys.terminate (it calls `panic`)
 std.complex.complex_string
     check (78 diagnostics): std/complex/complex_string.code:17: cannot apply binary operator `float_to_string(z.real) + "+"`
     needs: `String`
@@ -147,9 +146,6 @@ std.hashlib.hasher
 std.hashlib.string_hash
     check (76 diagnostics): std/hashlib/string_hash.code:16: method `as_bytes` does not exist `value.as_bytes()`
     needs: `String`
-std.math.math
-    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
-    needs: std.sys.terminate (it calls `panic`)
 std.math.polynomial
     check (52 diagnostics): std/math/polynomial.code:19: undefined type `List[f64]`
     needs: `List` (std.collections.list)
@@ -193,13 +189,7 @@ std.sys.info
     check (40 diagnostics): std/sys/info.code:42: undefined type `String`
 std.sys.intrinsics
     check (181 diagnostics): std/sys/intrinsics.code:40: undefined trait `StringLiteral`
-std.sys.terminate
-    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
-    needs: the code generator to compile a function returning `Never` (`panic`, `exit`, `abort`)
 std.testing.suite
     check (38 diagnostics): std/testing/suite.code:11: undefined type `String`
 std.testing.testing
     check (62 diagnostics): std/testing/testing.code:11: undefined type `String`
-std.time.time
-    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
-    needs: std.sys.terminate (it calls `panic`)

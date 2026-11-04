@@ -114,6 +114,24 @@ public func distance_squared(a: Point, b: Point) -> f64 {
 
 Implicit return — the last expression is the return value; `return x` also works.
 
+A function that never returns declares the result `never` (`Never` in
+`std.builtin.type_aliases`): its body must diverge (`loop {}` without a
+`break`, or a call to another such function), and a call to it can stand
+where any type is expected (`if c { x } else { fail(3) }`):
+
+```codira
+extern "C" { func codira_exit(code: i32) -> never; }
+public func fail(code: i32) -> never { codira_exit(code) }
+```
+
+Compiled as a function returning nothing that LLVM is told does not return
+(`noreturn`), with `unreachable` after each call; its reflected signature
+names `()` as the result, so the runtime's hooks that do not return
+(`codira_abort`, `codira_exit`) are registered with a unit result. A `uses`
+function returning `never` can still come back when a handler aborts it,
+and is not `noreturn`. The Cranelift `--jit` backend compiles a call to one
+as a trap after the call.
+
 ### Bindings
 
 ```codira
@@ -1143,7 +1161,7 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
   (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
   which is not what a program sees).
-- **Importable today** (12 of 89 modules), each run from a program in
+- **Importable today** (17 of 89 modules), each run from a program in
   `crates/codira/tests/std_imports.rs` against independently computed
   values, except `std.memory.page` and `std.builtin.type_aliases` (check,
   build and load; not run):
@@ -1171,14 +1189,13 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     cryptographic**: predictable from its output, and seeded only by the
     caller.
   - `std.builtin.type_aliases` (`Never`).
-- **Check when imported, but cannot be built yet**: `std.sys.terminate`
-  (`panic`, `exit`, `abort`, `assert`), and what calls `panic`:
-  `std.math.math` (libm-backed `sin`...`atan2`, rounding, `gcd`,
-  `factorial`, classification), `std.time.time` (durations, monotonic
-  instants, wall clock, sleep), `std.complex.complex`,
-  `std.collections.optional`. The code generator panics on a function
-  returning `Never` ("could not convert return value"), and `panic` is
-  one. Their end-to-end tests are written and ignored until it does not.
+  - `std.sys.terminate`: `panic` (writes `panic: <message>` to standard
+    error and aborts), `exit`, `abort`, `assert`, `unreachable`, `todo`.
+  - What calls `panic`: `std.math.math` (libm-backed `sin`...`atan2`,
+    rounding, `gcd`, `factorial`, classification; within 2 ulp of Rust's
+    libm in the tests), `std.time.time` (durations, monotonic instants,
+    wall clock, sleep), `std.complex.complex`, `std.collections.optional`
+    (a generic `Optional[T]` struct; `unwrap` of an empty one panics).
 - **Waiting for the language**: what is written against `String` (most of
   `std.format`, `std.os`, `std.pathlib`, `std.testing`, `std.sys.info`, and
   the `*_string` halves split off from the modules above:
@@ -1956,11 +1973,13 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
 - importing standard-library modules, explicitly, with no prelude:
   `std.crypto.hash`, `std.fs.fs`, `std.memory.region`, `std.bit`,
   `std.math.constants`, `std.math.fast`, `std.hashlib.hash`,
-  `std.base64.base64`, `std.random.rng` (see "Importing the standard
-  library" for what is loaded, how it is linked, which modules qualify and
-  why the others do not yet; `std.math.math`, `std.time.time` and
-  `std.sys.terminate` check but wait for the code generator to compile
-  `Never`)
+  `std.base64.base64`, `std.random.rng`, `std.sys.terminate`,
+  `std.math.math`, `std.time.time`, `std.complex.complex`,
+  `std.collections.optional` (see "Importing the standard library" for
+  what is loaded, how it is linked, which modules qualify and why the
+  others do not yet)
+- functions returning `never`, called locally, across modules and as
+  `extern "C"` declarations (see "Functions")
 - `public` functions that take and return value structs, called from
   other modules and from the host
 - algebraic effects and structured concurrency (see below)
