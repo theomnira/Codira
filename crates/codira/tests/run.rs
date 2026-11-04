@@ -176,3 +176,29 @@ public func main() {
         "stderr: {stderr}"
     );
 }
+
+/// Regression: assigning an array (`a = b`, and an element of an array of
+/// arrays) used to panic the code generator with "unimplemented operation
+/// [i64]op[i64]". The assignment stores the handle, so the element shares
+/// the assigned array.
+#[test]
+fn arrays_can_be_assigned_to_locals_and_elements() {
+    let dir = package_with(
+        r#"
+public func main() {
+    var a = [1, 2]
+    a = [5, 6, 7]
+    println(a[2], " ", a.len())
+
+    var rows = [[1, 2], [3, 4]]
+    let row = [7, 8]
+    rows[1] = row
+    println(rows[1][0], " ", rows[1][1], " ", rows[0][1])
+}
+"#,
+    );
+    let output = codira_run(dir.path(), &[]);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "7 3\n7 8 2\n");
+}

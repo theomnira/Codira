@@ -1776,12 +1776,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         }
         let lhs_type = self.infer[lhs].clone();
         match (lhs_type.interned(), op) {
+            // An array is a GC reference: assigning one (`a = b`,
+            // `rows[i] = row`) stores the handle, as for a class instance.
+            // Both used to reach the `unimplemented!` below.
             (
                 TyKind::Optional(_)
                 | TyKind::Str
                 | TyKind::Tuple(..)
                 | TyKind::Enum(..)
-                | TyKind::Function(_),
+                | TyKind::Function(_)
+                | TyKind::Array(_),
                 BinaryOp::Assignment { op: None },
             ) => return self.gen_plain_assignment(lhs, rhs),
             (TyKind::Enum(e, _), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
