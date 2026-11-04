@@ -38,7 +38,7 @@ pub use crate::{
     in_file::InFile,
     name::Name,
     name_resolution::{Namespace, PerNs},
-    path::{Path, PathKind},
+    path::{import_paths_in_source, Path, PathKind},
     primitive_type::{FloatBitness, IntBitness, Signedness},
     resolve::{resolver_for_expr, resolver_for_scope, Resolver, TypeNs, ValueNs},
     ty::{

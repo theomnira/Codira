@@ -170,6 +170,29 @@ impl fmt::Display for Path {
     }
 }
 
+/// The path every top-level `import` of the source text `text` names, one
+/// per item of a grouped import (`import a.{b, c}` is `a.b` and `a.c`); a
+/// glob import's path is the module it imports from.
+///
+/// It reads the text alone, before the file is part of any package: a
+/// driver uses it to find which standard-library modules a program needs
+/// before it loads them (the standard library is loaded file by file, only
+/// the modules a program's imports reach).
+pub fn import_paths_in_source(text: &str) -> Vec<Path> {
+    use codira_syntax::ast::ModuleItemOwner;
+
+    let parse = codira_syntax::SourceFile::parse(text);
+    let mut paths = Vec::new();
+    for item in parse.tree().items() {
+        if let ast::ModuleItemKind::Use(use_item) = item.kind() {
+            Path::expand_use_item(&use_item, |path, _tree, _is_glob, _alias| {
+                paths.push(path);
+            });
+        }
+    }
+    paths
+}
+
 /// Given an `ast::UseTree` and an optional prefix, call a callback function for
 /// every item that is contained in the import tree.
 ///

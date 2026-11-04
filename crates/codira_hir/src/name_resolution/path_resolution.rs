@@ -70,15 +70,17 @@ impl PackageDefs {
 
     /// Resolves the specified `name` from within the specified `module`
     ///
-    /// Three scopes, in order: the module's own items, the built-in
-    /// primitives, and the package's prelude. The prelude is last so that a
-    /// module can define a name the prelude also exports and get its own --
-    /// shadowing a prelude name is a local decision, and a prelude that
-    /// could not be shadowed would make adding a name to it a breaking
-    /// change for every module in the package.
+    /// Four scopes, in order: the module's own items, the built-in
+    /// primitives, the package's prelude, and the other packages by name
+    /// (`std`). The prelude comes after the module so that a module can
+    /// define a name the prelude also exports and get its own -- shadowing a
+    /// prelude name is a local decision, and a prelude that could not be
+    /// shadowed would make adding a name to it a breaking change for every
+    /// module in the package. Package names come last for the same reason:
+    /// a program with a module of its own called `std` keeps it.
     fn resolve_name_in_module(
         &self,
-        _db: &dyn DefDatabase,
+        db: &dyn DefDatabase,
         module: PackageModuleId,
         name: &Name,
     ) -> PerNs<(ItemDefinitionId, Visibility)> {
@@ -86,6 +88,29 @@ impl PackageDefs {
             .get(name)
             .or(BUILTIN_SCOPE.get(name).copied().unwrap_or_else(PerNs::none))
             .or_else(|| self.resolve_name_in_prelude(module, name))
+            .or_else(|| self.resolve_package_name(db, name))
+    }
+
+    /// The root module of the package other packages call `name`, if there
+    /// is one other than this package (see
+    /// `codira_hir_input::PackageData::name`).
+    fn resolve_package_name(
+        &self,
+        db: &dyn DefDatabase,
+        name: &Name,
+    ) -> PerNs<(ItemDefinitionId, Visibility)> {
+        let packages = db.packages();
+        match packages.by_name(&name.to_string()) {
+            Some(package) if package != self.id => PerNs::types((
+                ModuleId {
+                    package,
+                    local_id: db.module_tree(package).root,
+                }
+                .into(),
+                Visibility::Public,
+            )),
+            _ => PerNs::none(),
+        }
     }
 
     /// Resolves `name` against the package's prelude, if it has one.
@@ -159,6 +184,9 @@ impl PackageDefs {
             )),
         };
 
+        // The package the last segment was looked up in: a path can leave
+        // this package through another package's name (`std.fs.fs_open`).
+        let mut curr_package = self.module_tree.package;
         for (i, segment) in segments {
             let (curr, vis) = match curr_per_ns.take_types() {
                 Some(r) => r,
@@ -168,14 +196,24 @@ impl PackageDefs {
             };
 
             curr_per_ns = match curr {
-                ItemDefinitionId::ModuleId(module) => self[module.local_id].get(segment),
+                ItemDefinitionId::ModuleId(module) if module.package == self.id => {
+                    curr_package = module.package;
+                    self[module.local_id].get(segment)
+                }
+                // Another package is complete by the time this one resolves
+                // its imports (packages do not import each other in a
+                // cycle), so its scopes are final.
+                ItemDefinitionId::ModuleId(module) => {
+                    curr_package = module.package;
+                    db.package_defs(module.package)[module.local_id].get(segment)
+                }
                 // TODO: Enum variants
                 s => {
                     return ResolvePathResult::with(
                         PerNs::types((s, vis)),
                         ReachedFixedPoint::Yes,
                         Some(i),
-                        Some(self.module_tree.package),
+                        Some(curr_package),
                     );
                 }
             };
@@ -185,7 +223,7 @@ impl PackageDefs {
             curr_per_ns,
             ReachedFixedPoint::Yes,
             None,
-            Some(self.module_tree.package),
+            Some(curr_package),
         )
     }
 }

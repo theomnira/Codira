@@ -413,3 +413,200 @@ fn fully_qualified_module_path(db: &dyn HirDatabase, module: Module) -> String {
     )
     .collect::<String>()
 }
+
+/// A database with the program `program` and the package `std`, each a
+/// fixture of files.
+fn with_std(program: &str, std: &str) -> MockDatabase {
+    use std::sync::Arc;
+
+    use codira_hir_input::{FileId, Fixture, PackageSet, SourceDatabase, SourceRoot, SourceRootId};
+
+    let mut db = MockDatabase::default();
+    let mut next = 0;
+    for (root, fixture) in [(SourceRootId(0), program), (SourceRootId(1), std)] {
+        let mut source_root = SourceRoot::default();
+        for entry in Fixture::parse(fixture) {
+            let file_id = FileId(next);
+            next += 1;
+            db.set_file_text(file_id, Arc::from(entry.text));
+            db.set_file_source_root(file_id, root);
+            source_root.insert_file(file_id, entry.relative_path);
+        }
+        db.set_source_root(root, Arc::new(source_root));
+    }
+    let mut packages = PackageSet::default();
+    packages.add_package(SourceRootId(0));
+    packages.add_named_package(SourceRootId(1), "std");
+    db.set_packages(Arc::new(packages));
+    db
+}
+
+/// The module tree of every package of `db`, with its diagnostics.
+fn trees(db: &MockDatabase) -> String {
+    itertools::Itertools::intersperse(
+        Package::all(db).iter().map(|package| {
+            let package_defs = db.package_defs(package.id);
+            tree_for_module(db, &package_defs, package.root_module(db)).to_string()
+        }),
+        "\n".to_owned(),
+    )
+    .collect()
+}
+
+#[test]
+fn import_from_the_std_package() {
+    let db = with_std(
+        r#"
+    //- /mod.code
+    import std.fs.fs.{open, File}
+    import std.fs.fs
+    "#,
+        r#"
+    //- /fs/fs.code
+    public struct File;
+    public func open() {}
+    func secret() {}
+    "#,
+    );
+    insta::assert_snapshot!(trees(&db), @r"
+    mod mod
+    '-- use struct std::fs::fs::File
+
+    mod std
+    '-- mod fs
+        '-- mod fs
+            +-- fn secret
+            +-- struct File
+            '-- fn open
+    ");
+}
+
+#[test]
+fn private_and_internal_std_items_cannot_be_imported() {
+    let db = with_std(
+        r#"
+    //- /mod.code
+    import std.fs.secret
+    import std.fs.package_only
+    import std.fs.*
+    "#,
+        r#"
+    //- /fs.code
+    public func open() {}
+    func secret() {}
+    internal func package_only() {}
+    "#,
+    );
+    insta::assert_snapshot!(trees(&db), @r"
+    mod mod
+    +-- ERROR: 7..20: unresolved import
+    '-- ERROR: 28..47: unresolved import
+
+    mod std
+    '-- mod fs
+        +-- fn secret
+        +-- fn package_only
+        '-- fn open
+    ");
+}
+
+#[test]
+fn inside_std_root_is_the_std_root() {
+    let db = with_std(
+        r#"
+    //- /mod.code
+    import std.b.Thing
+    "#,
+        r#"
+    //- /a.code
+    public struct Thing;
+    //- /b.code
+    public import root.a.Thing
+    "#,
+    );
+    insta::assert_snapshot!(trees(&db), @r"
+    mod mod
+    '-- use struct std::a::Thing
+
+    mod std
+    +-- mod b
+    |   '-- use struct std::a::Thing
+    '-- mod a
+        '-- struct Thing
+    ");
+}
+
+#[test]
+fn a_program_module_named_std_shadows_the_package() {
+    let db = with_std(
+        r#"
+    //- /mod.code
+    import std.Mine
+    import std.fs.open
+    //- /std.code
+    public struct Mine;
+    "#,
+        r#"
+    //- /fs.code
+    public func open() {}
+    "#,
+    );
+    insta::assert_snapshot!(trees(&db), @r"
+    mod mod
+    +-- ERROR: 23..34: unresolved import
+    +-- use struct package::std::Mine
+    '-- mod std
+        '-- struct Mine
+
+    mod std
+    '-- mod fs
+        '-- fn open
+    ");
+}
+
+#[test]
+fn the_std_package_does_not_see_the_program() {
+    let db = with_std(
+        r#"
+    //- /mod.code
+    public struct Program;
+    "#,
+        r#"
+    //- /a.code
+    import root.Program
+    "#,
+    );
+    let trees = trees(&db);
+    assert!(trees.contains("unresolved import"), "{trees}");
+}
+
+#[test]
+fn a_program_calls_a_std_function_and_uses_a_std_type() {
+    let db = with_std(
+        r#"
+    //- /mod.code
+    import std.geo.{Point, make, x_of}
+    public func main() -> i64 {
+        let p: Point = make(3);
+        let q: std.geo.Point = p;
+        x_of(q)
+    }
+    "#,
+        r#"
+    //- /geo.code
+    public struct Point { x: i64 }
+    public func make(x: i64) -> Point { Point { x: x } }
+    public func x_of(p: Point) -> i64 { p.x }
+    "#,
+    );
+    let mut diagnostics = Vec::new();
+    for package in Package::all(&db) {
+        for module in package.modules(&db) {
+            module.diagnostics(
+                &db,
+                &mut DiagnosticSink::new(|d| diagnostics.push(d.message())),
+            );
+        }
+    }
+    assert!(diagnostics.is_empty(), "{diagnostics:?}");
+}

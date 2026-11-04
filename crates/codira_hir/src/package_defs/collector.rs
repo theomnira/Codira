@@ -331,7 +331,14 @@ impl DefCollector<'_> {
             #[allow(clippy::match_same_arms)]
             match resolution.take_types() {
                 Some((ItemDefinitionId::ModuleId(m), _)) => {
-                    let scope = &self.package_defs[m.local_id];
+                    // A module of another package (`import std.fs.fs.*`):
+                    // that package's scopes are final already.
+                    let other_package =
+                        (m.package != self.package_id).then(|| self.db.package_defs(m.package));
+                    let scope = match &other_package {
+                        Some(defs) => &defs[m.local_id],
+                        None => &self.package_defs[m.local_id],
+                    };
 
                     // Get all the items that are visible from this module
                     let resolutions = scope
@@ -361,10 +368,12 @@ impl DefCollector<'_> {
                     );
 
                     // Record the wildcard import in case new items are added to the module we are
-                    // importing
-                    let glob = self.glob_imports.entry(m.local_id).or_default();
-                    if !glob.iter().any(|(m, _, _)| *m == import_module_id) {
-                        glob.push((import_module_id, import_visibility, import.source));
+                    // importing (only this package's modules still change)
+                    if other_package.is_none() {
+                        let glob = self.glob_imports.entry(m.local_id).or_default();
+                        if !glob.iter().any(|(m, _, _)| *m == import_module_id) {
+                            glob.push((import_module_id, import_visibility, import.source));
+                        }
                     }
                 }
                 Some((_, _)) => {

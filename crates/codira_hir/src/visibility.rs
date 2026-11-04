@@ -85,6 +85,12 @@ impl Visibility {
             Visibility::Public => return true,
         };
 
+        // A restricted item is never visible from another package: module
+        // ids are only comparable within one package's module tree.
+        if to_module.package != module_tree.package {
+            return false;
+        }
+
         let mut ancestors = successors(Some(from_module), |m| module_tree[*m].parent);
 
         ancestors.any(|m| m == to_module.local_id)
@@ -97,6 +103,10 @@ impl Visibility {
             Visibility::Module(m) => m,
             Visibility::Public => return true,
         };
+
+        if to_module.package != from_module.package {
+            return false;
+        }
 
         let module_tree = db.module_tree(from_module.package);
         let mut ancestors = successors(Some(from_module.local_id), |m| module_tree[*m].parent);

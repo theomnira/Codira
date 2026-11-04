@@ -51,10 +51,20 @@ impl Module {
         })
     }
 
-    /// Returns the name of this module or None if this is the root module
+    /// Returns the name of this module, or None if this is the root module of
+    /// the package being compiled.
+    ///
+    /// The root module of a named package (`std`, see
+    /// `codira_hir_input::PackageData::name`) is named after the package, so
+    /// every full name of an item in it -- the symbols in the dispatch
+    /// table, type names, the file names of libraries -- differs from the
+    /// names of the program's own items, even for a program module with the
+    /// same path as a standard-library module.
     pub fn name(self, db: &dyn HirDatabase) -> Option<String> {
         let module_tree = db.module_tree(self.id.package);
-        let parent = module_tree[self.id.local_id].parent?;
+        let Some(parent) = module_tree[self.id.local_id].parent else {
+            return db.packages()[self.id.package].name.clone();
+        };
         module_tree[parent]
             .children
             .iter()
