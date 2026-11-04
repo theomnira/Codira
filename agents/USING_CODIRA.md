@@ -914,10 +914,11 @@ public func equal(a: u64, b: u64) -> bool {
   function this applies to. A function the optimizer inlined everywhere and
   removed has no code of its own and is reported as not checked.
 - What the machine-code check is not: a proof of constant-time execution.
-  It has been run only on x86-64 Linux (ELF); the `AArch64` decoder is unit
-  tested on instruction encodings, never on a built library, and checks
-  rules (a)-(c) only; Mach-O and PE libraries are read but call targets
-  through their stubs are not resolved, so calls there are reported.
+  It has been run on x86-64 Linux (ELF) builds, and on `aarch64` Linux
+  libraries cross-compiled there (checked, never run on `AArch64` hardware),
+  where it checks rules (a)-(c) only; Mach-O and PE libraries are read but
+  call targets through their stubs are not resolved, so calls there are
+  reported.
   Multiplies, shifts, `cmov` and loads at public addresses are assumed
   constant-time; other micro-architectural effects (cache banks, subnormal
   floats, frequency) are not modelled; speculative execution is out of

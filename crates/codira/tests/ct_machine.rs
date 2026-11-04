@@ -9,8 +9,8 @@
 //!   breaks a rule is caught, with the function and the instruction named;
 //!   and the repository's `oblivious` functions are run through it.
 //!
-//! The machine-code rules are x86-64 only in these tests (the host they run
-//! on); `codira_ctcheck`'s unit tests cover its `AArch64` decoder.
+//! Most tests build for the host (x86-64 Linux); one cross-compiles for
+//! `aarch64-unknown-linux-gnu` and checks the library without running it.
 
 use std::{collections::BTreeSet, ffi::OsString, path::Path};
 
@@ -61,9 +61,15 @@ fn build(dir: &Path, extra: &[&str]) -> Result<ExitStatus, String> {
 /// Builds `source` at `-O<opt>` with the check, and returns the names of the
 /// functions it reports (empty when the build passes).
 fn failing_functions(source: &str, opt: &str) -> (BTreeSet<String>, String) {
+    failing_functions_with(source, opt, &[])
+}
+
+fn failing_functions_with(source: &str, opt: &str, extra: &[&str]) -> (BTreeSet<String>, String) {
     let project = tempfile::tempdir().unwrap();
     write_package(project.path(), source);
-    match build(project.path(), &["--check-constant-time", "-O", opt]) {
+    let mut args = vec!["--check-constant-time", "-O", opt];
+    args.extend_from_slice(extra);
+    match build(project.path(), &args) {
         Ok(status) => {
             assert_eq!(
                 status,
@@ -385,6 +391,23 @@ fn the_repository_oblivious_functions() {
             BTreeSet::new()
         };
         assert_eq!(all, expected, "-O{opt}");
+    }
+}
+
+#[test]
+fn aarch64_libraries_are_checked_too() {
+    // Rules (a)-(c) only: the `AArch64` backend keeps the 8-bit select a
+    // `csel`, and the public loops of `mix` still branch at -O0.
+    let target = ["--target", "aarch64-unknown-linux-gnu"];
+    let (failing, message) = failing_functions_with(&operator_corpus(), "0", &target);
+    assert!(failing.is_empty(), "{message}");
+    let (failing, message) = failing_functions_with(SOURCES[2].1, "0", &target);
+    assert_eq!(failing, BTreeSet::from(["mix".to_string()]), "{message}");
+    assert!(message.contains("(AArch64)"), "{message}");
+    assert!(message.contains("conditional branch"), "{message}");
+    for opt in ["2", "3"] {
+        let (failing, message) = failing_functions_with(SOURCES[2].1, opt, &target);
+        assert!(failing.is_empty(), "-O{opt}: {message}");
     }
 }
 
