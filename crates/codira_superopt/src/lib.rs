@@ -47,6 +47,8 @@
 //! of the block (all modelled flag-writing instructions overwrite them); no
 //! memory; the original's registers that it does not write are preserved.
 
+pub mod library;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;

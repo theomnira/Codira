@@ -297,12 +297,12 @@ flowchart TD
         CTCheck["codira_ctcheck<br/>codira build --check-constant-time:<br/>no secret branch, no variable-time instruction,<br/>no unchecked call, no secret address (x86-64);<br/>x86-64 and AArch64 machine code"]
         MCodeIR["codira_mcode<br/>x86-64 and AArch64 integer instructions,<br/>one semantics run concretely and as Z3 bit-vectors,<br/>checked against the CPU it runs on"]
         Profiles["cost profiles<br/>x86-64 latencies and throughputs measured<br/>on the host; AArch64 from the Neoverse N1<br/>optimization guide, never measured"]
-        Superopt["codira_superopt<br/>bounded search of up to 3 instructions,<br/>lowered code proven equal by Z3,<br/>chosen by cost model or by timing;<br/>refuses constant-time code; offline tool,<br/>not part of codira build"]
+        Superopt["codira_superopt<br/>codira build --superoptimize (experimental):<br/>the integer tail of each function, up to 3 instructions,<br/>proven equal by Z3, patched in place and re-proven;<br/>refuses constant-time code; cached"]
         MCodeIR --> Superopt
         Profiles --> Superopt
     end
     Lib -.->|"oblivious functions"| CTCheck
-    Lib -.->|"objects, offline"| Superopt
+    Lib -.->|"--superoptimize"| Superopt
     Superopt <==>|"replacement proven"| SMT
     Flow -.->|"constant-time code refused"| Superopt
 
@@ -312,7 +312,7 @@ flowchart TD
         N2["loop schedules (LLVM hints)<br/>fails a dependence-safety test"]
         N3["multi-shot continuations,<br/>sample / observe<br/>fails posterior checks"]
         N6["proof-gated live updates<br/>relational prover and runtime<br/>protocol do not compile yet"]
-        N7["superoptimiser inside codira build,<br/>array handles marked dereferenceable,<br/>rewritten code patched into libraries"]
+        N7["superoptimiser in loop bodies and on<br/>other targets, array handles marked<br/>dereferenceable"]
         N8["@budget, table declarations,<br/>tensor shape checking, memory<br/>domains, capability types (in progress)"]
     end
 

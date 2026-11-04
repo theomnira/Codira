@@ -16,6 +16,7 @@ mod diagnostics_snippets;
 mod driver;
 mod native_build;
 mod std_library;
+mod superopt;
 
 use std::{
     ffi::OsStr,

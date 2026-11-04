@@ -1046,10 +1046,12 @@ dependencies = [
  "codira_hir",
  "codira_hir_input",
  "codira_image",
+ "codira_mcode",
  "codira_paths",
  "codira_project",
  "codira_runtime",
  "codira_smt",
+ "codira_superopt",
  "codira_syntax",
  "codira_target",
  "insta",
@@ -1402,6 +1404,8 @@ version = "0.6.0-dev"
 dependencies = [
  "codira_mcode",
  "codira_smt",
+ "iced-x86",
+ "object 0.36.5",
 ]
 
 [[package]]

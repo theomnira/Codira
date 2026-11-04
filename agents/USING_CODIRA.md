@@ -1410,6 +1410,43 @@ unpacks them once into a temporary directory named after their hash; later
 runs load them directly. `main` may return nothing (exit code 0), an integer
 (the exit code) or `bool` (true is success). Host target only for now.
 
+### Superoptimisation: `codira build --superoptimize` (experimental)
+
+```bash
+codira build -O 3 --superoptimize
+# superoptimiser: `mix` at 0x1910: mov rax, rsi; xor rax, rdi; and rsi, rdi;
+#   lea rax, [rax + 2*rsi] => lea rax, [rdi + rsi] (latency 3.2 -> 1.0 cycles,
+#   13 -> 4 bytes, proven by Z3)
+```
+
+After a library is linked, the straight-line integer code that ends each of
+its functions (the instructions just before `ret`) is searched for a cheaper
+sequence of up to three instructions. What it does and guarantees:
+
+- A replacement is written only when Z3 proves it returns the same 64-bit
+  value for every input, it writes no register the original left alone, and
+  it fits in the bytes it replaces (the rest becomes one `nop`, so no address
+  moves). The written bytes are decoded again and proven again; on any
+  mismatch the original stays.
+- Functions that must run in constant time (`oblivious`, `@constant_time`)
+  are never touched, nor are generic functions, functions with an indirect
+  jump, or code a dynamic relocation writes. It composes with
+  `--check-constant-time`, which runs after it, and with `--certify`, whose
+  certificate hashes the rewritten code.
+- "Cheaper" is decided by a cost model whose x86-64 latencies and
+  throughputs were measured on one Intel Emerald Rapids machine; on other
+  processors the choice may not be faster. Instructions an extension
+  provides (BMI1 `andn`) are used only when `--target-cpu` implies it.
+- Results are cached in `target/.superopt-cache`, keyed by the code, the
+  cost profile and the search bounds; a cached answer is re-proven before
+  use, so rebuilds repeat no search.
+
+Limits: x86-64 ELF libraries only (other targets build unchanged, with a
+note); only the code before a `ret`, not loop bodies; 64-bit
+general-purpose register arithmetic only (no memory, flags, 32-bit forms or
+vectors); a function LLVM inlined into its caller is rewritten only where it
+is still called. The search is bounded, so it is not exhaustive.
+
 ### Proof certificates: `codira build --certify`, `codira certify`
 
 ```bash
