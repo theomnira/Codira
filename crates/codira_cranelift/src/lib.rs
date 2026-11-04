@@ -39,7 +39,7 @@ use codira_hir::{
 use cranelift_codegen::{
     ir::{
         condcodes::{FloatCC, IntCC},
-        types, AbiParam, Block, InstBuilder, Signature, Type, Value,
+        types, AbiParam, Block, InstBuilder, Signature, TrapCode, Type, Value,
     },
     settings::{self, Configurable},
 };
@@ -964,6 +964,19 @@ impl<'a, 'db> Translator<'a, 'db> {
             .module
             .declare_func_in_func(callee_id, self.builder.func);
         let call = self.builder.ins().call(callee_ref, &values);
+        // A function returning `never` has no result here either; nothing
+        // after a call to it can run, so the block ends in a trap and what
+        // follows goes to a dead block, as after a `return`.
+        let never = function
+            .ty(self.state.db)
+            .callable_sig(self.state.db)
+            .is_some_and(|sig| sig.ret().is_never());
+        if never {
+            self.builder.ins().trap(TrapCode::unwrap_user(1));
+            self.terminated = true;
+            self.after_terminator();
+            return Ok(None);
+        }
         Ok(self.builder.inst_results(call).first().copied())
     }
 
