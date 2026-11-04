@@ -1070,10 +1070,68 @@ allocating) as a major change, and one that narrowed as a minor change.
 import math
 import collections.list
 import geometry.{ Point, Vector as Vec2 }
-
-root.tools.clamp(x, 0, 1)     // `root` = package root
-super.helper()                 // parent module
+import root.tools.clamp        // `root` = package root
+import super.helper            // parent module
+import std.crypto.hash.{sha256_str, SHA256_LEN}   // the standard library
 ```
+
+Each file is a module (`geometry.code` or `geometry/mod.code` is
+`geometry`, `a/b.code` is `a.b`). Paths with more than one segment are
+written in `import` and in type position (`let p: root.geometry.Point`); in
+an expression, import the name and call it (`clamp(x, 0, 1)`), since
+`root.tools.clamp(x, 0, 1)` is read as field accesses and does not resolve.
+
+#### Importing the standard library
+
+A program imports standard-library modules (the `std/` directory of the
+Codira distribution) by their path under `std`:
+
+```codira
+import std.crypto.hash.{sha256_str, SHA256_LEN}
+import std.fs.fs.*
+import std.memory.region.{Region, region_new, region_alloc, region_free}
+```
+
+- **Only what is imported is loaded**: the modules a program's imports
+  name, and the modules those import in turn (`import root.<..>` inside
+  `std` means the standard library's root). Nothing else of `std/` is read,
+  and there is **no implicit prelude**: `std/prelude.code` is not in scope
+  in programs (it would pull in all of `std/`, most of which does not check
+  yet). Import what you use, explicitly.
+- **Only modules that check clean can be used.** Most of `std/` still has
+  errors (`crates/codira_compiler/tests/snapshots/stdlib_check_ratchet__stdlib_check_status.snap`).
+  Importing such a module, or one that imports such a module, fails the
+  build with the module's own diagnostics, shown against its file
+  (`--> std/math/fast.code:12:5`), and a line naming it: ``error: the
+  standard-library module `std.math.fast` (std/math/fast.code) has 2
+  errors; ...``. A file clean in the ratchet can still fail here when a
+  module it imports is not clean (`std.ai.algorithm.functional` imports
+  `std.ai.tensor.raw`), or when it relies on names of the standard
+  library's prelude, which imported modules do not get either
+  (`std.math.math` calls `push`, `std.time.time` calls `panic`).
+  Importable today: `std.crypto.hash`, `std.fs.fs` and `std.memory.region`
+  (each tested from a program) and `std.memory.page` (checks clean when
+  imported; not run).
+- **Linking**: each imported standard-library module is compiled with the
+  program into a library of its own in the program's `target/` directory
+  (`target/hash$crypto$std.codiralib`), exactly like the program's own
+  modules, and the runtime loads it with the program (`codira start`,
+  `Runtime::builder`, and `codira build --exe`, which bundles every library
+  in `target/`). There is no precompiled standard library.
+- Names: a program module of its own called `std` takes precedence over
+  the standard library (then `std` means that module). The program's
+  `fs` module and `std.fs` are different modules with different symbols.
+  Private and `internal` items of the standard library cannot be imported.
+- **Where the standard library is found**: `CODIRA_STD_PATH` if set (a
+  directory holding `prelude.code`); otherwise `std/` next to the `codira`
+  executable or one directory above it (`<prefix>/bin/codira` and
+  `<prefix>/std`); otherwise the `std/` of the source tree the compiler was
+  built from. A program that imports `std` when none is found fails with
+  a message saying so; a program that imports nothing from `std` never
+  looks.
+- Not yet: the language server does not load the standard library (an
+  `import std.<..>` is unresolved there); a standard-library module cannot
+  be named in an expression without importing it, like any module.
 
 ---
 
@@ -1816,6 +1874,12 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   per instantiation (see "Traits and bounds" for the limits: no generic
   traits, associated types, trait objects or operators on a `T`)
 - imports and visibility (`public`/`internal`/`private`)
+- importing standard-library modules that check clean, explicitly, with
+  no prelude: `import std.crypto.hash.{sha256_str}`, `std.fs.fs`,
+  `std.memory.region` (see "Importing the standard library" for what is
+  loaded, how it is linked and which modules qualify)
+- `public` functions that take and return value structs, called from
+  other modules and from the host
 - algebraic effects and structured concurrency (see below)
 - function values: named functions as values, closures with by-value
   captures, calls through locals, fields and arrays (see "Function values
@@ -1853,8 +1917,9 @@ Runtime (hosts embedding `codira_runtime`):
 - Files and hashes (Linux tested; macOS and Windows built but never run):
   the runtime provides file and hash services that a program reaches with
   `extern "C"` declarations, wrapped in `std/fs/fs.code` and
-  `std/crypto/hash.code`. Since `std` cannot be imported yet, a program
-  declares them itself.
+  `std/crypto/hash.code`. A program imports the wrappers
+  (`import std.fs.fs.*`, `import std.crypto.hash.*`) or declares the
+  services itself.
   - **Opening:** `codira_fs_open(path_addr: usize, path_len: usize, flags:
     u32) -> i64`. The flags are READ 1, WRITE 2, APPEND 4, CREATE 8,
     TRUNCATE 16 and CREATE_NEW 32; pass the path with `str_data`/`str_len`.
@@ -1952,7 +2017,9 @@ types").
 Parsed but **not yet lowered** -- the compiler stops with "... is not
 supported by the code generator yet" naming the construct: postfix `^`. Not available at
 all yet: generic enums, generic traits, trait objects (dynamic dispatch),
-`String`, and using the standard library from a program.
+`String`, the standard library's prelude in programs, and every
+standard-library module that does not check clean on its own (most of
+`std/`: see "Importing the standard library").
 
 ---
 
