@@ -1,0 +1,31 @@
+name: Windows SDK libraries
+description: >
+  Makes the Windows SDK's import libraries (psapi.lib, ole32.lib, ...)
+  findable by rustc at C:\winsdk-um-x64, for builds with
+  -Ctarget-feature=+crt-static.
+
+  The LLVM release Codira builds against is compiled with the static CRT, so
+  the Windows jobs build with +crt-static too. With it, llvm-sys asks for the
+  system libraries LLVM uses as static libraries (`-l static=psapi`), and
+  rustc looks for a static library itself, to bundle it into llvm-sys's rlib:
+  only in the -L directories, never in the linker's LIB path, which the
+  runners do not set in any case. The jobs add `-Lnative=C:\winsdk-um-x64` to
+  RUSTFLAGS; this action points that directory at the newest installed SDK's
+  um\x64 libraries. A junction rather than the SDK's own path, because that
+  has spaces in it and RUSTFLAGS is split on whitespace.
+runs:
+  using: composite
+  steps:
+    - name: Link the Windows SDK libraries
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        $kits = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\Lib'
+        $psapi = Get-ChildItem -Path $kits -Filter psapi.lib -Recurse |
+          Where-Object { $_.Directory.FullName -like '*\um\x64' } |
+          Sort-Object { [version]$_.Directory.Parent.Parent.Name } |
+          Select-Object -Last 1
+        if (-not $psapi) { throw "no psapi.lib for x64 under $kits" }
+        Write-Output "Windows SDK libraries: $($psapi.DirectoryName)"
+        if (Test-Path C:\winsdk-um-x64) { Remove-Item C:\winsdk-um-x64 -Force }
+        New-Item -ItemType Junction -Path C:\winsdk-um-x64 -Target $psapi.DirectoryName | Out-Null

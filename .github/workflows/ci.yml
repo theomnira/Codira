@@ -62,7 +62,7 @@ jobs:
             CARGO_INCREMENTAL: 1
             CARGO_TARGET_DIR: "target"
           - os: "windows-latest"
-            RUSTFLAGS: "-Dwarnings -Ctarget-feature=+crt-static"
+            RUSTFLAGS: "-Dwarnings -Ctarget-feature=+crt-static -Lnative=C:\\winsdk-um-x64"
             CARGO_INCREMENTAL: 0
             CARGO_TARGET_DIR: "C:\\cargo-target-dir"
     env:
@@ -71,16 +71,29 @@ jobs:
       # Disable generating debug info, we don't need it here anyway and its only using disk space
       CARGO_PROFILE_DEV_DEBUG: 0
       CARGO_TARGET_DIR: ${{ matrix.CARGO_TARGET_DIR }}
+      # cargo-llvm-cov names each process's profile <name>-%p-%m.profraw, one
+      # file per process. The funis shell tests run the instrumented linker
+      # thousands of times, so the profiles are merged as they are written
+      # instead, into a pool of at most 8 files per instrumented binary.
+      LLVM_PROFILE_FILE_NAME: codira-%8m.profraw
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
+
+      - name: Link the Windows SDK libraries
+        uses: ./.github/actions/windows-sdk-libs
 
       - name: Install packages
         if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt-get install libasound2-dev libudev-dev
+          # The funis shell tests link for the cross targets too, and run
+          # their programs under QEMU, when these are installed.
+          sudo apt-get install -y qemu-user \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
+            gcc-riscv64-linux-gnu g++-riscv64-linux-gnu
 
       - name: Install LLVM
         uses: ./.github/actions/install-llvm
@@ -137,7 +150,7 @@ jobs:
           - RUSTFLAGS: "-Dwarnings"
             CARGO_INCREMENTAL: 1
           - os: "windows-latest"
-            RUSTFLAGS: "-Dwarnings -Ctarget-feature=+crt-static"
+            RUSTFLAGS: "-Dwarnings -Ctarget-feature=+crt-static -Lnative=C:\\winsdk-um-x64"
             CARGO_INCREMENTAL: 0
     env:
       RUSTFLAGS: ${{ matrix.RUSTFLAGS }}
@@ -148,6 +161,9 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+
+      - name: Link the Windows SDK libraries
+        uses: ./.github/actions/windows-sdk-libs
 
       - name: Install LLVM
         uses: ./.github/actions/install-llvm
@@ -174,56 +190,8 @@ jobs:
           command: test
           args: --doc --all-features
 
-  test-mdbook:
-    name: Test mdbook
-    runs-on: ubuntu-22.04
-    needs: check
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Install LLVM
-        uses: ./.github/actions/install-llvm
-
-      - name: Install Z3
-        uses: ./.github/actions/install-z3
-
-      - name: Install nightly rustfmt
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: nightly
-          profile: minimal
-          components: rustfmt
-
-      - name: Install stable toolchain
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          override: true
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Cargo build
-        uses: actions-rs/cargo@v1
-        env:
-          RUSTFLAGS: ${{ matrix.RUSTFLAGS }}
-        with:
-          command: build
-          args: -p codira_runtime
-
-      - name: Install mdbook
-        uses: actions-rs/install@v0.1
-        with:
-          crate: mdbook
-          version: 0.4.21
-          use-tool-cache: true
-
-      - name: mdbook test
-        run: mdbook test book -L target/debug/deps
-
-      - name: mdbook build
-        run: mdbook build book
+  # There is no mdbook job: it tested and built `book/`, and the repository
+  # has no book. A job for it belongs with the book, when there is one.
 
   test-cpp:
     name: Test C++ Runtime
@@ -236,11 +204,14 @@ jobs:
         include:
           - RUSTFLAGS: "-Dwarnings"
           - os: "windows-latest"
-            RUSTFLAGS: "-Dwarnings -Ctarget-feature=+crt-static"
+            RUSTFLAGS: "-Dwarnings -Ctarget-feature=+crt-static -Lnative=C:\\winsdk-um-x64"
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
+
+      - name: Link the Windows SDK libraries
+        uses: ./.github/actions/windows-sdk-libs
 
       - name: Install LLVM
         uses: ./.github/actions/install-llvm

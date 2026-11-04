@@ -41,6 +41,9 @@ add-apt-repository "${REPO_NAME}"
 apt-get update
 
 # Install required packages for LLVM
-apt-get install -y llvm-$LLVM_VERSION llvm-$LLVM_VERSION-* liblld-$LLVM_VERSION* libclang-rt-$LLVM_VERSION-dev
+# lld-$LLVM_VERSION has the linker executables (ld.lld, ld64.lld, lld-link)
+# that codira spawns, which it finds in /usr/lib/llvm-$LLVM_VERSION/bin;
+# liblld-$LLVM_VERSION-dev the headers and libraries codira_lld builds against.
+apt-get install -y llvm-$LLVM_VERSION llvm-$LLVM_VERSION-* lld-$LLVM_VERSION liblld-$LLVM_VERSION* libclang-rt-$LLVM_VERSION-dev
 
 apt download libpolly-$LLVM_VERSION-dev && dpkg --force-all -i libpolly-$LLVM_VERSION-dev*

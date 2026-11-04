@@ -238,6 +238,16 @@ fn main() {
 
     build.cpp(true).file("wrapper/lld-c.cpp");
 
+    // LLD's headers and libraries are found next to LLVM's, as in a
+    // from-source build with lld enabled, the LLVM project's Windows release
+    // and Debian's liblld packages. Homebrew installs LLD as a formula of its
+    // own, under a prefix of its own, which CODIRA_LLD_PREFIX names.
+    println!("cargo:rerun-if-env-changed=CODIRA_LLD_PREFIX");
+    let lld_prefix = env::var_os("CODIRA_LLD_PREFIX").map(PathBuf::from);
+    if let Some(prefix) = &lld_prefix {
+        build.include(prefix.join("include"));
+    }
+
     if build.get_compiler().is_like_msvc() {
         build.flag("/std:c++17");
         // Match LLVM's own CRT choice. Prebuilt LLVM/LLD for MSVC is built
@@ -277,6 +287,9 @@ fn main() {
 
     // Link LLVM libraries
     println!("cargo:rustc-link-search=native={libdir}");
+    if let Some(prefix) = &lld_prefix {
+        println!("cargo:rustc-link-search=native={}", prefix.join("lib").display());
+    }
     let blacklist = ["LLVMLineEditor"];
     for name in get_link_libraries()
         .iter()
