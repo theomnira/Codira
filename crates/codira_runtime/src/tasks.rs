@@ -50,6 +50,18 @@
 //! in which case it registers and sleeps again. A sleeping select counts as
 //! blocked for the pool, exactly like a blocked send or receive.
 //!
+//! # Collections
+//!
+//! A task runs Codira code, so it holds a mutator guard
+//! (`codira_memory::gc::safepoint`) for as long as its entry runs: a
+//! collection stops it at its next allocation and scans its stack. Every
+//! wait here -- a channel operation, a `select`, a scope join -- runs inside a
+//! blocking region, so a waiting task is already parked and never holds up a
+//! collection (nor can a collection deadlock with it). Channel locks are
+//! taken and released inside those regions, and values received into Codira
+//! stack slots are written after the region ends, so nothing writes a stack
+//! a collector may be scanning.
+//!
 //! # Sessions
 //!
 //! `codira.session_open` makes the two endpoints of a session: two channels
@@ -69,6 +81,8 @@ use std::{
 };
 
 use parking_lot::{Condvar, Mutex};
+
+use codira_memory::gc::safepoint::blocking;
 
 use crate::{FunctionDefinition, IntoFunctionDefinition};
 
@@ -190,7 +204,10 @@ impl Pool {
 }
 
 fn run(mut job: Job) {
-    (job.entry)(job.args.as_mut_ptr().cast::<u8>());
+    {
+        let _guard = codira_memory::gc::safepoint::enter();
+        (job.entry)(job.args.as_mut_ptr().cast::<u8>());
+    }
     let mut pending = job.scope.pending.lock();
     *pending -= 1;
     if *pending == 0 {
@@ -361,8 +378,10 @@ extern "C" fn scope_spawn(scope: usize, entry: usize, args: usize, size: usize) 
 extern "C" fn scope_end(scope: usize) {
     // SAFETY: the compiler ends each scope it began exactly once.
     let scope = unsafe { Arc::from_raw(scope as *const ScopeState) };
-    let mut pending = scope.pending.lock();
-    wait_while(&scope.finished, &mut pending, |pending| *pending > 0);
+    blocking(|| {
+        let mut pending = scope.pending.lock();
+        wait_while(&scope.finished, &mut pending, |pending| *pending > 0);
+    });
     // Every task has finished, so nothing uses the scope's channels any
     // more; they are freed with the last reference to the scope.
 }
@@ -400,23 +419,37 @@ unsafe fn channel_ref<'a>(channel: usize) -> &'a Channel {
 extern "C" fn channel_send(channel: usize, value: usize) {
     // SAFETY: the compiler only names a channel inside the scope that owns it.
     let channel = unsafe { channel_ref(channel) };
-    let mut state = channel.state.lock();
-    wait_while(&channel.not_full, &mut state, |state| {
-        state.queue.len() >= channel.capacity
+    blocking(|| {
+        let mut state = channel.state.lock();
+        wait_while(&channel.not_full, &mut state, |state| {
+            state.queue.len() >= channel.capacity
+        });
+        // SAFETY: `value` is the address of a stack slot of the element type
+        // (only read).
+        unsafe { channel.push(&mut state, value) };
     });
-    // SAFETY: `value` is the address of a stack slot of the element type.
-    unsafe { channel.push(&mut state, value) };
 }
 
 extern "C" fn channel_receive(channel: usize, out: usize) {
     // SAFETY: the compiler only names a channel inside the scope that owns it.
     let channel = unsafe { channel_ref(channel) };
-    let mut state = channel.state.lock();
-    wait_while(&channel.not_empty, &mut state, |state| {
-        state.queue.is_empty()
+    let mut element = 0u128;
+    blocking(|| {
+        let mut state = channel.state.lock();
+        wait_while(&channel.not_empty, &mut state, |state| {
+            state.queue.is_empty()
+        });
+        // SAFETY: `element` has room for any element.
+        unsafe { channel.pop(&mut state, std::ptr::from_mut(&mut element) as usize) };
     });
     // SAFETY: `out` is the address of a stack slot of the element type.
-    unsafe { channel.pop(&mut state, out) };
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            std::ptr::from_ref(&element).cast::<u8>(),
+            out as *mut u8,
+            channel.element_size,
+        );
+    }
 }
 
 /// Creates the two endpoints of a session in `scope` and writes their
@@ -565,7 +598,11 @@ extern "C" fn channel_select(cases: usize, count: usize, has_default: usize) -> 
         woken: Mutex::new(false),
         wake: Condvar::new(),
     });
-    loop {
+    // A received value lands here first and is copied to its Codira stack
+    // slot once the thread runs again.
+    let mut received = 0u128;
+    let received_at = std::ptr::from_mut(&mut received) as usize;
+    let chosen = blocking(|| loop {
         let mut states: Vec<_> = channels.iter().map(|c| c.state.lock()).collect();
         // After a sleep, cancel the registration on every channel, including
         // the ones that did not wake this select. (Nothing to remove the
@@ -594,7 +631,7 @@ extern "C" fn channel_select(cases: usize, count: usize, has_default: usize) -> 
             unsafe {
                 match case.kind {
                     SELECT_SEND => channel.push(state, case.data),
-                    SELECT_RECEIVE => channel.pop(state, case.data),
+                    SELECT_RECEIVE => channel.pop(state, received_at),
                     _ => fatal("a `select` case of an unknown kind"),
                 }
             }
@@ -613,7 +650,19 @@ extern "C" fn channel_select(cases: usize, count: usize, has_default: usize) -> 
         drop(states);
         let mut woken = waiter.woken.lock();
         wait_while(&waiter.wake, &mut woken, |woken| !*woken);
+    });
+    if chosen < count && cases[chosen].kind == SELECT_RECEIVE {
+        let channel = channel_of(&cases[chosen]);
+        // SAFETY: `data` is the address of a stack slot of the element type.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                std::ptr::from_ref(&received).cast::<u8>(),
+                cases[chosen].data as *mut u8,
+                channel.element_size,
+            );
+        }
     }
+    chosen
 }
 
 /// The task functions every runtime registers.
