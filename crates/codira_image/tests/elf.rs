@@ -178,6 +178,15 @@ fn run_on_linux(script: &Path, library: &Path, reference: &Path) -> Option<Strin
     let mut command = if cfg!(target_os = "linux") {
         Command::new("python3")
     } else if cfg!(windows) {
+        // wsl.exe reports a missing distribution on stdout, so the check
+        // below cannot tell that from a failed load: ask WSL first.
+        let wsl_runs_python = Command::new("wsl.exe")
+            .args(["-e", "python3", "-c", ""])
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if !wsl_runs_python {
+            return None;
+        }
         let mut c = Command::new("wsl.exe");
         c.args(["-e", "python3"]);
         c
