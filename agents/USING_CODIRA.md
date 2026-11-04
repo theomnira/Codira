@@ -1886,6 +1886,28 @@ Runtime (hosts embedding `codira_runtime`):
   - **Not cryptographic:** `std/hashlib` (FNV-1a).
   - Tests: `crates/codira/tests/fs_and_hash.rs`. Limits:
     `lab/rfcs/0004-runtime-io-and-hashing.md`.
+- Database and tensors (experimental, x86-64 Linux tested; RFC 0007): the
+  `codira_db` engine and a first slice of `codira_ai` are reached through the
+  runtime services `codira_db_*` and `codira_ai_*`, wrapped in
+  `std/db/db.code` and `std/ai/runtime.code`. Until `std` can be imported,
+  declare the `extern "C"` services in the program.
+  - **Database:** a program can open a directory with an fsync policy, run
+    snapshot-isolation transactions (`get` into a caller buffer, `put`,
+    `delete`), commit, abort, checkpoint and close. Commit returns the
+    commit timestamp, and a write-write conflict returns its own code, -3.
+    Snapshot isolation is not serializable: write skew is possible. A
+    directory may be opened once per process, and nothing stops a second
+    process. Scans and typed tables are not exposed.
+  - **Tensors:** a program can create f32 tensors from a buffer and shape,
+    and run `matmul` (batched), broadcasting `add`, `relu` and `softmax`. It
+    can read values back, and train a Linear layer with
+    `codira_ai_linear_mse_sgd_step`.
+  - **Handles and errors:** handles are generation-checked `i64` values,
+    tagged by kind, so a transaction handle passed as a database handle is
+    refused. Tensors and layers are not traced by the GC and must be freed
+    explicitly. Every error is a documented negative code.
+  - **Effects:** all of these services count as blocking and allocating.
+  - Tests: `crates/codira/tests/db_and_ai.rs`.
 - Experimental hardware safety: `codira build --sanitize=memtag` tags
   `stack_alloc` slots, region memory and OS pages with ARM MTE on aarch64
   Linux targets with `+mte` (built and inspected, never run: see

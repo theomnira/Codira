@@ -2,8 +2,10 @@
 
 The native storage engine intended to back `std.db` (experimental; design and
 status in [`lab/rfcs/0002-codira-db.md`](../../lab/rfcs/0002-codira-db.md)).
-Pure Rust, one dependency (`crc32fast`). It is not yet reachable from Codira
-programs: that needs the file-I/O and runtime C ABI work of Sessions 4 and 6.
+Pure Rust, one dependency (`crc32fast`). Codira programs reach its key-value
+transactions through the runtime services `codira_db_*` (wrapped in
+`std/db/db.code`; see [`lab/rfcs/0007-runtime-db-and-ai-abi.md`](../../lab/rfcs/0007-runtime-db-and-ai-abi.md)).
+Scans and typed tables are reachable from Rust only.
 
 What it is: an in-memory, ordered, multi-version key-value index made durable
 by a checksummed write-ahead log and periodic snapshot checkpoints, with

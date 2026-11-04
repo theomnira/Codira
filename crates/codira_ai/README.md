@@ -6,10 +6,12 @@ Experimental (Tier B candidate). Design and plan: [`lab/rfcs/0003-codira-ai.md`]
 the Codira runtime is to expose to `std.ai`. It is pure Rust and uses only
 `std`: no BLAS, no array library, no Python, no external inference service.
 
-**No Codira program can use it yet.** The C ABI binding through
-`codira_runtime_capi` belongs to the runtime workstream (Session 6) and has
-not been written. Programs cannot import `std` yet either (`lab/STATUS.md`
-§3). Everything below is tested from Rust only.
+**Codira programs reach a first slice of it**: f32 tensors, matmul,
+broadcasting add, relu, softmax, and a Linear layer trained with an MSE + SGD
+step, through the runtime services `codira_ai_*` (wrapped in
+`std/ai/runtime.code`; see
+[`lab/rfcs/0007-runtime-db-and-ai-abi.md`](../../lab/rfcs/0007-runtime-db-and-ai-abi.md)).
+Everything else below is tested from Rust only.
 
 ## Modules
 
