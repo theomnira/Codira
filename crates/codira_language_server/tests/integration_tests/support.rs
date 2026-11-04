@@ -29,7 +29,7 @@ use serde_json::Value;
 /// information about the project.
 pub struct Project<'a> {
     fixture: &'a str,
-    tmp_dir: Option<tempdir::TempDir>,
+    tmp_dir: Option<tempfile::TempDir>,
 }
 
 impl Project<'_> {
@@ -46,7 +46,7 @@ impl Project<'_> {
         // Get or create a temporary directory
         let tmp_dir = self
             .tmp_dir
-            .unwrap_or_else(|| tempdir::TempDir::new("testdir").unwrap());
+            .unwrap_or_else(|| tempfile::Builder::new().prefix("testdir").tempdir().unwrap());
 
         // Write all fixtures to a folder
         for entry in Fixture::parse(self.fixture) {
@@ -84,12 +84,12 @@ pub struct Server {
     messages: RefCell<Vec<Message>>,
     worker: Option<std::thread::JoinHandle<()>>,
     client: Connection,
-    tmp_dir: tempdir::TempDir,
+    tmp_dir: tempfile::TempDir,
 }
 
 impl Server {
     /// Constructs and initializes a new `Server`
-    pub fn new(tmp_dir: tempdir::TempDir, config: Config) -> Self {
+    pub fn new(tmp_dir: tempfile::TempDir, config: Config) -> Self {
         let (connection, client) = Connection::memory();
 
         let worker = std::thread::spawn(move || {

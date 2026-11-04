@@ -54,7 +54,6 @@ in-process-lld = ["dep:codira_lld"]
 codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
 codira_image = { version = "0.6.0-dev", path = "../codira_image" }
 anyhow = { workspace = true, features = ["std"] }
-apple-codesign = { workspace = true }
 array-init = { workspace = true }
 by_address = { workspace = true }
 bytemuck = { workspace = true }
@@ -75,7 +74,7 @@ codira_syntax = { version = "0.6.0-dev", path = "../codira_syntax" }
 codira_tv = { version = "0.6.0-dev", path = "../codira_tv" }
 # Reads the symbols a package's assembled native objects define (`native`),
 # and the objects `test_targets` builds for every target.
-object = "0.36.5"
+object = { version = "0.36.5", default-features = false, features = ["std", "read"] }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
 paste = { workspace = true }

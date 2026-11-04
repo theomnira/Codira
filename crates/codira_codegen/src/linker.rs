@@ -625,6 +625,11 @@ impl Linker for Ld64Linker {
 
         // Link as dynamic library
         self.args.push("-dylib".to_owned());
+        // An ad-hoc code signature, which arm64 macOS requires before it
+        // maps the library and which x86-64 macOS accepts. LLD writes it as
+        // the last step of the link, so nothing has to re-sign the file
+        // afterwards.
+        self.args.push("-adhoc_codesign".to_owned());
 
         self.add_apple_sdk()?;
         self.args.push("-lSystem".to_owned());
