@@ -117,16 +117,22 @@ impl Program {
     }
 }
 
-// The host side of `print`/`println`: one value each, formatted as the LLVM
-// backend's runtime formats it.
+// The host side of `print`/`println`: one value each, formatted exactly as
+// the LLVM backend's runtime formats it (`codira_runtime`'s `builtins.rs`):
+// integers in decimal, and floats in their shortest round-trip form in their
+// own precision, always with a decimal point or an exponent (Rust's `{:?}`),
+// so `1.0` prints `1.0` and `0.1f32` prints `0.1`.
 extern "C" fn codira_jit_print_i64(value: i64) {
     print!("{value}");
 }
 extern "C" fn codira_jit_print_u64(value: u64) {
     print!("{value}");
 }
+extern "C" fn codira_jit_print_f32(value: f32) {
+    print!("{value:?}");
+}
 extern "C" fn codira_jit_print_f64(value: f64) {
-    print!("{value}");
+    print!("{value:?}");
 }
 extern "C" fn codira_jit_print_bool(value: u8) {
     print!("{}", value != 0);
@@ -197,6 +203,7 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
     let mut jit = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
     jit.symbol("codira_jit_print_i64", codira_jit_print_i64 as *const u8);
     jit.symbol("codira_jit_print_u64", codira_jit_print_u64 as *const u8);
+    jit.symbol("codira_jit_print_f32", codira_jit_print_f32 as *const u8);
     jit.symbol("codira_jit_print_f64", codira_jit_print_f64 as *const u8);
     jit.symbol("codira_jit_panic", codira_jit_panic as *const u8);
     jit.symbol("codira_jit_print_bool", codira_jit_print_bool as *const u8);
@@ -208,6 +215,7 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
     for (name, params) in [
         ("codira_jit_print_i64", vec![AbiParam::new(types::I64)]),
         ("codira_jit_print_u64", vec![AbiParam::new(types::I64)]),
+        ("codira_jit_print_f32", vec![AbiParam::new(types::F32)]),
         ("codira_jit_print_f64", vec![AbiParam::new(types::F64)]),
         (
             "codira_jit_panic",
@@ -459,6 +467,12 @@ impl State<'_> {
         self.strings.insert(text.to_owned(), id);
         Ok(id)
     }
+}
+
+/// An argument of `print`/`println`, evaluated and waiting to be printed.
+enum PrintArg {
+    Text(String),
+    Value(Option<ScalarTy>, Option<Value>),
 }
 
 /// Where a `break` goes, and the value it carries.
@@ -1070,8 +1084,15 @@ impl<'a, 'db> Translator<'a, 'db> {
             if !matches!(builtin, BuiltinFn::Print | BuiltinFn::Println) {
                 return self.unsupported(format!("the builtin `{}`", builtin.name()));
             }
+            // Every argument is evaluated, left to right, before anything is
+            // printed, as on the LLVM backend: an argument that calls a
+            // function which prints does so before this line starts.
+            let mut values = Vec::with_capacity(args.len());
             for &arg in args {
-                self.print(arg)?;
+                values.push(self.print_argument(arg)?);
+            }
+            for value in values {
+                self.print(value)?;
             }
             if builtin == BuiltinFn::Println {
                 self.print_text("\n")?;
@@ -1147,22 +1168,29 @@ impl<'a, 'db> Translator<'a, 'db> {
         Ok(())
     }
 
-    fn print(&mut self, arg: ExprId) -> Result<(), Unsupported> {
+    /// Evaluates one argument of `print`/`println`, without printing it.
+    fn print_argument(&mut self, arg: ExprId) -> Result<PrintArg, Unsupported> {
         if let Expr::Literal(Literal::String(text)) = &self.body.clone()[arg] {
-            return self.print_text(text);
+            return Ok(PrintArg::Text(text.to_string()));
         }
         let ty = self.scalar_of(&self.infer[arg])?;
         let value = self.expr(arg)?;
+        Ok(PrintArg::Value(ty, value))
+    }
+
+    fn print(&mut self, arg: PrintArg) -> Result<(), Unsupported> {
+        let (ty, value) = match arg {
+            PrintArg::Text(text) => return self.print_text(&text),
+            PrintArg::Value(ty, value) => (ty, value),
+        };
         match (ty, value) {
             (Some(ScalarTy::Bool), Some(value)) => {
                 self.call_print("codira_jit_print_bool", &[value]);
             }
-            (Some(ScalarTy::Float { bits }), Some(value)) => {
-                let value = if bits == 32 {
-                    self.builder.ins().fpromote(types::F64, value)
-                } else {
-                    value
-                };
+            (Some(ScalarTy::Float { bits: 32 }), Some(value)) => {
+                self.call_print("codira_jit_print_f32", &[value]);
+            }
+            (Some(ScalarTy::Float { .. }), Some(value)) => {
                 self.call_print("codira_jit_print_f64", &[value]);
             }
             (Some(ScalarTy::Int { bits, signed }), Some(value)) => {
