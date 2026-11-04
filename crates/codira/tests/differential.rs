@@ -20,9 +20,11 @@
 //! - `CODIRA_DIFF_PROGRAMS` and `CODIRA_DIFF_SEED` change how many programs
 //!   run and from which seed; `many_programs` (ignored by default) runs
 //!   thousands in parallel.
-//! - Known divergences are tested as such, with their explanation, so that a
-//!   fix is noticed: see the `known_divergence_*` tests at the end of this
-//!   file, each of which explains its divergence and how it was found.
+//! - A known divergence is tested as such, with its explanation, so that a
+//!   fix is noticed (a `known_divergence_*` test, recognised by
+//!   `known_divergence`). There is none today: every one found so far is
+//!   fixed and has a regression test at the end of this file that explains
+//!   it and how it was found.
 //!
 //! Passing is evidence, not proof: it says these programs agree, nothing about
 //! programs the generator cannot write.
@@ -161,19 +163,11 @@ enum Verdict {
 }
 
 /// A known divergence, pinned by a `known_divergence_*` test in this file,
-/// recognised by what the
-/// failing backend printed. The match is narrow on purpose (backend, and the
-/// exact error text), so a different bug at the same crash site still fails.
-fn known_divergence(backend: Backend, outcome: &Outcome) -> Option<&'static str> {
-    let e = &outcome.stderr;
-    if backend == Backend::LlvmO0
-        && e.contains("Instruction does not dominate all uses!")
-        && e.contains("phi {}")
-    {
-        return Some(
-            "llvm -O 0: invalid unit phi in nested if (see known_divergence_llvm_o0_nested_if)",
-        );
-    }
+/// recognised by what the failing backend printed. The match must be narrow
+/// (backend, and the exact error text), so a different bug at the same crash
+/// site still fails. None is known today; the last one (an invalid unit
+/// `phi` at `-O 0`) is fixed, see `llvm_o0_nested_if_agrees`.
+fn known_divergence(_backend: Backend, _outcome: &Outcome) -> Option<&'static str> {
     None
 }
 
@@ -432,20 +426,21 @@ fn env_u64(name: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
-/// The generator configuration: the default, plus the switches named in
-/// `CODIRA_DIFF_ENABLE` (comma-separated: `float_to_narrow_int`,
-/// `calls_in_print_args`, `print_in_constant_functions`), which turn back on
-/// constructs left out because of known divergences -- to check whether one
-/// is fixed, or to reproduce a seed reported before its exclusion was added.
+/// The generator configuration: the default (every switch on), minus the
+/// switches named in `CODIRA_DIFF_DISABLE` (comma-separated:
+/// `float_to_narrow_int`, `calls_in_print_args`,
+/// `print_in_constant_functions`), which leave out constructs that once
+/// diverged -- to reproduce a seed reported before the fix, or to find out
+/// whether a new divergence depends on one of them.
 fn config() -> Config {
     let mut cfg = Config::default();
-    let enable = std::env::var("CODIRA_DIFF_ENABLE").unwrap_or_default();
-    for name in enable.split(',').map(str::trim).filter(|n| !n.is_empty()) {
+    let disable = std::env::var("CODIRA_DIFF_DISABLE").unwrap_or_default();
+    for name in disable.split(',').map(str::trim).filter(|n| !n.is_empty()) {
         match name {
-            "float_to_narrow_int" => cfg.float_to_narrow_int = true,
-            "calls_in_print_args" => cfg.calls_in_print_args = true,
-            "print_in_constant_functions" => cfg.print_in_constant_functions = true,
-            other => panic!("CODIRA_DIFF_ENABLE: unknown switch `{other}`"),
+            "float_to_narrow_int" => cfg.float_to_narrow_int = false,
+            "calls_in_print_args" => cfg.calls_in_print_args = false,
+            "print_in_constant_functions" => cfg.print_in_constant_functions = false,
+            other => panic!("CODIRA_DIFF_DISABLE: unknown switch `{other}`"),
         }
     }
     cfg
@@ -598,129 +593,158 @@ fn generator_covers_the_subset() {
     );
 }
 
-/// KNOWN DIVERGENCE: the backends print floats differently.
+/// Regression (was a known divergence): the backends print floats the same
+/// way.
 ///
 /// The LLVM backend's runtime prints a float with Rust's `{:?}` (shortest
 /// round trip, always with a decimal point or exponent, and an `f32` in
 /// `f32` precision: `crates/codira_runtime/src/builtins.rs`, `print_f32` and
-/// `print_f64`). The Cranelift backend's host print function uses `{}` and
-/// widens an `f32` to `f64` first (`crates/codira_cranelift/src/lib.rs`,
-/// `codira_jit_print_f64` and `Translator::print`). So `println(1.0)` prints
-/// `1.0` on LLVM and `1` on Cranelift, and `println(0.1f32)` prints `0.1` and
-/// `0.10000000149011612`.
-///
-/// The generator therefore never prints a float directly (it prints integer
-/// conversions of each float result, which still compares the arithmetic).
-/// This test pins the divergence down: once the Cranelift backend is fixed it
-/// fails, and then it should become an agreement test and the generator
-/// should print floats directly.
+/// `print_f64`). The Cranelift backend's host print function used `{}` and
+/// widened an `f32` to `f64` first, so `println(1.0)` printed `1` and
+/// `println(0.1f32)` printed `0.10000000149011612`. It now has an `f32` and
+/// an `f64` print function that format as the runtime does, and the
+/// generator prints floats directly.
 #[test]
-fn known_divergence_float_printing() {
-    let source =
-        "public func main() {\n    println(1.0)\n    println(0.1f32)\n    println(2.5)\n}\n";
-    let llvm = run(source, Backend::LlvmDefault);
+fn float_printing_agrees() {
+    let source = "public func main() {\n    println(1.0)\n    println(0.1f32)\n    println(2.5)\n    \
+                  println(-0.0)\n    println(100000000000000000000.0f32)\n    println(0.0000001)\n    \
+                  println(16777217.0f32)\n    println((0.0 / 0.0))\n    println((1.0f32 / 0.0f32))\n    \
+                  println((-1.0 / 0.0))\n    println(\"x \", 0.30000000000000004, \" \", 3.0f32)\n}\n";
+    let expected =
+        "1.0\n0.1\n2.5\n-0.0\n1e20\n1e-7\n16777216.0\nNaN\ninf\n-inf\nx 0.30000000000000004 3.0\n";
     let jit = run(source, Backend::Cranelift);
-    assert_eq!(llvm.exit, Some(0), "{}", llvm.stderr);
     assert!(ran_on_cranelift(&jit), "{}", jit.stderr);
-    assert_eq!(llvm.stdout, "1.0\n0.1\n2.5\n");
-    assert_eq!(
-        jit.stdout, "1\n0.10000000149011612\n2.5\n",
-        "the float printing divergence changed or was fixed: update this test \
-         and the generator"
-    );
+    assert_eq!(jit.stdout, expected);
+    for backend in [Backend::LlvmDefault, Backend::LlvmO0] {
+        let llvm = run(source, backend);
+        assert_eq!(llvm.stdout, expected, "{}\n{}", backend.name(), llvm.stderr);
+    }
 }
 
-/// KNOWN DIVERGENCE: a cast from a float to an 8- or 16-bit integer crashes
-/// the Cranelift backend.
+/// Regression (was a known divergence): a cast from a float to an 8- or
+/// 16-bit integer crashed the Cranelift backend.
 ///
-/// `Translator::cast` in `crates/codira_cranelift/src/lib.rs` emits
-/// `fcvt_to_sint_sat` / `fcvt_to_uint_sat` with an `i8` or `i16` result, which
-/// Cranelift's x86-64 backend does not encode: it panics with "internal error:
-/// entered unreachable code" in `cranelift-codegen` 0.136.2,
-/// `src/isa/x64/inst/emit.rs` (line 1057 for a signed target, 1247 for an
-/// unsigned one). The panic is not caught, so `codira run --jit` exits with
-/// status 101 instead of compiling the program or falling back to LLVM. The
-/// LLVM backend runs it. 32- and 64-bit targets work on both.
-///
-/// The generator does not write these casts by default
-/// (`Config::float_to_narrow_int`). Once the backend is fixed this test fails;
-/// then turn the option on and make this an agreement test.
+/// `Translator::cast` in `crates/codira_cranelift/src/lib.rs` emitted
+/// `fcvt_to_sint_sat` / `fcvt_to_uint_sat` with an `i8` or `i16` result,
+/// which Cranelift's x86-64 backend does not encode: it panicked with
+/// "internal error: entered unreachable code" in `cranelift-codegen` 0.136.2,
+/// `src/isa/x64/inst/emit.rs`, and `codira run --jit` exited with status 101.
+/// It now converts to `i32` (saturating), clamps to the target's range and
+/// narrows. The language defines the cast as saturating with NaN giving 0,
+/// which the LLVM backend implements with `llvm.fpto{s,u}i.sat`; this test
+/// checks both backends on in-range, out-of-range, fractional, infinite and
+/// NaN inputs.
 #[test]
-fn known_divergence_float_to_narrow_int_cast() {
-    for (from, to) in [("f64", "i8"), ("f32", "u8"), ("f64", "i16"), ("f32", "u16")] {
-        let source = format!(
-            "func c(x: {from}) -> {to} {{\n    (x as {to})\n}}\n\
-             public func main() {{\n    println(c(300.5{from}))\n}}\n"
-        );
-        let llvm = run(&source, Backend::LlvmDefault);
-        assert_eq!(llvm.exit, Some(0), "{}", llvm.stderr);
-        let jit = run(&source, Backend::Cranelift);
+fn float_to_narrow_int_cast_agrees() {
+    // `NUM` is replaced by a literal suffix; the last three are NaN and the
+    // two infinities.
+    let inputs = [
+        "300.5NUM",
+        "(-300.5NUM)",
+        "127.9NUM",
+        "(-128.9NUM)",
+        "(-129.0NUM)",
+        "255.9NUM",
+        "256.0NUM",
+        "(-0.9NUM)",
+        "10000000000.0NUM",
+        "(-10000000000.0NUM)",
+        "65535.5NUM",
+        "(-32768.5NUM)",
+        "32767.5NUM",
+        "(0.0NUM / 0.0NUM)",
+        "(1.0NUM / 0.0NUM)",
+        "(-1.0NUM / 0.0NUM)",
+    ];
+    let mut source = String::new();
+    let mut calls = String::new();
+    for from in ["f32", "f64"] {
+        for to in ["i8", "u8", "i16", "u16"] {
+            source.push_str(&format!(
+                "func c_{from}_{to}(x: {from}) -> {to} {{\n    (x as {to})\n}}\n"
+            ));
+            for input in inputs {
+                let literal = input.replace("NUM", from);
+                calls.push_str(&format!(
+                    "    println(\"{from} {to} \", c_{from}_{to}({literal}))\n"
+                ));
+            }
+        }
+    }
+    source.push_str(&format!("public func main() {{\n{calls}}}\n"));
+    let reference = run(&source, Backend::LlvmDefault);
+    assert_eq!(reference.exit, Some(0), "{}", reference.stderr);
+    // A few values written out, so that the reference is checked too.
+    for line in [
+        "f64 i8 127",
+        "f64 i8 -128",
+        "f64 u8 255",
+        "f32 u8 0",
+        "f64 i16 32767",
+        "f32 u16 65535",
+    ] {
         assert!(
-            jit.exit == Some(101) && jit.stderr.contains("entered unreachable code"),
-            "the {from} -> {to} cast no longer crashes the Cranelift backend \
-             (exit {:?}): update this test and the generator\n{}",
-            jit.exit,
-            jit.stderr
+            reference.stdout.contains(line),
+            "missing `{line}`:\n{}",
+            reference.stdout
+        );
+    }
+    let jit = run(&source, Backend::Cranelift);
+    assert!(ran_on_cranelift(&jit), "{}", jit.stderr);
+    assert_eq!(jit.stdout, reference.stdout, "{}", jit.stderr);
+    let o0 = run(&source, Backend::LlvmO0);
+    assert_eq!(o0.stdout, reference.stdout, "{}", o0.stderr);
+}
+
+/// Regression (was a known divergence): `-O 0` builds of a nested `if`
+/// crashed the LLVM backend.
+///
+/// An `if` without `else` took the value of its `then` branch as its own,
+/// so when that branch was an `if`/`else` (whose value is a unit `phi {}`),
+/// an enclosing `if`/`else` used that phi as an incoming value from a block
+/// it does not dominate: the merge block of the `if` without `else` is also
+/// reached straight from its condition. `codira run -O 0` panicked with
+/// "Instruction does not dominate all uses!" (the module is verified when
+/// inkwell clones it). An `if` without `else` now has the unit value, in
+/// `gen_if` in `crates/codira_codegen/src/ir/body.rs`.
+#[test]
+fn llvm_o0_nested_if_agrees() {
+    let source = "func f(a: bool, b: bool, c: bool) {\n    if a {\n        println(\"a\")\n    } else {\n        if b {\n            if c {\n                println(\"c\")\n            } else {\n                println(\"not c\")\n            }\n        }\n    }\n}\n\
+                  public func main() {\n    f(false, true, true)\n    f(false, true, false)\n    f(false, false, true)\n    f(true, true, true)\n}\n";
+    for backend in Backend::ALL {
+        let outcome = run(source, backend);
+        assert_eq!(
+            (outcome.exit, outcome.stdout.as_str()),
+            (Some(0), "c\nnot c\na\n"),
+            "{}\n{}",
+            backend.name(),
+            outcome.stderr
         );
     }
 }
 
-/// KNOWN DIVERGENCE: `-O 0` builds of a nested `if` crash the LLVM backend.
+/// Regression (was a known divergence): `println` arguments with side
+/// effects.
 ///
-/// An `if`/`else` that is the only statement of an `if` without `else`, in
-/// the `else` branch of another `if`, makes the LLVM backend emit a unit-typed
-/// `phi {}` whose operand does not dominate its use. At `-O 0` the module is
-/// verified when inkwell clones it, and `codira run -O 0` panics with
-/// "Instruction does not dominate all uses!". At `-O 1` to `-O 3` the same
-/// program builds and runs correctly; whether the IR before optimization is
-/// invalid there too was not established (the IR written by `--emit-ir` is
-/// after optimization). The differential test recognises exactly this error
-/// on `-O 0` as a known divergence (`known_divergence`) and still compares
-/// the other two backends on such programs.
+/// The LLVM backend evaluates every argument of `print`/`println`, left to
+/// right, before printing any of them; the Cranelift backend
+/// (`Translator::print`) evaluated and printed them one at a time, so when an
+/// argument called a function that prints, the output was interleaved
+/// differently. The language now specifies the LLVM backend's order
+/// (`agents/USING_CODIRA.md`, "Functions"), and Cranelift follows it.
 #[test]
-fn known_divergence_llvm_o0_nested_if() {
-    let source = "func f(a: bool, b: bool, c: bool) {\n    if a {\n        println(\"a\")\n    } else {\n        if b {\n            if c {\n                println(\"c\")\n            } else {\n                println(\"not c\")\n            }\n        }\n    }\n}\n\
-                  public func main() {\n    f(false, true, true)\n}\n";
-    let o2 = run(source, Backend::LlvmDefault);
-    assert_eq!(
-        (o2.exit, o2.stdout.as_str()),
-        (Some(0), "c\n"),
-        "{}",
-        o2.stderr
-    );
-    let jit = run(source, Backend::Cranelift);
-    assert_eq!(jit.stdout, "c\n", "{}", jit.stderr);
-    let o0 = run(source, Backend::LlvmO0);
-    assert!(
-        known_divergence(Backend::LlvmO0, &o0).is_some(),
-        "the -O 0 nested-if crash changed or was fixed (exit {:?}): update this \
-         test and `known_divergence`\n{}",
-        o0.exit,
-        o0.stderr
-    );
-}
-
-/// KNOWN DIVERGENCE: `println` arguments with side effects.
-///
-/// The LLVM backend evaluates every argument of `println` before printing any
-/// of them; the Cranelift backend (`Translator::print`) evaluates and prints
-/// them one at a time. So when an argument calls a function that prints,
-/// the output is interleaved differently. `agents/USING_CODIRA.md` does not
-/// say which order is meant. The generator does not put calls in `println`
-/// arguments by default (`Config::calls_in_print_args`).
-#[test]
-fn known_divergence_print_argument_order() {
-    let source = "func g() -> i32 {\n    println(\"in g\")\n    7i32\n}\n\
-                  public func main() {\n    println(\"g is \", g())\n}\n";
-    let llvm = run(source, Backend::LlvmDefault);
+fn print_arguments_evaluated_first() {
+    let source = "func g(n: i32) -> i32 {\n    println(\"in g \", n)\n    n * 7i32\n}\n\
+                  public func main() {\n    println(\"g is \", g(1i32), \" and \", g(2i32))\n    \
+                  print(\"no newline \", g(3i32))\n    println(\"\")\n}\n";
+    let expected = "in g 1\nin g 2\ng is 7 and 14\nin g 3\nno newline 21\n";
     let jit = run(source, Backend::Cranelift);
     assert!(ran_on_cranelift(&jit), "{}", jit.stderr);
-    assert_eq!(llvm.stdout, "in g\ng is 7\n", "{}", llvm.stderr);
-    assert_eq!(
-        jit.stdout, "g is in g\n7\n",
-        "the print argument order divergence changed or was fixed: update this \
-         test and the generator"
-    );
+    assert_eq!(jit.stdout, expected);
+    for backend in [Backend::LlvmDefault, Backend::LlvmO0] {
+        let llvm = run(source, backend);
+        assert_eq!(llvm.stdout, expected, "{}\n{}", backend.name(), llvm.stderr);
+    }
 }
 
 /// Regression (was a wrong-code divergence on the LLVM path): the Eidos
