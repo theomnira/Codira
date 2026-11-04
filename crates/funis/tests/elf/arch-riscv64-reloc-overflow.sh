@@ -21,6 +21,8 @@ EOF
 $CC -B. -o $t/exe1 $t/a.o $t/b.o $t/c.o -Wl,--section-start=.foo=0x10000 \
   -Wl,--section-start=.bar=0x8000f000
 
+# GNU as before 2.40 assembles `call` with R_RISCV_CALL, later releases
+# with R_RISCV_CALL_PLT.
 not $CC -B. -o $t/exe2 $t/a.o $t/b.o $t/c.o -Wl,--section-start=.foo=0x10000 \
   -Wl,--section-start=.bar=0x8000f800 |&
-  grep -F 'relocation R_RISCV_CALL_PLT against bar out of range'
+  grep -E 'relocation R_RISCV_CALL(_PLT)? against bar out of range'

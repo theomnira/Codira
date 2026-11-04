@@ -672,7 +672,9 @@ fn run_exact(
                     // The script found nothing to test on this machine (a
                     // tool it needs is missing); its log says so.
                     let log = fs::read_to_string(&result.log).unwrap_or_default();
-                    let why = log.lines().rev().find(|line| line.trim_end().ends_with("skipped"));
+                    let why = log.lines().find(|line| {
+                        !line.starts_with('+') && line.trim_end().ends_with("skipped")
+                    });
                     println!("{wanted}: skipped by the script: {}", why.unwrap_or("").trim());
                 }
                 Outcome::Fail | Outcome::Timeout => {

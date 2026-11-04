@@ -26,6 +26,14 @@ int *get_foo();
 int main() { printf("%d\n", get_foo() == &foo); }
 EOF
 
+# Before binutils 2.40, GNU as does not mark a GOT load relaxable (no
+# R_RISCV_RELAX after its R_RISCV_GOT_HI20), and then the load must stay.
+relocs=$($OBJDUMP -r $t/a.o | grep -A1 R_RISCV_GOT_HI20)
+if [[ $relocs != *R_RISCV_RELAX* ]]; then
+  echo "the assembler does not mark the GOT load relaxable: skipped"
+  skip
+fi
+
 $CC -B. -o $t/exe $t/a.o $t/b.o
 $QEMU $t/exe | grep -x 1
 
