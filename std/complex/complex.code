@@ -2,14 +2,21 @@
 // Complex number type for Codira.
 // Provides a Complex struct and a full set of arithmetic and transcendental
 // operations for complex numbers over f64.
+//
+// `complex_to_string` is in `std.complex.complex_string`: it returns a
+// `String`, which does not check yet.
+
+// No standard-library module relies on the prelude; each imports what it
+// uses, so that a program (which has no prelude) can import it.
+import root.sys.terminate.{panic};
 
 // ---------------------------------------------------------------------------
 // Complex
 // A complex number z = real + imag*i, stored as two f64 components.
 // ---------------------------------------------------------------------------
 public struct Complex {
-    real: f64,
-    imag: f64,
+    public real: f64,
+    public imag: f64,
 }
 
 // ---------------------------------------------------------------------------
@@ -165,8 +172,8 @@ public func complex_conj(z: Complex) -> Complex {
 
 // Converts to polar form (r, theta).
 public struct PolarForm {
-    r: f64,
-    theta: f64,
+    public r: f64,
+    public theta: f64,
 }
 
 public func complex_to_polar(z: Complex) -> PolarForm {
@@ -206,16 +213,6 @@ public func complex_almost_eq(a: Complex, b: Complex, tol: f64) -> bool {
     let abs_dr: f64 = if dr < 0.0 { -dr } else { dr };
     let abs_di: f64 = if di < 0.0 { -di } else { di };
     return abs_dr <= tol && abs_di <= tol;
-}
-
-// ---------------------------------------------------------------------------
-// String representation
-// ---------------------------------------------------------------------------
-public func complex_to_string(z: Complex) -> String {
-    if z.imag >= 0.0 {
-        return float_to_string(z.real) + "+" + float_to_string(z.imag) + "i";
-    }
-    return float_to_string(z.real) + float_to_string(z.imag) + "i";
 }
 
 // ---------------------------------------------------------------------------
@@ -265,4 +262,3 @@ extern func sqrt(x: f64) -> f64;
 extern func cos(x: f64) -> f64;
 extern func sin(x: f64) -> f64;
 extern func atan2(y: f64, x: f64) -> f64;
-extern func float_to_string(x: f64) -> String;
