@@ -104,6 +104,13 @@ fn division_and_square_root_are_variable_time() {
     let report = x86(&code, vec![int(true), int(true)]);
     assert_eq!(rules(&report), [Rule::VariableTime], "{report:#?}");
     assert!(report.violations[0].disassembly.starts_with("div"));
+    assert_eq!(
+        report.violations[0].detail,
+        "an operand is derived from a secret"
+    );
+    let report = x86(&code, vec![int(false), int(false)]);
+    assert_eq!(rules(&report), [Rule::VariableTime], "public operands too");
+    assert!(report.violations[0].detail.contains("not found"));
 
     // sqrtsd xmm0, xmm1; ret
     let report = x86(&[0xf2, 0x0f, 0x51, 0xc1, RET], vec![]);

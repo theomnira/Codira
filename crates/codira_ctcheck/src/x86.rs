@@ -796,6 +796,20 @@ pub(crate) fn check(
                         v.detail = detail.to_string();
                     }
                 }
+                if VARIABLE_TIME.contains(&instruction.mnemonic()) {
+                    let detail = if step.input_tainted {
+                        "an operand is derived from a secret"
+                    } else {
+                        "the operands were not found to depend on a secret register value"
+                    };
+                    if let Some(v) = violations.iter_mut().find(|v| {
+                        v.address == instruction.ip()
+                            && v.rule == Rule::VariableTime
+                            && v.detail.is_empty()
+                    }) {
+                        v.detail = detail.to_string();
+                    }
+                }
             }
             true
         }
