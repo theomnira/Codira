@@ -43,12 +43,14 @@ std.ai.tensor.shape
     check (1 diagnostic): std/ai/tensor/shape.code:95: undefined value `MAX_RANK`
 std.atomic.atomic
     check (1 diagnostic): std/atomic/atomic.code:25: undefined type `String`
+    needs: module-level `let` (its orderings; the compiler drops them without a word), `String`, and in-place parameters (its operations would act on a copy)
 std.base64.base64_string
     check (77 diagnostics): std/base64/base64_string.code:24: undefined type `Array[u8]`
+    needs: `String`, the growable `Array[u8]`, and module-level `let`
 std.builtin.bool
     check (22 diagnostics): std/builtin/bool.code:132: undefined type `String`
 std.builtin.dtype
-    check (234 diagnostics): std/builtin/dtype.code:51: cannot apply unary operator `self.is_unsigned()`
+    check (231 diagnostics): std/builtin/dtype.code:51: cannot apply unary operator `self.is_unsigned()`
 std.builtin.error
     check (52 diagnostics): std/builtin/error.code:33: undefined type `String`
 std.builtin.int
@@ -67,38 +69,53 @@ std.builtin.swap
     check (46 diagnostics): std/builtin/swap.code:34: undefined type `Pointer[T]`
 std.builtin.traits
     check (18 diagnostics): std/builtin/traits.code:124: undefined type `Hasher`
+    needs: generic traits (`Indexable[Index, Element]`, `Iterable[Element]`) and `String`
 std.builtin.tuple
     check (104 diagnostics): std/builtin/tuple.code:77: undefined type `String`
 std.builtin.types
     check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
+    needs: the `f16` and `bf16` types, and sizeof/alignof intrinsics it does not declare
 std.collections.array
     check (50 diagnostics): std/collections/array.code:12: undefined type `FixedBuf[T, N]`
 std.collections.binary_heap
     check (45 diagnostics): std/collections/binary_heap.code:11: undefined type `Pointer[T]`
+    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.bitset
     check (43 diagnostics): std/collections/bitset.code:13: undefined type `Pointer[u64]`
+    needs: `Pointer[u64]` (std.memory.pointer)
 std.collections.counter
     check (64 diagnostics): std/collections/counter.code:11: undefined type `Dict[T, usize]`
+    needs: `Dict` (std.collections.dict)
 std.collections.deque
     check (26 diagnostics): std/collections/deque.code:10: undefined type `Pointer[T]`
+    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.dict
     check (116 diagnostics): std/collections/dict.code:34: undefined type `Pointer[Entry[K, V]]`
+    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.linked_list
     check (134 diagnostics): std/collections/linked_list.code:11: undefined type `Pointer[Node[T]]`
+    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.list
     check (55 diagnostics): std/collections/list.code:10: undefined type `Pointer[T]`
+    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.optional
-    check (3 diagnostics): std/collections/optional.code:85: undefined value `panic`
+    build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
+    needs: std.sys.terminate (it calls `panic`)
 std.collections.set
     check (97 diagnostics): std/collections/set.code:24: undefined type `Pointer[SetEntry[T]]`
+    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.span
     check (31 diagnostics): std/collections/span.code:11: undefined type `Pointer[T]`
+    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.string
     check (75 diagnostics): std/collections/string.code:10: undefined type `Pointer[u8]`
+    needs: `Pointer[u8]` (std.memory.pointer)
 std.complex.complex
     build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
+    needs: std.sys.terminate (it calls `panic`)
 std.complex.complex_string
     check (78 diagnostics): std/complex/complex_string.code:17: cannot apply binary operator `float_to_string(z.real) + "+"`
+    needs: `String`
 std.db.db
     check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
 std.ffi.cstring
@@ -107,8 +124,10 @@ std.ffi.unsafe_union
     check (27 diagnostics): std/ffi/unsafe_union.code:15: undefined type `Array[u8]`
 std.format.format
     check (72 diagnostics): std/format/format.code:15: undefined type `String`
+    needs: `String`
 std.format.repr
     check (55 diagnostics): std/format/repr.code:15: undefined type `String`
+    needs: `String`
 std.gpu.globals
     check (108 diagnostics): std/gpu/globals.code:44: method `is_nvidia_gpu` does not exist `info.is_nvidia_gpu()`
 std.gpu.host_info
@@ -123,14 +142,19 @@ std.gpu.warp
     check (479 diagnostics): std/gpu/warp.code:49: mismatched type `{ if info.is_nvidia_gpu() { return intrinsics.llvm_intrinsic...`
 std.hashlib.hasher
     check (34 diagnostics): std/hashlib/hasher.code:14: undefined type `Array[u8]`
+    needs: in-place parameters: its writers take the hasher as `mut`, which the compiler accepts but passes by copy, so they would change nothing; and `String`
 std.hashlib.string_hash
     check (76 diagnostics): std/hashlib/string_hash.code:16: method `as_bytes` does not exist `value.as_bytes()`
+    needs: `String`
 std.math.math
     build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
+    needs: std.sys.terminate (it calls `panic`)
 std.math.polynomial
     check (52 diagnostics): std/math/polynomial.code:19: undefined type `List[f64]`
+    needs: `List` (std.collections.list)
 std.math.sequence
     check (55 diagnostics): std/collections/list.code:10: undefined type `Pointer[T]`
+    needs: `List` (std.collections.list)
 std.memory.alloc
     check (92 diagnostics): std/memory/alloc.code:59: mismatched type `0`
 std.memory.arc_pointer
@@ -141,6 +165,7 @@ std.memory.owned_pointer
     check (63 diagnostics): std/memory/owned_pointer.code:86: undefined value `__intrinsic_addr_to_ref`
 std.memory.pointer
     check (44 diagnostics): std/memory/pointer.code:140: undefined value `__panic`
+    needs: std.builtin.traits and std.builtin.types, `String`, and intrinsics the compiler does not have (`__intrinsic_to_hex`, `__intrinsic_type_name`)
 std.memory.unsafe_pointer
     check (51 diagnostics): std/memory/unsafe_pointer.code:89: undefined type `Pointer[T]`
 std.os.env
@@ -154,22 +179,26 @@ std.os.process
 std.pathlib.path
     check (75 diagnostics): std/pathlib/path.code:12: undefined type `String`
 std.prelude
-    check (1020 diagnostics): std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
+    check (1019 diagnostics): std/ai/tensor/raw.code:88: undefined value `SIZE_F32`
 std.random.random
     check (83 diagnostics): std/random/random.code:33: attempted to access a non-existent field in a struct. `_global_rng.s0`
+    needs: module-level mutable state (its generator is a global); and the growable `Array`
 std.sys.arg
     check (134 diagnostics): std/sys/arg.code:36: undefined value `__intrinsic_argc`
 std.sys.assert_compare
     check (22 diagnostics): std/sys/assert_compare.code:20: cannot apply `==` to a value of generic type `T`: operators on a type parameter are not supported; declare the operation as a method of a trait, bound `T` by it (`T: Trait`) and call the method `a == b`
+    needs: operators on a type parameter (`==`, `<` through traits) and `String` (`Stringable`)
 std.sys.info
     check (40 diagnostics): std/sys/info.code:42: undefined type `String`
 std.sys.intrinsics
     check (181 diagnostics): std/sys/intrinsics.code:40: undefined trait `StringLiteral`
 std.sys.terminate
     build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
+    needs: the code generator to compile a function returning `Never` (`panic`, `exit`, `abort`)
 std.testing.suite
     check (38 diagnostics): std/testing/suite.code:11: undefined type `String`
 std.testing.testing
     check (62 diagnostics): std/testing/testing.code:11: undefined type `String`
 std.time.time
     build: the code generator panicked: could not convert return value (in crates/codira_codegen/src/ir/ty.rs)
+    needs: std.sys.terminate (it calls `panic`)

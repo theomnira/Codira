@@ -48,7 +48,78 @@ use codira_compiler::{Config, Driver, OptimizationLevel, Target};
 /// Why a module cannot be made importable with the compiler as it is: what
 /// is missing, not what is wrong with the module. Only for modules that
 /// are blocked; a module that becomes importable must lose its entry.
-const KNOWN_BLOCKERS: &[(&str, &str)] = &[];
+const KNOWN_BLOCKERS: &[(&str, &str)] = &[
+    // Check clean when imported; blocked by the code generator alone.
+    (
+        "sys.terminate",
+        "the code generator to compile a function returning `Never` (`panic`, `exit`, `abort`)",
+    ),
+    ("math.math", "std.sys.terminate (it calls `panic`)"),
+    ("time.time", "std.sys.terminate (it calls `panic`)"),
+    ("complex.complex", "std.sys.terminate (it calls `panic`)"),
+    (
+        "collections.optional",
+        "std.sys.terminate (it calls `panic`)",
+    ),
+    // What the compiler does not have yet.
+    (
+        "sys.assert_compare",
+        "operators on a type parameter (`==`, `<` through traits) and `String` (`Stringable`)",
+    ),
+    (
+        "hashlib.hasher",
+        "in-place parameters: its writers take the hasher as `mut`, which the compiler accepts \
+         but passes by copy, so they would change nothing; and `String`",
+    ),
+    (
+        "random.random",
+        "module-level mutable state (its generator is a global); and the growable `Array`",
+    ),
+    (
+        "builtin.types",
+        "the `f16` and `bf16` types, and sizeof/alignof intrinsics it does not declare",
+    ),
+    (
+        "builtin.traits",
+        "generic traits (`Indexable[Index, Element]`, `Iterable[Element]`) and `String`",
+    ),
+    (
+        "memory.pointer",
+        "std.builtin.traits and std.builtin.types, `String`, and intrinsics the compiler \
+         does not have (`__intrinsic_to_hex`, `__intrinsic_type_name`)",
+    ),
+    ("collections.list", "`Pointer[T]` (std.memory.pointer)"),
+    ("collections.string", "`Pointer[u8]` (std.memory.pointer)"),
+    ("collections.deque", "`Pointer[T]` (std.memory.pointer)"),
+    (
+        "collections.binary_heap",
+        "`Pointer[T]` (std.memory.pointer)",
+    ),
+    ("collections.span", "`Pointer[T]` (std.memory.pointer)"),
+    (
+        "collections.linked_list",
+        "`Pointer[T]` (std.memory.pointer)",
+    ),
+    ("collections.bitset", "`Pointer[u64]` (std.memory.pointer)"),
+    ("collections.set", "`Pointer[T]` (std.memory.pointer)"),
+    ("collections.dict", "`Pointer[T]` (std.memory.pointer)"),
+    ("collections.counter", "`Dict` (std.collections.dict)"),
+    ("math.sequence", "`List` (std.collections.list)"),
+    ("math.polynomial", "`List` (std.collections.list)"),
+    (
+        "base64.base64_string",
+        "`String`, the growable `Array[u8]`, and module-level `let`",
+    ),
+    ("hashlib.string_hash", "`String`"),
+    ("complex.complex_string", "`String`"),
+    ("format.format", "`String`"),
+    ("format.repr", "`String`"),
+    (
+        "atomic.atomic",
+        "module-level `let` (its orderings; the compiler drops them without a word), \
+         `String`, and in-place parameters (its operations would act on a copy)",
+    ),
+];
 
 /// The repository root, derived from this crate's manifest directory.
 fn repo_root() -> PathBuf {
