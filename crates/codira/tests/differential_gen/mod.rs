@@ -170,20 +170,20 @@ pub struct Config {
     /// executed, counting callees).
     pub cost_budget: u64,
     /// Generate casts from a float to an 8- or 16-bit integer. Off by
-    /// default: the Cranelift backend crashes on them today (known
-    /// the float-to-narrow-integer divergence, pinned by
-    /// `known_divergence_float_to_narrow_int_cast`). A 32- or 64-bit target
+    /// default: the Cranelift backend crashes on them today (a known
+    /// divergence, pinned by `known_divergence_float_to_narrow_int_cast` in
+    /// `differential.rs`). A 32- or 64-bit target
     /// is still generated, and so is a narrowing of its result.
     pub float_to_narrow_int: bool,
     /// Allow calls inside the arguments of `println`. Off by default: when a
     /// called function prints too, the backends interleave the output
-    /// differently (known divergence 4, pinned by
+    /// differently (a known divergence, pinned by
     /// `known_divergence_print_argument_order`).
     pub calls_in_print_args: bool,
     /// Let a function without parameters print (itself or through a call).
     /// Off by default: the LLVM path's Eidos constant fold replaces such a
-    /// function by its constant result and drops the printing (known
-    /// divergence 5, pinned by `known_divergence_eidos_fold_drops_output`).
+    /// function by its constant result and drops the printing (a known
+    /// divergence, pinned by `known_divergence_eidos_fold_drops_output`).
     /// Functions without parameters are still generated, so the fold itself
     /// stays under test.
     pub print_in_constant_functions: bool,

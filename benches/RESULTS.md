@@ -116,7 +116,7 @@ access inside Codira code, which compiles to a load or store.
 
 ## Not done
 
-- No check fails yet when a number regresses.
+- No check fails when a number regresses.
   Criterion can compare against a saved baseline
   (`scripts/bench.sh -- --save-baseline main`, then `-- --baseline main`)
   and reports changes, but it does not fail, and on a shared virtual
