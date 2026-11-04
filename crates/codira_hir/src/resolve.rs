@@ -13,7 +13,7 @@ use crate::{
     has_module::HasModule,
     ids::{
         DefWithBodyId, EffectId, EnumId, FunctionId, GenericDefId, ImplId, ItemContainerId,
-        ItemDefinitionId, Lookup, SessionId, StructId, TypeAliasId, TypeParamId,
+        ItemDefinitionId, Lookup, SessionId, StructId, TraitId, TypeAliasId, TypeParamId,
     },
     item_scope::BUILTIN_SCOPE,
     name,
@@ -34,6 +34,10 @@ pub(crate) enum Scope {
     Module(ModuleItemMap),
     /// Brings `Self` in `impl` block into scope
     Impl(ImplId),
+    /// Brings a trait's `Self` into scope: inside a trait, `Self` is the
+    /// trait's own type parameter (see `GenericDefId::TraitId`), the type
+    /// a method is called on, known only per implementation.
+    Trait(TraitId),
     /// Brings a declaration's `[T, U]` generic parameters into scope.
     ///
     /// Pushed between the module scope and any expression scope, so a
@@ -206,7 +210,8 @@ impl Resolver {
                     | ItemDefinitionId::PrimitiveType(_)
                     | ItemDefinitionId::EffectId(_)
                     | ItemDefinitionId::SessionId(_)
-                    | ItemDefinitionId::EnumId(_),
+                    | ItemDefinitionId::EnumId(_)
+                    | ItemDefinitionId::TraitId(_),
                     _,
                 ) => return None,
             };
@@ -226,8 +231,8 @@ impl Resolver {
             match scope {
                 // A generic parameter lives in the type namespace only:
                 // `T` names a type, never a value, so value resolution
-                // passes straight through it.
-                Scope::GenericParams(_) => {}
+                // passes straight through it. So does a trait's `Self`.
+                Scope::GenericParams(_) | Scope::Trait(_) => {}
                 Scope::Expr(scope) if num_segments <= 1 => {
                     let entry = scope
                         .expr_scopes
@@ -274,7 +279,8 @@ impl Resolver {
                                     ItemDefinitionId::ModuleId(_)
                                     | ItemDefinitionId::FunctionId(_)
                                     | ItemDefinitionId::EffectId(_)
-                                    | ItemDefinitionId::SessionId(_),
+                                    | ItemDefinitionId::SessionId(_)
+                                    | ItemDefinitionId::TraitId(_),
                                     _,
                                 ) => return None,
                             };
@@ -320,7 +326,8 @@ impl Resolver {
                     ItemDefinitionId::ModuleId(_)
                     | ItemDefinitionId::FunctionId(_)
                     | ItemDefinitionId::EffectId(_)
-                    | ItemDefinitionId::SessionId(_),
+                    | ItemDefinitionId::SessionId(_)
+                    | ItemDefinitionId::TraitId(_),
                     _,
                 ) => {
                     return None;
@@ -345,6 +352,21 @@ impl Resolver {
                 Scope::Impl(i) => {
                     if first_name == &name![Self] {
                         return Some((TypeNs::SelfType(*i), Visibility::Public, remaining_idx()));
+                    }
+                }
+                Scope::Trait(t) => {
+                    if first_name == &name![Self] && path.segments.len() == 1 {
+                        return Some((
+                            TypeNs::GenericParam(
+                                TypeParamId {
+                                    owner: GenericDefId::TraitId(*t),
+                                    index: 0,
+                                },
+                                name![Self],
+                            ),
+                            Visibility::Public,
+                            None,
+                        ));
                     }
                 }
                 // A generic parameter is only ever named by a single bare
@@ -390,6 +412,25 @@ impl Resolver {
         }
         match module_def.take_types()? {
             (ItemDefinitionId::EffectId(id), vis) => Some((id, vis)),
+            _ => None,
+        }
+    }
+
+    /// Resolves the specified `path` as a trait: a bound (`T: Show`) or the
+    /// trait of an `extend Type: Show`. Like an effect, a trait shares the
+    /// type namespace with types but is not one, so only this finds it.
+    pub fn resolve_path_as_trait(
+        &self,
+        db: &dyn DefDatabase,
+        path: &Path,
+    ) -> Option<(TraitId, Visibility)> {
+        let (package_defs, module_id) = self.module_scope()?;
+        let (module_def, idx) = package_defs.resolve_path_in_module(db, module_id, path);
+        if idx.is_some() {
+            return None;
+        }
+        match module_def.take_types()? {
+            (ItemDefinitionId::TraitId(id), vis) => Some((id, vis)),
             _ => None,
         }
     }
@@ -471,6 +512,9 @@ impl Scope {
             Scope::Impl(i) => {
                 visitor(name![Self], ScopeDef::ImplSelfType(*i));
             }
+            // Like a generic parameter, a trait's `Self` is a type, which
+            // name completion (value namespace) does not offer.
+            Scope::Trait(_) => {}
             // Generic parameters are intentionally not offered here.
             // `visit_names` feeds name *completion*, which works in the
             // value namespace; a type parameter is not a value, and
@@ -548,6 +592,12 @@ impl HasResolver for EnumId {
     }
 }
 
+impl HasResolver for TraitId {
+    fn resolver(self, db: &dyn DefDatabase) -> Resolver {
+        self.module(db).resolver(db).push_scope(Scope::Trait(self))
+    }
+}
+
 impl HasResolver for EffectId {
     fn resolver(self, db: &dyn DefDatabase) -> Resolver {
         self.module(db).resolver(db)
@@ -573,6 +623,7 @@ impl HasResolver for ItemContainerId {
         match self {
             ItemContainerId::ModuleId(it) => it.resolver(db),
             ItemContainerId::ImplId(it) => it.resolver(db),
+            ItemContainerId::TraitId(it) => it.resolver(db),
         }
     }
 }
@@ -606,6 +657,8 @@ fn generic_param(db: &dyn DefDatabase, owner: GenericDefId, name: &Name) -> Opti
             item_tree[loc.id.value].generic_params.clone()
         }
         GenericDefId::ImplId(id) => return impl_generic_param(db, id, name),
+        // A trait's only parameter is `Self`, which `Scope::Trait` resolves.
+        GenericDefId::TraitId(_) => return None,
     };
 
     params
@@ -641,7 +694,11 @@ fn generic_param(db: &dyn DefDatabase, owner: GenericDefId, name: &Name) -> Opti
 /// does not carry generic arguments -- they are parsed and then dropped
 /// during type-ref lowering, so the item tree's `self_ty` for
 /// `extend Box[T]` is indistinguishable from `extend Box`.
-fn impl_generic_param(db: &dyn DefDatabase, id: ImplId, name: &Name) -> Option<TypeParamId> {
+pub(crate) fn impl_generic_param(
+    db: &dyn DefDatabase,
+    id: ImplId,
+    name: &Name,
+) -> Option<TypeParamId> {
     use codira_syntax::ast::AstNode;
 
     use crate::code_model::src::HasSource;
@@ -664,7 +721,7 @@ fn impl_generic_param(db: &dyn DefDatabase, id: ImplId, name: &Name) -> Option<T
         })?;
 
     let mut index = 0u32;
-    for arg in path_type.generic_arg_list()?.generic_args() {
+    for arg in path_type.generic_arg_list()?.args() {
         let Some(arg_path) = codira_syntax::ast::PathType::cast(arg.syntax().clone())
             .and_then(|p| p.path())
             .and_then(Path::from_ast)

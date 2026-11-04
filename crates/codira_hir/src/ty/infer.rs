@@ -23,7 +23,7 @@ use crate::{
         op, Substitution, Ty, TyKind, TypableDef, TypeWalk,
     },
     type_ref::LocalTypeRefId,
-    BinaryOp, BuiltinFn, CallableDef, Function, HirDatabase, HirDisplay, Name, Path,
+    BinaryOp, BuiltinFn, CallableDef, Function, HirDatabase, HirDisplay, Name, Path, Trait,
 };
 
 mod closures;
@@ -380,6 +380,11 @@ enum CallReceiver {
     Value(ExprId, Ty),
     /// `Type.assoc(..)`: the receiver expression and the type it names.
     Type(ExprId, Ty),
+    /// `T.assoc(..)` for a type parameter `T` whose bound declares `assoc`:
+    /// the receiver expression and `T`. The callee is the trait's
+    /// declaration, written in terms of the trait's `Self`, which is what
+    /// `T` instantiates.
+    TraitSelf(ExprId, Ty),
 }
 
 enum ActiveLoop {
@@ -439,6 +444,10 @@ struct InferenceResultBuilder<'a> {
     /// `resolve_all` so that a parameter no argument determined can be
     /// reported by name.
     instantiations: FxHashMap<ExprId, (Function, Substitution)>,
+
+    /// The bounds that hold in the body: what its type parameters
+    /// implement (see `crate::traits`).
+    bounds: Arc<crate::traits::GenericBounds>,
 }
 
 impl<'a> InferenceResultBuilder<'a> {
@@ -469,6 +478,9 @@ impl<'a> InferenceResultBuilder<'a> {
             variant_exprs: FxHashMap::default(),
             pat_variants: FxHashMap::default(),
             instantiations: FxHashMap::default(),
+            bounds: match body.owner() {
+                DefWithBodyId::FunctionId(f) => db.function_bounds(f),
+            },
         }
     }
 
@@ -1331,16 +1343,55 @@ impl InferenceResultBuilder<'_> {
                     });
                 resolved
             }
+            // A method of a type parameter is one its bounds declare:
+            // `x.show()` for `x: T` and `T: Show`. It resolves to the
+            // trait's declaration; monomorphisation replaces that with the
+            // implementation for each type `T` is instantiated at.
             Err(None) if matches!(receiver_ty.interned(), TyKind::TypeParam(..)) => {
-                for &arg in args {
-                    self.infer_expr(arg, &Expectation::none());
+                let TyKind::TypeParam(param, _) = receiver_ty.interned() else {
+                    unreachable!("matched above")
+                };
+                match crate::traits::bound_method(
+                    self.db,
+                    &self.bounds,
+                    *param,
+                    method_name,
+                    AssociationMode::WithSelf,
+                ) {
+                    crate::traits::BoundMethod::Found(method) => method.id,
+                    other => {
+                        for &arg in args {
+                            self.infer_expr(arg, &Expectation::none());
+                        }
+                        self.report_bound_method_error(
+                            tgt_expr,
+                            &receiver_ty,
+                            method_name,
+                            &other,
+                        );
+                        return error_type();
+                    }
                 }
-                self.report_op_on_type_param(
-                    tgt_expr,
-                    &format!("cannot call method `{method_name}` on"),
+            }
+            // A default method of a trait the type implements, which its
+            // implementation does not override: `p.ne(q)`.
+            Err(None)
+                if crate::traits::default_method(
+                    self.db,
                     &receiver_ty,
-                );
-                return error_type();
+                    method_name,
+                    AssociationMode::WithSelf,
+                )
+                .is_some() =>
+            {
+                crate::traits::default_method(
+                    self.db,
+                    &receiver_ty,
+                    method_name,
+                    AssociationMode::WithSelf,
+                )
+                .expect("checked by the guard")
+                .id
             }
             Err(None) => {
                 // `len()` and friends on arrays and `str` are builtins.
@@ -1478,9 +1529,36 @@ impl InferenceResultBuilder<'_> {
             TypeNs::PrimitiveType(id) => type_for_def(TypableDef::PrimitiveType(id.into())),
             TypeNs::SelfType(id) => self.db.type_for_impl_self(id),
             TypeNs::EnumId(id) => Enum::from(id).ty(),
-            // As above: `T.assoc(..)` needs `where T: Trait` bounds to
-            // resolve against, which are parsed but not yet resolved.
-            TypeNs::GenericParam(..) => return None,
+            // `T.assoc(..)`: an associated function a bound of `T`
+            // declares, such as `T.default()` for `T: Defaultable`.
+            TypeNs::GenericParam(param, _) => {
+                let param_ty = TyKind::TypeParam(param, path.as_ident()?.clone()).intern();
+                match crate::traits::bound_method(
+                    self.db,
+                    &self.bounds,
+                    param,
+                    method_name,
+                    AssociationMode::WithoutSelf,
+                ) {
+                    crate::traits::BoundMethod::Found(method) => {
+                        self.method_resolution.insert(tgt_expr, method.id);
+                        return Some(self.infer_call_arguments_and_return(
+                            tgt_expr,
+                            args,
+                            method.into(),
+                            CallReceiver::TraitSelf(receiver, param_ty),
+                        ));
+                    }
+                    other => {
+                        self.set_expr_type(receiver, param_ty.clone());
+                        for &arg in args {
+                            self.infer_expr(arg, &Expectation::none());
+                        }
+                        self.report_bound_method_error(tgt_expr, &param_ty, method_name, &other);
+                        return Some(error_type());
+                    }
+                }
+            }
         };
 
         let resolved_function = lookup_method(
@@ -1581,21 +1659,53 @@ impl InferenceResultBuilder<'_> {
     /// parameter.
     ///
     /// A parameter stands for every type, so the only operations valid on
-    /// it are the ones every type has: moving, copying, passing, returning
-    /// and storing. Anything more -- `a + b`, `a < b`, `a.len()` -- needs a
-    /// bound saying the operation exists (`where T: Add`), and bounds are
-    /// parsed but not resolved. The message says that instead of the
-    /// generic "cannot apply binary operator", which reads as if `T` were a
-    /// type the operator merely does not support.
+    /// it are the ones every type has -- moving, copying, passing,
+    /// returning and storing -- and the methods its bounds declare.
+    /// Operators (`a + b`, `a < b`, `-a`) are not resolved through traits
+    /// yet. The message says that instead of the generic "cannot apply
+    /// binary operator", which reads as if `T` were a type the operator
+    /// merely does not support.
     fn report_op_on_type_param(&mut self, id: ExprId, what: &str, ty: &Ty) {
         let ty = ty.display(self.db).to_string();
         self.diagnostics.push(InferenceDiagnostic::ExprError {
             id: id.into(),
             message: format!(
-                "{what} a value of generic type `{ty}`: an operation on a type parameter needs \
-                 a bound (`where {ty}: ...`), and bounds are not supported yet; generic code \
-                 can only move, copy, pass, return and store a `{ty}`"
+                "{what} a value of generic type `{ty}`: operators on a type parameter are not \
+                 supported; declare the operation as a method of a trait, bound `{ty}` by it \
+                 (`{ty}: Trait`) and call the method"
             ),
+        });
+    }
+
+    /// Reports a method call on a type parameter that its bounds do not
+    /// resolve: no bound declares the method, or more than one does.
+    fn report_bound_method_error(
+        &mut self,
+        id: ExprId,
+        ty: &Ty,
+        method_name: &Name,
+        found: &crate::traits::BoundMethod,
+    ) {
+        let ty = ty.display(self.db).to_string();
+        let message = match found {
+            crate::traits::BoundMethod::NotFound(bounds) if bounds.is_empty() => format!(
+                "cannot call `{method_name}` on a value of generic type `{ty}`: `{ty}` has no \
+                 bounds; bound it by a trait that declares `{method_name}` (`{ty}: Trait`)"
+            ),
+            crate::traits::BoundMethod::NotFound(bounds) => format!(
+                "no method `{method_name}` in the bounds of `{ty}` ({})",
+                crate::traits::trait_list(self.db, bounds)
+            ),
+            crate::traits::BoundMethod::Ambiguous(traits) => format!(
+                "`{method_name}` is declared by more than one bound of `{ty}` ({}); this \
+                 version cannot tell which one is meant",
+                crate::traits::trait_list(self.db, traits)
+            ),
+            crate::traits::BoundMethod::Found(_) => return,
+        };
+        self.diagnostics.push(InferenceDiagnostic::ExprError {
+            id: id.into(),
+            message,
         });
     }
 
@@ -1648,6 +1758,9 @@ impl InferenceResultBuilder<'_> {
         let receiver_declared = match (&receiver, callable) {
             (CallReceiver::Value(..), CallableDef::Function(f)) => f.self_param_ty(self.db),
             (CallReceiver::Type(_, named), _) => Some(named.clone()),
+            (CallReceiver::TraitSelf(..), CallableDef::Function(f)) => {
+                f.trait_container(self.db).map(Trait::self_ty)
+            }
             _ => None,
         };
         let mut instantiated: Vec<Ty> = signature.params().to_vec();
@@ -1668,6 +1781,10 @@ impl InferenceResultBuilder<'_> {
             }
             (CallReceiver::Type(expr, _), Some(instantiated)) => {
                 self.set_expr_type(expr, instantiated);
+            }
+            (CallReceiver::TraitSelf(expr, named), Some(instantiated)) => {
+                self.unify(&instantiated, &named);
+                self.set_expr_type(expr, named);
             }
             _ => {}
         }
@@ -2356,9 +2473,49 @@ impl InferenceResultBuilder<'_> {
                     ),
                 });
             }
+            self.check_bounds(call, callee, &resolved);
             resolved_calls.insert(call, resolved);
         }
         resolved_calls
+    }
+
+    /// Reports each argument of the call `call` of the generic `callee`
+    /// that does not implement a trait `callee`'s bounds require of the
+    /// parameter it stands for. Inside a generic body an argument may be
+    /// one of the body's own parameters, which implements what its own
+    /// bounds say.
+    fn check_bounds(&mut self, call: ExprId, callee: Function, args: &Substitution) {
+        let bounds = self.db.function_bounds(callee.id);
+        if bounds.bounds.is_empty() {
+            return;
+        }
+        let environment = callee.generic_environment(self.db);
+        for bound in &bounds.bounds {
+            let Some(arg) = environment
+                .iter()
+                .position(|param| *param == bound.param)
+                .and_then(|index| args.get(index))
+            else {
+                continue;
+            };
+            if crate::traits::implements(self.db, arg, bound.trait_, &self.bounds) {
+                continue;
+            }
+            let param = bound
+                .param
+                .name(self.db)
+                .map_or_else(|| "?".to_owned(), |name| name.to_string());
+            self.diagnostics.push(InferenceDiagnostic::ExprError {
+                id: call.into(),
+                message: format!(
+                    "the type `{}` does not implement the trait `{}`, which `{}` requires of \
+                     its parameter `{param}`",
+                    arg.display(self.db),
+                    bound.trait_.name(self.db),
+                    callee.name(self.db)
+                ),
+            });
+        }
     }
 
     fn infer_block(

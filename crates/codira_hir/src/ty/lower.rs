@@ -344,7 +344,10 @@ impl From<ModuleDef> for Option<TypableDef> {
             ModuleDef::Struct(t) => Some(TypableDef::Struct(t)),
             ModuleDef::TypeAlias(t) => Some(TypableDef::TypeAlias(t)),
             ModuleDef::Enum(e) => Some(TypableDef::Enum(e)),
-            ModuleDef::Module(_) | ModuleDef::Effect(_) | ModuleDef::Session(_) => None,
+            ModuleDef::Module(_)
+            | ModuleDef::Effect(_)
+            | ModuleDef::Session(_)
+            | ModuleDef::Trait(_) => None,
         }
     }
 }

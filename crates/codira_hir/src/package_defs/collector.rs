@@ -12,7 +12,7 @@ use super::PackageDefs;
 use crate::{
     ids::{
         EffectLoc, EnumLoc, FunctionLoc, ImplLoc, Intern, ItemContainerId, ItemDefinitionId,
-        SessionLoc, StructLoc, TypeAliasLoc,
+        SessionLoc, StructLoc, TraitLoc, TypeAliasLoc,
     },
     item_scope::{ImportType, ItemScope, PerNsGlobImports},
     item_tree::{
@@ -554,6 +554,7 @@ impl<'a> ModCollectorContext<'a, '_> {
                 ModItem::Effect(id) => self.collect_effect(id),
                 ModItem::Session(id) => self.collect_session(id),
                 ModItem::Enum(id) => self.collect_enum(id),
+                ModItem::Trait(id) => self.collect_trait(id),
                 ModItem::Import(id) => {
                     self.collect_import(id);
                     continue;
@@ -684,6 +685,26 @@ impl<'a> ModCollectorContext<'a, '_> {
             .into(),
             name: &effect.name,
             visibility: &self.item_tree[effect.visibility],
+            has_constructor: false,
+        }
+    }
+
+    /// Collects the definition data from a `trait` declaration. A trait
+    /// lives in the type namespace; see `ItemDefinitionId::TraitId`.
+    fn collect_trait(&self, id: LocalItemTreeId<item_tree::Trait>) -> DefData<'a> {
+        let item = &self.item_tree[id];
+        DefData {
+            id: TraitLoc {
+                module: ModuleId {
+                    package: self.def_collector.package_id,
+                    local_id: self.module_id,
+                },
+                id: ItemTreeId::new(self.file_id, id),
+            }
+            .intern(self.def_collector.db)
+            .into(),
+            name: &item.name,
+            visibility: &self.item_tree[item.visibility],
             has_constructor: false,
         }
     }

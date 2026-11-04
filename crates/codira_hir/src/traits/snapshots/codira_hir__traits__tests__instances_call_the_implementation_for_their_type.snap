@@ -1,0 +1,30 @@
+---
+source: crates/codira_hir/src/traits/tests.rs
+expression: "instance_calls(r#\"\n    trait Show {\n        func show(self) -> i64;\n        func twice(self) -> i64 { self.show() * 2 }\n    }\n    struct Point { x: i64 }\n    struct Box[T] { v: T }\n    class Counter { n: i64 }\n    extend Point: Show {\n        func show(self) -> i64 { self.x }\n    }\n    extend Counter: Show {\n        func show(self) -> i64 { self.n }\n        func twice(self) -> i64 { 0 }\n    }\n    extend i64: Show {\n        func show(self) -> i64 { self }\n    }\n    extend Box[T: Show]: Show {\n        func show(self) -> i64 { self.v.show() }\n    }\n    func show_it[T: Show](x: T) -> i64 { x.show() + x.twice() }\n    func main() -> i64 {\n        let n: i64 = 3;\n        show_it(Point { x: 1 }) + show_it(Counter { n: 2 }) + show_it(n)\n            + show_it(Box { v: Point { x: 4 } })\n    }\n    \"#)"
+snapshot_kind: text
+---
+main
+show
+show
+twice
+show
+show_it[Point]
+  -> show
+  -> twice[Point] (trait Show)
+show_it[Counter]
+  -> show
+  -> twice
+show_it[i64]
+  -> show
+  -> twice[i64] (trait Show)
+show_it[Box[Point]]
+  -> show[Point]
+  -> twice[Box[Point]] (trait Show)
+twice[Point]
+  -> show
+twice[i64]
+  -> show
+show[Point]
+  -> show
+twice[Box[Point]]
+  -> show[Point]

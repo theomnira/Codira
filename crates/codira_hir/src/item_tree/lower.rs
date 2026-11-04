@@ -22,7 +22,7 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{
-    diagnostics, AssociatedItem, Const, Effect, Enum, Field, Fields, Function, FunctionFlags,
+    diagnostics, AssociatedItem, Const, Effect, Enum, Field, Fields, Function, FunctionFlags, Trait,
     GenericParamData, IdRange, Impl, ItemTree, ItemTreeData, ItemTreeNode, ItemVisibilities,
     LocalItemTreeId, ModItem, Param, ParamAstId, RawVisibilityId, Session, Struct, TypeAlias,
     INTRINSIC_ABI,
@@ -94,6 +94,7 @@ impl Context {
                 ModItem::Effect(item) => Some(&self.data.effects[item.index].name),
                 ModItem::Session(item) => Some(&self.data.sessions[item.index].name),
                 ModItem::Enum(item) => Some(&self.data.enums[item.index].name),
+                ModItem::Trait(item) => Some(&self.data.traits[item.index].name),
                 ModItem::Import(item) => {
                     let import = &self.data.imports[item.index];
                     if import.is_glob {
@@ -149,13 +150,10 @@ impl Context {
             ast::ModuleItemKind::EffectDef(ast) => self.lower_effect(&ast).map(Into::into),
             ast::ModuleItemKind::SessionDef(ast) => self.lower_session(&ast).map(Into::into),
             ast::ModuleItemKind::EnumDef(ast) => self.lower_enum(&ast).map(Into::into),
-            // `trait`, `macro`, and `extern "C" { .. }` blocks are
-            // fully parsed (see `codira_syntax`) but not yet lowered into name-resolvable
-            // HIR items -- that requires their own item-tree/code-model support (akin
-            // to what exists for `struct`/`func` today), which is tracked as follow-up
-            // work rather than implemented here without a way to verify it end-to-end.
-            ast::ModuleItemKind::TraitDef(_)
-            | ast::ModuleItemKind::MacroDef(_)
+            ast::ModuleItemKind::TraitDef(ast) => self.lower_trait(&ast).map(Into::into),
+            // `macro` and `supervisor` blocks are fully parsed (see
+            // `codira_syntax`) but not lowered into name-resolvable HIR items.
+            ast::ModuleItemKind::MacroDef(_)
             | ast::ModuleItemKind::SupervisorDef(_) => None,
             ast::ModuleItemKind::ExternBlock(ast) => Some(self.lower_extern_block(&ast)),
         }
@@ -615,6 +613,32 @@ impl Context {
         };
 
         Some(self.data.impls.alloc(res).into())
+    }
+
+    /// Lowers a `trait` declaration. Its methods are lowered like those of
+    /// an `extend` block; which of them have a body is recorded in their
+    /// flags.
+    fn lower_trait(&mut self, trait_def: &ast::TraitDef) -> Option<LocalItemTreeId<Trait>> {
+        let name = trait_def.name()?.as_name();
+        let visibility = lower_visibility(trait_def);
+        let ast_id = self.source_ast_id_map.ast_id(trait_def);
+        let items = trait_def
+            .extend_item_list()
+            .into_iter()
+            .flat_map(|it| it.extend_items())
+            .filter_map(|item| self.lower_associated_item(&item))
+            .collect();
+        Some(
+            self.data
+                .traits
+                .alloc(Trait {
+                    name,
+                    visibility,
+                    items,
+                    ast_id,
+                })
+                .into(),
+        )
     }
 
     fn lower_associated_item(&mut self, item: &ast::ExtendItem) -> Option<AssociatedItem> {

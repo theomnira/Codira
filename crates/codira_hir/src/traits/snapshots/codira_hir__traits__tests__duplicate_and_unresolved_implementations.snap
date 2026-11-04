@@ -1,0 +1,12 @@
+---
+source: crates/codira_hir/src/traits/tests.rs
+expression: "diagnostics(r#\"\n    trait Show {\n        func show(self) -> i64;\n    }\n    struct A { x: i64 }\n    struct Box[T] { v: T }\n    extend A: Show {\n        func show(self) -> i64 { 1 }\n    }\n    extend A: Show {\n        func show(self) -> i64 { 2 }\n    }\n    extend Box[T]: Show {\n        func show(self) -> i64 { 1 }\n    }\n    extend Box[i64]: Show {\n        func show(self) -> i64 { 2 }\n    }\n    extend A: Missing {}\n    extend A: B {}\n    struct B { y: i64 }\n    extend bool {}\n    \"#)"
+snapshot_kind: text
+---
+362..376: inherent `extend` blocks can only be added for structs
+154..187: the name `show` is defined multiple times
+270..303: the name `show` is defined multiple times
+148..152: `Show` is already implemented for `A`; a type can implement a trait only once
+264..268: `Show` is already implemented for `Box[T]`; a type can implement a trait only once
+316..323: undefined trait `Missing`
+337..338: `B` is a type, not a trait: an `extend` block can only implement traits

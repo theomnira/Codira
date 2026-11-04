@@ -145,7 +145,10 @@ impl TypeRefMapBuilder {
                 let generic_args: Vec<LocalTypeRefId> = path
                     .generic_arg_list()
                     .map(|list| {
-                        list.generic_args()
+                        // `args`, not `generic_args`: in `extend Box[T: Show]`
+                        // the bound `Show` is a sibling of `T` in the list,
+                        // and is not an argument of `Box`.
+                        list.args()
                             .map(|arg| self.alloc_from_node(&arg))
                             .collect()
                     })

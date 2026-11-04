@@ -19,7 +19,7 @@ pub use salsa;
 pub use self::code_model::{
     Effect, EffectData, EffectOpSig, Enum, EnumLayout, EnumSlot, EnumVariant, Field, Function,
     FunctionData, HasSource, Module, ModuleDef, Package, PrimitiveType, Protocol, ProtocolStep,
-    Session, Struct, StructMemoryKind, TypeAlias, VariantKind,
+    Session, Struct, StructMemoryKind, Trait, TypeAlias, VariantKind,
 };
 pub use crate::{
     builtin::BuiltinFn,
@@ -75,6 +75,7 @@ mod refinement_check;
 mod resolve;
 mod source_id;
 mod supervisor_validator;
+pub mod traits;
 mod ty;
 mod type_ref;
 mod utils;

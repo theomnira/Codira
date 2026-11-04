@@ -147,6 +147,7 @@ impl Struct {
         let validator = validator::StructValidator::new(self, db, self.file_id(db));
         validator.validate_privacy(sink);
         self.validate_codegen_support(db, sink);
+        crate::traits::struct_bound_diagnostics(db, self, sink);
     }
 
     /// Reports a field whose type mentions a generic parameter that is not

@@ -344,6 +344,20 @@ fn tree_for_module(
                     node.push(format!("use enum {fully_qualified_name}"));
                 }
             }
+            ItemDefinitionId::TraitId(t) => {
+                let t: crate::Trait = (*t).into();
+                let name = t.name(db);
+                if is_local {
+                    node.push(format!("trait {name}"));
+                } else {
+                    let fully_qualified_name = format!(
+                        "{}::{}",
+                        fully_qualified_module_path(db, t.module(db)),
+                        name
+                    );
+                    node.push(format!("use trait {fully_qualified_name}"));
+                }
+            }
             ItemDefinitionId::EffectId(effect) => {
                 let effect: crate::Effect = (*effect).into();
                 let name = effect.name(db);

@@ -12,6 +12,7 @@ mod module;
 mod package;
 mod primitive_type;
 pub(crate) mod session;
+pub(crate) mod r#trait;
 pub(crate) mod src;
 pub(crate) mod r#struct;
 mod type_alias;
@@ -30,9 +31,10 @@ pub use self::{
     package::Package,
     primitive_type::PrimitiveType,
     r#enum::{Enum, EnumData, EnumLayout, EnumSlot, EnumVariant, VariantKind},
-    r#impl::{AssocItem, ImplData},
+    r#impl::{AssocItem, Impl, ImplData},
     r#struct::{Field, Struct, StructData, StructKind, StructMemoryKind},
     session::{Protocol, ProtocolStep, Session, SessionData},
+    r#trait::{Trait, TraitData},
     src::HasSource,
     type_alias::{TypeAlias, TypeAliasData},
 };

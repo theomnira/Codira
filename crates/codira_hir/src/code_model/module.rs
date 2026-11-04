@@ -8,7 +8,7 @@ use codira_hir_input::{FileId, ModuleId};
 
 use super::{
     r#impl::Impl, AssocItem, Effect, Enum, Function, Package, PrimitiveType, Session, Struct,
-    TypeAlias,
+    Trait, TypeAlias,
 };
 use crate::{ids::ItemDefinitionId, DiagnosticSink, HirDatabase};
 
@@ -115,12 +115,14 @@ impl Module {
                 ModuleDef::Effect(e) => e.diagnostics(db, sink),
                 ModuleDef::Session(s) => s.diagnostics(db, sink),
                 ModuleDef::Enum(e) => e.diagnostics(db, sink),
+                ModuleDef::Trait(t) => t.diagnostics(db, sink),
                 _ => (),
             }
         }
 
         // Add diagnostics from impls
         for item in self.impls(db) {
+            crate::traits::impl_diagnostics(db, item.id, sink);
             for associated_item in item.items(db) {
                 let AssocItem::Function(fun) = associated_item;
 
@@ -215,6 +217,13 @@ pub enum ModuleDef {
     Effect(Effect),
     Session(Session),
     Enum(Enum),
+    Trait(Trait),
+}
+
+impl From<Trait> for ModuleDef {
+    fn from(t: Trait) -> Self {
+        ModuleDef::Trait(t)
+    }
 }
 
 impl From<Session> for ModuleDef {
@@ -276,6 +285,7 @@ impl From<ItemDefinitionId> for ModuleDef {
             ItemDefinitionId::EffectId(id) => Effect { id }.into(),
             ItemDefinitionId::SessionId(id) => Session { id }.into(),
             ItemDefinitionId::EnumId(id) => Enum { id }.into(),
+            ItemDefinitionId::TraitId(id) => Trait { id }.into(),
         }
     }
 }

@@ -628,6 +628,30 @@ impl Collector<'_> {
                     // `Shape.Circle(..)` builds a value: no call, no allocation.
                 } else {
                     match self.frame.infer.method_resolution(expr) {
+                        // A trait method called on a type parameter (`x.show()`
+                        // for `x: T`, `T: Show`) reaches a different
+                        // implementation per instantiation, and this analysis
+                        // runs once per generic body, before any is chosen:
+                        // what resolution recorded is only the trait's
+                        // declaration (or default body), not the code that
+                        // runs. So the call is treated as unknown -- every
+                        // effect -- which is sound for every instantiation.
+                        Some(f)
+                            if Function::from(f).trait_container(self.db).is_some()
+                                && self
+                                    .frame
+                                    .infer
+                                    .instantiation(expr)
+                                    .and_then(|args| args.first())
+                                    .is_none_or(crate::mono::contains_type_param) =>
+                        {
+                            self.source(
+                                expr,
+                                EffectSet::ALL,
+                                "a trait method called on a generic type, whose implementation \
+                                 is chosen per instantiation and is not known here",
+                            );
+                        }
                         Some(f) => self.call(expr, Function::from(f)),
                         None => self.source(
                             expr,

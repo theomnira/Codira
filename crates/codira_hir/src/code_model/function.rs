@@ -246,6 +246,12 @@ impl FunctionData {
         self.flags.is_extern()
     }
 
+    /// Returns true if the function was declared with a body. A required
+    /// method of a trait (`func eq(self, other: Self) -> bool;`) has none.
+    pub fn has_body(&self) -> bool {
+        self.flags.has_body()
+    }
+
     /// Returns true if this function is a compiler intrinsic, declared in an
     /// `extern "codira-intrinsic"` block.
     pub fn is_intrinsic(&self) -> bool {
@@ -433,14 +439,23 @@ impl Function {
         };
 
         let mut environment = Vec::new();
-        if let ItemContainerId::ImplId(impl_id) = self.id.lookup(db).container {
-            db.type_for_impl_self(impl_id).walk(&mut |ty| {
-                if let TyKind::TypeParam(id, _) = ty.interned() {
-                    if !environment.contains(id) {
-                        environment.push(*id);
+        match self.id.lookup(db).container {
+            ItemContainerId::ImplId(impl_id) => {
+                db.type_for_impl_self(impl_id).walk(&mut |ty| {
+                    if let TyKind::TypeParam(id, _) = ty.interned() {
+                        if !environment.contains(id) {
+                            environment.push(*id);
+                        }
                     }
-                }
-            });
+                });
+            }
+            // A method of a trait is written in terms of the trait's `Self`,
+            // so even a default body has one instance per implementing type.
+            ItemContainerId::TraitId(trait_id) => environment.push(TypeParamId {
+                owner: GenericDefId::TraitId(trait_id),
+                index: 0,
+            }),
+            ItemContainerId::ModuleId(_) => {}
         }
         let own = self.data(db).generic_params().len();
         environment.extend((0..own).map(|index| TypeParamId {
@@ -522,6 +537,7 @@ impl Function {
     }
 
     pub fn diagnostics(self, db: &dyn HirDatabase, sink: &mut DiagnosticSink<'_>) {
+        db.function_bounds(self.id).add_diagnostics(sink);
         let body = self.body(db);
         body.add_diagnostics(db, self.into(), sink);
         let infer = self.infer(db);

@@ -61,6 +61,8 @@ pub trait InternDatabase: SourceDatabase {
     fn intern_session(&self, loc: ids::SessionLoc) -> ids::SessionId;
     #[salsa::interned]
     fn intern_enum(&self, loc: ids::EnumLoc) -> ids::EnumId;
+    #[salsa::interned]
+    fn intern_trait(&self, loc: ids::TraitLoc) -> ids::TraitId;
 }
 
 #[salsa::query_group(DefDatabaseStorage)]
@@ -78,6 +80,9 @@ pub trait DefDatabase: InternDatabase + AstDatabase {
 
     #[salsa::invoke(crate::code_model::SessionData::session_data_query)]
     fn session_data(&self, id: ids::SessionId) -> Arc<crate::code_model::SessionData>;
+
+    #[salsa::invoke(crate::code_model::TraitData::trait_data_query)]
+    fn trait_data(&self, id: ids::TraitId) -> Arc<crate::code_model::TraitData>;
 
     #[salsa::invoke(crate::code_model::EnumData::enum_data_query)]
     fn enum_data(&self, id: ids::EnumId) -> Arc<crate::code_model::EnumData>;
@@ -166,6 +171,18 @@ pub trait HirDatabase: DefDatabase {
 
     #[salsa::invoke(InherentImpls::inherent_impls_in_package_query)]
     fn inherent_impls_in_package(&self, package: PackageId) -> Arc<InherentImpls>;
+
+    /// Every implementation of a trait in a package. See `crate::traits`.
+    #[salsa::invoke(crate::traits::trait_impls_in_package_query)]
+    fn trait_impls_in_package(&self, package: PackageId) -> Arc<crate::traits::TraitImpls>;
+
+    /// The bounds that hold in a function's body. See `crate::traits`.
+    #[salsa::invoke(crate::traits::function_bounds_query)]
+    fn function_bounds(&self, def: FunctionId) -> Arc<crate::traits::GenericBounds>;
+
+    /// The bounds written in an `extend` block's type. See `crate::traits`.
+    #[salsa::invoke(crate::traits::impl_bounds_query)]
+    fn impl_bounds(&self, def: ImplId) -> Arc<crate::traits::GenericBounds>;
 
     /// Lowers a function's HIR body to a `codira_mir::Generator` -- see
     /// `crate::mir_lower`. `None` if the body uses a construct outside

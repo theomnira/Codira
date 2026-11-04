@@ -3,10 +3,10 @@ source: crates/codira_hir/src/ty/tests.rs
 expression: "infer(r\"\n    func ops[T](a: T, b: T) -> T {\n        let s = a + b;\n        let c = a < b;\n        let n = -a;\n        let m = a.len();\n        var x = a;\n        x = b;\n        x\n    }\",)"
 snapshot_kind: text
 ---
-43..48: cannot apply `+` to a value of generic type `T`: an operation on a type parameter needs a bound (`where T: ...`), and bounds are not supported yet; generic code can only move, copy, pass, return and store a `T`
-62..67: cannot apply `<` to a value of generic type `T`: an operation on a type parameter needs a bound (`where T: ...`), and bounds are not supported yet; generic code can only move, copy, pass, return and store a `T`
-81..83: cannot negate a value of generic type `T`: an operation on a type parameter needs a bound (`where T: ...`), and bounds are not supported yet; generic code can only move, copy, pass, return and store a `T`
-97..104: cannot call method `len` on a value of generic type `T`: an operation on a type parameter needs a bound (`where T: ...`), and bounds are not supported yet; generic code can only move, copy, pass, return and store a `T`
+43..48: cannot apply `+` to a value of generic type `T`: operators on a type parameter are not supported; declare the operation as a method of a trait, bound `T` by it (`T: Trait`) and call the method
+62..67: cannot apply `<` to a value of generic type `T`: operators on a type parameter are not supported; declare the operation as a method of a trait, bound `T` by it (`T: Trait`) and call the method
+81..83: cannot negate a value of generic type `T`: operators on a type parameter are not supported; declare the operation as a method of a trait, bound `T` by it (`T: Trait`) and call the method
+97..104: cannot call `len` on a value of generic type `T`: `T` has no bounds; bound it by a trait that declares `len` (`T: Trait`)
 12..13 'a': T
 18..19 'b': T
 29..139 '{     ...   x }': T

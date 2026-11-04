@@ -2434,9 +2434,10 @@ fn generic_calls_record_their_instantiation() {
 }
 
 /// A value of generic type `T` can be moved, copied, passed, returned and
-/// stored -- and nothing more until bounds exist. Each operation that would
-/// need one says so, naming the type, instead of the generic "cannot apply
-/// binary operator".
+/// stored, and its bounds' methods called (see `crate::traits`); operators
+/// are not resolved through traits. Each operation that is not allowed
+/// says so, naming the type, instead of the generic "cannot apply binary
+/// operator".
 #[test]
 fn operations_on_a_type_parameter_need_bounds() {
     insta::assert_snapshot!(infer(

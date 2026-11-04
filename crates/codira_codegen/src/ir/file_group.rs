@@ -302,6 +302,9 @@ pub(crate) fn gen_file_group_ir<'ink>(
             | ModuleDef::TypeAlias(_)
             | ModuleDef::Effect(_)
             | ModuleDef::Session(_)
+            // A trait has no runtime representation: its calls are
+            // resolved per instantiation (see `codira_hir::traits`).
+            | ModuleDef::Trait(_)
             | ModuleDef::Module(_) => (),
         }
     }
