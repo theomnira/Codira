@@ -35,6 +35,7 @@ codira_circuits = { version = "0.6.0-dev", path = "../codira_circuits" }
 serde_json = { workspace = true, features = ["std"] }
 
 [dev-dependencies]
+codira_ctcheck = { version = "0.6.0-dev", path = "../codira_ctcheck" }
 cargo-husky = { workspace = true, features = ["user-hooks"] }
 tempfile = { workspace = true }
 codira_skeptic = { path = "../codira_skeptic", version = "0.6.0-dev" }
