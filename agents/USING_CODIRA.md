@@ -191,6 +191,58 @@ An out-of-range index prints `panic at mod.code:7:13: index out of bounds: the
 length is 3 but the index is -1` to stderr and ends the program with exit
 status 101. A panic cannot be caught from Codira yet.
 
+### Integer arithmetic, shifts and casts
+
+What each operator does, on every integer width (`i8` to `i128`, `u8` to
+`u128`) and on both back ends (LLVM, and Cranelift with `--jit`). None of
+them is undefined behaviour.
+
+- **`+`, `-`, `*` and unary `-`** wrap at the type's width (two's
+  complement): `127i8 + 1i8` is `-128i8`.
+- **`/` and `%`** (and `/=`, `%=`) truncate toward zero, and the remainder
+  has the sign of the dividend: `-7 / 2` is `-3`, `-7 % 2` is `-1`. A zero
+  divisor panics (`attempt to divide by zero`, `attempt to calculate the
+  remainder with a divisor of zero`), and so do the signed `MIN / -1` and
+  `MIN % -1`, whose quotient does not fit (`attempt to divide with
+  overflow`, `attempt to calculate the remainder with overflow`). The panic
+  is reported as an out-of-range index is: `panic at mod.code:5:5: attempt
+  to divide by zero` on stderr, exit status 101.
+
+  The check is a compare and a branch the optimizer knows is cold (two for a
+  signed type, and LLVM drops the `MIN` test when it knows the dividend is
+  not `MIN`). It is left out when the divisor is a positive integer literal,
+  and when the function has a contract and the verifier proves the divisor
+  non-zero (and, signed, the division free of `MIN / -1`): `requires d > 0`
+  does both. That is the same decision the effect analysis makes for
+  `@nopanic` (see below), so a division in a `@nopanic` function never has a
+  check. Measured on x86-64 at `-O 2`, loops of 200 million `i64` and `u32`
+  divisions and remainders by a run-time divisor (constant across the loop,
+  or changing every iteration) run within 2% of the same loops with the
+  divisor proven safe, which is below the run-to-run noise: the division's
+  own latency hides the predicted branch.
+- **`<<` and `>>`** take the shift amount modulo the width: only its low
+  `log2(width)` bits count, read as unsigned, so `x << 65` on an `i64` is
+  `x << 1`, and on a signed type a negative amount `-k` shifts by
+  `width - k` (`1i32 << -1i32` is `i32::MIN`). This is what Rust's
+  `wrapping_shl`, Java and C# do, and what x86-64 and `AArch64` shift
+  instructions do at 32 and 64 bits, so it costs nothing there; an 8- or
+  16-bit shift keeps one `and`. `>>` is arithmetic on a signed type and
+  logical on an unsigned one. The verifier models shifts the same way.
+- **`as` between integers** truncates to a narrower type and sign- or
+  zero-extends (by the *source's* signedness) to a wider one; `bool as` an
+  integer is 0 or 1.
+- **`as` from a float to an integer** rounds toward zero and saturates: a
+  value below the target's range gives its `MIN`, above it its `MAX`, and
+  NaN gives 0 (`300.5 as u8` is `255`, `-1.0e10 as i16` is `-32768`), for
+  every target width, as Rust's `as` does. LLVM implements it with
+  `llvm.fpto{s,u}i.sat`; Cranelift converts to 32 or 64 bits with its
+  saturating conversion and, for an 8- or 16-bit target, clamps and narrows.
+- **`as` from an integer to a float** rounds to the nearest representable
+  value (ties to even), and `f64 as f32` rounds the same way. Float
+  arithmetic is IEEE 754 in the type's own precision, with no fused or
+  reassociated operations; float `/` by zero gives an infinity or NaN, never
+  a panic.
+
 ### Hot-loop builtins: `array_filled`, `select`, `fma`, `likely`, `unlikely`
 
 ```
@@ -217,7 +269,11 @@ if unlikely(i >= limit) { .. }       // branch weights for the optimizer
 - Float sums are not reassociated, so LLVM will not vectorize a float
   reduction on its own. Write the accumulators out (`a0..a3`, each updated with
   `fma`) to get independent dependency chains; integer reductions vectorize at
-  `-O3` without help. There are no vector (`<4 x f64>`) types in the language
+  `-O3` without help.
+- An integer division by a run-time divisor checks it (see "Integer
+  arithmetic, shifts and casts"); `requires d > 0` on the function removes
+  the check, although measured it costs under the noise next to the
+  division itself. There are no vector (`<4 x f64>`) types in the language
   yet: lane-level control and an automatic accumulator split are not done.
 - Tests that read the generated IR: `crates/codira/tests/perf_builtins.rs`.
 
@@ -1048,10 +1104,12 @@ What counts, exactly (today's code generator and runtime):
 - **Panics**: `a[i]` and `a[i] = v` (bounds check; `a.unchecked_get(i)` is
   the unchecked escape hatch), integer `/` and `%` (and `/=`, `%=`), calling a
   `@runtime_checked` function that has `requires`, and every allocation.
-  Integer division is not checked by the generated code at all -- a zero
-  divisor or `MIN / -1` is undefined behaviour -- so a division only counts
+  An integer division panics on a zero divisor and on a signed `MIN / -1` or
+  `MIN % -1` (see "Integer arithmetic, shifts and casts"), so it only counts
   as safe when its divisor is a positive literal or the function has a
   contract and Z3 proves the divisor non-zero (and, signed, not `MIN / -1`).
+  Exactly those divisions are compiled without the check. Shifts never
+  panic: the amount is taken modulo the width.
 - **May not terminate** (`@realtime` only): a `while` or `loop` without a
   `decreases` measure, or whose measure the verifier does not prove, and
   recursion, direct or mutual. `for` loops are bounded by construction.
@@ -1353,6 +1411,14 @@ public func main() {
 and `str`s; anything else is a compile error. A program that defines its own
 function named `print` calls its own. See `examples/hello`.
 
+All arguments are evaluated first, left to right, and then printed, so an
+argument that calls a function which prints itself does so before any of
+this call's output: with `func g() -> i32 { println("in g"); 7 }`,
+`println("g is ", g())` prints `in g` and then `g is 7`. Integers print in
+decimal; a float prints in the shortest form that reads back as the same
+value in its own type, always with a decimal point or an exponent: `1.0`,
+`0.1` (for `0.1f32` too), `1e20`, `-0.0`, `NaN`, `inf`.
+
 Useful `build` options: `-O 0..3` (default `2`), `--emit-ir`, `--watch`,
 `--target <triple>` (cross-compile), `--manifest-path <path>`, and:
 
@@ -1393,7 +1459,11 @@ covers the scalar core of the language (integers up to 64 bits, floats,
 `bool`; `let`/`var` and assignment; operators and casts; `if`, `loop`,
 `while`, `break`, `return`; calls; `print`/`println` of scalars and string
 literals). A program that uses anything else runs on the LLVM backend instead,
-with a note naming what Cranelift does not compile yet. Measured: a
+with a note naming what Cranelift does not compile yet. What it compiles
+means the same as on LLVM: the same division checks and panic messages,
+shift and cast semantics, argument order and float printing (see "Integer
+arithmetic, shifts and casts"); `crates/codira/tests/differential.rs` runs
+random programs on both and compares. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
 build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time.
 
@@ -2006,7 +2076,9 @@ after its hash, so `bun --hot` sees rebuilds. Underneath it uses
 Verified through the full pipeline (parser → HIR → LLVM → link → run):
 
 - `struct`, `class`, `func`, `let`/`var`, tuples and tuple patterns
-- field access, arithmetic, comparisons, `as` casts
+- field access, arithmetic, comparisons, `as` casts (integer division checked,
+  shifts masked, float-to-integer casts saturating: see "Integer arithmetic,
+  shifts and casts")
 - `if`/`else`, `while`, `loop`, `for` over ranges and arrays, `break`,
   `continue`, short-circuit `&&`/`||`, function calls, methods via `extend`,
   `Type.assoc_fn()` static calls
