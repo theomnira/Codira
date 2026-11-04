@@ -1,6 +1,9 @@
 // std/bit/bit.code
 // Bit manipulation utilities for Codira.
-// Provides low-level bitwise operations on unsigned and signed integer types.
+// Provides low-level bitwise operations on unsigned integer types.
+//
+// A shift's two operands have the same type in Codira, so a `u32` shift
+// amount is widened (`value << (s as u64)`) before shifting a `u64`.
 
 // ---------------------------------------------------------------------------
 // count_leading_zeros
@@ -183,13 +186,16 @@ public func bit_width_u32(value: u32) -> u32 {
 // bit_ceil
 // Returns the smallest power of two >= `value`.
 // bit_ceil(0) returns 1.  bit_ceil(1) returns 1.  bit_ceil(5) returns 8.
+// `value` must be at most 2^63 (2^31 for `bit_ceil_u32`): above that the
+// power of two does not fit, and the shift that would build it is by the
+// full width, which is undefined.
 // ---------------------------------------------------------------------------
 public func bit_ceil(value: u64) -> u64 {
     if value <= 1 {
         return 1;
     }
     let width: u32 = bit_width(value - 1);
-    return 1 as u64 << width;
+    return (1 as u64) << (width as u64);
 }
 
 // bit_ceil for u32.
@@ -211,7 +217,7 @@ public func bit_floor(value: u64) -> u64 {
         return 0;
     }
     let width: u32 = bit_width(value);
-    return 1 as u64 << (width - 1);
+    return (1 as u64) << ((width - 1) as u64);
 }
 
 // bit_floor for u32.
@@ -232,7 +238,7 @@ public func rotate_bits_left(value: u64, amount: u32) -> u64 {
     if s == 0 {
         return value;
     }
-    return (value << s) | (value >> (64 - s));
+    return (value << (s as u64)) | (value >> ((64 - s) as u64));
 }
 
 // Rotate left for u32.
@@ -253,7 +259,7 @@ public func rotate_bits_right(value: u64, amount: u32) -> u64 {
     if s == 0 {
         return value;
     }
-    return (value >> s) | (value << (64 - s));
+    return (value >> (s as u64)) | (value << ((64 - s) as u64));
 }
 
 // Rotate right for u32.
