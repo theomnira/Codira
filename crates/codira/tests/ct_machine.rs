@@ -9,8 +9,9 @@
 //!   breaks a rule is caught, with the function and the instruction named;
 //!   and the repository's `oblivious` functions are run through it.
 //!
-//! Most tests build for the host (x86-64 Linux); one cross-compiles for
-//! `aarch64-unknown-linux-gnu` and checks the library without running it.
+//! Most tests build for an x86-64 host, or for x86-64 Linux on a host of
+//! another architecture; one cross-compiles for `aarch64-unknown-linux-gnu`
+//! and checks the library without running it.
 
 use std::{collections::BTreeSet, ffi::OsString, path::Path};
 
@@ -61,7 +62,30 @@ fn build(dir: &Path, extra: &[&str]) -> Result<ExitStatus, String> {
 /// Builds `source` at `-O<opt>` with the check, and returns the names of the
 /// functions it reports (empty when the build passes).
 fn failing_functions(source: &str, opt: &str) -> (BTreeSet<String>, String) {
-    failing_functions_with(source, opt, &[])
+    failing_functions_with(source, opt, X86_64)
+}
+
+/// The tests are of the x86-64 rules: on a host of another architecture
+/// (an AArch64 Mac) they cross-compile for x86-64 Linux, whose library the
+/// check reads just the same.
+const X86_64: &[&str] = if cfg!(target_arch = "x86_64") {
+    &[]
+} else {
+    &["--target", "x86_64-unknown-linux-gnu"]
+};
+
+/// The library a build with the arguments `extra` writes: under the target's
+/// own directory when it names one with `--target` and that is where the
+/// library is, else `target/mod.codiralib`.
+fn library(dir: &Path, extra: &[&str]) -> std::path::PathBuf {
+    let triple = extra
+        .iter()
+        .position(|arg| *arg == "--target")
+        .and_then(|at| extra.get(at + 1));
+    match triple.map(|triple| dir.join("target").join(triple).join("mod.codiralib")) {
+        Some(cross) if cross.is_file() => cross,
+        _ => dir.join("target/mod.codiralib"),
+    }
 }
 
 fn failing_functions_with(source: &str, opt: &str, extra: &[&str]) -> (BTreeSet<String>, String) {
@@ -76,7 +100,7 @@ fn failing_functions_with(source: &str, opt: &str, extra: &[&str]) -> (BTreeSet<
                 ExitStatus::Success,
                 "-O{opt}: the source was rejected"
             );
-            assert!(project.path().join("target/mod.codiralib").is_file());
+            assert!(library(project.path(), extra).is_file());
             (BTreeSet::new(), String::new())
         }
         Err(message) => {
@@ -85,7 +109,7 @@ fn failing_functions_with(source: &str, opt: &str, extra: &[&str]) -> (BTreeSet<
                 "-O{opt}: {message}"
             );
             // A library that fails the check is not left behind.
-            assert!(!project.path().join("target/mod.codiralib").exists());
+            assert!(!library(project.path(), extra).exists());
             let names = message
                 .lines()
                 .filter_map(|line| line.trim().strip_prefix('`'))
@@ -406,10 +430,10 @@ fn the_library_entry_point_reports_every_function() {
     let project = tempfile::tempdir().unwrap();
     write_package(project.path(), &format!("{EXAMPLES}{SELECT_U8}{SCALED}"));
     assert_eq!(
-        build(project.path(), &["--certify", "-O", "0"]),
+        build(project.path(), &[&["--certify", "-O", "0"], X86_64].concat()),
         Ok(ExitStatus::Success)
     );
-    let bytes = std::fs::read(project.path().join("target/mod.codiralib")).unwrap();
+    let bytes = std::fs::read(library(project.path(), X86_64)).unwrap();
     let int = |secret| codira_ctcheck::Param {
         class: codira_ctcheck::ParamClass::Integer,
         secret,

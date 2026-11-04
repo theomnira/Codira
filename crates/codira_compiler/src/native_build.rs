@@ -188,9 +188,15 @@ pub fn compile_native_sources(
     let mut libraries = native.libs.clone();
     // On ELF a shared object has to name the C++ runtime it uses, or loading
     // it fails on the first `operator new`. The C library needs no such
-    // entry: the process loading the assembly already has it.
-    if needs_cxx_runtime && !is_msvc && !target.options.is_like_osx {
-        libraries.push(cxx_runtime_for(&clang, target));
+    // entry: the process loading the assembly already has it. A Mach-O
+    // library must resolve every symbol when it is linked, so it names
+    // libc++, which the SDK the linker is given has.
+    if needs_cxx_runtime && !is_msvc {
+        libraries.push(if target.options.is_like_osx {
+            "c++".to_owned()
+        } else {
+            cxx_runtime_for(&clang, target)
+        });
     }
 
     NativeInputs::new(
