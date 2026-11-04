@@ -27,7 +27,11 @@ use inkwell::{
 use crate::{
     intrinsics,
     ir::{
-        dispatch_table::DispatchTable, intrinsic_ops, ty::HirTypeCache, type_table::TypeTable,
+        array_tbaa::{self, ArrayAccess},
+        dispatch_table::DispatchTable,
+        intrinsic_ops,
+        ty::HirTypeCache,
+        type_table::TypeTable,
         FunctionMap, RuntimeArrayValue, RuntimeReferenceValue,
     },
     module_group::ModuleGroup,
@@ -724,9 +728,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .build_gep(element_ty, elements, &[index_value], "fill.slot")
                 .expect("failed to build GEP into array elements")
         };
-        self.builder
+        let store = self
+            .builder
             .build_store(slot, value)
             .expect("failed to store a filled element");
+        array_tbaa::tag(store, ArrayAccess::Element);
         let next = self
             .builder
             .build_int_add(index_value, index_ty.const_int(1, false), "fill.next")
@@ -746,9 +752,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .expect("failed to cast a filled array's length")
         };
         let array_length_ptr = array.get_length_ptr(&self.builder);
-        self.builder
+        let store = self
+            .builder
             .build_store(array_length_ptr, length)
             .expect("failed to store a filled array's length");
+        array_tbaa::tag(store, ArrayAccess::Length);
         Some(array.into())
     }
 
@@ -800,15 +808,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             ),
             BuiltinFn::ArrayLen => {
                 let array = self.array_value(receiver, receiver_value);
-                Some(
-                    self.builder
-                        .build_load(
-                            array.length_ty(),
-                            array.get_length_ptr(&self.builder),
-                            "len",
-                        )
-                        .expect("failed to load an array's length"),
-                )
+                let length = self
+                    .builder
+                    .build_load(
+                        array.length_ty(),
+                        array.get_length_ptr(&self.builder),
+                        "len",
+                    )
+                    .expect("failed to load an array's length");
+                array_tbaa::tag_value(length, ArrayAccess::Length);
+                Some(length)
             }
             BuiltinFn::ArrayUncheckedGet => {
                 let array = self.array_value(receiver, receiver_value);
@@ -1977,9 +1986,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(op) => Some(self.gen_logic_bin_op(lhs, rhs, op).into()),
@@ -2049,9 +2060,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(_) => {
@@ -2089,9 +2102,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             BinaryOp::LogicOp(_) => {
@@ -2122,9 +2137,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             _ => unimplemented!("Operator {:?} is not implemented for struct", op),
@@ -2153,9 +2170,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     None => rhs,
                 };
                 let place = self.gen_place_expr(lhs_expr)?;
-                self.builder
+                let store = self
+                    .builder
                     .build_store(place, rhs)
                     .expect("failed to build store");
+                self.tag_if_indexed(lhs_expr, store);
                 Some(self.gen_empty())
             }
             _ => unimplemented!("Operator {:?} is not implemented for struct", op),
@@ -2314,6 +2333,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
     /// Given an expression generate code that results in a memory address that
     /// can be used for other place operations.
+    /// Tags a store through the place `place_expr` as an array-element
+    /// access when that place is a bounds-checked `xs[i]` (see
+    /// [`array_tbaa`]).
+    fn tag_if_indexed(&self, place_expr: ExprId, store: inkwell::values::InstructionValue<'ink>) {
+        if matches!(self.body[place_expr], Expr::Index { .. }) {
+            array_tbaa::tag(store, ArrayAccess::Element);
+        }
+    }
+
     fn gen_place_expr(&mut self, expr: ExprId) -> Option<PointerValue<'ink>> {
         let body = self.body.clone();
         match &body[expr] {
@@ -2973,9 +3001,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     fn gen_plain_assignment(&mut self, lhs: ExprId, rhs: ExprId) -> Option<BasicValueEnum<'ink>> {
         let value = self.gen_expr(rhs)?;
         let place = self.gen_place_expr(lhs)?;
-        self.builder
+        let store = self
+            .builder
             .build_store(place, value)
             .expect("failed to build store");
+        self.tag_if_indexed(lhs, store);
         Some(self.gen_empty())
     }
 
@@ -3675,8 +3705,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let length = self
             .builder
             .build_load(length_type, array.get_length_ptr(&self.builder), "len")
-            .expect("failed to load an array's length")
-            .into_int_value();
+            .expect("failed to load an array's length");
+        array_tbaa::tag_value(length, ArrayAccess::Length);
+        let length = length.into_int_value();
 
         let counter = self
             .new_alloca_builder()
@@ -3960,17 +3991,21 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             };
 
             let expr_value = self.gen_expr(*expr)?;
-            self.builder
+            let store = self
+                .builder
                 .build_store(element_ptr, expr_value)
                 .expect("failed to build store for array element");
+            array_tbaa::tag(store, ArrayAccess::Element);
         }
 
         // Once all values have been stored in the array, update the length of the array
         let length = array.length_ty().const_int(exprs.len() as u64, false);
         let array_length_ptr = array.get_length_ptr(&self.builder);
-        self.builder
+        let store = self
+            .builder
             .build_store(array_length_ptr, length)
             .expect("failed to build store for array length");
+        array_tbaa::tag(store, ArrayAccess::Length);
 
         Some(array)
     }
@@ -3990,11 +4025,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .get_basic_type(element_ty)
             .expect("expected basic type");
         let element_ptr = self.gen_place_index(expr, base, index)?;
-        Some(
-            self.builder
-                .build_load(element_basic_ty, element_ptr, "")
-                .expect("failed to build load for array index"),
-        )
+        let element = self
+            .builder
+            .build_load(element_basic_ty, element_ptr, "")
+            .expect("failed to build load for array index");
+        array_tbaa::tag_value(element, ArrayAccess::Element);
+        Some(element)
     }
 
     /// Generates the address of `base[index]`, checking that the index is
@@ -4021,8 +4057,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let length = self
             .builder
             .build_load(length_type, base.get_length_ptr(&self.builder), "len")
-            .expect("failed to load an array's length")
-            .into_int_value();
+            .expect("failed to load an array's length");
+        array_tbaa::tag_value(length, ArrayAccess::Length);
+        let length = length.into_int_value();
 
         // Compare in whichever of the two widths is wider, so an `i128`
         // index is not truncated into range before it is checked.
