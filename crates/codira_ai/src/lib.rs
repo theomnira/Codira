@@ -17,6 +17,7 @@
 //! | [`nn`] | parameters, initialisers, Linear, Embedding, LayerNorm, MLP, attention, losses |
 //! | [`optim`] | SGD with momentum, Adam, AdamW, cosine schedule with warmup, gradient clipping |
 //! | [`quant`] | symmetric per-channel INT8 weights, INT8 matmul with i32 accumulation, measured error |
+//! | [`tokenizer`] | byte-level BPE training, encoding and decoding |
 //!
 //! # Status
 //!
@@ -32,6 +33,7 @@ pub mod optim;
 pub mod quant;
 pub mod rng;
 pub mod tensor;
+pub mod tokenizer;
 
 pub use autograd::{Graph, Var};
 pub use error::{Result, TensorError};
