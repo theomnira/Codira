@@ -86,6 +86,9 @@ pub struct CheckDiagnostic {
     /// 1-based line number, as a human would cite it.
     pub line: u32,
     pub message: String,
+    /// The source text the diagnostic points at, as written (empty for a
+    /// syntax error): what an `undefined value` is the undefined value of.
+    pub highlight: String,
 }
 
 /// Aggregate counts produced by a single diagnostic pass.
@@ -712,6 +715,7 @@ impl Driver {
                 let parse = self.db.parse(file_id);
                 let line_index = self.db.line_index(file_id);
                 let relative_path = display_path(&self.db, file_id).to_string();
+                let text = self.db.file_text(file_id);
 
                 let mut diagnostics: Vec<CheckDiagnostic> = parse
                     .errors()
@@ -720,6 +724,7 @@ impl Driver {
                         kind: DiagnosticKind::Syntax,
                         line: line_index.line_col(syntax_error.location().offset()).line + 1,
                         message: syntax_error.to_string(),
+                        highlight: String::new(),
                     })
                     .collect();
 
@@ -730,6 +735,13 @@ impl Driver {
                             kind: DiagnosticKind::Semantic,
                             line: line_index.line_col(d.highlight_range().start()).line + 1,
                             message: d.message(),
+                            highlight: if d.source().file_id == file_id {
+                                text.get(std::ops::Range::<usize>::from(d.highlight_range()))
+                                    .unwrap_or_default()
+                                    .to_owned()
+                            } else {
+                                String::new()
+                            },
                         });
                     }),
                 );
