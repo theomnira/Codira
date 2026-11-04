@@ -76,3 +76,6 @@ examples/interop/c/main.exe
 
 # Extra cargo build directories (e.g. CARGO_TARGET_DIR=target-check)
 /target-*/
+
+# Internal research notes, kept out of the public repository
+/lab/

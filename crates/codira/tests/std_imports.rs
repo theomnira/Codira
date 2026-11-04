@@ -3,7 +3,7 @@
 //!
 //! Functionality:
 //! - End-to-end tests of importing the standard library from a program
-//!   (`lab/rfcs/0006-std-imports.md`): the real `codira` binary builds and
+//!   the real `codira` binary builds and
 //!   runs programs that `import std.<module>`, and the standard-library
 //!   modules they import are compiled into libraries of their own in the
 //!   program's `target/` directory, which the runtime loads with the

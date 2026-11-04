@@ -7,9 +7,8 @@
 // Date: November 4, 2026
 //
 // Functionality:
-// - The key-value layer of the native storage engine (crates/codira_db,
-//   lab/rfcs/0002) over the runtime's database services
-//   (codira_runtime::native_db, lab/rfcs/0007): open a database directory
+// - The key-value layer of the native storage engine (crates/codira_db)
+//   over the runtime's database services (codira_runtime::native_db): open a database directory
 //   with an fsync policy, begin a snapshot-isolation transaction, get, put
 //   and delete byte-string keys, commit (with a distinct code for a
 //   write-write conflict), abort, checkpoint and close.
@@ -42,8 +41,7 @@
 // runtime hands out, positive on success; a negative value is a DB_ERR_*
 // code. The runtime keeps generation-checked tables with a kind tag, so a
 // closed, committed, forged or wrong-kind handle is refused
-// (DB_ERR_BAD_HANDLE). Bare i64, not structs, for the reason std/fs gives
-// (lab/rfcs/0004 §12).
+// (DB_ERR_BAD_HANDLE). Bare i64, not structs, for the reason std/fs gives.
 //
 // Every transaction ends with `db_commit` or `db_abort`; until then
 // `db_close` refuses with DB_ERR_BUSY and the database stays open. Commit

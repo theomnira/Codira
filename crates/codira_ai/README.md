@@ -1,6 +1,6 @@
 # codira_ai
 
-Experimental (Tier B candidate). Design and plan: [`lab/rfcs/0003-codira-ai.md`](../../lab/rfcs/0003-codira-ai.md).
+Experimental.
 
 `codira_ai` is the native tensor and automatic-differentiation engine that
 the Codira runtime is to expose to `std.ai`. It is pure Rust and uses only
@@ -9,8 +9,8 @@ the Codira runtime is to expose to `std.ai`. It is pure Rust and uses only
 **Codira programs reach a first slice of it**: f32 tensors, matmul,
 broadcasting add, relu, softmax, and a Linear layer trained with an MSE + SGD
 step, through the runtime services `codira_ai_*` (wrapped in
-`std/ai/runtime.code`; see
-[`lab/rfcs/0007-runtime-db-and-ai-abi.md`](../../lab/rfcs/0007-runtime-db-and-ai-abi.md)).
+`std/ai/runtime.code`, conventions documented in
+`crates/codira_runtime/src/native_ai.rs`).
 Everything else below is tested from Rust only.
 
 ## Modules

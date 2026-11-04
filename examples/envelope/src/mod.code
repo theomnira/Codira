@@ -3,7 +3,7 @@
 // Date: November 4, 2026
 //
 // Functionality:
-// - The Codira Semantic Envelope (experimental, Tier B): `@envelope` states
+// - The Codira Semantic Envelope (experimental): `@envelope` states
 //   what a function may do and the compiler checks it over everything the
 //   function calls. Run with
 //   `codira run --manifest-path examples/envelope/codira.toml`, and see each

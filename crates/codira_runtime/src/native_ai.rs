@@ -5,7 +5,7 @@
 //! Functionality:
 //! - Tensor services the runtime provides to Codira programs through
 //!   `extern "C"` declarations (`std/ai/runtime.code`), backed by the
-//!   `codira_ai` engine (`lab/rfcs/0003-codira-ai.md`). A deliberately small
+//!   `codira_ai` engine. A deliberately small
 //!   slice: `f32` tensors created from a caller's buffer and shape, matmul,
 //!   broadcasting add, relu, softmax, reading a tensor back, freeing it; and
 //!   one training path, a `Linear` layer (`y = x W + b`) trained by one
@@ -13,7 +13,7 @@
 //!   reverse-mode autodiff. Every function is registered in each runtime's
 //!   dispatch table.
 //!
-//! The conventions are those of `native_fs` and `native_db` (`lab/rfcs/0007`):
+//! The conventions are those of `native_fs` and `native_db`:
 //! addresses and lengths are `usize`, every failure is a return value, never
 //! a panic, and each body runs under `catch_unwind`, so a bug here becomes
 //! [`AI_ERR_OTHER`] instead of unwinding into generated code. Functions that

@@ -21,9 +21,10 @@
 //!
 //! # Status
 //!
-//! Experimental (Tier B candidate, see `lab/rfcs/0003-codira-ai.md`). No
-//! Codira program can reach this crate yet: the runtime C ABI binding is
-//! future work owned by the runtime workstream.
+//! Experimental. Codira
+//! programs reach a first slice of it (f32 tensors, a few ops, a Linear layer
+//! with an SGD step) through `codira_runtime::native_ai`; the rest is
+//! reachable from Rust only.
 
 pub mod autograd;
 pub mod error;

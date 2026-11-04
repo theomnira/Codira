@@ -16,9 +16,9 @@
 // runtime keeps a generation-checked table, so a closed or forged handle is
 // refused (FS_ERR_BAD_HANDLE) instead of reaching another file. `fs_open`
 // returns the handle (positive) or the error code (negative). Handles are a
-// bare i64, not a struct like std/memory's Region, because today's compiler
-// crashes building a `public` function that takes or returns a value struct
-// (lab/rfcs/0004 §12); a struct wrapper is a compatible change once fixed.
+// bare i64, not a struct like std/memory's Region: they were written while
+// the compiler still crashed on `public` functions that take or return a
+// value struct (since fixed); a struct wrapper is a compatible change.
 //
 // Every operation returns a value or a negative FS_ERR_* code; nothing
 // panics. `fs_last_os_error` gives the raw OS error (errno, GetLastError) of
@@ -36,7 +36,7 @@
 // *name* is durable only after `fs_sync_dir` on its directory (Unix; on
 // Windows it returns FS_ERR_UNSUPPORTED). The safe way to replace a file is:
 // write a temporary file in the same directory, fsync it, close it, rename it
-// over the target, then sync the directory. See lab/rfcs/0004.
+// over the target, then sync the directory.
 //
 // Effects: every function here blocks (it is a system call) and the runtime
 // takes a lock on its handle table, so none is `@noblock`. The runtime

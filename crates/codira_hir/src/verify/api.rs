@@ -38,7 +38,7 @@
 //! | type alias retargeted, or its refinement changed in any way | major |
 //! | anything else (bodies, private items) | patch |
 //!
-//! The semantic envelope (`lab/rfcs/0001-semantic-envelope.md`) is the one
+//! The semantic envelope (`@envelope`) is the one
 //! the effect analysis *infers* for the function, through everything it
 //! calls, private callees included: a body change that makes a public
 //! function allocate, block, panic, run unboundedly, call foreign code,

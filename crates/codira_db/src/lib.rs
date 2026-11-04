@@ -4,7 +4,7 @@
 //!
 //! Functionality:
 //! - `codira_db`, the native storage engine intended to back `std.db`
-//!   (experimental, Tier B candidate; see `lab/rfcs/0002-codira-db.md`).
+//!   (experimental; see the crate README).
 //! - A key-value store over byte strings with a checksummed write-ahead
 //!   log, explicit fsync policy and crash recovery ([`Db`]).
 //! - Snapshot-isolation MVCC transactions with first-committer-wins

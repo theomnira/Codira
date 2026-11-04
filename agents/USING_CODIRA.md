@@ -1032,7 +1032,7 @@ permissive value) beside its declaration. `--json` writes the
 `codira-envelope/0` schema, and `--check` exits with an error when a
 declaration is not met. The guarantee is about the source, under the same
 limits as `@noalloc` and the other attributes, not about machine code.
-Design and status: `lab/rfcs/0001-semantic-envelope.md`. Example:
+Example:
 `examples/envelope`.
 
 **Package envelope.** An `[envelope]` table in `codira.toml` takes the same
@@ -1949,9 +1949,9 @@ Runtime (hosts embedding `codira_runtime`):
   - **Effects:** file services are ordinary externs, so they count as
     blocking.
   - **Not cryptographic:** `std/hashlib` (FNV-1a).
-  - Tests: `crates/codira/tests/fs_and_hash.rs`. Limits:
-    `lab/rfcs/0004-runtime-io-and-hashing.md`.
-- Database and tensors (experimental, x86-64 Linux tested; RFC 0007): the
+  - Tests: `crates/codira/tests/fs_and_hash.rs`. Durability is claimed for Linux
+    only; macOS and Windows are built but not run.
+- Database and tensors (experimental, x86-64 Linux tested): the
   `codira_db` engine and a first slice of `codira_ai` are reached through the
   runtime services `codira_db_*` and `codira_ai_*`, wrapped in
   `std/db/db.code` and `std/ai/runtime.code`. Until `std` can be imported,

@@ -15,8 +15,8 @@
 //!   moved in between two versions, for `codira api-diff`
 //!   ([`compare_values`]).
 //!
-//! Tier B (experimental) of the Frontier Systems Laboratory; the design,
-//! prior art and limits are in `lab/rfcs/0001-semantic-envelope.md`.
+//! Experimental and opt-in; the limits are below and in the language
+//! guide (`agents/USING_CODIRA.md`, "Semantic envelopes").
 //!
 //! # What a clause means
 //!

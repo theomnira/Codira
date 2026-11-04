@@ -6,13 +6,12 @@
 //! - Database services the runtime provides to Codira programs through
 //!   `extern "C"` declarations (`std/db/db.code`), backed by the `codira_db`
 //!   storage engine (write-ahead log, snapshot-isolation MVCC, checkpoints;
-//!   `lab/rfcs/0002-codira-db.md`): open a database directory with an fsync
+//!   see its README): open a database directory with an fsync
 //!   policy, begin a transaction, get, put, delete, commit, abort,
 //!   checkpoint and close. Every function is registered in each runtime's
 //!   dispatch table.
 //!
-//! The conventions are those of `native_fs` (`lab/rfcs/0004`, and
-//! `lab/rfcs/0007` for this module): addresses and lengths cross the
+//! The conventions are those of `native_fs`: addresses and lengths cross the
 //! boundary as `usize`, every failure is a return value, never a panic, and
 //! each body runs under `catch_unwind`, so a bug here becomes
 //! [`DB_ERR_OTHER`] instead of an abort.

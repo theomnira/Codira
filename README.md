@@ -41,15 +41,16 @@ it, and one source can target CPUs, GPUs, quantum processors and more.
   `codira envelope --json` reports every function's inferred envelope.
   Keys the compiler cannot check yet are rejected, not ignored.
 
-- **Native storage and AI engines** (experimental, Rust crates the runtime
-  will expose to `std.db` and `std.ai`; not callable from Codira yet) -
-  `codira_db`: a write-ahead-logged, snapshot-isolation transactional store
-  tested by crashing a workload at every storage operation; `codira_ai`:
-  strided tensors, tape-based reverse-mode autodiff with every gradient rule
-  checked numerically, attention and transformer layers, Adam/AdamW, INT8
-  weights and a BPE tokenizer. Limits and measurements:
-  [`lab/rfcs/0002-codira-db.md`](lab/rfcs/0002-codira-db.md),
-  [`lab/rfcs/0003-codira-ai.md`](lab/rfcs/0003-codira-ai.md).
+- **Native storage and AI engines** (experimental) - `codira_db`: a
+  write-ahead-logged, snapshot-isolation transactional store tested by
+  crashing a workload at every storage operation; `codira_ai`: strided
+  tensors, tape-based reverse-mode autodiff with every gradient rule checked
+  numerically, attention and transformer layers, Adam/AdamW, INT8 weights
+  and a BPE tokenizer. Programs reach the database and a first slice of the
+  tensor engine through runtime services wrapped by `std/db` and
+  `std/ai/runtime.code`. Limits and measurements:
+  [`crates/codira_db/README.md`](crates/codira_db/README.md),
+  [`crates/codira_ai/README.md`](crates/codira_ai/README.md).
 
 - **Units of measure** - `f64 unit(m / s)` is checked at compile time and
   erased, so it costs nothing at run time.
@@ -85,10 +86,6 @@ it, and one source can target CPUs, GPUs, quantum processors and more.
 - **Tooling** - a language server, a build daemon that keeps the compiler
   warm, `codira test`, `codira query` (search by what code returns) and
   `codira quantum`.
-
-Research and experimental work is organised by the Codira Frontier Systems
-Laboratory ([`lab/`](lab/README.md)): its tiers, workstreams, RFCs and an
-honest inventory of what exists ([`lab/STATUS.md`](lab/STATUS.md)).
 
 What runs end to end today, and what is parsed but not yet compiled, is
 listed precisely in [`agents/USING_CODIRA.md`](agents/USING_CODIRA.md)

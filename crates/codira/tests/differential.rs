@@ -22,7 +22,7 @@
 //!   thousands in parallel.
 //! - Known divergences are tested as such, with their explanation, so that a
 //!   fix is noticed: see the `known_divergence_*` tests, and
-//!   `lab/rfcs/0008-differential-testing.md` §12 for the record.
+//!   the `known_divergence_*` tests below for the record.
 //!
 //! Passing is evidence, not proof: it says these programs agree, nothing about
 //! programs the generator cannot write.
@@ -160,7 +160,7 @@ enum Verdict {
     Diverge { signature: String, report: String },
 }
 
-/// A divergence already recorded in `lab/rfcs/0008-differential-testing.md`
+/// A divergence already recorded by a `known_divergence_*` test
 /// §12 and pinned by a `known_divergence_*` test, recognised by what the
 /// failing backend printed. The match is narrow on purpose (backend, and the
 /// exact error text), so a different bug at the same crash site still fails.
@@ -591,7 +591,7 @@ fn known_divergence_float_printing() {
     assert_eq!(
         jit.stdout, "1\n0.10000000149011612\n2.5\n",
         "the float printing divergence changed or was fixed: update this test, \
-         the generator and RFC 0008"
+         the generator"
     );
 }
 
@@ -623,7 +623,7 @@ fn known_divergence_float_to_narrow_int_cast() {
         assert!(
             jit.exit == Some(101) && jit.stderr.contains("entered unreachable code"),
             "the {from} -> {to} cast no longer crashes the Cranelift backend \
-             (exit {:?}): update this test, the generator and RFC 0008\n{}",
+             (exit {:?}): update this test, the generator\n{}",
             jit.exit,
             jit.stderr
         );
@@ -659,7 +659,7 @@ fn known_divergence_llvm_o0_nested_if() {
     assert!(
         known_divergence(Backend::LlvmO0, &o0).is_some(),
         "the -O 0 nested-if crash changed or was fixed (exit {:?}): update this \
-         test, `known_divergence` and RFC 0008\n{}",
+         test, `known_divergence`\n{}",
         o0.exit,
         o0.stderr
     );
@@ -684,6 +684,6 @@ fn known_divergence_print_argument_order() {
     assert_eq!(
         jit.stdout, "g is in g\n7\n",
         "the print argument order divergence changed or was fixed: update this \
-         test, the generator and RFC 0008"
+         test, the generator"
     );
 }

@@ -24,7 +24,7 @@ pub struct Manifest {
 }
 
 /// The package's semantic envelope, from the manifest's `[envelope]` table
-/// (Codira Semantic Envelope version 1, `lab/rfcs/0001-semantic-envelope.md`):
+/// (Codira Semantic Envelope version 1):
 ///
 /// ```toml
 /// [envelope]

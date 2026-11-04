@@ -34,7 +34,7 @@
 //!   which would compare LLVM with itself.
 //! - Floats are never printed directly: the two backends format them
 //!   differently today (see `known_divergence_float_printing` in
-//!   `differential.rs` and `lab/rfcs/0008-differential-testing.md` §12).
+//!   `differential.rs`).
 //!   Generated programs print `(x as i64)` and `((x * 4096.0) as i64)` of
 //!   each float result instead, which still compares the float arithmetic.
 //! - Two more constructs are left out by default because of known
@@ -170,7 +170,7 @@ pub struct Config {
     pub cost_budget: u64,
     /// Generate casts from a float to an 8- or 16-bit integer. Off by
     /// default: the Cranelift backend crashes on them today (known
-    /// divergence 2 in `lab/rfcs/0008-differential-testing.md`, pinned by
+    /// the float-to-narrow-integer divergence, pinned by
     /// `known_divergence_float_to_narrow_int_cast`). A 32- or 64-bit target
     /// is still generated, and so is a narrowing of its result.
     pub float_to_narrow_int: bool,

@@ -44,7 +44,7 @@ fn build(dir: &Path) -> codira::ExitStatus {
     run_with_args(args).unwrap()
 }
 
-/// The reproducer of `lab/rfcs/0004-runtime-io-and-hashing.md` §12, which
+/// The original reproducer of the crash, which
 /// made `codira build` segfault.
 const RFC_0004_REPRODUCER: &str = r#"
 public struct File { _handle: i64, }

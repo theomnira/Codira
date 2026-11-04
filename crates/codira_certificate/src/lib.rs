@@ -19,7 +19,7 @@
 //!
 //! Since format version 2 (`codira-certificate/2`) every function also
 //! carries its *inferred semantic envelope* (`allocation: none`, `panic:
-//! true`, ...: `lab/rfcs/0001-semantic-envelope.md`), the value of each
+//! true`, ...: `@envelope` in the language guide), the value of each
 //! checked key as the effect analysis computed it from the source at build
 //! time. Version 1 certificates are still read and checked; they record no
 //! envelopes, and a check says so. Any other format is rejected.
@@ -109,7 +109,7 @@ pub const FORMAT_V1: &str = "codira-certificate/1";
 /// What a recorded envelope is, written into every certificate that carries
 /// envelopes.
 pub const ENVELOPE_BASIS: &str =
-    "source-level effect analysis (Codira Semantic Envelope, lab/rfcs/0001-semantic-envelope.md) \
+    "source-level effect analysis (Codira Semantic Envelope) \
      as computed at build time; codira certify re-derives it from the source with the compiler's \
      front end. It is not a statement about the machine code, and nothing enforces it at run \
      time";

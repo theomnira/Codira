@@ -8,8 +8,8 @@
 //
 // Functionality:
 // - A first, deliberately small slice of the native tensor and autodiff
-//   engine (crates/codira_ai, lab/rfcs/0003) over the runtime's tensor
-//   services (codira_runtime::native_ai, lab/rfcs/0007): f32 tensors created
+//   engine (crates/codira_ai) over the runtime's tensor
+//   services (codira_runtime::native_ai): f32 tensors created
 //   from a buffer and a shape, matmul (batched, broadcasting batch axes),
 //   broadcasting add, relu, softmax, reading a tensor back into a buffer,
 //   freeing it; and a Linear layer `y = x W + b` trained by one step of plain
@@ -37,8 +37,7 @@
 // Handles are positive i64 values; a negative value is an AI_ERR_* code. The
 // runtime keeps generation-checked tables with a kind tag, so a freed,
 // forged or wrong-kind handle (a layer passed as a tensor) is refused with
-// AI_ERR_BAD_HANDLE. Bare i64, not structs, for the reason std/fs gives
-// (lab/rfcs/0004 §12).
+// AI_ERR_BAD_HANDLE. Bare i64, not structs, for the reason std/fs gives.
 //
 // Memory passed by address is raw memory like the load_*/store_*
 // intrinsics: element data is f32, row-major; a shape is `rank` usize

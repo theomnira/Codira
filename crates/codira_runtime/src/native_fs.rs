@@ -435,7 +435,7 @@ pub extern "C" fn codira_fs_seek(handle: i64, offset: i64, whence: u32) -> i64 {
 /// Flushes the file's data and metadata to the storage device. Returns `0`
 /// or a negative `FS_ERR_*` code.
 ///
-/// What "flushed" means depends on the OS (RFC 0004 §6): `fsync(2)` on Linux
+/// What "flushed" means depends on the OS: `fsync(2)` on Linux
 /// and the BSDs; `fcntl(F_FULLFSYNC)` on Apple platforms, which also asks the
 /// drive to empty its write cache (falling back to `fsync`, which does not,
 /// where the file system refuses `F_FULLFSYNC`); `FlushFileBuffers` on

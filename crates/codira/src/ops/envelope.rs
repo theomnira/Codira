@@ -6,7 +6,7 @@
 //! - `codira envelope`: every function's semantic envelope (Codira Semantic
 //!   Envelope, version 0) as the effect analysis infers it, beside the
 //!   `@envelope` it declares, as text or as JSON (`--json`). Experimental
-//!   (Tier B); see `lab/rfcs/0001-semantic-envelope.md`.
+//!   and opt-in.
 //! - The package envelope (version 1): the manifest's `[envelope]` table,
 //!   which every `public` function must fit. [`package_envelope_errors`] is
 //!   the check `codira check` and `codira build` run.
