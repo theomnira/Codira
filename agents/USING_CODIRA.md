@@ -907,6 +907,45 @@ worst-case execution time needs a cycle model of the target CPU that the
 compiler does not have. `codira build --fuel` lets any call stop when its fuel
 runs out, so such a build rejects `@nopanic` and `@realtime` functions.
 
+### Semantic envelopes: `@envelope` (experimental)
+
+`@envelope(..)` declares what a function may do. Each clause rules out one
+effect, and the compiler checks it through everything the function calls,
+like `@noalloc`:
+
+```codira
+@envelope(allocation: none, blocking: false, panic: false, termination: bounded,
+          foreign: none, concurrency: none, effects: none, secrecy: none)
+func scale(x: i64, k: i64) -> i64 { x * k + 1 }
+```
+
+| key | rules out with | allows with | what it rules out |
+|-----|----------------|-------------|-------------------|
+| `allocation` | `none` | `any` | allocation (as `@noalloc`) |
+| `blocking` | `false` | `true` | blocking (as `@noblock`) |
+| `panic` | `false` | `true` | panics and unchecked UB (as `@nopanic`) |
+| `termination` | `bounded` | `any` | unproven loops, recursion |
+| `foreign` | `none` | `any` | `extern`, `@asm`, `perform`, calls through function values |
+| `concurrency` | `none` | `any` | `scope`, `spawn` |
+| `effects` | `none` | `any` | `perform` |
+| `secrecy` | `none` | `any` | `secret` parameters, results and `let`s, `oblivious`, `declassify` |
+
+The allowing value checks nothing; it documents intent. On an `extern`
+declaration the envelope is a trusted assertion. Keys from the design that
+cannot be checked yet (`reads`, `writes`, `persistence`, `capability`,
+`memory`, `fuel`, `latency`, `energy`, `network`, `targets`) are errors, not
+silently ignored, and so are unknown keys, repeated keys, values without a
+key and a second `@envelope` on the same function.
+
+`codira envelope` prints every function's *inferred* envelope (the strongest
+value of each key the analysis proves, with the call chain behind each
+permissive value) beside its declaration. `--json` writes the
+`codira-envelope/0` schema, and `--check` exits with an error when a
+declaration is not met. The guarantee is about the source, under the same
+limits as `@noalloc` and the other attributes, not about machine code.
+Design and status: `lab/rfcs/0001-semantic-envelope.md`. Example:
+`examples/envelope`.
+
 ### Modules & imports
 
 ```codira
@@ -1693,6 +1732,9 @@ Circom output), and `codira build` writes `target/<function>.v` (Verilog) for
 `@noalloc`, `@nopanic`, `@noblock` and `@realtime` are checked statically in
 `codira check` and `codira build` (see their section above); `@deadline` is
 rejected.
+Experimental: `@envelope(..)` declarations are checked the same way, and
+`codira envelope` reports every function's inferred envelope (see
+"Semantic envelopes").
 
 Algebraic effects (`effect`, `uses`, `perform`, `handle`, `resume`) with
 one-shot, tail-resumptive or aborting handlers, nested handlers, and aborts

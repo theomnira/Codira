@@ -13,8 +13,8 @@ use clap::{Parser, Subcommand};
 /// `codira-launcher` binary runs.
 pub use ops::exe;
 use ops::{
-    api_diff, attest, bindgen, build, certify, check, daemon, import_c, init, language_server, new,
-    quantum, query, run, start, synth, test,
+    api_diff, attest, bindgen, build, certify, check, daemon, envelope, import_c, init,
+    language_server, new, quantum, query, run, start, synth, test,
 };
 
 #[derive(Parser)]
@@ -79,6 +79,11 @@ enum Command {
     /// their parameters (e.g. "result < 0"), with a witness input for each
     Query(query::Args),
 
+    /// Every function's semantic envelope (what it may allocate, block on,
+    /// panic, run, spawn, perform or touch that is secret) as the compiler
+    /// infers it, beside its `@envelope` declaration (experimental)
+    Envelope(envelope::Args),
+
     /// Read a C header with Clang and write Codira `extern "C"` declarations
     /// for its functions
     ImportC(import_c::Args),
@@ -126,6 +131,7 @@ where
         Command::Attest(args) => attest::attest(args),
         Command::Test(args) => test::test(args),
         Command::Query(args) => query::query(args),
+        Command::Envelope(args) => envelope::envelope(args),
         Command::Synth(args) => synth::synth(args),
         Command::ImportC(args) => import_c::import_c(args),
     }

@@ -119,8 +119,11 @@ use crate::{
     StructMemoryKind, TyKind,
 };
 
+pub mod envelope;
 #[cfg(test)]
 mod tests;
+
+pub use envelope::{envelope_report, Envelope, FunctionEnvelope};
 
 /// Something a function can do that an attribute can rule out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -135,14 +138,32 @@ pub enum Effect {
     /// May run without a bound: a loop without a proven measure, or
     /// recursion.
     Unbounded,
+    /// Runs code the analysis cannot see: an `extern` function, `@asm`, a
+    /// handler chosen at run time, or a call through a function value.
+    /// Tracked for `@envelope(foreign: none)`.
+    Foreign,
+    /// Starts concurrent work: `scope` or `spawn`. Tracked for
+    /// `@envelope(concurrency: none)`.
+    Spawn,
+    /// Performs an algebraic effect (`perform`). Tracked for
+    /// `@envelope(effects: none)`.
+    Perform,
+    /// Handles data the program marks `secret`: a `secret` parameter,
+    /// result or `let`, an `oblivious` function, or `declassify`. Tracked
+    /// for `@envelope(secrecy: none)`.
+    Secret,
 }
 
 impl Effect {
-    pub const ALL: [Effect; 4] = [
+    pub const ALL: [Effect; 8] = [
         Effect::Alloc,
         Effect::Block,
         Effect::Panic,
         Effect::Unbounded,
+        Effect::Foreign,
+        Effect::Spawn,
+        Effect::Perform,
+        Effect::Secret,
     ];
 
     fn bit(self) -> u8 {
@@ -156,6 +177,10 @@ impl Effect {
             Effect::Block => "may block",
             Effect::Panic => "may panic",
             Effect::Unbounded => "may not terminate",
+            Effect::Foreign => "runs code outside the analysis",
+            Effect::Spawn => "starts concurrent tasks",
+            Effect::Perform => "performs algebraic effects",
+            Effect::Secret => "handles `secret` data",
         }
     }
 }
@@ -166,10 +191,19 @@ pub struct EffectSet(u8);
 
 impl EffectSet {
     pub const NONE: EffectSet = EffectSet(0);
-    pub const ALL: EffectSet = EffectSet(0b1111);
+    pub const ALL: EffectSet = EffectSet(0b1111_1111);
+    /// The four effects the `@noalloc`/`@nopanic`/`@noblock`/`@realtime`
+    /// attributes are about: Alloc, Block, Panic and Unbounded.
+    pub const CLASSIC: EffectSet = EffectSet(0b1111);
     /// A GC allocation: it can take the heap lock and aborts when memory
     /// runs out.
     const GC_ALLOC: EffectSet = EffectSet(0b0111);
+    /// `scope` and `spawn`: an allocation that starts concurrent work.
+    const TASKS: EffectSet = EffectSet(0b0010_0111);
+    /// Everything that comes from code the analysis cannot see, except
+    /// handling secrets: a secret can only reach such code through a
+    /// function that itself mentions `secret`, which is counted there.
+    const OPAQUE_PUBLIC: EffectSet = EffectSet(0b0111_1111);
 
     pub fn of(effects: &[Effect]) -> EffectSet {
         EffectSet(effects.iter().fold(0, |bits, e| bits | e.bit()))
@@ -296,15 +330,19 @@ impl EffectAttr {
             EffectAttr::NoAlloc => EffectSet::of(&[Effect::Alloc]),
             EffectAttr::NoPanic => EffectSet::of(&[Effect::Panic]),
             EffectAttr::NoBlock => EffectSet::of(&[Effect::Block]),
-            EffectAttr::Realtime => EffectSet::ALL,
+            EffectAttr::Realtime => EffectSet::CLASSIC,
         }
     }
 }
 
-/// The effect attributes on a function, and its `@deadline` attributes.
+/// The effect attributes on a function, its `@envelope`, and its
+/// `@deadline` attributes.
 struct Attributes {
     effects: Vec<(EffectAttr, ast::Attribute)>,
     deadlines: Vec<ast::Attribute>,
+    /// The first `@envelope`; later ones are in `extra_envelopes`.
+    envelope: Option<(Envelope, ast::Attribute)>,
+    extra_envelopes: Vec<ast::Attribute>,
 }
 
 impl Attributes {
@@ -312,6 +350,8 @@ impl Attributes {
         let mut attrs = Attributes {
             effects: Vec::new(),
             deadlines: Vec::new(),
+            envelope: None,
+            extra_envelopes: Vec::new(),
         };
         let Some(list) = func.source(db).value.attribute_list() else {
             return attrs;
@@ -326,6 +366,13 @@ impl Attributes {
                 });
             match name.as_deref() {
                 Some("deadline") => attrs.deadlines.push(attr),
+                Some("envelope") if envelope::is_envelope(&attr) => {
+                    if attrs.envelope.is_some() {
+                        attrs.extra_envelopes.push(attr);
+                    } else {
+                        attrs.envelope = Some((Envelope::parse(&attr), attr));
+                    }
+                }
                 Some(name) => {
                     if let Some(effect_attr) = EffectAttr::from_name(name) {
                         attrs.effects.push((effect_attr, attr));
@@ -338,9 +385,14 @@ impl Attributes {
     }
 
     fn forbidden(&self) -> EffectSet {
-        self.effects
+        let attrs = self
+            .effects
             .iter()
-            .fold(EffectSet::NONE, |set, (attr, _)| set.union(attr.forbids()))
+            .fold(EffectSet::NONE, |set, (attr, _)| set.union(attr.forbids()));
+        match &self.envelope {
+            Some((envelope, _)) => attrs.union(envelope.forbidden()),
+            None => attrs,
+        }
     }
 
     /// "`@noalloc` and `@nopanic`": the attributes that forbid any of
@@ -352,11 +404,15 @@ impl Attributes {
                 names.push(attr.name());
             }
         }
-        names
-            .iter()
-            .map(|n| format!("`{n}`"))
-            .collect::<Vec<_>>()
-            .join(" and ")
+        let mut names: Vec<String> = names.iter().map(|n| format!("`{n}`")).collect();
+        if let Some(text) = self
+            .envelope
+            .as_ref()
+            .and_then(|(envelope, _)| envelope.name_forbidding(effects))
+        {
+            names.push(format!("`{text}`"));
+        }
+        names.join(" and ")
     }
 }
 
@@ -370,21 +426,24 @@ pub(crate) fn effect_sources_query(db: &dyn HirDatabase, func: Function) -> Arc<
             return Arc::new(out);
         }
         let asserted = Attributes::of(db, func).forbidden();
-        let effects = EffectSet::ALL.without(asserted);
+        let effects = EffectSet::OPAQUE_PUBLIC.without(asserted);
         if !effects.is_empty() {
             out.sources.push(Source {
                 effects,
                 site: name_site(db, func),
                 what: format!(
                     "`{}` is an `extern` function, which the analysis cannot see into (its \
-                     declaration may assert `@noalloc`, `@nopanic`, `@noblock` or `@realtime`)",
+                     declaration may assert `@noalloc`, `@nopanic`, `@noblock`, `@realtime` or \
+                     an `@envelope`)",
                     func.name(db)
                 ),
             });
         }
+        push_secret_source(db, func, &mut out);
         return Arc::new(out);
     }
 
+    push_secret_source(db, func, &mut out);
     let frame = Frame::new(db, func);
     let root = frame.body.body_expr();
     if matches!(frame.body[root], Expr::Missing) {
@@ -415,6 +474,27 @@ pub(crate) fn effect_sources_query(db: &dyn HirDatabase, func: Function) -> Arc<
 
     collector.visit(root);
     Arc::new(collector.out)
+}
+
+/// A function whose own source mentions `secret` (a parameter, the result
+/// or a `let`), or that is `oblivious`, handles secret data.
+fn push_secret_source(db: &dyn HirDatabase, func: Function, out: &mut EffectSources) {
+    let src = func.source(db).value;
+    let mentions_secret = src.is_oblivious()
+        || src
+            .syntax()
+            .descendants()
+            .any(|node| node.kind() == codira_syntax::SyntaxKind::SECRET_TYPE);
+    if mentions_secret {
+        out.sources.push(Source {
+            effects: EffectSet::of(&[Effect::Secret]),
+            site: name_site(db, func),
+            what: format!(
+                "`{}` takes, returns or binds a `secret` value (or is `oblivious`)",
+                func.name(db)
+            ),
+        });
+    }
 }
 
 /// The location of a function's name, for sources that are about the whole
@@ -584,12 +664,12 @@ impl Collector<'_> {
             ),
             Expr::Scope { .. } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                EffectSet::TASKS,
                 "`scope` allocates its task bookkeeping and waits for its tasks at the end",
             ),
             Expr::Spawn { .. } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                EffectSet::TASKS,
                 "`spawn` copies the task's arguments to the heap and queues it",
             ),
             Expr::ChannelSend { .. } => self.source(
@@ -656,8 +736,12 @@ impl Collector<'_> {
                     "`array_filled(..)` allocates an array",
                 );
             }
-            BuiltinFn::Declassify
-            | BuiltinFn::CtSelect
+            BuiltinFn::Declassify => self.source(
+                expr,
+                EffectSet::of(&[Effect::Secret]),
+                "`declassify` releases a `secret` value",
+            ),
+            BuiltinFn::CtSelect
             | BuiltinFn::Select
             | BuiltinFn::Likely
             | BuiltinFn::Unlikely
@@ -1094,6 +1178,23 @@ pub(crate) fn realtime_diagnostics(
             });
         }
     }
+    for attr in &attrs.extra_envelopes {
+        sink.push(EffectAttributeViolation {
+            file,
+            site: SyntaxNodePtr::new(attr.syntax()),
+            message: "a function has at most one `@envelope`; merge the clauses into the first"
+                .to_string(),
+        });
+    }
+    if let Some((envelope, syntax)) = &attrs.envelope {
+        for error in &envelope.errors {
+            sink.push(EffectAttributeViolation {
+                file,
+                site: SyntaxNodePtr::new(syntax.syntax()),
+                message: error.clone(),
+            });
+        }
+    }
     // On an `extern` declaration the attributes are trusted assertions.
     let forbidden = attrs.forbidden();
     if forbidden.is_empty() || func.is_extern(db) {
@@ -1198,6 +1299,19 @@ pub fn fuel_diagnostics(db: &dyn HirDatabase, module: Module, sink: &mut Diagnos
             continue;
         }
         let attrs = Attributes::of(db, func);
+        if let Some((envelope, syntax)) = &attrs.envelope {
+            if let Some(text) = envelope.name_forbidding(EffectSet::of(&[Effect::Panic])) {
+                sink.push(EffectAttributeViolation {
+                    file: func.source(db).file_id,
+                    site: SyntaxNodePtr::new(syntax.syntax()),
+                    message: format!(
+                        "`{}` is `{text}`, but this build is instrumented with fuel (`--fuel`): \
+                         every call and loop iteration can stop it when the fuel runs out",
+                        func.name(db),
+                    ),
+                });
+            }
+        }
         for (attr, syntax) in &attrs.effects {
             if attr.forbids().contains(Effect::Panic) {
                 sink.push(EffectAttributeViolation {
