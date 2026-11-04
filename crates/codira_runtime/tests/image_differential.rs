@@ -16,7 +16,9 @@
 //!
 //! The environment variables that pick the linker are process-wide, so this
 //! file has a single test.
-use codira_compiler::{image_link_stats, DIRECT_LINK_ENV, LINK_VERIFY_ENV};
+use codira_compiler::{
+    image_link_stats, DIRECT_ELF_ENV, DIRECT_LINK_ENV, LINK_MODE_ENV, LINK_VERIFY_ENV,
+};
 use codira_test::CompileAndRunTestDriver;
 
 type Calls = fn(&CompileAndRunTestDriver) -> Vec<String>;
@@ -249,6 +251,11 @@ const PROGRAMS: &[(&str, &str, Calls)] = &[
 #[test]
 fn programs_behave_the_same_with_the_image_writer_and_with_lld() {
     std::env::set_var(LINK_VERIFY_ENV, "1");
+    // The image writer is tried in direct link mode, the default only on
+    // Windows hosts, and writes ELF only when asked to: ask for both, so the
+    // test compares the same two linkers on every host.
+    std::env::set_var(LINK_MODE_ENV, "direct");
+    std::env::set_var(DIRECT_ELF_ENV, "1");
     for (name, source, calls) in PROGRAMS {
         // Linked by LLD alone.
         std::env::set_var(DIRECT_LINK_ENV, "0");
