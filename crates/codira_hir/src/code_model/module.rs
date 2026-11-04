@@ -114,6 +114,10 @@ impl Module {
             // their structural validation walks the raw syntax tree
             // directly instead of going through the item tree above.
             crate::supervisor_validator::supervisor_diagnostics(db, file_id, sink);
+
+            // In-place parameters and module-level bindings parse, but
+            // would compile to something other than what they say.
+            crate::unsupported_syntax::unsupported_syntax_diagnostics(db, file_id, sink);
         }
 
         // Add diagnostics from the items

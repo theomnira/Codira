@@ -56,12 +56,13 @@ const KNOWN_BLOCKERS: &[(&str, &str)] = &[
     ),
     (
         "hashlib.hasher",
-        "in-place parameters: its writers take the hasher as `mut`, which the compiler accepts \
-         but passes by copy, so they would change nothing; and `String`",
+        "in-place parameters: its writers take the hasher as `mut`, and the compiler has \
+         only by-copy parameters (it rejects `mut`); and `String`",
     ),
     (
         "random.random",
-        "module-level mutable state (its generator is a global); and the growable `Array`",
+        "module-level mutable state (its generator is a global, and the compiler rejects a \
+         module-level `var`); and the growable `Array`",
     ),
     (
         "builtin.types",
@@ -104,8 +105,8 @@ const KNOWN_BLOCKERS: &[(&str, &str)] = &[
     ("format.repr", "`String`"),
     (
         "atomic.atomic",
-        "module-level `let` (its orderings; the compiler drops them without a word), \
-         `String`, and in-place parameters (its operations would act on a copy)",
+        "module-level `let` (its orderings), `String`, and in-place parameters (`mut`), \
+         none of which the compiler has: it rejects the first and the last",
     ),
 ];
 

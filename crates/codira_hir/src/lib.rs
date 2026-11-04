@@ -78,6 +78,7 @@ mod supervisor_validator;
 pub mod traits;
 mod ty;
 mod type_ref;
+mod unsupported_syntax;
 mod utils;
 pub mod verify;
 
