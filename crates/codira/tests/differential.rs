@@ -479,7 +479,7 @@ fn threads() -> usize {
     std::thread::available_parallelism().map_or(2, |n| n.get().min(8))
 }
 
-/// The default run: 150 programs from a fixed seed (about 20 s on four cores;
+/// The default run: 150 programs from a fixed seed (about 11 s on four cores;
 /// every divergence found is reduced, one per kind).
 #[test]
 fn backends_agree_on_random_programs() {

@@ -44,7 +44,7 @@
 
 use std::fmt::Write as _;
 
-/// SplitMix64: deterministic, no dependencies, and good enough to drive a
+/// `SplitMix64`: deterministic, no dependencies, and good enough to drive a
 /// generator.
 pub struct Rng(u64);
 
@@ -471,7 +471,7 @@ impl Gen<'_> {
                     }
                     if ty.is_int() && self.rng.chance(15) {
                         let op = *self.rng.pick(&["<<=", ">>="]);
-                        let mask = self.int_lit(ty, u64::from(ty.bits() - 1));
+                        let mask = Self::int_lit(ty, u64::from(ty.bits() - 1));
                         return format!("{ind}{target} {op} ({value} & {mask})\n");
                     }
                     if ty.is_float() && self.rng.chance(40) {
@@ -589,7 +589,7 @@ impl Gen<'_> {
 
     // ---- expressions --------------------------------------------------
 
-    fn int_lit(&self, ty: Ty, value: u64) -> String {
+    fn int_lit(ty: Ty, value: u64) -> String {
         format!("{value}{}", ty.name())
     }
 
@@ -617,9 +617,9 @@ impl Gen<'_> {
                     _ => max - self.rng.below(4).min(max),
                 };
                 if ty.is_signed() && self.rng.chance(35) {
-                    format!("(-{})", self.int_lit(ty, value))
+                    format!("(-{})", Self::int_lit(ty, value))
                 } else {
-                    self.int_lit(ty, value)
+                    Self::int_lit(ty, value)
                 }
             }
         }
@@ -683,7 +683,7 @@ impl Gen<'_> {
                 }
                 5 => {
                     let op = *self.rng.pick(&["<<", ">>"]);
-                    let mask = self.int_lit(ty, u64::from(ty.bits() - 1));
+                    let mask = Self::int_lit(ty, u64::from(ty.bits() - 1));
                     return format!(
                         "({} {op} ({} & {mask}))",
                         self.expr(ty, d),
@@ -692,9 +692,9 @@ impl Gen<'_> {
                 }
                 6 => {
                     let op = *self.rng.pick(&["/", "%"]);
-                    let one = self.int_lit(ty, 1);
+                    let one = Self::int_lit(ty, 1);
                     let divisor = if ty.is_signed() {
-                        let max = self.int_lit(ty, ty.signed_max());
+                        let max = Self::int_lit(ty, ty.signed_max());
                         format!("(({} & {max}) | {one})", self.expr(ty, d))
                     } else {
                         format!("({} | {one})", self.expr(ty, d))
