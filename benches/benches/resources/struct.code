@@ -1,21 +1,21 @@
-pub struct(gc) GcParent {
+public class GcParent {
     child: GcChild
 }
 
-pub struct(gc) ValueParent {
+public class ValueParent {
     child: ValueChild
 }
 
-struct(gc) GcChild(f32, f32, f32, f32);
-struct(value) ValueChild(f32, f32, f32, f32);
+public class GcChild(f32, f32, f32, f32);
+public struct ValueChild(f32, f32, f32, f32);
 
-pub fn make_gc_parent() -> GcParent {
+public func make_gc_parent() -> GcParent {
     GcParent {
         child: GcChild(-2.0, -1.0, 1.0, 2.0),
     }
 }
 
-pub fn make_value_parent() -> ValueParent {
+public func make_value_parent() -> ValueParent {
     ValueParent {
         child: ValueChild(-2.0, -1.0, 1.0, 2.0),
     }

@@ -5,8 +5,8 @@
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
 //!
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use codira_runtime::StructRef;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use wasmer::Store;
 
 mod util;
@@ -40,8 +40,11 @@ pub fn fibonacci_benchmark(c: &mut Criterion) {
         // Run LuaJIT fibonacci
         group.bench_with_input(BenchmarkId::new("luajit", i), i, |b, i| {
             b.iter(|| {
-                let f: mlua::Function = lua.globals().get("main").unwrap();
-                let _: i64 = f.call(*i).unwrap();
+                let f: mlua::Function<'_> = lua.globals().get("main").unwrap();
+                // Lua numbers are doubles: the sum leaves the range of an
+                // i64 (and later becomes infinite) where the others wrap. The
+                // number of iterations is the same.
+                let _: f64 = f.call(*i).unwrap();
             })
         });
 
@@ -98,12 +101,17 @@ pub fn empty_benchmark(c: &mut Criterion) {
     group.bench_function("rust", |b| b.iter(|| empty(black_box(20))));
     group.bench_function("luajit", |b| {
         b.iter(|| {
-            let f: mlua::Function = lua.globals().get("empty").unwrap();
+            let f: mlua::Function<'_> = lua.globals().get("empty").unwrap();
             let _: i64 = f.call(black_box(20)).unwrap();
         })
     });
     group.bench_function("wasm", |b| {
-        b.iter(|| wasm_func.call(&mut wasm_store, &[black_box(20i64).into()]))
+        // The module was built for wasm32, where `isize` is `i32`.
+        b.iter(|| {
+            wasm_func
+                .call(&mut wasm_store, &[black_box(20i32).into()])
+                .unwrap()
+        })
     });
 
     group.finish();
@@ -113,6 +121,8 @@ pub fn empty_benchmark(c: &mut Criterion) {
     }
 }
 
+// Fields 1 to 3 are only read by `clone()`, which is what is measured.
+#[allow(dead_code)]
 #[derive(Clone, Default)]
 struct RustChild(f32, f32, f32, f32);
 
@@ -126,8 +136,8 @@ struct RustParent<'a> {
 pub fn get_struct_field_benchmark(c: &mut Criterion) {
     // Perform setup (not part of the benchmark)
     let runtime = util::runtime_from_file("struct.code");
-    let codira_gc_parent: StructRef = runtime.invoke("make_gc_parent", ()).unwrap();
-    let codira_value_parent: StructRef = runtime.invoke("make_value_parent", ()).unwrap();
+    let codira_gc_parent: StructRef<'_> = runtime.invoke("make_gc_parent", ()).unwrap();
+    let codira_value_parent: StructRef<'_> = runtime.invoke("make_value_parent", ()).unwrap();
 
     let rust_child = RustChild(-2.0, -1.0, 1.0, 2.0);
     let rust_parent = RustParent {
@@ -141,7 +151,7 @@ pub fn get_struct_field_benchmark(c: &mut Criterion) {
     for i in [100i64, 200i64, 500i64, 1000i64].iter() {
         // Marshal Codira fundamental type
         {
-            let child = codira_gc_parent.get::<StructRef>("child").unwrap();
+            let child = codira_gc_parent.get::<StructRef<'_>>("child").unwrap();
             group.bench_with_input(BenchmarkId::new("codira fundamental", i), i, |b, i| {
                 b.iter(|| {
                     for _ in 0..*i {
@@ -171,7 +181,7 @@ pub fn get_struct_field_benchmark(c: &mut Criterion) {
             b.iter(|| {
                 for _ in 0..*i {
                     // TODO: Optimise `RefCell::borrow` cost for sequential marshalling
-                    let _child = black_box(codira_gc_parent.get::<StructRef>("child").unwrap());
+                    let _child = black_box(codira_gc_parent.get::<StructRef<'_>>("child").unwrap());
                     // TODO: Optimise `Drop` cost for temporary structs
                 }
             })
@@ -182,7 +192,8 @@ pub fn get_struct_field_benchmark(c: &mut Criterion) {
             b.iter(|| {
                 for _ in 0..*i {
                     // TODO: Optimise allocation of `struct(value)` by using a memory arena
-                    let _child = black_box(codira_value_parent.get::<StructRef>("child").unwrap());
+                    let _child =
+                        black_box(codira_value_parent.get::<StructRef<'_>>("child").unwrap());
                 }
             })
         });
@@ -214,8 +225,8 @@ pub fn get_struct_field_benchmark(c: &mut Criterion) {
 pub fn set_struct_field_benchmark(c: &mut Criterion) {
     // Perform setup (not part of the benchmark)
     let runtime = util::runtime_from_file("struct.code");
-    let mut codira_gc_parent: StructRef = runtime.invoke("make_value_parent", ()).unwrap();
-    let mut codira_value_parent: StructRef = runtime.invoke("make_value_parent", ()).unwrap();
+    let mut codira_gc_parent: StructRef<'_> = runtime.invoke("make_gc_parent", ()).unwrap();
+    let mut codira_value_parent: StructRef<'_> = runtime.invoke("make_value_parent", ()).unwrap();
 
     let rust_child = RustChild(-2.0, -1.0, 1.0, 2.0);
     let mut rust_child2 = rust_child.clone();
@@ -232,7 +243,7 @@ pub fn set_struct_field_benchmark(c: &mut Criterion) {
 
     // Iterate over a number of samples
     for i in [100i64, 200i64, 500i64, 1000i64].iter() {
-        let mut gc_child = codira_gc_parent.get::<StructRef>("child").unwrap();
+        let mut gc_child = codira_gc_parent.get::<StructRef<'_>>("child").unwrap();
 
         // Marshal Codira fundamental type
         group.bench_with_input(BenchmarkId::new("codira fundamental", i), i, |b, i| {
@@ -269,11 +280,13 @@ pub fn set_struct_field_benchmark(c: &mut Criterion) {
         });
 
         // Marshal Codira `struct(value)`
-        let value_child = codira_value_parent.get::<StructRef>("child").unwrap();
+        let value_child = codira_value_parent.get::<StructRef<'_>>("child").unwrap();
         group.bench_with_input(BenchmarkId::new("codira struct(value)", i), i, |b, i| {
             b.iter(|| {
                 for _ in 0..*i {
-                    codira_value_parent.set("child", value_child.clone()).unwrap();
+                    codira_value_parent
+                        .set("child", value_child.clone())
+                        .unwrap();
                 }
             })
         });
@@ -310,4 +323,3 @@ criterion_group!(
     set_struct_field_benchmark
 );
 criterion_main!(benches);
-

@@ -5,9 +5,9 @@
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
 //!
-use mlua::Lua;
 use codira_compiler::{Config, DisplayColor, Driver, OptimizationLevel, PathOrInline};
 use codira_runtime::Runtime;
+use mlua::Lua;
 use std::path::{Path, PathBuf};
 use wasmer::{Instance, Module, Store};
 
@@ -56,4 +56,3 @@ pub fn wasmer_from_file<P: AsRef<Path>>(store: &mut Store, p: P) -> Instance {
     let module = Module::new(store, wasm_content).unwrap();
     Instance::new(store, &module, &import_objects).unwrap()
 }
-
