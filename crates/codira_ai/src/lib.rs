@@ -16,6 +16,7 @@
 //! | [`autograd`] | tape-based reverse mode, custom gradients, gradient checking, dual numbers |
 //! | [`nn`] | parameters, initialisers, Linear, Embedding, LayerNorm, MLP, attention, losses |
 //! | [`optim`] | SGD with momentum, Adam, AdamW, cosine schedule with warmup, gradient clipping |
+//! | [`quant`] | symmetric per-channel INT8 weights, INT8 matmul with i32 accumulation, measured error |
 //!
 //! # Status
 //!
@@ -28,6 +29,7 @@ pub mod error;
 pub mod float;
 pub mod nn;
 pub mod optim;
+pub mod quant;
 pub mod rng;
 pub mod tensor;
 
