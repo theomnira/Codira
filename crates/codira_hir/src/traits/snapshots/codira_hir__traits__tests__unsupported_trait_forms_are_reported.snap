@@ -1,6 +1,6 @@
 ---
 source: crates/codira_hir/src/traits/tests.rs
-expression: "diagnostics(r#\"\n    trait Iterable[E] {\n        func next(self) -> E;\n    }\n    trait Generic {\n        func map[U](self, u: U) -> U;\n    }\n    trait Contracted {\n        func pos(self) -> i64 ensures result > 0;\n    }\n    trait Loop1: Loop2 {\n        func a(self);\n    }\n    trait Loop2: Loop1 {\n        func b(self);\n    }\n    trait Bad: i64 {\n        func c(self);\n    }\n    trait Show {\n        func show(self) -> i64;\n    }\n    struct Bounded[T: Show] { v: T }\n    func f[T: Undefined](x: T) {}\n    func g[T](x: T) where i64: Show {}\n    func h[T: Iterable[i64]](x: T) {}\n    func k(x: Show) {}\n    struct Holder { s: Show }\n    \"#)"
+expression: "diagnostics(r#\"\n    trait Iterable[E] {\n        func next(self) -> E;\n    }\n    trait Generic {\n        func map[U](self, u: U) -> U;\n    }\n    trait Contracted {\n        func pos(self) -> i64 ensures result > 0;\n    }\n    trait Loop1: Loop2 {\n        func a(self);\n    }\n    trait Loop2: Loop1 {\n        func b(self);\n    }\n    trait Bad: i64 {\n        func c(self);\n    }\n    trait Show {\n        func show(self) -> i64;\n    }\n    struct Bounded[T: Show] { v: T }\n    func f[T: Undefined](x: T) {}\n    func g[T](x: T) where i64: Show {}\n    func h[T: Iterable[i64]](x: T) {}\n    func k(x: Show) {}\n    struct Holder { s: Show }\n    struct Declared: Show { x: i64 }\n    class Base { x: i64 }\n    \"#)"
 snapshot_kind: text
 ---
 14..17: generic traits are not supported yet: `Iterable` cannot take type parameters; only methods on `Self` can be declared
@@ -16,3 +16,4 @@ snapshot_kind: text
 437..450: generic traits are not supported yet: `Iterable[i64]` takes no arguments
 471..475: a trait is not a type: values of a trait type (dynamic dispatch) are not supported; take a generic parameter bounded by the trait instead (`[T: Trait]`)
 499..503: a trait is not a type: values of a trait type (dynamic dispatch) are not supported; take a generic parameter bounded by the trait instead (`[T: Trait]`)
+523..527: a trait is implemented in an `extend` block, not named on the declaration: write `extend Declared: Show { .. }`

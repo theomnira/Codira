@@ -799,21 +799,46 @@ fn is_primitive(ty: &Ty) -> bool {
     )
 }
 
-/// Reports bounds on a struct's own parameters (`struct Box[T: Show]`),
-/// which this version does not check where the struct is used; the bound
-/// belongs on the `extend` block whose methods need it.
+/// Reports a trait named on a struct's declaration (`struct P: Show`),
+/// which does not implement it, and bounds on a struct's own parameters
+/// (`struct Box[T: Show]`), which this version does not check where the
+/// struct is used; the bound belongs on the `extend` block whose methods
+/// need it.
 pub(crate) fn struct_bound_diagnostics(
     db: &dyn HirDatabase,
     strukt: crate::Struct,
     sink: &mut DiagnosticSink<'_>,
 ) {
     let source = strukt.source(db);
+    let resolver = strukt.id.resolver(db);
+
+    // `struct Point: Show` reads as if it implemented `Show`, and nothing
+    // would hold it to that: the implementation is an `extend` block.
+    for entry in source
+        .value
+        .inheritance_list()
+        .into_iter()
+        .flat_map(|list| list.bounds())
+    {
+        if let BoundRef::Trait(trait_) = resolve_bound(db, &resolver, &entry) {
+            let name = trait_.name(db);
+            sink.push(TraitError {
+                file: source.file_id,
+                node: AstPtr::new(&entry).syntax_node_ptr(),
+                message: format!(
+                    "a trait is implemented in an `extend` block, not named on the declaration: \
+                     write `extend {}: {name} {{ .. }}`",
+                    strukt.name(db)
+                ),
+            });
+        }
+    }
+
     let Some(list) = source.value.generic_param_list() else {
         return;
     };
     for param in list.generic_params() {
         // A const parameter's type (`N: usize`) is not a bound.
-        let resolver = strukt.id.resolver(db);
         for bound in param.bounds() {
             if matches!(resolve_bound(db, &resolver, &bound), BoundRef::Type) {
                 continue;

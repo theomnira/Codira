@@ -233,6 +233,8 @@ fn unsupported_trait_forms_are_reported() {
     func h[T: Iterable[i64]](x: T) {}
     func k(x: Show) {}
     struct Holder { s: Show }
+    struct Declared: Show { x: i64 }
+    class Base { x: i64 }
     "#
     ));
 }
