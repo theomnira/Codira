@@ -80,7 +80,26 @@ fn collect_expr<'ink>(
                 // self.collect_intrinsic(module, entries, &intrinsics::drop);
                 *needs_alloc = true;
             }
-            Some(codira_hir::CallableDef::Function(_)) => (),
+            // A call through the dispatch table boxes a value-struct
+            // argument and result (the runtime's calling convention, see
+            // `gen_call`), and boxing allocates: a module whose only
+            // allocation is such a call still needs `new`.
+            Some(codira_hir::CallableDef::Function(f)) => {
+                let boxes_a_value_struct = f.ty(db).callable_sig(db).is_some_and(|sig| {
+                    sig.params()
+                        .iter()
+                        .chain(std::iter::once(sig.ret()))
+                        .any(|ty| {
+                            ty.as_struct().is_some_and(|s| {
+                                s.data(db).memory_kind == codira_hir::StructMemoryKind::Value
+                            })
+                        })
+                });
+                if boxes_a_value_struct {
+                    collect_intrinsic(context, target, &intrinsics::new, intrinsics);
+                    *needs_alloc = true;
+                }
+            }
             // A call through a function value calls no runtime function.
             None if infer.is_indirect_call(expr_id) => (),
             None => panic!("expected a callable expression"),

@@ -140,6 +140,28 @@ fn value_structs_cross_modules_and_the_host_boundary() {
     assert_eq!(sum, 12);
 }
 
+/// A module whose only allocation is the boxing of a value struct passed to
+/// another module's function: the boxing needs the runtime's `new`, which
+/// used to be missing from such a module's dispatch table (a panic in code
+/// generation, "unknown function").
+#[test]
+fn a_module_that_only_passes_value_structs_across_modules_builds() {
+    let user = r#"
+import geometry.{Point, origin, x_of}
+
+func helper(p: Point) -> i64 { x_of(p) }
+
+public func run() -> i64 { helper(origin()) + 5 }
+"#;
+    let dir = package_with(&[("mod.code", user), ("geometry.code", GEOMETRY)]);
+    assert_eq!(build(dir.path()), codira::ExitStatus::Success);
+    let library = dir.path().join("target/mod.codiralib");
+    // Safety: the library was compiled by this test.
+    let runtime = unsafe { Runtime::builder(&library).finish() }.unwrap();
+    let five: i64 = runtime.invoke("run", ()).unwrap();
+    assert_eq!(five, 5);
+}
+
 /// `std/memory/region.code`'s `Region` wrappers are `public` functions
 /// taking and returning a value struct, ending in `return`: they could not
 /// be built before. Compiled into a package (without its `import` line, as
