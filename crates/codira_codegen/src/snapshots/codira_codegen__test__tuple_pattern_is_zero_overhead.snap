@@ -1,19 +1,46 @@
 ---
 source: crates/codira_codegen/src/test.rs
 expression: "\n    func divmod(a: i64, b: i64) -> (i64, i64) {\n        (a / b, a % b)\n    }\n\n    public func main() -> i64 {\n        let (q, r) = divmod(47, 5);\n        q * 100 + r\n    }"
+snapshot_kind: text
 ---
 ; == FILE IR (mod) =====================================
 ; ModuleID = 'mod'
 source_filename = "mod"
 
-; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
-define { i64, i64 } @divmod(i64 %0, i64 %1) local_unnamed_addr #0 {
+%DispatchTable = type { ptr }
+
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+@codira.str = private unnamed_addr constant [26 x i8] c"attempt to divide by zero\00"
+@codira.str.2 = private unnamed_addr constant [32 x i8] c"attempt to divide with overflow\00"
+@codira.str.3 = private unnamed_addr constant [9 x i8] c"mod.code\00"
+
+define { i64, i64 } @divmod(i64 %0, i64 %1) local_unnamed_addr {
 body:
+  %div.zero = icmp eq i64 %1, 0
+  br i1 %div.zero, label %div.by_zero, label %div.nonzero
+
+div.by_zero:                                      ; preds = %body
+  %codira.panic_ptr = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr(ptr nonnull @codira.str, i64 25, ptr nonnull @codira.str.3, i64 8, i32 2, i32 6)
+  unreachable
+
+div.nonzero:                                      ; preds = %body
+  %div.min = icmp eq i64 %0, -9223372036854775808
+  %div.minus_one = icmp eq i64 %1, -1
+  %div.overflow = and i1 %div.min, %div.minus_one
+  br i1 %div.overflow, label %div.overflow3, label %div.ok15
+
+div.overflow3:                                    ; preds = %div.nonzero
+  %codira.panic_ptr4 = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr4(ptr nonnull @codira.str.2, i64 31, ptr nonnull @codira.str.3, i64 8, i32 2, i32 6)
+  unreachable
+
+div.ok15:                                         ; preds = %div.nonzero
   %div = sdiv i64 %0, %1
   %tuple_init = insertvalue { i64, i64 } undef, i64 %div, 0
   %rem = srem i64 %0, %1
-  %tuple_init5 = insertvalue { i64, i64 } %tuple_init, i64 %rem, 1
-  ret { i64, i64 } %tuple_init5
+  %tuple_init17 = insertvalue { i64, i64 } %tuple_init, i64 %rem, 1
+  ret { i64, i64 } %tuple_init17
 }
 
 ; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
@@ -28,4 +55,7 @@ attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memor
 ; ModuleID = 'group_name'
 source_filename = "group_name"
 
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
 @global_type_lookup_table = global [1 x ptr] zeroinitializer

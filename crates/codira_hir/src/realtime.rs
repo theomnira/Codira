@@ -57,12 +57,15 @@
 //!   `codira.panic_index_out_of_bounds`. `a.unchecked_get(i)` has no check and
 //!   is the documented escape hatch (an out-of-range index there reads
 //!   arbitrary memory instead);
-//! * integer `/` and `%` (and `/=`, `%=`): the code generator emits a plain
-//!   LLVM `sdiv`/`udiv`/`srem`/`urem`, so a zero divisor or a signed `MIN / -1`
-//!   is undefined behaviour -- worse than a panic. A division is safe when its
-//!   divisor is a positive integer literal, or when the function has a contract
-//!   and the verifier *proves* both obligations it already emits for that
-//!   division (non-zero divisor, no overflow);
+//! * integer `/` and `%` (and `/=`, `%=`): both code generators check the
+//!   divisor and call `codira.panic` with the source location on a zero
+//!   divisor, and, signed, on `MIN / -1` and `MIN % -1`. A division is safe --
+//!   no check is emitted and it is no source here -- when its divisor is a
+//!   positive integer literal, or when the function has a contract and the
+//!   verifier *proves* both obligations it already emits for that division
+//!   (non-zero divisor, no overflow). The decision is made once, here
+//!   ([`EffectSources::safe_divisions`], [`division_is_safe`]), and the code
+//!   generators follow it;
 //! * postfix `!` on an optional, which panics on `nil`;
 //! * calling a `@runtime_checked` function with a `requires` clause: the check
 //!   traps on entry when it fails;
@@ -269,6 +272,48 @@ pub struct CallEdge {
 pub struct EffectSources {
     pub sources: Vec<Source>,
     pub calls: Vec<CallEdge>,
+    /// The integer divisions and remainders (`/`, `%`, `/=`, `%=`) of the
+    /// body that cannot fail: the divisor is a positive integer literal, or
+    /// the verifier proved it non-zero (and, signed, the division free of
+    /// `MIN / -1`). Both code generators omit the run-time check for exactly
+    /// these and check every other integer division, so this one decision
+    /// is what both the analysis and the generated code follow.
+    pub safe_divisions: Vec<ExprId>,
+}
+
+/// Whether `expr` of `body` is an integer division or remainder (`/`, `%`,
+/// `/=`, `%=`) whose divisor the generated code must check: every one that
+/// is not in its function's [`EffectSources::safe_divisions`]. Both code
+/// generators ask this for each integer division they emit, and on `true`
+/// branch to a panic on a zero divisor and, for a signed type, on
+/// `MIN / -1` and `MIN % -1`.
+pub fn division_needs_check(
+    db: &dyn HirDatabase,
+    body: &crate::Body,
+    infer: &crate::InferenceResult,
+    expr: ExprId,
+) -> bool {
+    let Expr::BinaryOp {
+        lhs,
+        op:
+            Some(
+                BinaryOp::ArithOp(ArithOp::Divide | ArithOp::Remainder)
+                | BinaryOp::Assignment {
+                    op: Some(ArithOp::Divide | ArithOp::Remainder),
+                },
+            ),
+        ..
+    } = &body[expr]
+    else {
+        return false;
+    };
+    if !matches!(infer[*lhs].interned(), TyKind::Int(_)) {
+        return false;
+    }
+    let crate::ids::DefWithBodyId::FunctionId(id) = body.owner();
+    !db.effect_sources(Function::from(id))
+        .safe_divisions
+        .contains(&expr)
 }
 
 /// Why a function has an effect: the calls from it down to the function
@@ -884,6 +929,7 @@ impl Collector<'_> {
         // never overflows.
         if let Expr::Literal(Literal::Int(lit)) = &self.frame.body[rhs] {
             if lit.value > 0 {
+                self.out.safe_divisions.push(expr);
                 return;
             }
         }
@@ -892,12 +938,13 @@ impl Collector<'_> {
             kinds.push(ObligationKind::DivisionOverflow);
         }
         if self.proven(expr, &kinds) {
+            self.out.safe_divisions.push(expr);
             return;
         }
         let symbol = if op == ArithOp::Divide { "/" } else { "%" };
         let what = format!(
-            "integer `{symbol}` whose divisor is not proven {}: the generated code does not \
-             check, so this is undefined behaviour (give the function a contract that proves it)",
+            "integer `{symbol}` whose divisor is not proven {}: the generated code checks it and \
+             panics when it fails (give the function a contract that proves it)",
             if signed {
                 "non-zero and free of `MIN / -1` overflow"
             } else {

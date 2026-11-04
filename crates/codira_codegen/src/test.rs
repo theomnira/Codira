@@ -665,6 +665,24 @@ fn nested_if_without_else_unoptimized() {
     );
 }
 
+/// Integer division checks its divisor unless it is a positive literal (or
+/// proven safe): the literal divisors here get no check, the parameter gets
+/// one for zero and, signed, one for `MIN / -1`.
+#[test]
+fn division_checks() {
+    test_snapshot(
+        "division_checks",
+        r#"
+    public func by_literal(a: i64) -> i64 {
+        a / 10 + a % 7
+    }
+    public func by_param(a: i16, b: i16) -> i16 {
+        a / b
+    }
+    "#,
+    );
+}
+
 #[test]
 fn void_return() {
     test_snapshot(

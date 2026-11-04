@@ -135,6 +135,11 @@ fn collect_expr<'ink>(
     if let Expr::Match { .. } = expr {
         collect_intrinsic(context, target, &intrinsics::str_eq, intrinsics);
     }
+    // An integer division the analysis does not know to be safe checks its
+    // divisor and panics through the runtime.
+    if codira_hir::realtime::division_needs_check(db, body, infer, expr_id) {
+        collect_intrinsic(context, target, &intrinsics::panic, intrinsics);
+    }
 
     // Indexing checks its bounds and panics through the runtime when the
     // index is out of range.

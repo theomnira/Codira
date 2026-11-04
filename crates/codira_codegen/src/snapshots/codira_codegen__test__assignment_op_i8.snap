@@ -1,10 +1,20 @@
 ---
 source: crates/codira_codegen/src/test.rs
 expression: "\n    public func assign(a: i8, b: i8) -> i8 {\n        a = b;\n        a\n    }\n    public func assign_add(a: i8, b: i8) -> i8 {\n        a += b;\n        a\n    }\n    public func assign_subtract(a: i8, b: i8) -> i8 {\n        a -= b;\n        a\n    }\n    public func assign_multiply(a: i8, b: i8) -> i8 {\n        a *= b;\n        a\n    }\n    public func assign_divide(a: i8, b: i8) -> i8 {\n        a /= b;\n        a\n    }\n    public func assign_remainder(a: i8, b: i8) -> i8 {\n        a %= b;\n        a\n    }\n                        "
+snapshot_kind: text
 ---
 ; == FILE IR (mod) =====================================
 ; ModuleID = 'mod'
 source_filename = "mod"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+@codira.str = private unnamed_addr constant [26 x i8] c"attempt to divide by zero\00"
+@codira.str.2 = private unnamed_addr constant [32 x i8] c"attempt to divide with overflow\00"
+@codira.str.4 = private unnamed_addr constant [58 x i8] c"attempt to calculate the remainder with a divisor of zero\00"
+@codira.str.6 = private unnamed_addr constant [49 x i8] c"attempt to calculate the remainder with overflow\00"
+@codira.str.7 = private unnamed_addr constant [9 x i8] c"mod.code\00"
 
 ; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
 define i8 @assign(i8 %0, i8 returned %1) local_unnamed_addr #0 {
@@ -33,16 +43,54 @@ body:
   ret i8 %mul
 }
 
-; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
-define i8 @assign_divide(i8 %0, i8 %1) local_unnamed_addr #0 {
+define i8 @assign_divide(i8 %0, i8 %1) local_unnamed_addr {
 body:
+  %div.zero = icmp eq i8 %1, 0
+  br i1 %div.zero, label %div.by_zero, label %div.nonzero
+
+div.by_zero:                                      ; preds = %body
+  %codira.panic_ptr = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr(ptr nonnull @codira.str, i64 25, ptr nonnull @codira.str.7, i64 8, i32 18, i32 5)
+  unreachable
+
+div.nonzero:                                      ; preds = %body
+  %div.min = icmp eq i8 %0, -128
+  %div.minus_one = icmp eq i8 %1, -1
+  %div.overflow = and i1 %div.min, %div.minus_one
+  br i1 %div.overflow, label %div.overflow3, label %div.ok
+
+div.overflow3:                                    ; preds = %div.nonzero
+  %codira.panic_ptr4 = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr4(ptr nonnull @codira.str.2, i64 31, ptr nonnull @codira.str.7, i64 8, i32 18, i32 5)
+  unreachable
+
+div.ok:                                           ; preds = %div.nonzero
   %div = sdiv i8 %0, %1
   ret i8 %div
 }
 
-; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
-define range(i8 -127, -128) i8 @assign_remainder(i8 %0, i8 %1) local_unnamed_addr #0 {
+define range(i8 -127, -128) i8 @assign_remainder(i8 %0, i8 %1) local_unnamed_addr {
 body:
+  %div.zero = icmp eq i8 %1, 0
+  br i1 %div.zero, label %div.by_zero, label %div.nonzero
+
+div.by_zero:                                      ; preds = %body
+  %codira.panic_ptr = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr(ptr nonnull @codira.str.4, i64 57, ptr nonnull @codira.str.7, i64 8, i32 22, i32 5)
+  unreachable
+
+div.nonzero:                                      ; preds = %body
+  %div.min = icmp eq i8 %0, -128
+  %div.minus_one = icmp eq i8 %1, -1
+  %div.overflow = and i1 %div.min, %div.minus_one
+  br i1 %div.overflow, label %div.overflow3, label %div.ok
+
+div.overflow3:                                    ; preds = %div.nonzero
+  %codira.panic_ptr4 = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr4(ptr nonnull @codira.str.6, i64 48, ptr nonnull @codira.str.7, i64 8, i32 22, i32 5)
+  unreachable
+
+div.ok:                                           ; preds = %div.nonzero
   %rem = srem i8 %0, %1
   ret i8 %rem
 }
@@ -53,4 +101,7 @@ attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memor
 ; ModuleID = 'group_name'
 source_filename = "group_name"
 
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
 @global_type_lookup_table = global [1 x ptr] zeroinitializer

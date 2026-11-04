@@ -1,12 +1,24 @@
 ---
 source: crates/codira_codegen/src/test.rs
 expression: "\n    public func divmod(a: i32, b: i32) -> (i32, i32) {\n        (a / b, a % b)\n    }\n\n    public func first(t: (i32, f64)) -> i32 {\n        t.0\n    }\n\n    public func second(t: (i32, f64)) -> f64 {\n        t.1\n    }\n\n    public func nested(a: i32) -> i32 {\n        let t = ((a, a), a);\n        t.0.1\n    }\n\n    public func unit() -> () {\n        ()\n    }"
+snapshot_kind: text
 ---
 ; == FILE IR (mod) =====================================
 ; ModuleID = 'mod'
 source_filename = "mod"
 
+%DispatchTable = type { ptr }
+
+@dispatchTable = external global %DispatchTable
 @global_type_lookup_table = external global [4 x ptr]
+@codira.str = private unnamed_addr constant [26 x i8] c"attempt to divide by zero\00"
+@codira.str.1 = private unnamed_addr constant [9 x i8] c"mod.code\00"
+@codira.str.2 = private unnamed_addr constant [32 x i8] c"attempt to divide with overflow\00"
+@codira.str.3 = private unnamed_addr constant [9 x i8] c"mod.code\00"
+@codira.str.4 = private unnamed_addr constant [58 x i8] c"attempt to calculate the remainder with a divisor of zero\00"
+@codira.str.5 = private unnamed_addr constant [9 x i8] c"mod.code\00"
+@codira.str.6 = private unnamed_addr constant [49 x i8] c"attempt to calculate the remainder with overflow\00"
+@codira.str.7 = private unnamed_addr constant [9 x i8] c"mod.code\00"
 
 define { i32, i32 } @divmod(i32 %0, i32 %1) {
 body:
@@ -16,13 +28,53 @@ body:
   store i32 %0, ptr %a, align 4
   %a1 = load i32, ptr %a, align 4
   %b2 = load i32, ptr %b, align 4
+  %div.zero = icmp eq i32 %b2, 0
+  br i1 %div.zero, label %div.by_zero, label %div.nonzero
+
+div.by_zero:                                      ; preds = %body
+  %codira.panic_ptr = load ptr, ptr @dispatchTable, align 8
+  call void %codira.panic_ptr(ptr @codira.str, i64 25, ptr @codira.str.1, i64 8, i32 2, i32 6)
+  unreachable
+
+div.nonzero:                                      ; preds = %body
+  %div.min = icmp eq i32 %a1, -2147483648
+  %div.minus_one = icmp eq i32 %b2, -1
+  %div.overflow = and i1 %div.min, %div.minus_one
+  br i1 %div.overflow, label %div.overflow3, label %div.ok
+
+div.overflow3:                                    ; preds = %div.nonzero
+  %codira.panic_ptr4 = load ptr, ptr @dispatchTable, align 8
+  call void %codira.panic_ptr4(ptr @codira.str.2, i64 31, ptr @codira.str.3, i64 8, i32 2, i32 6)
+  unreachable
+
+div.ok:                                           ; preds = %div.nonzero
   %div = sdiv i32 %a1, %b2
   %tuple_init = insertvalue { i32, i32 } undef, i32 %div, 0
-  %a3 = load i32, ptr %a, align 4
-  %b4 = load i32, ptr %b, align 4
-  %rem = srem i32 %a3, %b4
-  %tuple_init5 = insertvalue { i32, i32 } %tuple_init, i32 %rem, 1
-  ret { i32, i32 } %tuple_init5
+  %a5 = load i32, ptr %a, align 4
+  %b6 = load i32, ptr %b, align 4
+  %div.zero7 = icmp eq i32 %b6, 0
+  br i1 %div.zero7, label %div.by_zero8, label %div.nonzero9
+
+div.by_zero8:                                     ; preds = %div.ok
+  %codira.panic_ptr10 = load ptr, ptr @dispatchTable, align 8
+  call void %codira.panic_ptr10(ptr @codira.str.4, i64 57, ptr @codira.str.5, i64 8, i32 2, i32 13)
+  unreachable
+
+div.nonzero9:                                     ; preds = %div.ok
+  %div.min11 = icmp eq i32 %a5, -2147483648
+  %div.minus_one12 = icmp eq i32 %b6, -1
+  %div.overflow13 = and i1 %div.min11, %div.minus_one12
+  br i1 %div.overflow13, label %div.overflow14, label %div.ok15
+
+div.overflow14:                                   ; preds = %div.nonzero9
+  %codira.panic_ptr16 = load ptr, ptr @dispatchTable, align 8
+  call void %codira.panic_ptr16(ptr @codira.str.6, i64 48, ptr @codira.str.7, i64 8, i32 2, i32 13)
+  unreachable
+
+div.ok15:                                         ; preds = %div.nonzero9
+  %rem = srem i32 %a5, %b6
+  %tuple_init17 = insertvalue { i32, i32 } %tuple_init, i32 %rem, 1
+  ret { i32, i32 } %tuple_init17
 }
 
 define i32 @first({ i32, double } %0) {
@@ -71,4 +123,7 @@ body:
 ; ModuleID = 'group_name'
 source_filename = "group_name"
 
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
 @global_type_lookup_table = global [4 x ptr] zeroinitializer
