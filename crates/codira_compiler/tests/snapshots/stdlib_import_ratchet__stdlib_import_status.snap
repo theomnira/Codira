@@ -68,7 +68,7 @@ std.builtin.simd
 std.builtin.slice
     check (63 diagnostics): std/builtin/slice.code:51: the type `Pointer[T]` mentions the generic parameter `T`, which `from_ref` does not declare: a generic type needs its arguments written out, e.g. `Box[i32]` rather than `Box`
 std.builtin.sort
-    check (106 diagnostics): std/builtin/sort.code:38: undefined value `__intrinsic_ilog2`
+    check (106 diagnostics): std/builtin/sort.code:41: undefined value `__intrinsic_ilog2`
 std.builtin.string_literal
     check (22 diagnostics): std/ai/tensor/raw.code:72: module-level `let` is not supported yet: `SIZE_F32` would not be defined, and no name can refer to it; write a function returning the value (`func SIZE_F32() -> T { .. }`), as `std.math.constants` does `public let SIZE_F32: usize = 4;`
 std.builtin.swap
@@ -155,13 +155,13 @@ std.math.sequence
 std.memory.alloc
     check (93 diagnostics): std/memory/alloc.code:59: mismatched type `0`
 std.memory.arc_pointer
-    check (84 diagnostics): std/memory/arc_pointer.code:55: undefined value `__intrinsic_sizeof`
+    check (84 diagnostics): std/memory/arc_pointer.code:59: undefined value `__intrinsic_sizeof`
 std.memory.memory
     check (37 diagnostics): std/memory/memory.code:31: undefined value `__intrinsic_memcpy`
 std.memory.owned_pointer
-    check (63 diagnostics): std/memory/owned_pointer.code:86: undefined value `__intrinsic_addr_to_ref`
+    check (63 diagnostics): std/memory/owned_pointer.code:87: undefined value `__intrinsic_addr_to_ref`
 std.memory.pointer
-    check (44 diagnostics): std/memory/pointer.code:140: undefined value `__panic`
+    check (44 diagnostics): std/memory/pointer.code:143: undefined value `__panic`
     needs: std.builtin.traits and std.builtin.types, `String`, and intrinsics the compiler does not have (`__intrinsic_to_hex`, `__intrinsic_type_name`)
 std.memory.unsafe_pointer
     check (51 diagnostics): std/memory/unsafe_pointer.code:89: undefined type `Pointer[T]`
