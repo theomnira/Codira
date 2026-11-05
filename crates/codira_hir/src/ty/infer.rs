@@ -112,6 +112,9 @@ pub struct InferenceResult {
     /// For each `x?`, the type its early return produces: the result type
     /// of the function or closure it returns from.
     pub(crate) propagations: FxHashMap<ExprId, Ty>,
+    /// For each `x?` whose error is wrapped on the way out, the variant of
+    /// the function's error enum that wraps it (see `infer::propagate`).
+    pub(crate) propagation_wraps: FxHashMap<ExprId, EnumVariant>,
     /// For each call of a generic function -- a free function, a method or
     /// an associated function -- the types its generic parameters stand for
     /// at that call, in the order of the callee's
@@ -245,6 +248,12 @@ impl InferenceResult {
         self.propagations.get(&expr)
     }
 
+    /// The variant of the enclosing function's error enum that `expr`, an
+    /// `x?`, wraps `x`'s error in, if it is wrapped.
+    pub fn propagation_wrap(&self, expr: ExprId) -> Option<EnumVariant> {
+        self.propagation_wraps.get(&expr).copied()
+    }
+
     /// The enum variant `expr` constructs, if it is `Shape.Circle(..)` or
     /// `Shape.Point`.
     pub fn variant_of_expr(&self, expr: ExprId) -> Option<EnumVariant> {
@@ -313,6 +322,7 @@ impl InferenceResult {
                 .iter()
                 .map(|(expr, ty)| (*expr, f(ty)))
                 .collect(),
+            propagation_wraps: self.propagation_wraps.clone(),
             standard_types: InternedStandardTypes::default(),
             closures: self
                 .closures
@@ -459,6 +469,7 @@ struct InferenceResultBuilder<'a> {
     pat_variants: FxHashMap<PatId, EnumVariant>,
     /// See [`InferenceResult::propagations`].
     propagations: FxHashMap<ExprId, Ty>,
+    propagation_wraps: FxHashMap<ExprId, EnumVariant>,
     /// See [`InferenceResult::instantiations`]; the callee is kept until
     /// `resolve_all` so that a parameter no argument determined can be
     /// reported by name.
@@ -497,6 +508,7 @@ impl<'a> InferenceResultBuilder<'a> {
             variant_exprs: FxHashMap::default(),
             pat_variants: FxHashMap::default(),
             propagations: FxHashMap::default(),
+            propagation_wraps: FxHashMap::default(),
             instantiations: FxHashMap::default(),
             bounds: match body.owner() {
                 DefWithBodyId::FunctionId(f) => db.function_bounds(f),
@@ -2473,6 +2485,7 @@ impl InferenceResultBuilder<'_> {
             variant_exprs: self.variant_exprs,
             variant_pats: self.pat_variants,
             propagations,
+            propagation_wraps: self.propagation_wraps,
             instantiations,
         }
     }

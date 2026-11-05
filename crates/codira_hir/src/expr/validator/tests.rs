@@ -571,12 +571,35 @@ fn test_propagate_typing() {
     func on_other(o: Other[i64, bool]) -> Other[i64, bool] { o? ; o }
     "#,
     ), @"
-    422..428: `?` would return this `Err(bool)` from a function that returns `Result[i64, str]`: the error types must be the same (there is no conversion between them); `match` and build the error the function returns
+    422..428: `?` would return this `Err(bool)` from a function that returns `Result[i64, str]`: the error types must be the same
     459..465: `?` on a `Result[i64, bool]` returns its `Err` early, so the enclosing function must return a `Result[_, bool]`, but it returns `i64`
     497..503: `?` on an optional returns `nil` early, so the enclosing function must return an optional, but it returns `i64`; unwrap with `!`, or test with `if let`
     550..556: `?` on a `Result[i64, bool]` returns its `Err` early, so the enclosing function must return a `Result[_, bool]`, but it returns `Other[i64, bool]`
     590..592: `?` applies to a `Result[T, E]` or an optional `T?`, but this is `i64`
     652..654: `?` applies to a `Result[T, E]` (an enum `Result` with variants `Ok(T)` and `Err(E)`) or an optional `T?`, but this is `Other[i64, bool]`
+    ");
+}
+
+/// `x?` wraps `x`'s error in the variant of the function's error enum that
+/// holds exactly that type; none or two such variants are errors.
+#[test]
+fn test_propagate_wraps_errors() {
+    insta::assert_snapshot!(diagnostics(
+        r#"
+    enum Result[T, E] { Ok(T), Err(E) }
+    enum IoError { Missing, Denied }
+    enum Problem { Io(IoError), Parse(i64), Other }
+    enum Twice { A(i64), B(i64) }
+    func read() -> Result[i64, IoError] { Result.Err(IoError.Missing) }
+    func parse() -> Result[i64, i64] { Result.Err(3) }
+
+    func both() -> Result[i64, Problem] { Result.Ok(read()? + parse()?) }
+    func twice() -> Result[i64, Twice] { Result.Ok(parse()?) }
+    func none() -> Result[i64, Problem] { let b: Result[i64, bool] = Result.Ok(1); Result.Ok(b?) }
+    "#,
+    ), @"
+    384..392: `?` cannot tell which variant of `Twice` to wrap this `i64` error in: `Twice.A`, `Twice.B` all hold one; `match` and build the error
+    485..487: `?` would return this `Err(bool)` from a function that returns `Result[i64, Problem]`: the error types must be the same, or `Problem` must have exactly one variant holding a `bool`, which `?` wraps the error in
     ");
 }
 

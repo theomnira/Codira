@@ -104,11 +104,41 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 // moves from this value's `Err` slot to that one's.
                 self.builder.position_at_end(return_block);
                 let err_slot = err.slots_at(self.db, args)[0] as u32 + 1;
-                let error = self
+                let mut error = self
                     .builder
                     .build_extract_value(value, err_slot, "error")
                     .expect("the `Err` slot exists in the layout");
                 let returned_args = mono::enum_args(&returned);
+                // `Problem.Io(e)`, when the function's error type wraps
+                // this one.
+                if let Some(wrap) = self.infer.propagation_wrap(expr) {
+                    let wrapper_ty = err.field_types_at(self.db, &returned_args).remove(0);
+                    let wrapper_args = mono::enum_args(&wrapper_ty);
+                    let tag = self
+                        .context
+                        .i32_type()
+                        .const_int(u64::from(wrap.index()), false);
+                    let wrapped = self
+                        .builder
+                        .build_insert_value(
+                            self.hir_types.get_enum_type(&wrapper_ty).const_zero(),
+                            tag,
+                            0,
+                            "wrap",
+                        )
+                        .expect("failed to set an enum tag");
+                    error = self
+                        .builder
+                        .build_insert_value(
+                            wrapped,
+                            error,
+                            wrap.slots_at(self.db, &wrapper_args)[0] as u32 + 1,
+                            "wrap",
+                        )
+                        .expect("failed to set an enum payload")
+                        .into_struct_value()
+                        .into();
+                }
                 let returned_type = self.hir_types.get_enum_type(&returned);
                 let tag = self
                     .context

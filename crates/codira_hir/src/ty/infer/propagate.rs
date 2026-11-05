@@ -8,9 +8,14 @@
 //!
 //! - On a `Result[T, E]` it is the `T` inside `Ok`, or it returns `Err(e)`
 //!   from the enclosing function (or closure), whose result type must be a
-//!   `Result[_, E]` of the same `Result` declaration with the same `E`.
-//!   There is no conversion between error types: a different `E` is an
-//!   error that names both.
+//!   `Result[_, F]` of the same `Result` declaration. Either `F` is `E`, or
+//!   `F` is an enum with exactly one variant whose one payload is an `E`,
+//!   and the error is wrapped in it on the way out: with
+//!   `enum Problem { Io(FileError), Parse(ParseError) }`, a `FileError`
+//!   leaves a `-> Result[_, Problem]` function as `Problem.Io(e)`. This
+//!   is what Rust's `From` implementations are written for, read off the
+//!   declaration instead; it is decided statically and is never ambiguous
+//!   (two variants holding an `E` are an error).
 //! - On a `T?` it is the `T`, or it returns `nil`; the enclosing result
 //!   type must be an optional (of any payload).
 //!
@@ -98,18 +103,41 @@ impl InferenceResultBuilder<'_> {
                 match returned.interned().clone() {
                     TyKind::Enum(r, ret_args) if r == e => {
                         let ret_err = err.field_types_at(self.db, &ret_args).remove(0);
-                        if !self.unify(&ret_err, &err_ty) {
-                            self.propagate_error(
+                        match self.error_wrap(&ret_err, &err_ty) {
+                            Ok(Some(variant)) => {
+                                self.propagation_wraps.insert(tgt_expr, variant);
+                            }
+                            Ok(None) if self.unify(&ret_err, &err_ty) => {}
+                            Ok(None) => {
+                                let err = err_ty.display(self.db).to_string();
+                                let wrap = if self.normalize(&ret_err).as_enum().is_some() {
+                                    format!(
+                                        ", or `{}` must have exactly one variant holding a \
+                                         `{err}`, which `?` wraps the error in",
+                                        ret_err.display(self.db)
+                                    )
+                                } else {
+                                    String::new()
+                                };
+                                self.propagate_error(
+                                    tgt_expr,
+                                    format!(
+                                        "`?` would return this `Err({err})` from a function that \
+                                         returns `{}`: the error types must be the same{wrap}",
+                                        returned.display(self.db),
+                                    ),
+                                );
+                            }
+                            Err(variants) => self.propagate_error(
                                 tgt_expr,
                                 format!(
-                                    "`?` would return this `Err({})` from a function that \
-                                     returns `{}`: the error types must be the same (there is \
-                                     no conversion between them); `match` and build the error \
-                                     the function returns",
+                                    "`?` cannot tell which variant of `{}` to wrap this `{}` \
+                                     error in: {} all hold one; `match` and build the error",
+                                    ret_err.display(self.db),
                                     err_ty.display(self.db),
-                                    returned.display(self.db)
+                                    variants.join(", "),
                                 ),
-                            );
+                            ),
                         }
                     }
                     TyKind::Unknown => {}
@@ -137,6 +165,39 @@ impl InferenceResultBuilder<'_> {
                 );
                 super::error_type()
             }
+        }
+    }
+
+    /// The variant of `outer` that wraps an error of type `inner` when `?`
+    /// passes it on (see the module documentation): `Ok(None)` when no
+    /// wrapping applies (the types are meant to be the same), `Err` with the
+    /// candidates when more than one variant could.
+    fn error_wrap(&mut self, outer: &Ty, inner: &Ty) -> Result<Option<EnumVariant>, Vec<String>> {
+        let outer = self.normalize(outer);
+        let inner = self.normalize(inner);
+        let TyKind::Enum(wrapper, args) = outer.interned() else {
+            return Ok(None);
+        };
+        if matches!(inner.interned(), TyKind::Enum(e, _) if e == wrapper)
+            || matches!(inner.interned(), TyKind::InferenceVar(_))
+        {
+            return Ok(None);
+        }
+        let mut found = Vec::new();
+        for variant in wrapper.variants(self.db) {
+            if let [payload] = variant.field_types_at(self.db, args).as_slice() {
+                if self.normalize(payload) == inner {
+                    found.push(variant);
+                }
+            }
+        }
+        match found.as_slice() {
+            [] => Ok(None),
+            [variant] => Ok(Some(*variant)),
+            _ => Err(found
+                .iter()
+                .map(|v| format!("`{}`", v.display(self.db)))
+                .collect()),
         }
     }
 
