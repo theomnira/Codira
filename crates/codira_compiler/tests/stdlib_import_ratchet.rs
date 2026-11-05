@@ -96,13 +96,9 @@ const KNOWN_BLOCKERS: &[(&str, &str)] = &[
     ("math.sequence", "`List` (std.collections.list)"),
     ("math.polynomial", "`List` (std.collections.list)"),
     (
-        "base64.base64_string",
-        "`String`, the growable `Array[u8]`, and module-level `let`",
+        "format.repr",
+        "trait objects: `repr` takes a `Representable` value, which needs dynamic dispatch",
     ),
-    ("hashlib.string_hash", "`String`"),
-    ("complex.complex_string", "`String`"),
-    ("format.format", "`String`"),
-    ("format.repr", "`String`"),
     (
         "atomic.atomic",
         "module-level `let` (its orderings), `String`, and in-place parameters (`mut`), \

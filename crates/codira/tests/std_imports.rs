@@ -1254,3 +1254,98 @@ fn std_collections_map_matches_rust_hash_map() {
     let (_dir, stdout) = run_ok(&[("mod.code", &code)]);
     assert_eq!(stdout, expected);
 }
+
+/// The modules written against `String`: `std.collections.string`,
+/// `std.format.format`, `std.hashlib.string_hash`, `std.complex.complex_string`,
+/// `std.base64.base64_string` and `std.sys.arg`, checked against values
+/// computed independently (the hashes by Rust's FNV-1a, the encodings by the
+/// RFC 4648 test vectors).
+#[test]
+fn std_string_modules_work() {
+    let dir = package_with(&[(
+        "mod.code",
+        r#"
+import std.collections.string.*
+import std.format.format.{format, format_int, format_uint, hex, bin, oct, pad_left, pad_right, center}
+import std.hashlib.string_hash.{hash_string, hash_string_bytes}
+import std.complex.complex.{complex_new}
+import std.complex.complex_string.{complex_to_string}
+import std.base64.base64_string.{b64encode, b64decode, b32encode, b16encode, b16decode, b64encode_string, b64decode_string}
+import std.sys.arg.{argc, argv, program_name, args, env_get, env_has}
+
+public func main() {
+    println(join(", ", "a b  c".to_string().split(" ")))
+    println(join("-", split_whitespace("  one two\tthree \n")))
+    println(split_whitespace("   ").len())
+    println(insert("héllo", 3, "XY"), " ", remove("héllo", 1, 3), " ", reverse("héllo"))
+    println(count("banana", "an"), " ", count("abc", ""), " ", compare("a", "b"), " ", equals("x", "x"))
+    println(string_from_code_point(0x4E16)!, string_from_code_point(0x1F600)!, " ", string_from_code_point(0xD800) == nil)
+    println(string_from_code_points([104u32, 233u32])!, " ", string_from_bytes([0xFFu8]) == nil)
+
+    println(format("Hello, {}! You are {} ({1}) {{x}} {9}", ["Alice", "30"]))
+    println(format_int(-255, 16), " ", format_uint(255, 2), " ", format_int(-9223372036854775808, 10))
+    println(hex(-255), " ", bin(5), " ", oct(8), " ", format_int(1, 99))
+    println("[", pad_left("7", 3, "0"), "] [", pad_right("ab", 4, "."), "] [", center("é", 4, "*"), "]")
+
+    println(hash_string("hello"), " ", hash_string_bytes("hello"), " ", hash_string(""))
+
+    println(complex_to_string(complex_new(1.0, 2.5)), " ", complex_to_string(complex_new(0.0, -1.0)))
+
+    println(b64encode("foobar".to_string().bytes()), " ", b32encode("fo".to_string().bytes()), " ", b16encode([1u8, 171u8]))
+    println(string_from_utf8(b64decode("Zm9vYmE=".to_string()))!, " ", b16decode("01ab".to_string())[1])
+    println(b64encode_string("héllo"), " ", b64decode_string(b64encode_string("héllo"))!)
+
+    println(argc() >= 1, " ", argv(0) != nil, " ", program_name().len() > 0, " ", argv(argc()) == nil, " ", args().len() as i64 == argc() - 1)
+    println(env_get("CODIRA_STRING_TEST")!, " ", env_has("CODIRA_SURELY_UNSET_VARIABLE"))
+}
+"#,
+    )]);
+    let output = Command::new(env!("CARGO_BIN_EXE_codira"))
+        .arg("run")
+        .arg("--manifest-path")
+        .arg(dir.path().join("codira.toml"))
+        .arg("--color")
+        .arg("disable")
+        .env("CODIRA_STD_PATH", std_dir())
+        .env("CODIRA_STRING_TEST", "set-by-the-test")
+        .env_remove("CODIRA_SURELY_UNSET_VARIABLE")
+        .output()
+        .expect("failed to spawn codira");
+    let stdout = text(&output.stdout);
+    assert!(
+        output.status.success(),
+        "codira run failed\nstdout:\n{stdout}\nstderr:\n{}",
+        text(&output.stderr)
+    );
+    let expected = format!(
+        "a, b, , c\n\
+         one-two-three\n\
+         0\n\
+         héXYllo hllo olléh\n\
+         2 4 -1 true\n\
+         世😀 true\n\
+         hé true\n\
+         Hello, Alice! You are 30 (30) {{x}} {{9}}\n\
+         -ff 11111111 -9223372036854775808\n\
+         -0xff 0b101 0o10 <invalid base>\n\
+         [007] [ab..] [*é**]\n\
+         {h} {h} 14695981039346656037\n\
+         1.0+2.5i 0.0-1.0i\n\
+         Zm9vYmFy MZXQ==== 01AB\n\
+         fooba 171\n\
+         aMOpbGxv héllo\n\
+         true true true true true\n\
+         set-by-the-test false\n",
+        h = fnv1a(b"hello"),
+    );
+    assert_eq!(stdout, expected);
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
