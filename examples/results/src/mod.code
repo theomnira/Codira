@@ -1,0 +1,39 @@
+// Sums the whitespace-separated integers in `numbers.txt` (run it from this
+// directory: `codira run`). Every failure -- a missing file, a word that is
+// not a number, a number too large -- is a value the caller sees; nothing
+// panics, and nothing is unwrapped.
+
+import std.fs.file.{read_file, FileError}
+import std.result.result.{Result}
+import std.text.ascii.{next_word, parse_i64, ParseError}
+
+// What can go wrong. `?` wraps a `FileError` in `Io` and a `ParseError` in
+// `Parse`: each is the one variant holding that type.
+enum Problem {
+    Io(FileError)
+    Parse(ParseError)
+}
+
+func sum_file(path: str) -> Result[i64, Problem] {
+    let bytes = read_file(path)?
+    var total: i64 = 0
+    var at: usize = 0
+    while let (start, end) = next_word(bytes, at) {
+        total += parse_i64(bytes, start, end)?
+        at = end
+    }
+    Result.Ok(total)
+}
+
+public func main() {
+    match sum_file("numbers.txt") {
+        Result.Ok(total) -> println(total),
+        Result.Err(Problem.Io(FileError.NotFound)) -> println("numbers.txt: no such file"),
+        Result.Err(Problem.Io(_)) -> println("numbers.txt: cannot be read"),
+        Result.Err(Problem.Parse(ParseError.InvalidDigit(at))) -> {
+            print("numbers.txt: not a number at byte ")
+            println(at)
+        }
+        Result.Err(Problem.Parse(_)) -> println("numbers.txt: a number is empty or too large"),
+    }
+}

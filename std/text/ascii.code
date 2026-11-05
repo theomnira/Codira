@@ -1,0 +1,95 @@
+// =============================================================================
+// std/text/ascii.code — Words and numbers in ASCII bytes
+// =============================================================================
+//
+// Text as `[u8]`, the way std/fs/file.code reads it: find the
+// whitespace-separated words, and parse a word as an integer, with a
+// `ParseError` saying what is wrong instead of a panic.
+//
+//     var at: usize = 0
+//     while let (start, end) = next_word(bytes, at) {
+//         total += parse_i64(bytes, start, end)?
+//         at = end
+//     }
+//
+// A word is a range of indices into the bytes (`start` inclusive, `end`
+// exclusive), so nothing is copied.
+// =============================================================================
+
+import root.result.result.{Result};
+
+// Why a word is not an integer.
+public enum ParseError {
+    // No digits (an empty word, or a sign alone).
+    Empty
+    // The byte at this index is not a digit.
+    InvalidDigit(usize)
+    // The number does not fit the type.
+    Overflow
+}
+
+// Whether `b` is ASCII whitespace: space, tab, line feed, vertical tab, form
+// feed or carriage return.
+public func is_space(b: u8) -> bool {
+    b == 32 || (b >= 9 && b <= 13)
+}
+
+// Whether `b` is an ASCII decimal digit.
+public func is_digit(b: u8) -> bool {
+    b >= 48 && b <= 57
+}
+
+// The next word at or after index `from`: its start and end, or `nil` when
+// only whitespace is left.
+public func next_word(bytes: [u8], from: usize) -> (usize, usize)? {
+    let n = bytes.len()
+    var start = from
+    while start < n && is_space(bytes[start]) {
+        start += 1
+    }
+    if start >= n {
+        return nil
+    }
+    var end = start
+    while end < n && !is_space(bytes[end]) {
+        end += 1
+    }
+    (start, end)
+}
+
+// The decimal integer in `bytes[start..end]`: an optional `+` or `-`, then
+// one or more digits. Every `i64` parses, `-9223372036854775808` included.
+public func parse_i64(bytes: [u8], start: usize, end: usize) -> Result[i64, ParseError] {
+    var i = start
+    var negative = false
+    if i < end && (bytes[i] == 43 || bytes[i] == 45) {
+        negative = bytes[i] == 45
+        i += 1
+    }
+    if i >= end {
+        return Result.Err(ParseError.Empty)
+    }
+    // Accumulated as a negative number, which has room for the minimum.
+    let min: i64 = -9223372036854775807 - 1
+    var value: i64 = 0
+    while i < end {
+        let b = bytes[i]
+        if !is_digit(b) {
+            return Result.Err(ParseError.InvalidDigit(i))
+        }
+        let digit = (b - 48) as i64
+        // value * 10 - digit >= min, without overflowing to find out.
+        if value < (min + digit) / 10 {
+            return Result.Err(ParseError.Overflow)
+        }
+        value = value * 10 - digit
+        i += 1
+    }
+    if negative {
+        Result.Ok(value)
+    } else if value == min {
+        Result.Err(ParseError.Overflow)
+    } else {
+        Result.Ok(-value)
+    }
+}

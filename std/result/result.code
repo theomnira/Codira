@@ -1,0 +1,150 @@
+// =============================================================================
+// std/result/result.code — Result[T, E]: a value, or the error that stopped it
+// =============================================================================
+//
+// `Result[T, E]` is either `Ok(value)` or `Err(error)`. It is a value type:
+// a tag and the payload slots of its two variants, no allocation.
+//
+// Postfix `?` propagates an error: `r?` is the value inside `Ok`, or returns
+// the `Err` from the enclosing function, which must return a `Result` too.
+// When that function's error type is an enum with exactly one variant
+// holding this error's type, `?` wraps the error in it:
+//
+//     enum Problem { Io(FileError), Parse(ParseError) }
+//
+//     func total(path: str) -> Result[i64, Problem] {
+//         let bytes = read_file(path)?        // a FileError leaves as Problem.Io
+//         ..
+//     }
+//
+// `?` works on any enum declared `Result` with the variants `Ok(T)` and
+// `Err(E)`; this is the one the standard library uses.
+//
+// On optionals (`T?`), `?` returns `nil` early and `!` unwraps or panics; see
+// `ok`, `err` and `from_optional` to move between the two.
+// =============================================================================
+
+import root.sys.terminate.{panic};
+
+public enum Result[T, E] {
+    Ok(T)
+    Err(E)
+}
+
+extend Result[T, E] {
+    // ── Query ────────────────────────────────────────────────────────────────
+
+    // Whether this is an `Ok`.
+    public func is_ok(self) -> bool {
+        match self {
+            Result.Ok(_) -> true,
+            Result.Err(_) -> false,
+        }
+    }
+
+    // Whether this is an `Err`.
+    public func is_err(self) -> bool {
+        !self.is_ok()
+    }
+
+    // ── To optionals ─────────────────────────────────────────────────────────
+
+    // The value of an `Ok`, or `nil`.
+    public func ok(self) -> T? {
+        match self {
+            Result.Ok(value) -> value,
+            Result.Err(_) -> nil,
+        }
+    }
+
+    // The error of an `Err`, or `nil`.
+    public func err(self) -> E? {
+        match self {
+            Result.Ok(_) -> nil,
+            Result.Err(error) -> error,
+        }
+    }
+
+    // ── Extraction ───────────────────────────────────────────────────────────
+
+    // The value of an `Ok`, or `fallback`.
+    public func unwrap_or(self, fallback: T) -> T {
+        match self {
+            Result.Ok(value) -> value,
+            Result.Err(_) -> fallback,
+        }
+    }
+
+    // The value of an `Ok`, or what `recover` makes of the error.
+    public func unwrap_or_else(self, recover: func(E) -> T) -> T {
+        match self {
+            Result.Ok(value) -> value,
+            Result.Err(error) -> recover(error),
+        }
+    }
+
+    // The value of an `Ok`; panics with `message` on an `Err`.
+    public func expect(self, message: str) -> T {
+        match self {
+            Result.Ok(value) -> value,
+            Result.Err(_) -> panic(message),
+        }
+    }
+
+    // The value of an `Ok`; panics on an `Err`. Prefer `?`, `match` or
+    // `expect` with a message saying why the error cannot happen.
+    public func unwrap(self) -> T {
+        self.expect("called `unwrap` on an `Err`")
+    }
+
+    // The error of an `Err`; panics with `message` on an `Ok`.
+    public func expect_err(self, message: str) -> E {
+        match self {
+            Result.Ok(_) -> panic(message),
+            Result.Err(error) -> error,
+        }
+    }
+
+    // ── Combinators ──────────────────────────────────────────────────────────
+
+    // `Ok(transform(value))`, or the same `Err`.
+    public func map[U](self, transform: func(T) -> U) -> Result[U, E] {
+        match self {
+            Result.Ok(value) -> Result.Ok(transform(value)),
+            Result.Err(error) -> Result.Err(error),
+        }
+    }
+
+    // The same `Ok`, or `Err(transform(error))`.
+    public func map_err[F](self, transform: func(E) -> F) -> Result[T, F] {
+        match self {
+            Result.Ok(value) -> Result.Ok(value),
+            Result.Err(error) -> Result.Err(transform(error)),
+        }
+    }
+
+    // `next(value)` for an `Ok`, or the same `Err`: the step after this one,
+    // when it can fail too.
+    public func and_then[U](self, next: func(T) -> Result[U, E]) -> Result[U, E] {
+        match self {
+            Result.Ok(value) -> next(value),
+            Result.Err(error) -> Result.Err(error),
+        }
+    }
+
+    // This, if it is an `Ok`; otherwise `other`.
+    public func or(self, other: Result[T, E]) -> Result[T, E] {
+        match self {
+            Result.Ok(_) -> self,
+            Result.Err(_) -> other,
+        }
+    }
+}
+
+// `Ok(value)` for a present value, `Err(error)` for `nil`.
+public func from_optional[T, E](value: T?, error: E) -> Result[T, E] {
+    match value {
+        nil -> Result.Err(error),
+        present -> Result.Ok(present),
+    }
+}

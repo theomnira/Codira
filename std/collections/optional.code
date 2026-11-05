@@ -127,3 +127,23 @@ public func flatten[T](opt: Optional[Optional[T]], default: T) -> Optional[T] {
 // `replace`/`take` (returning both the updated Optional and the old one,
 // as a tuple `(Optional[T], Optional[T])`, which the language supports) are
 // not written.
+
+// ── To and from the language's optionals ───────────────────────────────────
+
+// The value as a `T?`: `nil` when none is present.
+public func to_native[T](opt: Optional[T]) -> T? {
+    if opt.has_value {
+        opt.value
+    } else {
+        nil
+    }
+}
+
+// A `T?` as an Optional (`default` stands in for the unused payload, see
+// `none[T]` above).
+public func from_native[T](value: T?, default: T) -> Optional[T] {
+    match value {
+        nil -> none(default),
+        present -> some(present),
+    }
+}
