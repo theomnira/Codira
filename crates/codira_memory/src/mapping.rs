@@ -199,7 +199,15 @@ pub unsafe fn field_mapping(old_ty: &Type, new_ty: &Type, diff: &[FieldDiff]) ->
         .filter_map(|diff| match diff {
             FieldDiff::Delete { index } => Some(*index),
             FieldDiff::Move { old_index, .. } => Some(*old_index),
-            FieldDiff::Edit { old_index, .. } => *old_index,
+            // An edit without an `old_index` keeps the field's index, but
+            // not necessarily its place among the fields that are kept:
+            // another field inserted before it, or a kept field moved past
+            // it, shifts it. Like a move, it is mapped at its new index.
+            FieldDiff::Edit {
+                old_index,
+                new_index,
+                ..
+            } => Some(old_index.unwrap_or(*new_index)),
             FieldDiff::Insert { .. } => None,
         })
         .collect();
@@ -231,13 +239,13 @@ pub unsafe fn field_mapping(old_ty: &Type, new_ty: &Type, diff: &[FieldDiff]) ->
                 old_index,
                 new_index,
                 ..
-            } => old_index.map(|old_index| {
+            } => {
                 let old_offset = old_fields
-                    .get(old_index)
+                    .get(old_index.unwrap_or(*new_index))
                     .map(Field::offset)
                     .expect("The old field must exist.");
-                (*new_index, resolve_edit(old_type, new_type, old_offset))
-            }),
+                Some((*new_index, resolve_edit(old_type, new_type, old_offset)))
+            }
             FieldDiff::Insert { index, new_type } => Some((
                 *index,
                 if new_type.is_struct() && !new_type.is_value_type() {
@@ -274,26 +282,6 @@ pub unsafe fn field_mapping(old_ty: &Type, new_ty: &Type, diff: &[FieldDiff]) ->
     // Add mappings for all inserted and moved fields.
     for (new_index, map) in additions {
         mapping.insert(new_index, map);
-    }
-
-    // Modify the action for edited fields.
-    for diff in diff.iter() {
-        if let FieldDiff::Edit {
-            old_type,
-            new_type,
-            old_index: None,
-            new_index,
-            ..
-        } = diff
-        {
-            let old_offset = old_fields
-                .get(*new_index)
-                .map(Field::offset)
-                .expect("The old field must exist.");
-
-            let action = mapping.get_mut(*new_index).unwrap();
-            *action = resolve_edit(old_type, new_type, old_offset);
-        }
     }
 
     let new_fields: Vec<_> = new_ty
