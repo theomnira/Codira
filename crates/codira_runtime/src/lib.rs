@@ -26,6 +26,7 @@ pub mod memtag;
 pub mod native_ai;
 pub mod native_db;
 pub mod native_fs;
+mod native_array;
 mod native_handles;
 pub mod native_hash;
 pub mod native_memory;
@@ -365,6 +366,9 @@ impl Runtime {
 
         // The functions compiled `print`/`println` calls lower to.
         options.user_functions.extend(builtins::definitions());
+
+        // Growing arrays, and the array operations generated code delegates.
+        options.user_functions.extend(native_array::functions());
 
         // Raw memory services for `std/memory/{region,page}.code`
         options.user_functions.extend(native_memory::functions());

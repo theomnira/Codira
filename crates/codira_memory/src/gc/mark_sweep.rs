@@ -230,6 +230,49 @@ where
         Ok(ArrayHandle { obj: header })
     }
 
+    /// Makes room in the array `handle` for at least `min_capacity`
+    /// elements, or returns why the heap could not provide the memory.
+    ///
+    /// The capacity at least doubles (and is at least 4), so pushing `n`
+    /// elements one at a time copies O(n) elements in total. The array keeps
+    /// its handle; its elements move to a new buffer (see
+    /// `HeapInner::grow_array`). Like an allocation this is a safepoint, and
+    /// at the heap limit it collects once and retries, the array being
+    /// reachable from the caller's stack.
+    ///
+    /// # Safety
+    ///
+    /// `handle` must be a live array of this heap that no other thread
+    /// accesses during the call.
+    pub unsafe fn try_grow_array(
+        &self,
+        handle: GcPtr,
+        min_capacity: usize,
+    ) -> Result<(), AllocError> {
+        let header = header_of(handle);
+        let capacity = (*header.as_ref().data.cast::<ArrayHeader>()).capacity;
+        if min_capacity <= capacity {
+            return Ok(());
+        }
+        let new_capacity = min_capacity.max(capacity.saturating_mul(2)).max(4);
+        let grow = || unsafe { self.heap.inner.write().grow_array(header, new_capacity) };
+        let grow_or_collect = || match grow() {
+            Err(err @ AllocError::LimitExceeded { .. }) if safepoint::is_running() => self
+                .collect_stopped_then(grow)
+                .map_err(|CollectRefused| err)
+                .and_then(|(_, result)| result),
+            result => result,
+        };
+        if safepoint::is_running() {
+            safepoint::poll();
+            grow_or_collect()
+        } else if safepoint::holds_stop() {
+            grow()
+        } else {
+            safepoint::with_allocation_section(grow_or_collect)
+        }
+    }
+
     /// Allocates an object with a payload of `layout`, collecting once if
     /// the heap limit is hit and that is safe.
     #[inline]

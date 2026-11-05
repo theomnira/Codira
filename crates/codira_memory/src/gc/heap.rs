@@ -684,6 +684,66 @@ impl HeapInner {
         Ok(PayloadMigration { src, dest, release })
     }
 
+    /// Moves the payload of the array `header` to a new out-of-line buffer
+    /// with room for `new_capacity` elements, for a growing array (`push`,
+    /// `reserve`, ...).
+    ///
+    /// The array header and the `length` elements in use are copied; the
+    /// slots past the length are left uninitialized, which is sound because
+    /// nothing reads them (the collector, heap snapshots and hot-reload
+    /// migration stop at the length, and generated code checks every index
+    /// against it). An old out-of-line buffer is freed; an old inline
+    /// payload stays in its cell, unused, until the object dies. The object
+    /// keeps its address, so every handle to it stays valid.
+    ///
+    /// # Safety
+    ///
+    /// `header` must be an allocated array object of this heap, and no
+    /// other thread may access it during the call.
+    pub(crate) unsafe fn grow_array(
+        &mut self,
+        header: NonNull<ObjectHeader>,
+        new_capacity: usize,
+    ) -> Result<(), AllocError> {
+        let hdr = header.as_ptr();
+        let element = (*hdr)
+            .type_data()
+            .array_element()
+            .expect("growing an object that is not an array");
+        let old = (*hdr).data.cast::<ArrayHeader>();
+        let length = (*old).length;
+        let old_size = (*hdr).payload_size();
+        if new_capacity <= (*old).capacity {
+            return Ok(());
+        }
+        let new_layout = array_payload_layout(element, new_capacity).ok_or(AllocError::TooLarge)?;
+        let used = array_payload_layout(element, length)
+            .ok_or(AllocError::TooLarge)?
+            .size();
+        let layout = Layout::from_size_align(
+            new_layout.size().max(1),
+            new_layout.align().max(SMALL_PAYLOAD_ALIGN),
+        )
+        .map_err(|_layout_error| AllocError::TooLarge)?;
+        self.reserve(layout.size())?;
+        let buffer =
+            NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::SystemOutOfMemory {
+                requested: layout.size(),
+            })?;
+        std::ptr::copy_nonoverlapping((*hdr).data, buffer.as_ptr(), used);
+        (*buffer.as_ptr().cast::<ArrayHeader>()).capacity = new_capacity;
+        self.committed += layout.size();
+        let key = hdr as usize;
+        if let Some((previous, previous_layout)) = self.out_of_line.insert(key, (buffer, layout)) {
+            std::alloc::dealloc(previous.as_ptr(), previous_layout);
+            self.committed -= previous_layout.size();
+        }
+        (*hdr).flags |= FLAG_OUT_OF_LINE;
+        (*hdr).data = buffer.as_ptr();
+        self.global_bytes += new_layout.size() as isize - old_size as isize;
+        Ok(())
+    }
+
     /// Releases the buffers a [`PayloadMigration`] kept alive for reading.
     pub(crate) fn finish_payload_migration(&mut self, migration: PayloadMigration) {
         if let Some((buffer, layout, committed)) = migration.release {
