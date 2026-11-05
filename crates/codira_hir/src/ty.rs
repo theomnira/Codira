@@ -46,9 +46,10 @@ pub enum TyKind {
     Struct(Struct, Substitution),
 
     /// An `enum` type. A value type, laid out as a tag and payload slots
-    /// (see `code_model::EnumLayout`). The substitution is always empty:
-    /// generic enums are reported as unsupported, and the field is there so
-    /// that instantiating one later needs no new variant.
+    /// (see `code_model::EnumLayout`). The substitution holds the generic
+    /// arguments, as for a struct: `Result[i64, str]` and `Result[f64,
+    /// str]` are different types with different layouts. It is empty for
+    /// a non-generic enum.
     Enum(crate::Enum, Substitution),
 
     /// The primitive floating point type. Written as `float`.
@@ -332,16 +333,16 @@ impl Ty {
             // the tag and every payload slot -- so that the GUID changes
             // when the enum changes shape, which is what hot reloading keys
             // a re-layout on.
-            &TyKind::Enum(e, _) => {
+            TyKind::Enum(e, args) => {
                 let slots = e
-                    .layout(db)
+                    .layout_at(db, args)
                     .slots
                     .iter()
                     .map(|slot| Some(format!("{}: {}", slot.name, slot.ty.guid_string(db)?)))
                     .collect::<Option<Vec<_>>>()?;
                 Some(format!(
                     "enum {}{{tag: core::u32{}}}",
-                    e.full_name(db),
+                    crate::mono::enum_name(db, *e, args),
                     slots
                         .iter()
                         .map(|slot| format!(",{slot}"))
@@ -579,7 +580,16 @@ impl HirDisplay for Ty {
                 }
                 write!(f, "]")
             }
-            TyKind::Enum(e, _) => write!(f, "{}", e.name(f.db)),
+            TyKind::Enum(e, substitution) => {
+                write!(f, "{}", e.name(f.db))?;
+                if substitution.is_empty() {
+                    return Ok(());
+                }
+                write!(f, "[")?;
+                f.write_joined(substitution.iter(), ", ")?;
+                write!(f, "]")
+            }
+
             TyKind::Float(ty) => write!(f, "{ty}"),
             TyKind::Int(ty) => write!(f, "{ty}"),
             TyKind::Bool => write!(f, "bool"),

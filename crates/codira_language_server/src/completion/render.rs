@@ -108,7 +108,7 @@ impl<'a> Render<'a> {
         match resolution {
             ScopeDef::Local(local) => set_item_relevance(local.ty(self.ctx.db())),
             ScopeDef::ModuleDef(ModuleDef::Struct(st)) => set_item_relevance(st.ty(self.ctx.db())),
-            ScopeDef::ModuleDef(ModuleDef::Enum(e)) => set_item_relevance(e.ty()),
+            ScopeDef::ModuleDef(ModuleDef::Enum(e)) => set_item_relevance(e.ty(self.ctx.db())),
             ScopeDef::ModuleDef(ModuleDef::PrimitiveType(pt)) => {
                 set_item_relevance(pt.ty(self.ctx.db()));
             }

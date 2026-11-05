@@ -314,6 +314,14 @@ pub enum GenericDefId {
     /// A trait. Its one parameter, index 0, is `Self`: the type a method
     /// of the trait is called on, which is known only per implementation.
     TraitId(TraitId),
+    /// A generic enum: the `T, E` of `enum Result[T, E]`.
+    EnumId(EnumId),
+}
+
+impl From<EnumId> for GenericDefId {
+    fn from(id: EnumId) -> Self {
+        GenericDefId::EnumId(id)
+    }
 }
 
 impl From<TraitId> for GenericDefId {
@@ -361,6 +369,7 @@ impl TypeParamId {
             // the block itself.
             GenericDefId::ImplId(_) => None,
             GenericDefId::TraitId(_) => (index == 0).then_some(crate::name![Self]),
+            GenericDefId::EnumId(id) => db.enum_data(id).generic_params.get(index).cloned(),
         }
     }
 }

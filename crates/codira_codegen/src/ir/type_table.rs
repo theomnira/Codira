@@ -265,13 +265,16 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
         }
     }
 
-    /// Collects an enum's type and the types of its payload slots.
-    pub fn collect_enum(&mut self, hir_enum: codira_hir::Enum) {
-        self.collect_type(self.hir_types.type_id(&hir_enum.ty()));
-        for slot in hir_enum.layout(self.db).slots.iter() {
+    /// Collects an enum type's -- a non-generic enum, or an instantiated
+    /// generic one -- and the types of its payload slots.
+    pub fn collect_enum(&mut self, enum_ty: &codira_hir::Ty) {
+        self.collect_type(self.hir_types.type_id(enum_ty));
+        let layout = codira_hir::mono::enum_layout(self.db, enum_ty).expect("an enum type");
+        for slot in layout.slots.iter() {
             self.collect_type(self.hir_types.type_id(&slot.ty));
         }
     }
+
 
     /// Constructs a `TypeTable` from all *used* types.
     pub fn build(self) -> TypeTable<'ink> {

@@ -186,7 +186,7 @@ fn get_type_definition_array<'ink>(
     types
         .sorted_by_cached_key(|type_info| match type_info.interned() {
             TyKind::Struct(s, args) => mono::struct_name(db, *s, args),
-            TyKind::Enum(e, _) => e.full_name(db),
+            TyKind::Enum(e, args) => mono::enum_name(db, *e, args),
             _ => type_info.guid_string(db).unwrap_or_default(),
         })
         .map(|type_info| match type_info.interned() {
@@ -247,7 +247,7 @@ fn gen_structural_definition<'ink>(
         .guid_string(db)
         .expect("only types with a structural name are exported");
     let name = match ty.interned() {
-        TyKind::Enum(e, _) => e.full_name(db),
+        TyKind::Enum(e, args) => mono::enum_name(db, *e, args),
         _ => guid_name.clone(),
     };
     let inkwell_type = hir_types
@@ -272,8 +272,9 @@ fn gen_structural_definition<'ink>(
                 TyKind::Int(codira_hir::IntTy::usize()).intern(),
             ],
         ),
-        TyKind::Enum(e, _) => {
-            let layout = e.layout(db);
+        TyKind::Enum(e, args) => {
+            let layout = e.layout_at(db, args);
+
             (
                 std::iter::once(codira_hir::EnumLayout::TAG.to_string())
                     .chain(layout.slots.iter().map(|slot| slot.name.clone()))

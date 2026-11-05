@@ -240,6 +240,34 @@ pub fn struct_name(db: &dyn HirDatabase, strukt: Struct, args: &Substitution) ->
     name
 }
 
+/// The name an enum type is known by in generated code and to the runtime:
+/// the enum's full name, and for an instantiated generic one its arguments,
+/// `results::Result[i64, str]`. Hot reload matches an old and a new layout
+/// of a type by this name.
+pub fn enum_name(db: &dyn HirDatabase, e: crate::Enum, args: &Substitution) -> String {
+    let mut name = e.full_name(db);
+    push_args(db, &mut name, args);
+    name
+}
+
+/// The layout of the enum type `ty` (see `code_model::EnumLayout`), read
+/// through its generic arguments. `None` when `ty` is not an enum.
+pub fn enum_layout(db: &dyn HirDatabase, ty: &Ty) -> Option<Arc<crate::EnumLayout>> {
+    match ty.interned() {
+        TyKind::Enum(e, args) => Some(e.layout_at(db, args)),
+        _ => None,
+    }
+}
+
+/// The generic arguments of the enum type `ty` (empty when it is not an
+/// enum or not generic).
+pub fn enum_args(ty: &Ty) -> Substitution {
+    match ty.interned() {
+        TyKind::Enum(_, args) => args.clone(),
+        _ => Substitution::empty(),
+    }
+}
+
 /// Appends `[a, b]` for a non-empty argument list.
 fn push_args(db: &dyn HirDatabase, name: &mut String, args: &Substitution) {
     if args.is_empty() {
@@ -260,6 +288,8 @@ fn push_args(db: &dyn HirDatabase, name: &mut String, args: &Substitution) {
 fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
     match ty.interned() {
         TyKind::Struct(strukt, args) => struct_name(db, *strukt, args),
+        TyKind::Enum(e, args) => enum_name(db, *e, args),
+        TyKind::Optional(inner) => format!("{}?", type_name(db, inner)),
         TyKind::Array(element) => format!("[{}]", type_name(db, element)),
         TyKind::Channel(element) => format!("Channel[{}]", type_name(db, element)),
         TyKind::Tuple(_, elements) => {
@@ -277,8 +307,12 @@ fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
 /// How deeply `ty` nests: 1 for a type with no type inside it.
 fn type_depth(ty: &Ty) -> usize {
     let inner = match ty.interned() {
-        TyKind::Array(element) | TyKind::Channel(element) => type_depth(element),
+        TyKind::Array(element) | TyKind::Channel(element) | TyKind::Optional(element) => {
+            type_depth(element)
+        }
         TyKind::Struct(_, args)
+        | TyKind::Enum(_, args)
+
         | TyKind::Tuple(_, args)
         | TyKind::FnDef(_, args)
         | TyKind::Function(args) => args.iter().map(type_depth).max().unwrap_or(0),

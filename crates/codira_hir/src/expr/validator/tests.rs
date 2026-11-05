@@ -504,13 +504,60 @@ fn test_enum_typing_and_exhaustiveness() {
     ");
 }
 
-/// Declarations an enum cannot have yet, or ever: type parameters, braced
-/// variants, a variant name used twice, and containing itself by value.
+/// A generic enum is instantiated at every use: construction learns its
+/// arguments from the payload and the expected type, a pattern reads the
+/// payload types through the matched value's arguments, and `match` over
+/// an instantiation must cover every variant.
+#[test]
+fn test_generic_enum_typing_and_exhaustiveness() {
+    insta::assert_snapshot!(diagnostics(
+        r#"
+    enum Result[T, E] { Ok(T), Err(E) }
+    enum Maybe[T] { Just(T), Nothing }
+    struct P { x: i64 }
+
+    func ok() -> Result[i64, bool] { Result.Ok(1) }
+    func err() -> Result[i64, bool] { Result.Err(true) }
+    func wrong() -> Result[i64, bool] { Result.Err(1) }
+    func nested() -> Maybe[Maybe[i64]] { Maybe.Just(Maybe.Nothing) }
+    func f(r: Result[i64, bool], m: Maybe[P]) -> i64 {
+        let a: i64 = match r { Result.Ok(v) -> v, Result.Err(_) -> 0 };
+        let b: i64 = match r { Result.Ok(v) -> v };
+        let c: bool = match r { Result.Ok(v) -> v, Result.Err(e) -> e };
+        let d = match m { Maybe.Just(p) -> p.x, Maybe.Nothing -> 0 };
+        let e = Result.Ok(1) == Result.Err(2);
+        let g = m == m;
+        let h: Result[i64, bool] = Maybe.Nothing;
+        if let Result.Err(flag) = r { let k: bool = flag; }
+        a + b + d
+    }
+    "#,
+    ), @"
+    240..241: mismatched type
+    446..475: `match` is not exhaustive: `Result.Err(_)` is not covered; add an arm for it, or a `_ ->` arm
+    521..522: mismatched type
+    541..542: `match` arms have incompatible types: `i64` and `bool`
+    495..544: mismatched type
+    667..673: `==` compares only enums whose payloads are all numbers or `bool`s, and `Maybe` has others; `match` on it instead
+    706..719: mismatched type
+    ");
+
+}
+
+/// Declarations an enum cannot have yet, or ever: bounds on its
+/// parameters, a generic type without its arguments in a payload, braced
+/// variants, a variant name used twice, and containing itself by value --
+/// a generic one included.
 #[test]
 fn test_enum_declaration_errors() {
     insta::assert_snapshot!(diagnostics(
         r#"
     enum Option[T] { Some(T), Nothing }
+    enum Bounded[T: Shape] { One(T) }
+    trait Shape { func area(self) -> i64; }
+    enum Bare { One(Option) }
+    enum Tree[T] { Leaf, Node(Tree[T], T, Tree[T]) }
+    enum Forest[T] { Leaf(T), Node([Forest[T]]) }
     enum Dup { A, B, A }
     enum Braced { A { x: i32 } }
     enum List { Empty, More(i32, List) }
@@ -518,10 +565,12 @@ fn test_enum_declaration_errors() {
     class Holder { list: Fine }
     "#,
     ), @"
-    0..35: generic enums are not supported yet: `Option` cannot take type parameters (generic functions, structs and classes can)
-    53..54: `Dup` already has a variant called `A`
-    71..83: a variant with braced fields is not supported yet; write `A(label: Type, ..)` instead
-    86..122: `List` contains itself by value, so it would have no finite size; hold the recursive part through a `class`
+    52..57: bounds on an enum's own parameters are not supported; bound the `extend` block that needs them instead (`extend Bounded[T: Trait]`)
+    110..135: the payload type `Option[T]` mentions the generic parameter `T`, which `Bare` does not declare: a generic type needs its arguments written out, e.g. `Box[i32]` rather than `Box`
+    136..184: `Tree` contains itself by value, so it would have no finite size; hold the recursive part through a `class` or an array
+    248..249: `Dup` already has a variant called `A`
+    266..278: a variant with braced fields is not supported yet; write `A(label: Type, ..)` instead
+    281..317: `List` contains itself by value, so it would have no finite size; hold the recursive part through a `class` or an array
     ");
 }
 

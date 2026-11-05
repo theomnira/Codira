@@ -1854,8 +1854,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 | TyKind::Array(_),
                 BinaryOp::Assignment { op: None },
             ) => return self.gen_plain_assignment(lhs, rhs),
-            (TyKind::Enum(e, _), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
-                return self.gen_enum_eq(lhs, rhs, *e, negated)
+            (TyKind::Enum(..), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
+                return self.gen_enum_eq(lhs, rhs, &lhs_type.clone(), negated)
             }
             (TyKind::Optional(payload), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
                 return self.gen_optional_eq(lhs, rhs, &payload.clone(), negated)
@@ -3474,8 +3474,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     Pat::TupleStruct { args, .. } => args.clone(),
                     _ => Vec::new(),
                 };
-                let field_tys = variant.field_types(self.db);
-                let slots = variant.slots(self.db);
+                let enum_args = codira_hir::mono::enum_args(ty);
+                let field_tys = variant.field_types_at(self.db, &enum_args);
+                let slots = variant.slots_at(self.db, &enum_args);
                 for ((&arg, field_ty), slot) in args.iter().zip(field_tys.iter()).zip(slots) {
                     let field = self
                         .builder
@@ -3614,8 +3615,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     return;
                 };
                 let enum_value = value.into_struct_value();
-                let field_tys = variant.field_types(self.db);
-                let slots = variant.slots(self.db);
+                let enum_args = codira_hir::mono::enum_args(ty);
+                let field_tys = variant.field_types_at(self.db, &enum_args);
+                let slots = variant.slots_at(self.db, &enum_args);
                 for ((&arg, field_ty), slot) in args.iter().zip(field_tys.iter()).zip(slots) {
                     let field = self
                         .builder
@@ -3642,7 +3644,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             Expr::MethodCall { args, .. } => args.clone(),
             _ => Vec::new(),
         };
-        let enum_type = self.hir_types.get_enum_type(variant.parent());
+        // The construction's type is concrete here (a generic body is
+        // generated per instance), so it names the instantiation and with
+        // it the layout.
+        let enum_ty = self.infer[expr].clone();
+        let enum_args = codira_hir::mono::enum_args(&enum_ty);
+        let enum_type = self.hir_types.get_enum_type(&enum_ty);
         let tag = self
             .context
             .i32_type()
@@ -3651,7 +3658,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .builder
             .build_insert_value(enum_type.const_zero(), tag, 0, "variant")
             .expect("failed to set an enum tag");
-        for (&arg, slot) in args.iter().zip(variant.slots(self.db)) {
+        for (&arg, slot) in args.iter().zip(variant.slots_at(self.db, &enum_args)) {
             let payload = self.gen_expr(arg)?;
             value = self
                 .builder
@@ -3669,12 +3676,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         &mut self,
         lhs: ExprId,
         rhs: ExprId,
-        hir_enum: codira_hir::Enum,
+        enum_ty: &Ty,
         negated: bool,
     ) -> Option<BasicValueEnum<'ink>> {
         let lhs_value = self.gen_expr(lhs)?.into_struct_value();
         let rhs_value = self.gen_expr(rhs)?.into_struct_value();
-        let layout = hir_enum.layout(self.db);
+        let layout =
+            codira_hir::mono::enum_layout(self.db, enum_ty).expect("`==` on an enum type");
+
         let b = &self.builder;
         let field = |value: StructValue<'ink>, idx: u32| {
             b.build_extract_value(value, idx, "field")

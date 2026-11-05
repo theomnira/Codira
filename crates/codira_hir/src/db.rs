@@ -155,7 +155,11 @@ pub trait HirDatabase: DefDatabase {
     fn lower_enum(&self, def: crate::code_model::Enum) -> Arc<LowerTyMap>;
 
     #[salsa::invoke(crate::code_model::EnumLayout::enum_layout_query)]
-    fn enum_layout(&self, def: crate::code_model::Enum) -> Arc<crate::code_model::EnumLayout>;
+    fn enum_layout(
+        &self,
+        def: crate::code_model::Enum,
+        args: crate::ty::Substitution,
+    ) -> Arc<crate::code_model::EnumLayout>;
 
     #[salsa::invoke(crate::ty::callable_item_sig)]
     fn callable_sig(&self, def: CallableDef) -> FnSig;

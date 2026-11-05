@@ -140,6 +140,11 @@ pub(crate) fn instance_struct_types(
                 roots.extend(mono::struct_field_types(db, &s.ty(db)));
             }
         }
+        if let ModuleDef::Enum(e) = def {
+            if !e.is_generic(db) {
+                roots.extend(e.layout(db).slots.iter().map(|slot| slot.ty.clone()));
+            }
+        }
     }
 
     let mut found: Vec<Ty> = Vec::new();
@@ -147,7 +152,7 @@ pub(crate) fn instance_struct_types(
     while let Some(ty) = roots.pop() {
         let mut new = Vec::new();
         ty.walk(&mut |inner| {
-            if let TyKind::Struct(_, args) = inner.interned() {
+            if let TyKind::Struct(_, args) | TyKind::Enum(_, args) = inner.interned() {
                 if !args.is_empty()
                     && !mono::contains_type_param(inner)
                     && seen.insert(inner.clone())
@@ -156,9 +161,13 @@ pub(crate) fn instance_struct_types(
                 }
             }
         });
-        // The fields of a newly found instance can name further ones.
+        // The fields (or payload slots) of a newly found instance can name
+        // further ones.
         for instance in new {
-            roots.extend(mono::struct_field_types(db, &instance));
+            match mono::enum_layout(db, &instance) {
+                Some(layout) => roots.extend(layout.slots.iter().map(|slot| slot.ty.clone())),
+                None => roots.extend(mono::struct_field_types(db, &instance)),
+            }
             found.push(instance);
         }
     }
@@ -294,8 +303,11 @@ pub(crate) fn gen_file_group_ir<'ink>(
             ModuleDef::Struct(s) => {
                 type_table_builder.collect_struct(&s.ty(code_gen.db));
             }
+            // Like a generic struct, a generic enum is collected per
+            // instantiation, below.
+            ModuleDef::Enum(e) if e.is_generic(code_gen.db) => (),
             ModuleDef::Enum(e) => {
-                type_table_builder.collect_enum(e);
+                type_table_builder.collect_enum(&e.ty(code_gen.db));
             }
             ModuleDef::Function(_)
             | ModuleDef::PrimitiveType(_)
@@ -309,8 +321,13 @@ pub(crate) fn gen_file_group_ir<'ink>(
         }
     }
     for ty in &instance_types {
-        type_table_builder.collect_struct(ty);
+        if ty.as_enum().is_some() {
+            type_table_builder.collect_enum(ty);
+        } else {
+            type_table_builder.collect_struct(ty);
+        }
     }
+
     for unit in &units {
         type_table_builder.collect_fn(&unit.instance, &unit.infer);
     }

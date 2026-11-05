@@ -818,8 +818,8 @@ impl InferenceResultBuilder<'_> {
                     if lhs_is_optional {
                         self.check_optional_comparison(tgt_expr, *op, &lhs_ty, *rhs);
                     }
-                    if let TyKind::Enum(e, _) = self.normalize(&lhs_ty).interned() {
-                        self.check_enum_comparison(tgt_expr, *op, *e);
+                    if let TyKind::Enum(e, args) = self.normalize(&lhs_ty).interned().clone() {
+                        self.check_enum_comparison(tgt_expr, *op, e, &args);
                     }
                     op::binary_op_return_ty(*op, rhs_ty)
                 }
@@ -994,7 +994,7 @@ impl InferenceResultBuilder<'_> {
             }
             Expr::Field { expr, name } => {
                 if let Some(e) = self.enum_named_by(tgt_expr, *expr) {
-                    self.infer_variant_construction(tgt_expr, *expr, e, name, None)
+                    self.infer_variant_construction(tgt_expr, *expr, e, name, None, expected)
                 } else {
                     let receiver_ty = self.infer_expr(*expr, &Expectation::none());
                     if let Some((field_ty, is_visible)) =
@@ -1297,7 +1297,7 @@ impl InferenceResultBuilder<'_> {
         receiver: ExprId,
         args: &[ExprId],
         method_name: &Name,
-        _expected: &Expectation,
+        expected: &Expectation,
     ) -> Ty {
         // If the method name is missing from the AST we simply return an error type
         // since an error would have already been emitted by the AST generation.
@@ -1317,7 +1317,9 @@ impl InferenceResultBuilder<'_> {
         // is inferred as a value: a record struct's name is not a value, so
         // inferring it would report a spurious "mismatched struct literal"
         // and then a "method does not exist" on top of it.
-        if let Some(ty) = self.infer_static_member_call(tgt_expr, receiver, args, method_name) {
+        if let Some(ty) =
+            self.infer_static_member_call(tgt_expr, receiver, args, method_name, expected)
+        {
             return ty;
         }
 
@@ -1500,6 +1502,7 @@ impl InferenceResultBuilder<'_> {
         receiver: ExprId,
         args: &[ExprId],
         method_name: &Name,
+        expected: &Expectation,
     ) -> Option<Ty> {
         let Expr::Path(path) = &self.body[receiver] else {
             return None;
@@ -1521,7 +1524,7 @@ impl InferenceResultBuilder<'_> {
             let is_assoc_fn = e.variant(self.db, method_name).is_none()
                 && lookup_method(
                     self.db,
-                    &e.ty(),
+                    &e.ty(self.db),
                     self.module(),
                     method_name,
                     Some(AssociationMode::WithoutSelf),
@@ -1534,7 +1537,9 @@ impl InferenceResultBuilder<'_> {
                     e,
                     method_name,
                     Some(args),
+                    expected,
                 ));
+
             }
         }
 
@@ -1544,7 +1549,7 @@ impl InferenceResultBuilder<'_> {
             TypeNs::TypeAliasId(id) => type_for_def(TypableDef::TypeAlias(id.into())),
             TypeNs::PrimitiveType(id) => type_for_def(TypableDef::PrimitiveType(id.into())),
             TypeNs::SelfType(id) => self.db.type_for_impl_self(id),
-            TypeNs::EnumId(id) => Enum::from(id).ty(),
+            TypeNs::EnumId(id) => Enum::from(id).ty(self.db),
             // `T.assoc(..)`: an associated function a bound of `T`
             // declares, such as `T.default()` for `T: Defaultable`.
             TypeNs::GenericParam(param, _) => {
@@ -2259,7 +2264,7 @@ impl InferenceResultBuilder<'_> {
             // An enum's associated functions come from `extend` blocks; its
             // variants are reached through `Expr::Field`/`Expr::MethodCall`
             // (see `infer_variant_construction`), never through here.
-            TypeNs::EnumId(id) => Enum::from(id).ty(),
+            TypeNs::EnumId(id) => Enum::from(id).ty(self.db),
             // `T.method(..)` on an unconstrained type parameter needs bound
             // resolution (`where T: Trait`) to know what methods exist.
             // Bounds parse but are not yet resolved, so there is nothing to
@@ -2927,8 +2932,19 @@ impl InferenceResultBuilder<'_> {
         e: Enum,
         name: &Name,
         args: Option<&[ExprId]>,
+        expected: &Expectation,
     ) -> Ty {
-        let enum_ty = e.ty();
+        // `Result.Ok(1)` names `Result`, which is `Result[T, E]` with the
+        // enum's own parameters; each construction gets fresh variables for
+        // them, which the payload and the expected type then decide
+        // (`Result.Err(e)` returned from a `-> Result[i64, str]` learns its
+        // `T` only from the return type).
+        let enum_ty = self.instantiate_type(&e.ty(self.db));
+        if matches!(self.normalize(&expected.ty).interned(), TyKind::Enum(other, _) if *other == e)
+        {
+            self.unify(&enum_ty, &expected.ty);
+        }
+        let enum_args = crate::mono::enum_args(&enum_ty);
         // The receiver names the type; give it that type so no later stage
         // sees `Unknown` there.
         self.set_expr_type(receiver, enum_ty.clone());
@@ -2943,7 +2959,7 @@ impl InferenceResultBuilder<'_> {
             }
             return error_type();
         };
-        let field_tys = variant.field_types(self.db);
+        let field_tys = variant.field_types_at(self.db, &enum_args);
         let shown = variant.display(self.db).to_string();
         match (args, variant.kind(self.db)) {
             (None, VariantKind::Unit) | (Some(_), VariantKind::Tuple | VariantKind::Record)
@@ -3054,9 +3070,17 @@ impl InferenceResultBuilder<'_> {
                 return;
             }
         };
-        match ty.interned() {
-            TyKind::Enum(e, _) if *e == variant.parent() => {}
-            TyKind::Unknown => {}
+        // The value's type decides the payload types: in a `Result[i64,
+        // str]`, `Result.Ok(n)` binds an `i64`. A value whose type is not
+        // known yet is given the enum's type, with fresh arguments.
+        let enum_args = match self.normalize(ty).interned().clone() {
+            TyKind::Enum(e, args) if e == variant.parent() => args,
+            TyKind::Unknown => Substitution::empty(),
+            TyKind::InferenceVar(InferTy::Type(_)) => {
+                let fresh = self.instantiate_type(&variant.parent().ty(self.db));
+                self.unify(&fresh, ty);
+                crate::mono::enum_args(&fresh)
+            }
             _ => {
                 self.diagnostics.push(InferenceDiagnostic::ExprError {
                     id: pat.into(),
@@ -3071,9 +3095,9 @@ impl InferenceResultBuilder<'_> {
                 }
                 return;
             }
-        }
+        };
         let shown = variant.display(self.db).to_string();
-        let field_tys = variant.field_types(self.db);
+        let field_tys = variant.field_types_at(self.db, &enum_args);
         let unit = variant.kind(self.db) == VariantKind::Unit;
         if has_parens && unit {
             self.diagnostics.push(InferenceDiagnostic::ExprError {
@@ -3107,7 +3131,14 @@ impl InferenceResultBuilder<'_> {
     /// `==` and `!=` on enums: equal when the variants are and their
     /// payloads are. Only enums whose payloads are all numbers or `bool`s
     /// compare (see `Enum::is_comparable`); enums are not ordered.
-    fn check_enum_comparison(&mut self, tgt_expr: ExprId, op: BinaryOp, e: Enum) {
+    fn check_enum_comparison(
+        &mut self,
+        tgt_expr: ExprId,
+        op: BinaryOp,
+        e: Enum,
+        args: &Substitution,
+    ) {
+        let args: Substitution = args.iter().map(|arg| self.normalize(arg)).collect();
         let BinaryOp::CmpOp(cmp) = op else {
             return;
         };
@@ -3119,7 +3150,13 @@ impl InferenceResultBuilder<'_> {
                     "enums (`{name}`) are not ordered; compare them with `==`/`!=` or `match` on them"
                 ),
             });
-        } else if !e.is_comparable(self.db) {
+        } else if !e.is_comparable(self.db, &args, |ty| {
+            matches!(
+                ty.interned(),
+                TyKind::InferenceVar(InferTy::Int(_) | InferTy::Float(_))
+            )
+        }) {
+
             self.diagnostics.push(InferenceDiagnostic::ExprError {
                 id: tgt_expr.into(),
                 message: format!(

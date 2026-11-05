@@ -131,10 +131,14 @@ pub(crate) fn gen_file_ir<'ink>(
         .flat_map(|module| module.declarations(code_gen.db))
     {
         if let ModuleDef::Enum(e) = def {
+            // A generic enum is defined per instantiation, below.
+            if e.is_generic(code_gen.db) {
+                continue;
+            }
             // An enum is exported by the module that declares it, like a
             // struct, together with the tuples and optionals its payloads
             // use.
-            type_definitions.insert(e.ty());
+            type_definitions.insert(e.ty(code_gen.db));
             for slot in e.layout(code_gen.db).slots.iter() {
                 collect_structural_types(code_gen.db, &slot.ty, &mut type_definitions);
             }
@@ -160,7 +164,13 @@ pub(crate) fn gen_file_ir<'ink>(
                 collect_structural_types(code_gen.db, &field_ty, &mut type_definitions);
             }
         }
+        if let Some(layout) = mono::enum_layout(code_gen.db, ty) {
+            for slot in layout.slots.iter() {
+                collect_structural_types(code_gen.db, &slot.ty, &mut type_definitions);
+            }
+        }
     }
+
 
     // Tuples, optionals and `str` have no declaration to export them from,
     // but the runtime needs their layout as soon as one crosses into it --
