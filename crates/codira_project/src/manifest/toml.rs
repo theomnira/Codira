@@ -69,6 +69,11 @@ pub struct TomlProject {
     name: String,
     version: semver::Version,
     authors: Option<Vec<String>>,
+    /// An SPDX license expression, e.g. `"Apache-2.0 OR MIT"`.
+    license: Option<String>,
+    /// A license text shipped with the package, relative to the manifest.
+    #[serde(rename = "license-file")]
+    license_file: Option<String>,
 }
 
 /// The `[eidos]` table: bounds on the mid-level optimizer.
@@ -162,6 +167,8 @@ impl TomlManifest {
             },
             metadata: ManifestMetadata {
                 authors: self.package.authors.unwrap_or_default(),
+                license: self.package.license,
+                license_file: self.package.license_file.map(Into::into),
             },
             eidos: self.eidos.unwrap_or_default().into_settings()?,
             native: self

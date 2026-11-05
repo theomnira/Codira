@@ -82,6 +82,10 @@ impl NativeSources {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManifestMetadata {
     pub authors: Vec<String>,
+    /// `license` in `[package]`: an SPDX license expression, as written.
+    pub license: Option<String>,
+    /// `license-file` in `[package]`, relative to the manifest's directory.
+    pub license_file: Option<PathBuf>,
 }
 
 /// The package's `[eidos]` table: bounds on the mid-level optimizer. A key
@@ -208,6 +212,25 @@ mod tests {
         assert_eq!(format!("{}", manifest.package_id()), "test v0.2.0");
         assert_eq!(manifest.eidos(), &crate::EidosSettings::default());
         assert!(manifest.native().is_empty());
+        assert_eq!(manifest.metadata().license, None);
+        assert_eq!(manifest.metadata().license_file, None);
+    }
+
+    #[test]
+    fn license_fields() {
+        let manifest = Manifest::from_str(
+            "[package]\nname = \"t\"\nversion = \"0.1.0\"\nlicense = \"Apache-2.0 OR MIT\"\n\
+             license-file = \"LICENSE\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            manifest.metadata().license.as_deref(),
+            Some("Apache-2.0 OR MIT")
+        );
+        assert_eq!(
+            manifest.metadata().license_file.as_deref(),
+            Some(std::path::Path::new("LICENSE"))
+        );
     }
 
     fn with_eidos(table: &str) -> Result<Manifest, anyhow::Error> {

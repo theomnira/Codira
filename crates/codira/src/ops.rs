@@ -6,6 +6,7 @@
 //! - Part of the Codira compiler and runtime toolchain.
 pub mod api_diff;
 pub mod attest;
+pub mod audit;
 pub mod bench;
 mod bench_stats;
 pub mod bindgen;

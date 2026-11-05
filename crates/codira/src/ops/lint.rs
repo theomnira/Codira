@@ -549,7 +549,7 @@ const C_BLOCKING: &[&str] = &[
 ];
 
 /// The attributes of a function as written: `noalloc`, `envelope`, ...
-fn attribute_names(node: &SyntaxNode) -> Vec<(String, String)> {
+pub(crate) fn attribute_names(node: &SyntaxNode) -> Vec<(String, String)> {
     node.children()
         .filter(|c| c.kind() == SyntaxKind::ATTRIBUTE_LIST)
         .flat_map(|l| l.children().collect::<Vec<_>>())

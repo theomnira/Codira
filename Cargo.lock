@@ -603,6 +603,7 @@ dependencies = [
  "pretty_env_logger",
  "semver",
  "serde_json",
+ "sha2 0.11.1",
  "tempfile",
 ]
 

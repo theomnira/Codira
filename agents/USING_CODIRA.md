@@ -2306,6 +2306,37 @@ the same machine. The call overhead depends on how the `codira` binary
 itself was built (a debug build of the compiler is slower). Allocation and
 memory use are not measured.
 
+### Supply chain: `codira audit`
+
+`codira audit` reports what a package brings in besides its own Codira code
+and what in it is trusted rather than checked:
+
+- licence: `license` (an SPDX expression) and `license-file` from
+  `[package]` in `codira.toml`, with the licence file's SHA-256;
+- each `[native]` source with its language, size, SHA-256 and the
+  `SPDX-License-Identifier` it declares in its first 40 lines; the include
+  directories, defines and flags it is compiled with; and the system
+  libraries linked by name;
+- every `extern` declaration by ABI (`"C"`, `codira-intrinsic`, or none),
+  and its unchecked trusted assertions: `@noalloc`, `@nopanic`, `@noblock`,
+  `@realtime` and `@envelope(..)` on an extern, and each `@asm` variant
+  (whose `pure: true` is an assertion too). The effect analysis takes each
+  one at its word; this is the list a reviewer has to check by hand;
+- the standard-library modules the package imports, directly or through
+  other standard-library modules.
+
+It fails when something the manifest names does not exist (a native source,
+an include directory, the licence file). `--strict` also fails when the
+package declares no licence or a native source declares no SPDX identifier;
+without it those are notes. `--json` prints the report as JSON (schema
+`codira-audit/1`). Nothing is built.
+
+Limits: the SPDX identifier is what a file says, not a licence analysis of
+its contents; system libraries named in `libs` and the symbols an `extern`
+resolves to at link or load time are listed, not inspected; Codira packages
+have no package dependencies today, so the standard library is the only
+Codira code from outside the package.
+
 ---
 
 ## 5. End-to-end status today
