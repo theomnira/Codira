@@ -18,9 +18,7 @@ pub(crate) fn uses_strings(body: &Body, infer: &InferenceResult, expr: ExprId) -
     }
     match &body[expr] {
         Expr::BinaryOp {
-            lhs,
-            op: Some(op),
-            ..
+            lhs, op: Some(op), ..
         } => {
             !matches!(op, BinaryOp::Assignment { op: None } | BinaryOp::LogicOp(_))
                 && matches!(infer[*lhs].interned(), TyKind::String | TyKind::Str)

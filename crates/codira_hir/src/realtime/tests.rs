@@ -1060,7 +1060,9 @@ fn string_operations_count_as_allocating_or_panicking() {
     "#,
     );
     assert!(
-        diags.contains("`label` is `@noalloc` but allocates here: `to_string` allocates a new string or array"),
+        diags.contains(
+            "`label` is `@noalloc` but allocates here: `to_string` allocates a new string or array"
+        ),
         "{diags}"
     );
     assert!(

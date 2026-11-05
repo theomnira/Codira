@@ -86,7 +86,9 @@ extern "C" fn arg_len(index: i64) -> i64 {
 
 /// Byte `at` of argument `index`, or -1 when either is out of range.
 extern "C" fn arg_byte(index: i64, at: i64) -> i32 {
-    let arg = usize::try_from(index).ok().and_then(|index| arguments().get(index));
+    let arg = usize::try_from(index)
+        .ok()
+        .and_then(|index| arguments().get(index));
     let at = usize::try_from(at).ok();
     match (arg, at) {
         (Some(arg), Some(at)) => arg.as_bytes().get(at).map_or(-1, |&b| i32::from(b)),
@@ -100,9 +102,7 @@ fn environment() -> &'static [String] {
     static ENV: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     ENV.get_or_init(|| {
         std::env::vars_os()
-            .map(|(name, value)| {
-                format!("{}={}", name.to_string_lossy(), value.to_string_lossy())
-            })
+            .map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy()))
             .collect()
     })
 }
@@ -122,7 +122,9 @@ extern "C" fn env_entry_len(index: i64) -> i64 {
 
 /// Byte `at` of environment entry `index`, or -1.
 extern "C" fn env_entry_byte(index: i64, at: i64) -> i32 {
-    let entry = usize::try_from(index).ok().and_then(|index| environment().get(index));
+    let entry = usize::try_from(index)
+        .ok()
+        .and_then(|index| environment().get(index));
     match (entry, usize::try_from(at).ok()) {
         (Some(entry), Some(at)) => entry.as_bytes().get(at).map_or(-1, |&b| i32::from(b)),
         _ => -1,

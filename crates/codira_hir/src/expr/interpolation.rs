@@ -68,9 +68,7 @@ fn pieces(inner: &str) -> Option<Vec<Piece>> {
                 let parts: Vec<String> = hole.trim().split('.').map(str::to_owned).collect();
                 let is_name = |part: &String| {
                     let mut chars = part.chars();
-                    chars
-                        .next()
-                        .is_some_and(|c| c.is_alphabetic() || c == '_')
+                    chars.next().is_some_and(|c| c.is_alphabetic() || c == '_')
                         && chars.all(|c| c.is_alphanumeric() || c == '_')
                 };
                 if !parts.iter().all(is_name) {

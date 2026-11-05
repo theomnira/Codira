@@ -2176,7 +2176,9 @@ impl InferenceResultBuilder<'_> {
                 }
                 ty
             }
-            BuiltinFn::String(op @ StringOp::FromUtf8) => self.infer_string_free_fn(tgt_expr, op, args),
+            BuiltinFn::String(op @ StringOp::FromUtf8) => {
+                self.infer_string_free_fn(tgt_expr, op, args)
+            }
             BuiltinFn::ArrayLen
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen

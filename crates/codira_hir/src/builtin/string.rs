@@ -97,11 +97,7 @@ impl StringOp {
         if name == "to_string" {
             return matches!(
                 receiver,
-                TyKind::String
-                    | TyKind::Str
-                    | TyKind::Int(_)
-                    | TyKind::Float(_)
-                    | TyKind::Bool
+                TyKind::String | TyKind::Str | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool
             )
             .then_some(ToString);
         }
@@ -282,10 +278,25 @@ mod tests {
         );
         let count = |needle: &str| diags.matches(needle).count();
         assert_eq!(count("cannot apply binary operator"), 2, "{diags}");
-        assert_eq!(count("`find` takes a `String` or a `str`, not `"), 1, "{diags}");
-        assert_eq!(count("takes 1 parameters but 0 parameters was supplied"), 1, "{diags}");
-        assert_eq!(count("takes 2 parameters but 1 parameters was supplied"), 1, "{diags}");
-        assert!(diags.contains("method `to_string` does not exist"), "{diags}");
+        assert_eq!(
+            count("`find` takes a `String` or a `str`, not `"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("takes 1 parameters but 0 parameters was supplied"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("takes 2 parameters but 1 parameters was supplied"),
+            1,
+            "{diags}"
+        );
+        assert!(
+            diags.contains("method `to_string` does not exist"),
+            "{diags}"
+        );
         // `string_from_utf8(s)` and `let i: String = 5`; the `str` assigned
         // to a `String` converts.
         assert_eq!(count("mismatched type"), 2, "{diags}");

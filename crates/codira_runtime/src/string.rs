@@ -428,7 +428,10 @@ unsafe fn string_array(
 
 /// The byte range of `piece`, a subslice of `whole`.
 fn range_in(whole: &str, piece: &str) -> (usize, usize) {
-    (piece.as_ptr() as usize - whole.as_ptr() as usize, piece.len())
+    (
+        piece.as_ptr() as usize - whole.as_ptr() as usize,
+        piece.len(),
+    )
 }
 
 /// `s.split(sep)`: the pieces of `s` between the occurrences of `sep`, as
@@ -584,7 +587,13 @@ extern "C" fn string_repeat(
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), target.add(index * len), len);
         }
         header(value.buf).length.store(total, Ordering::Release);
-        write(out, RawString { len: total, ..value });
+        write(
+            out,
+            RawString {
+                len: total,
+                ..value
+            },
+        );
     }
 }
 
@@ -602,7 +611,13 @@ fn index_text(index: u64, signed: u8) -> String {
 /// travel as 64 bits plus their signedness, so `-1` reads as `-1`. The same
 /// decision as `str::get(start..end).is_some()` (checked against it by the
 /// property tests below).
-pub fn slice_error(whole: &str, start: u64, start_signed: u8, end: u64, end_signed: u8) -> Option<String> {
+pub fn slice_error(
+    whole: &str,
+    start: u64,
+    start_signed: u8,
+    end: u64,
+    end_signed: u8,
+) -> Option<String> {
     let negative = |value: u64, signed: u8| signed != 0 && (value as i64) < 0;
     let len = whole.len();
     let range = || {
@@ -627,7 +642,10 @@ pub fn slice_error(whole: &str, start: u64, start_signed: u8, end: u64, end_sign
     }
     for index in [start as usize, end as usize] {
         if !whole.is_char_boundary(index) {
-            let char_start = (0..index).rev().find(|&i| whole.is_char_boundary(i)).unwrap_or(0);
+            let char_start = (0..index)
+                .rev()
+                .find(|&i| whole.is_char_boundary(i))
+                .unwrap_or(0);
             let ch = whole[char_start..].chars().next().unwrap_or('\u{FFFD}');
             return Some(format!(
                 "byte index {index} is not a char boundary; it is inside {ch:?} (bytes {char_start}..{})",
@@ -1172,8 +1190,24 @@ mod tests {
         /// (ASCII and not), and two-, three- and four-byte characters.
         fn char(&mut self) -> char {
             const SPECIAL: &[char] = &[
-                ' ', '\t', '\n', '\r', '\u{a0}', '\u{2003}', '\u{3000}', 'é', 'ß', 'Ω', '世', '界',
-                '\u{1F600}', '\u{10FFFF}', '\u{FFFD}', ',', 'a', 'b',
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                '\u{a0}',
+                '\u{2003}',
+                '\u{3000}',
+                'é',
+                'ß',
+                'Ω',
+                '世',
+                '界',
+                '\u{1F600}',
+                '\u{10FFFF}',
+                '\u{FFFD}',
+                ',',
+                'a',
+                'b',
             ];
             match self.below(4) {
                 0 => SPECIAL[self.below(SPECIAL.len() as u64) as usize],
@@ -1430,11 +1464,28 @@ mod tests {
             let (data, len) = (heap.data(value), value.len);
             let (n, n_len) = (needle.as_ptr(), needle.len());
             let found = |at: i64| (at >= 0).then_some(at as usize);
-            assert_eq!(found(string_find(data, len, n, n_len)), s.find(&*needle), "{case}");
-            assert_eq!(found(string_rfind(data, len, n, n_len)), s.rfind(&*needle), "{case}");
-            assert_eq!(string_contains(data, len, n, n_len) != 0, s.contains(&*needle));
-            assert_eq!(string_starts_with(data, len, n, n_len) != 0, s.starts_with(&*needle));
-            assert_eq!(string_ends_with(data, len, n, n_len) != 0, s.ends_with(&*needle));
+            assert_eq!(
+                found(string_find(data, len, n, n_len)),
+                s.find(&*needle),
+                "{case}"
+            );
+            assert_eq!(
+                found(string_rfind(data, len, n, n_len)),
+                s.rfind(&*needle),
+                "{case}"
+            );
+            assert_eq!(
+                string_contains(data, len, n, n_len) != 0,
+                s.contains(&*needle)
+            );
+            assert_eq!(
+                string_starts_with(data, len, n, n_len) != 0,
+                s.starts_with(&*needle)
+            );
+            assert_eq!(
+                string_ends_with(data, len, n, n_len) != 0,
+                s.ends_with(&*needle)
+            );
             assert_eq!(
                 string_cmp(data, len, n, n_len),
                 s.cmp(&needle) as i64,
@@ -1459,9 +1510,19 @@ mod tests {
                     0,
                 );
                 let expected: Vec<&str> = s.split(&*needle).collect();
-                assert_eq!(heap.strings(pieces), expected, "{case}: {s:?} split {needle:?}");
+                assert_eq!(
+                    heap.strings(pieces),
+                    expected,
+                    "{case}: {s:?} split {needle:?}"
+                );
             }
-            let lines = string_lines(value.buf.cast(), value.start, value.len, heap.strings, heap.alloc());
+            let lines = string_lines(
+                value.buf.cast(),
+                value.start,
+                value.len,
+                heap.strings,
+                heap.alloc(),
+            );
             assert_eq!(heap.strings(lines), s.lines().collect::<Vec<_>>(), "{case}");
 
             for (mode, expected) in [(0, s.trim()), (1, s.trim_start()), (2, s.trim_end())] {
@@ -1498,7 +1559,14 @@ mod tests {
             let (data, len) = (heap.data(value), value.len);
             let mut out = std::mem::MaybeUninit::<RawString>::uninit();
             for upper in [0u8, 1] {
-                string_change_case(data, len, upper, heap.bytes, heap.alloc(), out.as_mut_ptr().cast());
+                string_change_case(
+                    data,
+                    len,
+                    upper,
+                    heap.bytes,
+                    heap.alloc(),
+                    out.as_mut_ptr().cast(),
+                );
                 // Safety: the function wrote the slot.
                 let changed = heap.read(unsafe { out.assume_init() });
                 let expected = if upper != 0 {
@@ -1520,11 +1588,26 @@ mod tests {
                 out.as_mut_ptr().cast(),
             );
             // Safety: the function wrote the slot.
-            assert_eq!(heap.read(unsafe { out.assume_init() }), s.replace(&*from, &to), "{case}");
+            assert_eq!(
+                heap.read(unsafe { out.assume_init() }),
+                s.replace(&*from, &to),
+                "{case}"
+            );
             let times = rng.below(4);
-            string_repeat(data, len, times, 0, heap.bytes, heap.alloc(), out.as_mut_ptr().cast());
+            string_repeat(
+                data,
+                len,
+                times,
+                0,
+                heap.bytes,
+                heap.alloc(),
+                out.as_mut_ptr().cast(),
+            );
             // Safety: the function wrote the slot.
-            assert_eq!(heap.read(unsafe { out.assume_init() }), s.repeat(times as usize));
+            assert_eq!(
+                heap.read(unsafe { out.assume_init() }),
+                s.repeat(times as usize)
+            );
         }
     }
 
@@ -1533,9 +1616,28 @@ mod tests {
         let heap = Heap::new();
         let mut rng = Rng(0x5eed_0006);
         let mut samples: Vec<String> = [
-            "0", "-0", "+1", "42", "-9223372036854775808", "9223372036854775807",
-            "9223372036854775808", "", " 1", "1 ", "1e3", "2.5", "-.5", "inf", "-inf", "NaN", "nan",
-            "1_000", "0x10", "١٢", "+", "-",
+            "0",
+            "-0",
+            "+1",
+            "42",
+            "-9223372036854775808",
+            "9223372036854775807",
+            "9223372036854775808",
+            "",
+            " 1",
+            "1 ",
+            "1e3",
+            "2.5",
+            "-.5",
+            "inf",
+            "-inf",
+            "NaN",
+            "nan",
+            "1_000",
+            "0x10",
+            "١٢",
+            "+",
+            "-",
         ]
         .iter()
         .map(|s| s.to_string())
@@ -1550,14 +1652,24 @@ mod tests {
         for s in &samples {
             let value = heap.string(s);
             let mut int = 0i64;
-            let ok = string_parse_i64(heap.data(value), value.len, std::ptr::addr_of_mut!(int).cast());
+            let ok = string_parse_i64(
+                heap.data(value),
+                value.len,
+                std::ptr::addr_of_mut!(int).cast(),
+            );
             assert_eq!((ok != 0).then_some(int), s.parse::<i64>().ok(), "{s:?}");
             let mut float = 0f64;
-            let ok = string_parse_f64(heap.data(value), value.len, std::ptr::addr_of_mut!(float).cast());
+            let ok = string_parse_f64(
+                heap.data(value),
+                value.len,
+                std::ptr::addr_of_mut!(float).cast(),
+            );
             let expected = s.parse::<f64>().ok();
             assert_eq!(ok != 0, expected.is_some(), "{s:?}");
             if let Some(expected) = expected {
-                assert!(expected.to_bits() == float.to_bits() || (expected.is_nan() && float.is_nan()));
+                assert!(
+                    expected.to_bits() == float.to_bits() || (expected.is_nan() && float.is_nan())
+                );
             }
         }
         let mut out = std::mem::MaybeUninit::<RawString>::uninit();
@@ -1569,9 +1681,19 @@ mod tests {
         for value in [0.1f64, 1.0, -0.0, 1e300, f64::NAN, f64::INFINITY] {
             string_from_f64(value, heap.bytes, heap.alloc(), out.as_mut_ptr().cast());
             // Safety: the function wrote the slot.
-            assert_eq!(heap.read(unsafe { out.assume_init() }), format!("{value:?}"));
+            assert_eq!(
+                heap.read(unsafe { out.assume_init() }),
+                format!("{value:?}")
+            );
         }
-        string_from_i128(u64::MAX, u64::MAX, 1, heap.bytes, heap.alloc(), out.as_mut_ptr().cast());
+        string_from_i128(
+            u64::MAX,
+            u64::MAX,
+            1,
+            heap.bytes,
+            heap.alloc(),
+            out.as_mut_ptr().cast(),
+        );
         // Safety: the function wrote the slot.
         assert_eq!(heap.read(unsafe { out.assume_init() }), "-1");
         string_from_bool(1, heap.bytes, heap.alloc(), out.as_mut_ptr().cast());

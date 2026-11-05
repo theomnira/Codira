@@ -18,9 +18,7 @@
 //! caller's frame (`out`), which keeps the new buffer's handle on the stack,
 //! where the conservative collector sees it.
 
-use codira_hir::{
-    ArithOp, BinaryOp, CmpOp, ExprId, Ordering as CmpOrdering, StringOp, Ty, TyKind,
-};
+use codira_hir::{ArithOp, BinaryOp, CmpOp, ExprId, Ordering as CmpOrdering, StringOp, Ty, TyKind};
 use inkwell::{
     values::{BasicMetadataValueEnum, BasicValueEnum, IntValue, PointerValue, StructValue},
     IntPredicate,
@@ -72,7 +70,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// A slot in the entry block for a runtime function to write a `String`,
     /// a `usize`, an `i64` or an `f64` to.
-    fn string_slot(&self, ty: inkwell::types::BasicTypeEnum<'ink>, name: &str) -> PointerValue<'ink> {
+    fn string_slot(
+        &self,
+        ty: inkwell::types::BasicTypeEnum<'ink>,
+        name: &str,
+    ) -> PointerValue<'ink> {
         self.new_alloca_builder()
             .build_alloca(ty, name)
             .expect("failed to allocate a slot for a string result")
@@ -204,7 +206,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .into_pointer_value();
         let data = self
             .builder
-            .build_load(self.context.ptr_type(inkwell::AddressSpace::default()), handle, "string.box.data")
+            .build_load(
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                handle,
+                "string.box.data",
+            )
             .expect("failed to load a box's payload")
             .into_pointer_value();
         self.builder
@@ -633,7 +639,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// `x.to_string()`, by the type of `x`.
-    fn gen_to_string(&mut self, receiver: ExprId, value: BasicValueEnum<'ink>) -> BasicValueEnum<'ink> {
+    fn gen_to_string(
+        &mut self,
+        receiver: ExprId,
+        value: BasicValueEnum<'ink>,
+    ) -> BasicValueEnum<'ink> {
         let i64_type = self.context.i64_type();
         match self.infer[receiver].clone().interned() {
             // Immutable, so the value itself is its own copy.
@@ -789,7 +799,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                             IntPredicate::NE
                         };
                         self.builder
-                            .build_int_compare(predicate, equal, equal.get_type().const_zero(), "eq")
+                            .build_int_compare(
+                                predicate,
+                                equal,
+                                equal.get_type().const_zero(),
+                                "eq",
+                            )
                             .expect("failed to compare strings")
                             .into()
                     }
@@ -805,7 +820,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                             (CmpOrdering::Greater, false) => IntPredicate::SGE,
                         };
                         self.builder
-                            .build_int_compare(predicate, order, order.get_type().const_zero(), "cmp")
+                            .build_int_compare(
+                                predicate,
+                                order,
+                                order.get_type().const_zero(),
+                                "cmp",
+                            )
                             .expect("failed to compare strings")
                             .into()
                     }

@@ -991,10 +991,16 @@ impl Collector<'_> {
             return;
         };
         let mut values = sig.params().iter().chain(std::iter::once(sig.ret()));
-        let boxed = values.clone().filter_map(crate::Ty::as_struct)
+        let boxed = values
+            .clone()
+            .filter_map(crate::Ty::as_struct)
             .find(|s| s.data(self.db).memory_kind == StructMemoryKind::Value)
             .map(|s| format!("the struct `{}`", s.name(self.db)))
-            .or_else(|| values.any(crate::Ty::is_string).then(|| "a `String`".to_string()));
+            .or_else(|| {
+                values
+                    .any(crate::Ty::is_string)
+                    .then(|| "a `String`".to_string())
+            });
         if let Some(boxed) = boxed {
             let what = format!(
                 "the call to `{}` in another module goes through the runtime's dispatch table, \

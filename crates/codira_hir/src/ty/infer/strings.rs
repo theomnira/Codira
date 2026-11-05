@@ -117,7 +117,12 @@ impl InferenceResultBuilder<'_> {
     /// return value, an assignment to a `String`) becomes a `String` copy of
     /// its text. Records `expr` for code generation and returns `String`,
     /// or `None` when no conversion applies.
-    pub(super) fn try_convert_to_string(&mut self, expr: ExprId, ty: &Ty, expected: &Ty) -> Option<Ty> {
+    pub(super) fn try_convert_to_string(
+        &mut self,
+        expr: ExprId,
+        ty: &Ty,
+        expected: &Ty,
+    ) -> Option<Ty> {
         let expected = self.normalize(expected);
         let actual = self.normalize(ty);
         if !(expected.is_string() && matches!(actual.interned(), TyKind::Str)) {
@@ -142,7 +147,12 @@ impl InferenceResultBuilder<'_> {
             (BinaryOp::ArithOp(ArithOp::Add), TyKind::String | TyKind::Str) => {
                 TyKind::String.intern()
             }
-            (BinaryOp::Assignment { op: Some(ArithOp::Add) }, TyKind::String) => Ty::unit(),
+            (
+                BinaryOp::Assignment {
+                    op: Some(ArithOp::Add),
+                },
+                TyKind::String,
+            ) => Ty::unit(),
             (BinaryOp::CmpOp(_), TyKind::String) => TyKind::Bool.intern(),
             // `str` against `str` compares too; a `str` on the left of any
             // other operator keeps the existing rules (and their errors).

@@ -187,7 +187,10 @@ public func main() {
 }
 "#,
     );
-    assert_eq!(out, "14 9\n9 233 19990\n14 72 195 104 héllo, 世界\n97 98 99 \n");
+    assert_eq!(
+        out,
+        "14 9\n9 233 19990\n14 72 195 104 héllo, 世界\n97 98 99 \n"
+    );
 }
 
 #[test]
@@ -394,7 +397,10 @@ public func main() {
 }
 "#,
     );
-    assert!(err.contains("string slice 2..1 starts after it ends"), "{err}");
+    assert!(
+        err.contains("string slice 2..1 starts after it ends"),
+        "{err}"
+    );
     let err = run_panics(
         r#"
 public func main() {
@@ -417,7 +423,10 @@ public func main() {
 }
 "#,
     );
-    assert!(err.contains("`split` was given an empty separator"), "{err}");
+    assert!(
+        err.contains("`split` was given an empty separator"),
+        "{err}"
+    );
 }
 
 #[test]
@@ -433,7 +442,10 @@ public func main() {
 "#,
     );
     assert!(out.contains("cannot apply binary operator"), "{out}");
-    assert!(out.contains("`find` takes a `String` or a `str`, not `"), "{out}");
+    assert!(
+        out.contains("`find` takes a `String` or a `str`, not `"),
+        "{out}"
+    );
     assert!(out.contains("method `nope` does not exist"), "{out}");
 }
 
@@ -548,10 +560,24 @@ public func main() {
 }
 "#,
     );
-    assert_eq!(out.matches("error: method `to_string` does not exist on `Point`").count(), 1, "{out}");
-    assert_eq!(out.matches("error: method `to_string` does not exist on `[").count(), 1, "{out}");
+    assert_eq!(
+        out.matches("error: method `to_string` does not exist on `Point`")
+            .count(),
+        1,
+        "{out}"
+    );
+    assert_eq!(
+        out.matches("error: method `to_string` does not exist on `[")
+            .count(),
+        1,
+        "{out}"
+    );
     assert!(out.contains("error: cannot find value"), "{out}");
-    assert_eq!(out.matches("error: invalid literal value").count(), 2, "{out}");
+    assert_eq!(
+        out.matches("error: invalid literal value").count(),
+        2,
+        "{out}"
+    );
 }
 
 /// The Cranelift backend has no GC heap: a program using `String` runs on
@@ -569,10 +595,15 @@ public func main() {
     let output = codira_run(dir.path(), &["--jit"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
     assert_eq!(stdout.replace("\r\n", "\n"), "jit?\n");
     assert!(
-        stderr.contains("a `String` (strings live on the GC heap, which this backend does not reach)"),
+        stderr.contains(
+            "a `String` (strings live on the GC heap, which this backend does not reach)"
+        ),
         "{stderr}"
     );
 }

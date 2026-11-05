@@ -2795,7 +2795,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                         }
                     }
                     if param_ty.is_string() {
-                        return self.box_string((*arg).try_into().expect("a String value")).into();
+                        return self
+                            .box_string((*arg).try_into().expect("a String value"))
+                            .into();
                     }
                     *arg
                 })
