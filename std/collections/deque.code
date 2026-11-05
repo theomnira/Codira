@@ -25,7 +25,7 @@ public class Deque[T] {
 }
 
 extend Deque[T] {
-    // An empty queue. It allocates nothing until the first push.
+    // An empty queue. Its buffer is allocated by the first push.
     public func new() -> Deque[T] {
         Deque { buffer: [], head: 0, count: 0 }
     }

@@ -42,7 +42,7 @@ public class Map[K, V] {
 }
 
 extend Map[K: Hashable + Eq, V] {
-    // An empty map. It allocates nothing until the first insertion.
+    // An empty map. Its table is allocated by the first insertion.
     public func new() -> Map[K, V] {
         Map { slot_keys: [], slot_values: [], slots: [], count: 0, used: 0 }
     }

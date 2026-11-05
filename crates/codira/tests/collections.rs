@@ -372,6 +372,83 @@ public func main() {
     );
 }
 
+/// The optimized IR (`-O 2`) of the package whose `src/mod.code` is
+/// `source`.
+fn optimized_ir(source: &str) -> String {
+    let dir = package_with(source);
+    let output = Command::new(env!("CARGO_BIN_EXE_codira"))
+        .arg("build")
+        .arg("--manifest-path")
+        .arg(dir.path().join("codira.toml"))
+        .args(["--emit-ir", "-O", "2", "--color", "disable"])
+        .output()
+        .expect("failed to spawn codira");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    std::fs::read_to_string(dir.path().join("target/mod.ll")).unwrap()
+}
+
+/// The text of the IR function definition named `name`.
+fn function_ir<'a>(ir: &'a str, name: &str) -> &'a str {
+    let start = ir
+        .match_indices("define ")
+        .map(|(start, _)| start)
+        .find(|&start| {
+            ir[start..]
+                .lines()
+                .next()
+                .is_some_and(|line| line.contains(&format!("@{name}(")))
+        })
+        .unwrap_or_else(|| panic!("no `{name}` in:\n{ir}"));
+    let end = ir[start..].find("\n}").map_or(ir.len(), |e| start + e + 2);
+    &ir[start..end]
+}
+
+/// A closure literal passed to `fold`, `any` or `map` is compiled in place:
+/// at `-O 2` the loop has no call and no allocation of a function value,
+/// and the `fold` sum vectorizes like the `for` loop written by hand. A
+/// function value passed instead is called through.
+#[test]
+fn closure_literals_are_compiled_in_place() {
+    let ir = optimized_ir(
+        r#"
+public func fold_sum(xs: [i64]) -> i64 { xs.fold(0, func(acc, x) { acc + x }) }
+public func loop_sum(xs: [i64]) -> i64 {
+    var total: i64 = 0
+    for x in xs { total += x }
+    total
+}
+public func any_big(xs: [i64], limit: i64) -> bool { xs.any(func(x) { x > limit }) }
+public func doubled(xs: [i64]) -> [i64] { xs.map(func(x) { x * 2 }) }
+public func through_value(xs: [i64], f: func(i64, i64) -> i64) -> i64 { xs.fold(0, f) }
+"#,
+    );
+    for name in ["fold_sum", "loop_sum"] {
+        let body = function_ir(&ir, name);
+        assert!(
+            body.contains("llvm.vector.reduce.add") && !body.contains("call ptr"),
+            "`{name}` is not a vectorized loop:\n{body}"
+        );
+        assert!(!body.contains("fn_value"), "`{name}`:\n{body}");
+    }
+    let any = function_ir(&ir, "any_big");
+    assert!(
+        !any.contains("call ") && !any.contains("fn_value"),
+        "`any_big` calls something:\n{any}"
+    );
+    // One allocation: the result array, not a function value.
+    let map = function_ir(&ir, "doubled");
+    assert_eq!(map.matches("tail call ptr").count(), 1, "`doubled`:\n{map}");
+    assert!(!map.contains("fn_value"), "`doubled`:\n{map}");
+    assert!(
+        function_ir(&ir, "through_value").contains("fn_value.call"),
+        "a function value is called through"
+    );
+}
+
 /// A deterministic generator for the property test (SplitMix64).
 struct Rng(u64);
 
