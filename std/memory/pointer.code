@@ -2,12 +2,15 @@
 // std/memory/pointer.code — Safe pointer type
 // =============================================================================
 //
-// Pointer[T] is a safe, bounds-aware pointer to a value of type T.
-// Unlike UnsafePointer, a Pointer carries validity guarantees enforced by
-// the compiler's borrow checker:
-//   - A Pointer is always aligned for T.
-//   - A Pointer is never null unless explicitly constructed via `Pointer.null()`.
-//   - Dereferencing a null Pointer panics at runtime.
+// Pointer[T] is a typed address of a value of type T. It is NOT memory
+// safe: Codira has no borrow checker and no lifetimes, so nothing stops a
+// Pointer from outliving its referent, pointing at memory the garbage
+// collector has freed, or being misaligned. What this file intends:
+//   - Dereferencing a null Pointer panics at runtime (the read and write
+//     below check for null; `read_unchecked`/`write_unchecked` do not).
+//   - A Pointer is null only when constructed via `Pointer.null()`.
+// Everything else (alignment, liveness, bounds) is the caller's
+// responsibility, as for UnsafePointer.
 //
 // Pointer is a value type (it is itself stored inline, not heap-allocated).
 // The data it points TO lives wherever the referent was allocated.

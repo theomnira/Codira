@@ -2,14 +2,15 @@
 // std/memory/owned_pointer.code — Unique-ownership heap pointer
 // =============================================================================
 //
-// OwnedPointer[T] provides single-owner, heap-allocated storage for a
-// value of type T.  When the OwnedPointer goes out of scope, the pointee
-// is destroyed and the memory is freed automatically.
-//
-// Semantics:
-//   - NOT copyable — ownership is unique.
-//   - Movable — ownership transfers on move.
-//   - Automatically deallocates on drop.
+// OwnedPointer[T] is meant to provide single-owner, heap-allocated storage
+// for a value of type T. The language does not support what that needs:
+// it has no destructors (nothing runs when a value goes out of scope), no
+// move-only types (every struct is copied on pass) and no ownership
+// checking. So, as written:
+//   - nothing is freed automatically: the memory leaks unless the owner
+//     frees it explicitly;
+//   - copies of an OwnedPointer are not prevented, and two copies freeing
+//     the same memory is a double free.
 //
 // This is analogous to C++ `std::unique_ptr`, Rust `Box<T>`, or Swift's
 // class-based heap allocation.
@@ -17,7 +18,7 @@
 // Example:
 //   let p = OwnedPointer[i32].new(42);
 //   let val = p.read();   // 42
-//   // p is freed at end of scope
+//   // p is NOT freed at end of scope (see above)
 // =============================================================================
 
 import root.builtin.traits.*;

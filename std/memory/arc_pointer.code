@@ -2,10 +2,14 @@
 // std/memory/arc_pointer.code — Atomic reference-counted pointer
 // =============================================================================
 //
-// ArcPointer[T] provides shared ownership of a heap-allocated value of
-// type T.  The allocation is freed when the last ArcPointer clone is
-// dropped.  Reference counting is performed with atomic operations, so
-// ArcPointer is safe to share across threads.
+// ArcPointer[T] is meant to provide shared ownership of a heap-allocated
+// value of type T, with the count kept by atomic operations. The language
+// has no destructors, so no count is ever decremented automatically: the
+// counts change only through explicit `clone` and `destroy` calls, and a
+// copy of the struct (every pass copies it) is not counted. Within those
+// limits the atomic counts make concurrent `clone`/`destroy` safe; they do
+// not make the pointee itself safe to share. Shared ownership of
+// GC-managed data needs none of this: use a `class`.
 //
 // Layout:
 //   The heap block stores a control block header (strong count + weak count)
@@ -17,15 +21,15 @@
 //   +------+------+---------+
 //
 // Cloning an ArcPointer increments the strong count atomically.
-// Dropping decrements it; when it reaches zero the payload is destroyed.
+// `destroy` decrements it; when it reaches zero the payload is destroyed.
 // If weak count is also zero, the control block is freed.
 //
 // Example:
 //   let a = ArcPointer[i32].new(42);
 //   let b = a.clone();           // strong count = 2
 //   let val = b.read();          // 42
-//   // b dropped → count = 1
-//   // a dropped → count = 0 → freed
+//   b.destroy();                 // count = 1
+//   a.destroy();                 // count = 0 -> freed
 // =============================================================================
 
 import root.builtin.traits.*;
