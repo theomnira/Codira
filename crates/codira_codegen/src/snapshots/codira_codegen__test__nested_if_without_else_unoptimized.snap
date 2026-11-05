@@ -46,16 +46,14 @@ else8:                                            ; preds = %then4
   br label %if_merge9
 
 if_merge9:                                        ; preds = %else8, %then7
-  %iftmp = phi {} [ zeroinitializer, %then7 ], [ zeroinitializer, %else8 ]
   br label %if_merge5
 
 if_merge5:                                        ; preds = %if_merge9, %else
   br label %if_merge
 
 if_merge:                                         ; preds = %if_merge5, %then
-  %iftmp12 = phi {} [ zeroinitializer, %then ], [ zeroinitializer, %if_merge5 ]
-  %n13 = load i32, ptr %n, align 4
-  ret i32 %n13
+  %n12 = load i32, ptr %n, align 4
+  ret i32 %n12
 }
 
 ; == GROUP IR (mod) ====================================

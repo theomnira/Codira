@@ -40,6 +40,7 @@ use crate::{
 
 mod closures;
 mod effects;
+mod merge;
 mod propagate;
 mod safety;
 mod tasks;
@@ -295,6 +296,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         // Undo what a hardware-safety mode set up, before every return.
         self.finish_safety();
+        // One return block for an aggregate result (see `merge`).
+        self.unify_aggregate_returns();
     }
 
     /// Emits a `@runtime_checked` function's `requires` clauses at its
@@ -2893,14 +2896,10 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // Construct phi block if a value was returned
         if let Some(then_block_ir) = then_block_ir {
             match else_ir_and_block {
-                Some((Some(else_block_ir), else_block)) => {
-                    let phi = self
-                        .builder
-                        .build_phi(then_block_ir.get_type(), "iftmp")
-                        .expect("failed to build phi");
-                    phi.add_incoming(&[(&then_block_ir, then_block), (&else_block_ir, else_block)]);
-                    Some(phi.as_basic_value())
-                }
+                Some((Some(else_block_ir), else_block)) => Some(self.gen_merge(
+                    &[(then_block_ir, then_block), (else_block_ir, else_block)],
+                    "iftmp",
+                )),
                 // The `else` branch never reaches the merge block, so only
                 // the `then` branch's value arrives there.
                 Some((None, _)) => Some(then_block_ir),
@@ -3376,14 +3375,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         if self.infer[match_expr].is_empty() {
             return Some(self.gen_empty());
         }
-        let phi = self
-            .builder
-            .build_phi(incoming[0].0.get_type(), "match")
-            .expect("failed to build a match phi");
-        for (arm_value, block) in &incoming {
-            phi.add_incoming(&[(arm_value, *block)]);
-        }
-        Some(phi.as_basic_value())
+        Some(self.gen_merge(&incoming, "match"))
     }
 
     /// Emits the test of `pat` against `value` (of type `ty`), or returns

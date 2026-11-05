@@ -345,5 +345,6 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         }
         // Undo what a hardware-safety mode set up, before every return.
         self.finish_safety();
+        self.unify_aggregate_returns();
     }
 }
