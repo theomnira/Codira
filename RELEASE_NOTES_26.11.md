@@ -1,6 +1,6 @@
 # Codira 26.11 release notes
 
-Build of November 5, 2026. COMMITS_LINE
+Build of November 5, 2026: 154 commits since 26.10 (`4d27456303`), including merge commits.
 
 26.11 works in two directions. It makes the language Codira describes and the
 language a program can use closer to the same thing: traits, standard-library
@@ -225,8 +225,27 @@ Codira 26.11 is **not ready for production or mission-critical use**. What
 stands in the way:
 
 - **Platforms.**
-  - Linux and Windows: CI_LINUX_WINDOWS
-  - macOS: CI_MACOS
+  - Linux and Windows (CI run 98, commit `a980406deb`): 3,790 of 3,791
+    tests pass on Linux and 2,188 of 2,189 on Windows. The only failure on
+    each was a stale generated C header for the runtime's C API, which is
+    regenerated in this release. The C++ runtime and doctest jobs pass on
+    both.
+  - macOS (same run): 3,493 of 3,517 tests pass; 24 fail.
+    - **The stale header,** fixed as above.
+    - **17 in the Funis linker:**
+      - 13 Mach-O and iOS-simulator integration tests from its
+        mold-derived suite;
+      - its no-leak test;
+      - 3 tests of its own test harness.
+    - **6 in Codira:**
+      - C inlining into Codira callers;
+      - an FMA code-generation check;
+      - two tuple zero-overhead IR checks;
+      - the image-writer comparison;
+      - the low-level memory intrinsics test.
+
+    The C++ runtime job passes on macOS. The macOS doctest job failed while
+    installing LLVM, before any test ran.
   - The repository's nightly format check fails: the code has not been
     reformatted to its `rustfmt.toml`.
 - **Hardware never run:** ARM MTE, CHERI (targets are refused) and GPU

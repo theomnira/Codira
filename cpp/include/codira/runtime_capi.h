@@ -525,7 +525,13 @@ struct CodiraErrorHandle codira_gc_unroot(struct CodiraRuntime runtime, CodiraGc
  * Collects all memory that is no longer referenced by rooted objects. If
  * successful, `reclaimed` is set, otherwise a non-zero error handle is
  * returned. If `reclaimed` is `true`, memory was reclaimed, otherwise nothing
- * happend. This behavior will likely change in the future.
+ * happend.
+ *
+ * May be called from any thread while other threads run Codira code: the
+ * collection stops every registered thread at a safepoint and scans its
+ * stack. Threads that call Codira functions through raw function pointers
+ * are registered only between `codira_thread_enter` and
+ * `codira_thread_leave`.
  *
  * If a non-zero error handle is returned, it must be manually destructed using
  * [`codira_error_destroy`].
@@ -625,6 +631,11 @@ struct CodiraErrorHandle codira_runtime_get_type_info_by_id(struct CodiraRuntime
  * Updates the runtime corresponding to `handle`. If successful, `updated` is
  * set, otherwise a non-zero error handle is returned.
  *
+ * A reload is deferred (`updated` is `false`) while any thread is inside
+ * Codira code, as far as the runtime knows: a call made through a raw
+ * function pointer counts only between `codira_thread_enter` and
+ * `codira_thread_leave`. A later update retries it.
+ *
  * If a non-zero error handle is returned, it must be manually destructed using
  * [`codira_error_destroy`].
  *
@@ -635,6 +646,18 @@ struct CodiraErrorHandle codira_runtime_get_type_info_by_id(struct CodiraRuntime
  * data, will lead to undefined behavior.
  */
 struct CodiraErrorHandle codira_runtime_update(struct CodiraRuntime runtime, bool *updated);
+
+/**
+ * Registers the calling thread as running Codira code, until the matching
+ * [`codira_thread_leave`]. Calls nest.
+ */
+void codira_thread_enter(void);
+
+/**
+ * Ends the innermost [`codira_thread_enter`] of the calling thread. Returns
+ * `false` (and does nothing) if the thread has no registration to end.
+ */
+bool codira_thread_leave(void);
 
 /**
  * Notifies the runtime an additional references exists to the function. This
