@@ -349,9 +349,9 @@ let same = Shape.Point == p              // `==`/`!=`: see below
 - `extend Shape { func area(self) -> f64 { .. } }` adds methods and
   associated functions (`Shape.unit()` when `unit` is not a variant name).
 - A `let` or parameter pattern must be irrefutable: use `if let`/`match`.
-- Not supported (each a clear error): generic enums (`enum Option[T]`),
-  braced variants (`Circle { radius: f64 }`), an enum containing itself by
-  value (hold the recursion through a `class`), variants as function values
+- Not supported (each a clear error): braced variants
+  (`Circle { radius: f64 }`), an enum containing itself by value (hold the
+  recursion through a `class` or an array), variants as function values
   (`let f = Shape.Circle`), printing an enum, and enums in
   `codira run --jit`, the MIR/e-graph path and quantum kernels. The verifier
   treats a payload a pattern binds as an unknown value.
@@ -360,6 +360,51 @@ let same = Shape.Point == p              // `==`/`!=`: see below
   end: the tag is the declaration index, so reordering variants changes what
   stored values mean, and a value whose variant was removed makes a later
   `match` stop with "no `match` arm matches this value".
+
+#### Generic enums
+
+```codira
+enum Maybe[T] { Just(T), Nothing }
+enum Tree[T] { Leaf(T), Node([Tree[T]]) }    // recursion through an array
+
+extend Maybe[T] {
+    func or(self, fallback: T) -> T {
+        match self { Maybe.Just(v) -> v, Maybe.Nothing -> fallback }
+    }
+}
+extend Maybe[T: Shape] {                     // only where `T: Shape`
+    func area(self) -> i64 { match self { Maybe.Just(s) -> s.area(), _ -> 0 } }
+}
+
+let a = Maybe.Just(2.5)                      // Maybe[f64], from the payload
+let b: Maybe[i64] = Maybe.Nothing            // from the expected type
+let n = count([Maybe.Just(1), Maybe.Nothing])
+```
+
+- An enum takes type parameters like a struct, and is monomorphised the
+  same way: each instantiation (`Maybe[i64]`, `Maybe[str]`) is a type of
+  its own with its own layout -- a `Result[i64, i64]` needs one `i64`
+  slot, a `Result[i64, f64]` an `i64` and an `f64` slot. No boxing, no
+  allocation.
+- Arguments are written in type position only (`Maybe[i64]`); a
+  construction learns them from its payload and the expected type, a
+  pattern from the value it matches. Everything above -- `match` with
+  exhaustiveness, `if let`, `while let`, `==` when the instantiation's
+  payloads are scalars, fields, arrays, parameters and results, modules,
+  hot reload -- works on an instantiation as on a plain enum.
+- Methods go in `extend Maybe[T] { .. }`; `extend Maybe[T: Trait]` adds
+  methods that exist only where the argument implements the trait (a call
+  on another instantiation is a bound error at the call). Bounds on the
+  enum's own parameters (`enum E[T: Shape]`) are an error: bound the
+  `extend`.
+- A value enum cannot contain itself (`enum Tree[T] { Node(Tree[T], T,
+  Tree[T]) }` has no finite size, and is an error): recurse through an
+  array (`Node([Tree[T]])`) or a `class` (`class Node[T] { value: T, next:
+  Link[T] }` with `enum Link[T] { End, More(Node[T]) }`). This is the same
+  rule as for a plain enum, and what Rust's `Box` is for.
+- To the runtime and to hot reload an instantiation is named with its
+  arguments (`results::Result[i64, str]`) and migrates by the slot rules
+  above.
 
 ### Generics
 
@@ -495,8 +540,7 @@ func fresh[T: Shape + Make](x: T) -> i64 { T.make().area() + x.area() }
   or constants, no blanket implementations (`extend T: Shape`), no
   negative or specialised implementations, and one type cannot implement
   two traits that declare a method of the same name (a type's methods
-  share one namespace). Generic enums do not exist, so `Option[T]`-style
-  traits cannot be written yet.
+  share one namespace).
 - `codira run --jit` (Cranelift) does not compile method calls or generic
   functions: it says so, and the program runs on LLVM.
 
@@ -524,6 +568,81 @@ while let v = next() { }          // loops while present
 `T?` is a value -- a present flag plus the payload, no allocation. A `T` is
 accepted wherever a `T?` is expected. `nil` needs an optional type from
 context (`let x = nil` alone is an error: annotate it).
+
+`T?` is the standard library's optional; there is no `Option[T]` enum,
+since it would add nothing `T?` lacks (`std.collections.optional`'s older
+`Optional[T]` struct converts with `to_native`/`from_native`). For "a value
+or why not", use `Result[T, E]` (next section).
+
+### Error handling: `Result` and `?`
+
+```codira
+import std.result.result.{Result}
+import std.fs.file.{read_file, FileError}
+import std.text.ascii.{next_word, parse_i64, ParseError}
+
+enum Problem { Io(FileError), Parse(ParseError) }
+
+func sum_file(path: str) -> Result[i64, Problem] {
+    let bytes = read_file(path)?              // FileError -> Problem.Io
+    var total: i64 = 0
+    var at: usize = 0
+    while let (start, end) = next_word(bytes, at) {
+        total += parse_i64(bytes, start, end)?   // ParseError -> Problem.Parse
+        at = end
+    }
+    Result.Ok(total)
+}
+
+func first_word(bytes: [u8]) -> usize? {
+    let (start, _) = next_word(bytes, 0)?     // `nil` returns `nil`
+    start
+}
+```
+
+- `Result[T, E]` (`std.result.result`) is `Ok(T)` or `Err(E)`, a generic
+  enum. Its methods: `is_ok`, `is_err`, `ok` and `err` (to `T?`/`E?`),
+  `unwrap_or`, `unwrap_or_else(func(E) -> T)`, `expect(message)` and
+  `unwrap` (panic on an `Err`), `expect_err`, `map`, `map_err`,
+  `and_then` (taking closures or named functions), `or`; and
+  `from_optional(value, error)`.
+- Postfix `?` on a `Result[T, E]` is the `T` inside an `Ok`; on an `Err`
+  it returns from the enclosing function (or closure). That function must
+  return a `Result[_, F]` of the same `Result` declaration, where either
+  `F` is `E`, or `F` is an enum with exactly one variant whose one payload
+  is an `E` -- then the error leaves wrapped in that variant
+  (`Problem.Io(e)` above). This is what Rust's `From` implementations are
+  written for, read off the declaration instead: nothing to write, decided
+  at compile time, and two variants holding the same type are an error
+  naming both rather than a choice.
+- On a `T?`, `x?` is the `T`, or returns `nil` from a function that
+  returns an optional (of any payload).
+- Anything else is a compile error saying which rule is broken: `?` on a
+  value that is neither, a function whose result is not a `Result`
+  (resp. an optional), an error type that neither matches nor is wrapped
+  by exactly one variant.
+- Which enums are a `Result`: any enum declared `Result` with exactly the
+  variants `Ok(T)` and `Err(E)` -- the standard library's, or a program's
+  own of that shape. A program's own `Result` and the standard one are
+  different types; `?` never converts between them.
+- What it costs: a tag test and a branch, the error moved into the
+  caller's `Err` (and its wrapping variant). No allocation, no call, no
+  unwinding.
+- An early return through `?` is a return, not a panic, for `@nopanic`
+  and the other effect promises. The contract verifier checks
+  `ensures` at every `?` as a return point; a postcondition about a
+  `Result` or optional result is not modelled and is reported as not
+  checkable, never passed. The information-flow checker treats `?` on a
+  secret as a branch and a return.
+- Grammar: `?` is a postfix operator like `!`, binding as tightly as a
+  call or a field access (`f(x)?.len()`). The `??` hole is an atom and can
+  never follow an expression, so after an expression `?` is always this
+  operator (`x??` is `(x?)?`); a `?` that begins a line is not postfix, so
+  a `??` on a line of its own is still a hole. `T?` is a type, parsed by
+  the type grammar.
+- Not yet: `?` in `main` (it returns nothing), a conversion other than
+  the variant wrapping above, and `codira run --jit` (Cranelift refuses
+  `?` and generic enums; the program runs on LLVM).
 
 ### `match`
 
@@ -1246,7 +1365,7 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
   (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
   which is not what a program sees).
-- **Importable today** (19 of 89 modules), each run from a program in
+- **Importable today** (22 of 92 modules), each run from a program in
   `crates/codira/tests/std_imports.rs` against independently computed
   values, except `std.memory.page` and `std.builtin.type_aliases` (check,
   build and load; not run):
@@ -1256,6 +1375,10 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     (f32 tensors and a Linear layer): wrappers over the runtime's database
     and tensor services, run by `crates/codira/tests/db_and_ai.rs`.
     Experimental; see the runtime section for their limits.
+  - `std.result.result` (`Result[T, E]` and its methods, see "Error
+    handling"), `std.fs.file` (`read_file(path) -> Result[[u8],
+    FileError]`) and `std.text.ascii` (`next_word`, and `parse_i64` with
+    a `ParseError` carrying the offending byte's index).
   - `std.bit.bit`, `std.bit.mask`: bit counts, reversal, byte swaps,
     rotations, masks and fields on `u64`/`u32`. Exact. `bit_ceil` needs a
     result that fits (`value` at most 2^63).
@@ -1287,7 +1410,8 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     rounding, `gcd`, `factorial`, classification; within 2 ulp of Rust's
     libm in the tests), `std.time.time` (durations, monotonic instants,
     wall clock, sleep), `std.complex.complex`, `std.collections.optional`
-    (a generic `Optional[T]` struct; `unwrap` of an empty one panics).
+    (a generic `Optional[T]` struct; `unwrap` of an empty one panics;
+    `to_native`/`from_native` convert to and from `T?`).
 - **Waiting for the language**: what is written against `String` (most of
   `std.format`, `std.os`, `std.pathlib`, `std.testing`, `std.sys.info`, and
   the `*_string` halves split off from the modules above:
@@ -2361,7 +2485,12 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
 - `enum` with payloads: construction, `match`/`if let`/`while let` with
   nested variant patterns (checked exhaustive), `==`, methods via `extend`,
   enums in fields, arrays, parameters and results, across modules and hot
-  reload (see "Enums & pattern matching" for the limits)
+  reload (see "Enums & pattern matching" for the limits); generic enums,
+  monomorphised per instantiation, with all of the above and bounded
+  `extend` blocks (see "Generic enums")
+- `Result[T, E]` (`std.result.result`) and postfix `?` on `Result`s and
+  optionals, wrapping an error in the caller's error enum (see "Error
+  handling")
 - generic functions, structs and classes, monomorphised per instantiation
   (see "Generics" above for the limits; generic functions are not exported
   to the host)
@@ -2377,7 +2506,8 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   `std.math.constants`, `std.math.fast`, `std.hashlib.hash`,
   `std.base64.base64`, `std.random.rng`, `std.sys.terminate`,
   `std.math.math`, `std.time.time`, `std.complex.complex`,
-  `std.collections.optional` (see "Importing the standard library" for
+  `std.collections.optional`, `std.result.result`, `std.fs.file`,
+  `std.text.ascii` (see "Importing the standard library" for
   what is loaded, how it is linked, which modules qualify and why the
   others do not yet)
 - functions returning `never`, called locally, across modules and as
@@ -2579,7 +2709,7 @@ types").
 
 Parsed but **not yet lowered** -- the compiler stops with "... is not
 supported by the code generator yet" naming the construct: postfix `^`. Not available at
-all yet: generic enums, generic traits, trait objects (dynamic dispatch),
+all yet: generic traits, trait objects (dynamic dispatch),
 `String`, module-level `let` and `var` (rejected with "module-level `let`
 is not supported yet"), in-place parameters (`inout`/`mut`/`out` and
 `mut T`/`&mut T`, rejected with "... are not supported yet"), the
