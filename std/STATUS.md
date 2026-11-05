@@ -290,7 +290,6 @@ Line numbers are as of this page's commit.
 | `std/os/path.code:9` | `PATH_SEP` is `/` on every platform. |
 | `std/memory/owned_pointer.code`, `std/memory/arc_pointer.code` | Designs that need destructors and move-only types, which the language does not have (now documented). |
 | `std/ffi/unsafe_union.code:14` | `UnsafeUnion` stores a GC byte array, so its layout is not a C union's and it cannot be passed to C. |
-| `std/.claude-flow/` | Two JSON files of an editor tool's state are tracked inside `std/`; they are not part of the library and should be removed. |
 
 ## Runtime services today
 
