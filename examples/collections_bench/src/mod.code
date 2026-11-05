@@ -1,0 +1,89 @@
+// Benchmarks of growable arrays and `Map` against Rust's `Vec` and
+// `HashMap` (`../collections_rust.rs` is the same work in Rust). Each line
+// printed is a name, the milliseconds it took and a checksum that both
+// programs agree on.
+//
+//     codira build -O 2 && codira start target/mod.codiralib main
+//     rustc -C opt-level=3 collections_rust.rs && ./collections_rust
+//
+// Results are recorded in agents/USING_CODIRA.md, "Growable arrays and
+// collections".
+
+import std.collections.map.{Map}
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(name: str, start: u64, check: i64) {
+    let ms = (now() - start) as f64 / 1000000.0
+    println(name, " ", ms, " ms (", check, ")")
+}
+
+class Rng { s: u64 }
+
+func next(r: Rng) -> u64 {
+    var x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+public func main() {
+    let n: i64 = 10000000
+
+    // 1. push 10M i64 into an empty array (no reserve)
+    var t = now()
+    let xs: [i64] = []
+    for i in 0..n { xs.push(i) }
+    report("push_10m", t, xs.len() as i64)
+
+    // 2. sum: builtin, fold with a closure, a hand-written loop, a chain
+    t = now()
+    let s1 = xs.sum()
+    report("sum_builtin", t, s1)
+    t = now()
+    let s2 = xs.fold(0, func(acc, x) { acc + x })
+    report("sum_fold_closure", t, s2)
+    t = now()
+    var s3: i64 = 0
+    for x in xs { s3 += x }
+    report("sum_for_loop", t, s3)
+    t = now()
+    var s4: i64 = 0
+    var i: usize = 0
+    while i < xs.len() { s4 += xs[i]; i += 1 }
+    report("sum_indexed_while", t, s4)
+    t = now()
+    let s5 = xs.map(func(x) { x * 2 }).filter(func(x) { x % 3 == 0 }).sum()
+    report("map_filter_sum", t, s5)
+    t = now()
+    let s6 = xs.fold(0, func(acc, x) { if (x * 2) % 3 == 0 { acc + x * 2 } else { acc } })
+    report("map_filter_sum_fused_fold", t, s6)
+
+    // 3. sort 1M random i64
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let ys: [i64] = []
+    for _ in 0..1000000 { ys.push((next(r) >> 1) as i64) }
+    t = now()
+    ys.sort()
+    report("sort_1m", t, ys[500000])
+
+    // 4. build and look up a map of 1M entries (random keys)
+    let keys: [i64] = []
+    for _ in 0..1000000 { keys.push((next(r) >> 1) as i64) }
+    t = now()
+    let m: Map[i64, i64] = Map.new()
+    for k in keys { m.insert(k, k ^ 5); }
+    report("map_insert_1m", t, m.len() as i64)
+    t = now()
+    var found: i64 = 0
+    for k in keys {
+        if let v = m.get(k) { found += v & 1 }
+    }
+    report("map_lookup_1m", t, found)
+}

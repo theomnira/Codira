@@ -191,6 +191,199 @@ An out-of-range index prints `panic at mod.code:7:13: index out of bounds: the
 length is 3 but the index is -1` to stderr and ends the program with exit
 status 101. A panic cannot be caught from Codira yet.
 
+### Growable arrays and collections
+
+`[T]` itself grows: it is Codira's `Vec`. There is no separate list type.
+
+```codira
+let xs: [i64] = []                 // empty: the object, no element buffer yet
+for i in 0..10 { xs.push(i * i) }  // amortized O(1): a full buffer doubles
+let last = xs.pop()                // i64?: nil when empty
+xs.insert(0, 100)                  // 0 <= i <= len, shifts the rest up
+let gone = xs.remove(3)            // i < len, shifts the rest down
+xs.append([7, 8])                  // another array's elements (`extend` is a keyword)
+xs.reserve(1000)                   // room for 1000 more without growing
+xs.clear()                         // length 0, capacity kept
+xs.len(); xs.capacity(); xs.is_empty(); xs.last()   // last: T?
+
+xs.contains(49); xs.index_of(49)   // bool; usize? (first match)
+xs.sort(); xs.reverse()            // in place
+xs.binary_search(49)               // usize? in a sorted array
+let part = xs[2..5]                // a copy of elements 2, 3, 4 (`..=` includes the end)
+let copy = xs.copy()
+
+let doubled = xs.map(func(x) { x * 2 })           // [i64]
+let big = xs.filter(func(x) { x > 10 })           // [i64]
+let total = xs.fold(0, func(acc, x) { acc + x })  // i64
+xs.any(func(x) { x == 4 }); xs.all(func(x) { x >= 0 })  // stop early
+xs.sum(); xs.min(); xs.max()                      // T, T?, T?
+for (i, x) in xs.enumerate() { }                  // index and element
+```
+
+- **Every index is checked**, with the source location: `insert`, `remove`
+  and slicing panic like `xs[i]` does (`panic at mod.code:5:13: index out of
+  bounds: the length is 2 but the index is 2`; a slice whose start is after
+  its end says `slice starts after its end`), exit status 101.
+- **Slicing copies.** `xs[lo..hi]` is a new array, so it can never dangle
+  when `xs` later grows or shrinks, and writing to it leaves `xs` alone. It
+  costs O(hi - lo). There is no view type.
+- **What the element type needs.** `push`, `pop`, `insert`, `remove`,
+  `append`, `map`, `filter`, `fold`, `any`, `all`, `copy`, `reverse` and
+  slicing take any `T`, in generic code too. `contains`/`index_of` need
+  integers, floats (IEEE `==`: `NaN` is never found), `bool` or `str`
+  (bytes); `sort`/`binary_search` integers, floats, `bool` or `str`;
+  `min`/`max` integers, floats or `bool` (a float `NaN` is skipped, unless
+  it is the first element); `sum` integers (wrapping) or floats (added in
+  order from 0). `binary_search` returns the index of some equal element
+  when there are several. Anything else is a compile error saying what is
+  needed. These are builtin, not trait-bounded: operators are not resolved
+  through traits, so on a type parameter they are errors too; generic code
+  uses `Eq`/`Ord` from `std.cmp.cmp` and writes the loop.
+- **`sort` is unstable** (pattern-defeating quicksort, in place, no
+  allocation, O(n log n) worst case: the runtime's Rust `sort_unstable`).
+  Floats sort by IEEE 754 total order (`-NaN < -inf < .. < -0.0 < 0.0 < ..
+  < inf < NaN`). There is no `sort_by` with a comparator yet.
+- **Closures are compiled in place.** When the argument of `map`, `filter`,
+  `fold`, `any` or `all` is a closure literal without `return`, its body is
+  generated inside the loop: no function value is created and nothing is
+  called, so `xs.fold(0, func(a, x) { a + x })` is the loop written by hand
+  (measured below). A named function (`xs.map(square)`) is called directly.
+  Any other function value is evaluated once and called through on every
+  element. A closure with `return` is an ordinary function value (`return`
+  leaves the closure).
+- **No laziness.** `xs.map(f).filter(g).sum()` builds the mapped and the
+  filtered arrays (one allocation per stage, none per element). Fuse the
+  stages into one `fold` when that matters.
+- **Changing an array while a loop runs over it** is memory-safe and
+  bounded: `for x in xs`, and the closure-taking methods, read the length
+  once before the first iteration and stop at the smaller of it and the
+  current length. An element pushed during the loop is not visited; when
+  the loop shortens the array it ends at the new end. Loop with
+  `while i < xs.len()` to see the pushed elements too.
+- **Sharing.** An array is a reference: `let ys = xs` shares one array, and
+  a function that pushes onto its parameter grows the caller's array. Use
+  `copy()` or a slice for an independent array.
+- **Effects.** `push`, `insert`, `reserve`, `append` (which can grow the
+  buffer), `copy`, `map`, `filter` and slicing (a new array) allocate, so
+  `@noalloc` rejects them; `insert`, `remove` and slicing can panic. `pop`,
+  `clear`, `contains`, `sort`, `sum`, `fold`, `any`, `all` and the rest do
+  neither, and a closure compiled in place adds only what its body does: a
+  `@noalloc @nopanic` function may call `xs.fold(0, func(a, x) { a + x })`.
+  A function value passed instead counts as unknown (every effect).
+- Not supported by `codira run --jit` (Cranelift): a program using arrays
+  says so and runs on LLVM.
+
+**Collections in the standard library** (`import std.collections.<module>`),
+built on `[T]`, all classes (assigning one shares it):
+
+```codira
+import std.collections.map.{Map}
+import std.collections.set.{Set}
+
+let ages: Map[str, i64] = Map.new()
+ages.insert("ada", 36);                  // returns the replaced value, i64?
+if let age = ages.get("ada") { println(age) }
+ages.get_or("bob", 0); ages.contains_key("ada"); ages.remove("ada")
+ages.len(); ages.keys(); ages.values(); ages.clear()
+
+let seen: Set[i64] = Set.from_array([1, 2, 3])
+seen.insert(4); seen.contains(2); seen.remove(1)   // bool each
+seen.union(other); seen.intersection(other); seen.difference(other)
+```
+
+- `Map[K, V]` (`std.collections.map`): open addressing with linear probing
+  over a power-of-two table, grown at three quarters full; keys need
+  `Hashable` (`std.hashlib.hash`) and `Eq` (`std.cmp.cmp`), which every
+  integer and float type, `bool` and `str` have; implement both for a type of
+  your own. **Not DoS-resistant**: the hashes are fixed and unseeded
+  (integers through a MurmurHash3 finalizer, `str` with FNV-1a), so whoever
+  picks the keys can make them collide.
+- `Set[T]` (`std.collections.set`) and `Counter[T]`
+  (`std.collections.counter`: `add`, `count`, `most_common`, ...) on `Map`.
+- `Deque[T]` (`std.collections.deque`): a ring buffer, `push_front`,
+  `push_back`, `pop_front`, `pop_back` (`T?`), `front`, `back`, `get`.
+- `BinaryHeap[T]` (`std.collections.binary_heap`): a max-heap, elements
+  need `Ord`; `push`, `pop` (largest first, `T?`), `peek`,
+  `to_sorted_array`, `from_array` (O(n)).
+- The static constructors take their type arguments from the expected type:
+  `let m: Map[i64, i64] = Map.new()`.
+- A `for` body, like any block, is checked against `()`: write
+  `m.insert(k, v);` (with the `;`) as the last statement of a loop body,
+  because `insert` returns the old value.
+
+**Measured** (x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores; Codira at `-O 2`
+with a release build of the compiler and runtime, Rust 1.97 at `-C
+opt-level=3`; median of 5 alternating runs, milliseconds). The programs are
+`examples/collections_bench/src/mod.code` and
+`examples/collections_bench/collections_rust.rs`; both print the same
+checksums.
+
+| work | Codira | Rust |
+|---|---:|---:|
+| push 10M `i64` onto an empty array (no `reserve`) | 42.8 | 43.2 (`Vec::push`) |
+| sum 10M: `xs.sum()` | 9.6 | 9.4 (`iter().sum()`) |
+| sum 10M: `xs.fold(0, func(a, x) { a + x })` | 9.5 | 9.4 (`iter().fold`) |
+| sum 10M: `for x in xs` | 9.0 | 9.5 (`for x in &v`) |
+| `xs.map(x * 2).filter(x % 3 == 0).sum()` | 78.9 | 15.9 (lazy chain) |
+| the same as one `fold` | 16.1 | 15.9 |
+| sort 1M random `i64` | 19.5 | 19.7 (`sort_unstable`; `sort` 29.9) |
+| `Map[i64, i64]`: insert 1M random keys | 106.2 | 89.5 (`HashMap`, SipHash); 66.1 (same hash as Codira) |
+| `Map[i64, i64]`: look the 1M keys up | 48.1 | 92.4 (SipHash); 30.8 (same hash) |
+
+- Pushing, sorting and the closure-based reductions run at Rust's speed;
+  the sums are bound by memory bandwidth (80 MB). The `fold` with a closure
+  literal compiles to the same vectorized loop as the `for` loop (checked
+  on the IR in `closure_literals_are_compiled_in_place`,
+  `crates/codira/tests/collections.rs`).
+- The chain is about 5 times slower than Rust's because each stage builds
+  its array (10M and then 10M elements allocated, zeroed and written); fused
+  into one `fold` it is on par. There are no lazy iterators.
+- `Map` is 1.6 times slower than Rust's `HashMap` with the same hash
+  function: every probe goes through the map object and three arrays
+  (bounds-checked loads of the state byte, the key and the value) where
+  `hashbrown` probes 16 control bytes at once with SIMD. Against Rust's
+  default (DoS-resistant SipHash) map, lookups are faster and insertion
+  slower.
+- What growth cost existing loops: `for x in xs` now also tests the current
+  length on every iteration. Measured against the old lowering written out
+  by hand, a loop that only reads is unchanged (9.4 vs 9.4 ms over 10M
+  elements: LLVM hoists the second length load), a loop storing to a class
+  field is within noise (29.6 vs 29.3 ms), and a loop storing into another
+  array is 6% slower (22.4 vs 21.2 ms) because the length is reloaded after
+  each store; with `CODIRA_ARRAY_TBAA=1` that loop is unchanged (17.0 vs
+  17.3 ms). Program: `examples/collections_loop_cost/src/mod.code`.
+
+### Arrays: layout, growth and the host
+
+An array value is a handle to a GC object whose first word points at the
+payload -- length, capacity, then the elements (references for class
+elements). Growing moves the payload to a buffer at least twice as big
+(the runtime's `codira.array_grow`, through the GC heap: a safepoint that
+collects at the heap limit like an allocation) and frees an old out-of-line
+buffer; the handle, so every reference to the array, stays the same.
+
+- **Why `[T]` and not a new `List[T]`:** the layout already had a capacity
+  and the handle indirection hot reload needs, so growth only replaces the
+  payload pointer. `ArrayRef` in the host API reads the same layout and is
+  unchanged (`len()`, and `capacity()`, which may now exceed it); the
+  runtime type info is unchanged; there is one array type to learn.
+- **Safety under growth:** generated code never keeps an element address
+  across anything that can grow the array -- every access reloads the
+  payload pointer after the last user code it depends on -- and the
+  collector, heap snapshots and hot-reload migration all stop at the
+  length (slots past it are never read). A host holding an `ArrayRef`
+  iterator must not call Codira code that grows that array while iterating.
+- **Hot reload, heap snapshots:** a grown array migrates and saves like any
+  array; a migration or a restore gives it a capacity equal to its length.
+- **Alias classes** (`CODIRA_ARRAY_TBAA=1`, see
+  `crates/codira_codegen/src/ir/array_tbaa.rs`) stay sound with growth and
+  are not made more conservative: lengths are now also written by `push`,
+  `pop`, `insert`, `remove`, `clear` and `append`, but with the length tag,
+  into the payload header; element accesses are still tagged only below the
+  capacity, and the handle is still written only by runtime calls, after
+  which LLVM reloads it. The capacity is loaded with the length tag (it is
+  the payload header's other word).
+
 ### Integer arithmetic, shifts and casts
 
 What each operator does, on every integer width (`i8` to `i128`, `u8` to
@@ -252,8 +445,9 @@ let y  = fma(x, w, acc)              // x * w + acc, rounded once (f32 or f64)
 if unlikely(i >= limit) { .. }       // branch weights for the optimizer
 ```
 
-- `array_filled(v, n)` is the only way to make an array whose length is not
-  written out in the source. `v` is an integer, float or `bool`; the fill is a
+- `array_filled(v, n)` makes an array of `n` copies of `v` in one
+  allocation (an array of any element type can also grow with `push`, see
+  "Growable arrays and collections"). `v` is an integer, float or `bool`; the fill is a
   counted loop that LLVM turns into a `memset` or vector stores. It allocates,
   so `@noalloc` rejects it.
 - `select(c, a, b)` takes integers, floats or `bool`s (it is a call; the
@@ -1215,6 +1409,10 @@ What counts, exactly (today's code generator and runtime):
 
 - **Allocates** (and so may also block on the heap's lock and abort when the
   heap limit or memory runs out): constructing a `class`, an array literal,
+  `array_filled`, the array methods that can grow the buffer (`push`,
+  `insert`, `reserve`, `append`) or make a new array (`copy`, `map`,
+  `filter`, slicing `xs[lo..hi]`), a closure (except one an array method
+  compiles in place, see "Growable arrays and collections"),
   `print`/`println`, `channel(n)`, `scope`, `spawn`, a channel send, `select`
   (even with `default`), opening a session (`S.open()`), and a
   call to a function of *another module* that takes or returns a value
@@ -1224,7 +1422,8 @@ What counts, exactly (today's code generator and runtime):
   `ep.choose(..)` and `offer`), `select`, the end of a `scope`, and the
   allocations above.
 - **Panics**: `a[i]` and `a[i] = v` (bounds check; `a.unchecked_get(i)` is
-  the unchecked escape hatch), integer `/` and `%` (and `/=`, `%=`), calling a
+  the unchecked escape hatch), `xs.insert(i, x)`, `xs.remove(i)` and slicing
+  (their index checks), integer `/` and `%` (and `/=`, `%=`), calling a
   `@runtime_checked` function that has `requires`, and every allocation.
   An integer division panics on a zero divisor and on a signed `MIN / -1` or
   `MIN % -1` (see "Integer arithmetic, shifts and casts"), so it only counts
@@ -1365,7 +1564,7 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
   (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
   which is not what a program sees).
-- **Importable today** (22 of 92 modules), each run from a program in
+- **Importable today** (@@IMPORTABLE@@ modules), each run from a program in
   `crates/codira/tests/std_imports.rs` against independently computed
   values, except `std.memory.page` and `std.builtin.type_aliases` (check,
   build and load; not run):
@@ -1406,6 +1605,15 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   - `std.builtin.type_aliases` (`Never`).
   - `std.sys.terminate`: `panic` (writes `panic: <message>` to standard
     error and aborts), `exit`, `abort`, `assert`, `unreachable`, `todo`.
+  - `std.cmp.cmp`: the traits `Eq` (`a.eq(b)`) and `Ord` (`a.lt(b)`) for
+    every integer and float type, `bool` and `str`, `str_compare`,
+    `min_of`/`max_of`.
+  - `std.collections.map` (`Map[K, V]`), `std.collections.set` (`Set[T]`),
+    `std.collections.counter` (`Counter[T]`), `std.collections.deque`
+    (`Deque[T]`) and `std.collections.binary_heap` (`BinaryHeap[T]`), on
+    growable arrays (see "Growable arrays and collections"). The hash
+    tables are **not DoS-resistant**. `std.hashlib.hash` gives every
+    integer and float type, `bool` and `str` a `Hashable` implementation.
   - What calls `panic`: `std.math.math` (libm-backed `sin`...`atan2`,
     rounding, `gcd`, `factorial`, classification; within 2 ulp of Rust's
     libm in the tests), `std.time.time` (durations, monotonic instants,
@@ -1416,9 +1624,10 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `std.format`, `std.os`, `std.pathlib`, `std.testing`, `std.sys.info`, and
   the `*_string` halves split off from the modules above:
   `std.base64.base64_string`, `std.hashlib.string_hash`,
-  `std.complex.complex_string`); everything built on `Pointer[T]` (every
-  collection but `optional`, and through `List`, `std.math.sequence` and
-  `std.math.polynomial`); `std.builtin.traits` (generic traits);
+  `std.complex.complex_string`); what is still written on `Pointer[T]`
+  (`std.collections.list` and `std.collections.dict`, superseded by `[T]`
+  and `Map`, `span`, `linked_list`, `bitset`, `string`, and through `List`,
+  `std.math.sequence` and `std.math.polynomial`); `std.builtin.traits` (generic traits);
   `std.sys.assert_compare` (`assert_eq` and friends: operators on a type
   parameter); `std.random.random` (a global generator: there is no
   module-level state, and a module-level `var` is rejected);
@@ -1597,7 +1806,10 @@ with a note naming what Cranelift does not compile yet. What it compiles
 means the same as on LLVM: the same division checks and panic messages,
 shift and cast semantics, argument order and float printing (see "Integer
 arithmetic, shifts and casts"); `crates/codira/tests/differential.rs` runs
-random programs on both and compares. Measured: a
+random programs on both and compares. Arrays (and so the growable-array
+methods and the collections) are not compiled by Cranelift: such a program
+runs on LLVM with the note, and the random programs of the differential
+test have no arrays. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
 build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time.
 
@@ -2477,6 +2689,14 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
 - arrays: literals, bounds-checked indexing and element assignment, `len()`,
   `unchecked_get(i)` (arrays of tuples type-check but do not link yet: the
   runtime has no type info for tuple element types)
+- growable arrays: `push`, `pop`, `insert`, `remove`, `clear`, `reserve`,
+  `append`, `contains`, `index_of`, `sort`, `binary_search`, `reverse`,
+  `copy`, slicing `xs[lo..hi]`, `map`/`filter`/`fold`/`any`/`all` with
+  closures compiled in place, `sum`/`min`/`max`, `for (i, x) in
+  xs.enumerate()`, through the GC heap, hot reload and heap snapshots (see
+  "Growable arrays and collections"; tests:
+  `crates/codira/tests/collections.rs`,
+  `crates/codira_runtime/tests/growable_arrays.rs`)
 - `array_filled(v, n)`, `select`, `fma`, `likely`/`unlikely` (see "Hot-loop
   builtins"; not supported by the Cranelift `--jit` backend, which refuses them)
 - `str` literals, and `print`/`println` (`codira run` shows the output)
@@ -2507,7 +2727,8 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   `std.base64.base64`, `std.random.rng`, `std.sys.terminate`,
   `std.math.math`, `std.time.time`, `std.complex.complex`,
   `std.collections.optional`, `std.result.result`, `std.fs.file`,
-  `std.text.ascii` (see "Importing the standard library" for
+  `std.text.ascii`, `std.cmp.cmp`, and `Map`, `Set`, `Deque`,
+  `BinaryHeap` and `Counter` in `std.collections` (see "Importing the standard library" for
   what is loaded, how it is linked, which modules qualify and why the
   others do not yet)
 - functions returning `never`, called locally, across modules and as
