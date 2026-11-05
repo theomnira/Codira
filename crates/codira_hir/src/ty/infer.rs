@@ -4061,16 +4061,27 @@ mod diagnostics {
                     field_with_same_name,
                     associated_function_with_same_name,
                 } => {
-                    let method_call = body
+                    let source = body
                         .expr_syntax(*id)
-                        .expect("expression missing from source map")
-                        .map(|expr_src| {
-                            expr_src
-                                .left()
-                                .expect("could not retrieve expression from ExprSource")
-                                .cast()
-                                .expect("could not cast expression to method call")
+                        .expect("expression missing from source map");
+                    // A call the compiler wrote -- the `to_string()` of a hole
+                    // in an interpolated literal -- points at the literal,
+                    // which is not a method call: blame the literal.
+                    let cast = source.value.clone().left().and_then(|ptr| ptr.cast());
+                    let Some(cast) = cast else {
+                        sink.push(ExprError {
+                            file,
+                            node: source
+                                .value
+                                .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr()),
+                            message: format!(
+                                "method `{method_name}` does not exist on `{}`",
+                                crate::HirDisplay::display(receiver_ty, db)
+                            ),
                         });
+                        return;
+                    };
+                    let method_call = source.map(|_| cast);
                     sink.push(MethodNotFound {
                         method_call,
                         receiver_ty: receiver_ty.clone(),

@@ -116,6 +116,12 @@ fn scan_identifier_or_keyword(c: char, cursor: &mut Cursor<'_>) -> SyntaxKind {
     match (c, cursor.current()) {
         ('_', None) => return UNDERSCORE,
         ('_', Some(c)) if !is_ident_continue(c) => return UNDERSCORE,
+        // `f"x = {x}"`: an interpolated string literal, one token.
+        ('f', Some('"')) => {
+            cursor.bump();
+            scan_string('"', cursor);
+            return STRING;
+        }
         _ => (),
     };
     cursor.bump_while(is_ident_continue);

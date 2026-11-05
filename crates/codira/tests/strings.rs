@@ -485,3 +485,71 @@ public func main() {
     );
     assert_eq!(out, "ab ab1 ab2 ab1 ab2 ab1!\n");
 }
+
+#[test]
+fn interpolated_literals() {
+    let out = run_ok(
+        r#"
+struct Point {
+    x: f64,
+    y: f64,
+}
+
+class Player {
+    var name: String,
+    var pos: Point,
+}
+
+extend Player {
+    func describe(self) -> String {
+        f"{self.name} at ({self.pos.x}, {self.pos.y})"
+    }
+}
+
+public func main() {
+    let n = 42
+    let ok = true
+    let name = "ann".to_string()
+    let p = Player { name: "bob", pos: Point { x: 1.5, y: -2.0 } }
+    println(f"n = {n}, ok = {ok}, name = {name}!")
+    println(f"{n}")
+    println(f"{{literal braces}} and \"quotes\" and {name}{name}")
+    println(p.describe())
+    println(f"")
+    var log = "".to_string()
+    for i in 0..3 {
+        log += f"[{i}]"
+    }
+    println(log)
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        "n = 42, ok = true, name = ann!\n42\n{literal braces} and \"quotes\" and annann\n\
+         bob at (1.5, -2.0)\n\n[0][1][2]\n"
+    );
+}
+
+#[test]
+fn interpolation_errors_are_reported() {
+    let out = build_fails(
+        r#"
+struct Point { x: f64 }
+
+public func main() {
+    let p = Point { x: 1.0 }
+    let xs = [1, 2]
+    println(f"p = {p}")
+    println(f"xs = {xs}")
+    println(f"missing = {nope}")
+    println(f"unbalanced {p.x")
+    println(f"call {f(1)}")
+}
+"#,
+    );
+    assert_eq!(out.matches("error: method `to_string` does not exist on `Point`").count(), 1, "{out}");
+    assert_eq!(out.matches("error: method `to_string` does not exist on `[").count(), 1, "{out}");
+    assert!(out.contains("error: cannot find value"), "{out}");
+    assert_eq!(out.matches("error: invalid literal value").count(), 2, "{out}");
+}

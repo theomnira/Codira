@@ -33,6 +33,7 @@ use crate::{
 };
 
 pub(crate) mod effects;
+mod interpolation;
 pub(crate) mod scope;
 pub(crate) mod session;
 mod tasks;
@@ -369,6 +370,10 @@ pub enum LiteralError {
 
     /// An escape sequence whose character is not one this language defines.
     UnknownEscape(char),
+
+    /// An interpolated literal (`f".."`) with an unbalanced brace, or a
+    /// hole that is not a name followed by fields.
+    InvalidInterpolation,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -1157,6 +1162,11 @@ impl<'a> ExprCollector<'a> {
                     }
 
                     expr_id
+                }
+                ast::LiteralKind::String(lit)
+                    if codira_syntax::AstToken::text(&lit).starts_with('f') =>
+                {
+                    self.collect_interpolated(codira_syntax::AstToken::text(&lit), syntax_ptr)
                 }
                 ast::LiteralKind::String(lit) => {
                     let (value, errors) = string_lit(codira_syntax::AstToken::text(&lit));
@@ -2305,7 +2315,9 @@ mod diagnostics {
                         // what `InvalidLiteral` says; the escape itself is
                         // inside the highlighted span, so the reader can see
                         // which one it was.
-                        LiteralError::InvalidByteEscape | LiteralError::UnknownEscape(_) => {
+                        LiteralError::InvalidByteEscape
+                        | LiteralError::UnknownEscape(_)
+                        | LiteralError::InvalidInterpolation => {
                             sink.push(InvalidLiteral { literal });
                         }
                     }
