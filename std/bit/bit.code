@@ -187,8 +187,9 @@ public func bit_width_u32(value: u32) -> u32 {
 // Returns the smallest power of two >= `value`.
 // bit_ceil(0) returns 1.  bit_ceil(1) returns 1.  bit_ceil(5) returns 8.
 // `value` must be at most 2^63 (2^31 for `bit_ceil_u32`): above that the
-// power of two does not fit, and the shift that would build it is by the
-// full width, which is undefined.
+// power of two does not fit. The shift that would build it is by the full
+// width, which Codira takes modulo the width, so the result is then 1, not
+// an error and not a power of two >= `value`.
 // ---------------------------------------------------------------------------
 public func bit_ceil(value: u64) -> u64 {
     if value <= 1 {
