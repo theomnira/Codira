@@ -1074,6 +1074,25 @@ impl<'ctx> Exec<'_, 'ctx> {
                 }
                 Some(self.fresh_for_ty(&self.frame.infer[expr].clone(), "closure"))
             }
+            // `x?` may return early, so it is a return point as well: the
+            // postconditions are checked there too, on every path that
+            // reaches it (whether `x` is an `Err`/`nil` is not modelled, so
+            // this covers the ones where it is). The value returned is the
+            // caller's `Err`/`nil`, which the solver does not model: a
+            // postcondition about `result` there is reported as not
+            // checkable, never passed.
+            Expr::Propagate { expr: operand } => {
+                self.eval(state, *operand)?;
+                let returned = self
+                    .frame
+                    .infer
+                    .propagation(expr)
+                    .cloned()
+                    .unwrap_or_else(|| TyKind::Unknown.intern());
+                let early = self.fresh_for_ty(&returned, "propagated");
+                self.check_return(state, early);
+                Some(self.fresh_for_ty(&self.frame.infer[expr].clone(), "value"))
+            }
             other => {
                 // Fields, indexing, literals of composite types: evaluate
                 // the operands for the obligations they carry, then forget

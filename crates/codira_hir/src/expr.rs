@@ -466,6 +466,13 @@ pub enum Expr {
     Unwrap {
         expr: ExprId,
     },
+    /// `expr?`: error propagation. The `Ok` payload of a `Result`, or an
+    /// early return of its `Err` from the enclosing function; the value
+    /// inside an optional, or an early `return nil`. See
+    /// `ty::infer::propagate` for the rules.
+    Propagate {
+        expr: ExprId,
+    },
     /// `start..end`, or `start..=end` when `inclusive`. Valid only as a
     /// `for` loop's iterable for now; there is no range value type.
     Range {
@@ -784,7 +791,8 @@ impl Expr {
             Expr::Scope { body: expr }
             | Expr::Spawn { call: expr }
             | Expr::ChannelReceive { channel: expr }
-            | Expr::Unwrap { expr } => f(*expr),
+            | Expr::Unwrap { expr }
+            | Expr::Propagate { expr } => f(*expr),
             Expr::ChannelSend { channel, value } => {
                 f(*channel);
                 f(*value);
@@ -1503,6 +1511,10 @@ impl<'a> ExprCollector<'a> {
             ast::ExprKind::TryExpr(e) => {
                 let inner = self.collect_expr_opt(e.expr());
                 self.alloc_expr(Expr::Unwrap { expr: inner }, syntax_ptr)
+            }
+            ast::ExprKind::PropagateExpr(e) => {
+                let inner = self.collect_expr_opt(e.expr());
+                self.alloc_expr(Expr::Propagate { expr: inner }, syntax_ptr)
             }
             // `x^` transfer (see spec/LANGUAGE_SPEC.md section 14) is fully
             // parsed but lowers to a `Missing` placeholder: the HIR has no

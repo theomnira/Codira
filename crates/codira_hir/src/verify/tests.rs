@@ -422,6 +422,48 @@ fn diagnostics_render_counterexamples_in_codira_syntax() {
     );
 }
 
+/// `x?` is a return point: a postcondition must hold where it returns early
+/// too, and one about a result the solver does not model (a `Result` or an
+/// optional) is reported as not checkable rather than passed.
+#[test]
+fn propagation_is_a_return_point() {
+    let source = |guard: &str| {
+        format!(
+            r#"
+    enum Result[T, E] {{ Ok(T), Err(E) }}
+    func get(x: i64) -> i64? {{ x }}
+    func check(x: i64) -> i64?
+        ensures x > 0
+    {{
+        {guard}
+        let v = get(x)?
+        if x <= 0 {{ loop {{ }} }}
+        v
+    }}
+    func whole(x: i64) -> Result[i64, bool]
+        ensures result == result
+    {{
+        Result.Ok(x)
+    }}
+    "#
+        )
+    };
+    // Only the normal return is guarded: the early one escapes.
+    let r = report(&source(""), "check");
+    let cex = refuted(&r, &ObligationKind::Postcondition).expect("the early return escapes");
+    assert!(input(cex, "x") <= 0);
+    // Guarded before the `?`, both returns hold.
+    let r = report(&source("if x <= 0 { loop { } }"), "check");
+    assert!(all_proven(&r), "{r:#?}");
+    // Not modelled: unverified, never proven.
+    let r = report(&source(""), "whole");
+    assert!(!all_proven(&r), "{r:#?}");
+    assert!(r
+        .obligations
+        .iter()
+        .any(|o| matches!(o.verdict, Verdict::Unknown(_))));
+}
+
 #[test]
 fn uncheckable_clauses_are_errors_not_silent_passes() {
     let diags = diagnostics(

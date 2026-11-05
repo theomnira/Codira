@@ -30,6 +30,8 @@ mod closures;
 mod effects;
 mod exhaustive;
 mod place_expr;
+mod propagate;
+pub use propagate::result_variants;
 mod tasks;
 mod type_variable;
 mod unify;
@@ -107,6 +109,9 @@ pub struct InferenceResult {
     /// The enum variant each `Shape.Circle(..)`/`Shape.Point` pattern
     /// matches.
     pub(crate) variant_pats: FxHashMap<PatId, EnumVariant>,
+    /// For each `x?`, the type its early return produces: the result type
+    /// of the function or closure it returns from.
+    pub(crate) propagations: FxHashMap<ExprId, Ty>,
     /// For each call of a generic function -- a free function, a method or
     /// an associated function -- the types its generic parameters stand for
     /// at that call, in the order of the callee's
@@ -231,6 +236,13 @@ impl InferenceResult {
             .map(|(_, ty)| ty)
             .chain(self.type_of_pat.iter().map(|(_, ty)| ty))
             .chain(self.optional_wraps.values())
+            .chain(self.propagations.values())
+    }
+
+    /// The type `x?` returns early with (the enclosing result type), if
+    /// `expr` is an `x?`.
+    pub fn propagation(&self, expr: ExprId) -> Option<&Ty> {
+        self.propagations.get(&expr)
     }
 
     /// The enum variant `expr` constructs, if it is `Shape.Circle(..)` or
@@ -296,6 +308,11 @@ impl InferenceResult {
                 .collect(),
             variant_exprs: self.variant_exprs.clone(),
             variant_pats: self.variant_pats.clone(),
+            propagations: self
+                .propagations
+                .iter()
+                .map(|(expr, ty)| (*expr, f(ty)))
+                .collect(),
             standard_types: InternedStandardTypes::default(),
             closures: self
                 .closures
@@ -440,6 +457,8 @@ struct InferenceResultBuilder<'a> {
     /// Variant constructions and variant patterns (see `InferenceResult`).
     variant_exprs: FxHashMap<ExprId, EnumVariant>,
     pat_variants: FxHashMap<PatId, EnumVariant>,
+    /// See [`InferenceResult::propagations`].
+    propagations: FxHashMap<ExprId, Ty>,
     /// See [`InferenceResult::instantiations`]; the callee is kept until
     /// `resolve_all` so that a parameter no argument determined can be
     /// reported by name.
@@ -477,6 +496,7 @@ impl<'a> InferenceResultBuilder<'a> {
             optional_wraps: FxHashMap::default(),
             variant_exprs: FxHashMap::default(),
             pat_variants: FxHashMap::default(),
+            propagations: FxHashMap::default(),
             instantiations: FxHashMap::default(),
             bounds: match body.owner() {
                 DefWithBodyId::FunctionId(f) => db.function_bounds(f),
@@ -899,6 +919,7 @@ impl InferenceResultBuilder<'_> {
             Expr::Match { expr, arms, source } => {
                 self.infer_match(tgt_expr, *expr, arms, *source, expected)
             }
+            Expr::Propagate { expr } => self.infer_propagate(tgt_expr, *expr),
             Expr::Unwrap { expr } => {
                 let inner_ty = self.infer_expr(*expr, &Expectation::none());
                 match self.normalize(&inner_ty).interned() {
@@ -2417,6 +2438,10 @@ impl InferenceResultBuilder<'_> {
         for ty in optional_wraps.values_mut() {
             *ty = self.type_variables.resolve_ty_completely(ty.clone());
         }
+        let mut propagations = std::mem::take(&mut self.propagations);
+        for ty in propagations.values_mut() {
+            *ty = self.type_variables.resolve_ty_completely(ty.clone());
+        }
         let mut pat_types = std::mem::take(&mut self.type_of_pat);
         for (pat, ty) in pat_types.iter_mut() {
             let was_unknown = ty.is_unknown() || contains_unknown(ty);
@@ -2447,6 +2472,7 @@ impl InferenceResultBuilder<'_> {
             optional_wraps,
             variant_exprs: self.variant_exprs,
             variant_pats: self.pat_variants,
+            propagations,
             instantiations,
         }
     }

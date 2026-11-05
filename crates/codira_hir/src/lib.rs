@@ -44,7 +44,8 @@ pub use crate::{
     ty::{
         cast::{check_cast, CastCheck, CastOp, InvalidCastReason},
         lower::CallableDef,
-        ClosureInfo, FloatTy, FnSig, InferenceResult, IntTy, ResolveBitness, Substitution, Ty,
+        result_variants, ClosureInfo, FloatTy, FnSig, InferenceResult, IntTy, ResolveBitness,
+        Substitution, Ty,
         TyKind, TypableDef, TypeWalk,
     },
     visibility::{HasVisibility, Visibility},

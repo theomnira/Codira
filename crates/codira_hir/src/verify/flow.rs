@@ -342,7 +342,10 @@ impl Checker<'_> {
 
     /// Whether a `return` somewhere below `expr` returns a secret.
     fn returns_secret(&self, expr: ExprId) -> bool {
-        if let Expr::Return { expr: Some(value) } = &self.frame.body[expr] {
+        // `x?` returns a piece of `x` (its `Err`, or `nil`).
+        if let Expr::Return { expr: Some(value) } | Expr::Propagate { expr: value } =
+            &self.frame.body[expr]
+        {
             if self.tainted(*value) {
                 return true;
             }
@@ -503,6 +506,24 @@ impl Checker<'_> {
                 self.error(
                     *value,
                     "secret value returned from a function whose result is not `secret` \
+                     (wrap it in `declassify(..)` if revealing it is intended)",
+                );
+            }
+            // `x?` tests `x` and may return a piece of it: a branch, and a
+            // return.
+            Expr::Propagate { expr: value } if ct && self.tainted(*value) => {
+                self.error(
+                    *value,
+                    "`?` on a secret in a constant-time function branches on it (use \
+                     `ct_select(..)` to choose without branching)",
+                );
+            }
+            Expr::Propagate { expr: value }
+                if !self.sig.result && !self.in_closure.contains(&id) && self.tainted(*value) =>
+            {
+                self.error(
+                    *value,
+                    "`?` on a secret may return it from a function whose result is not `secret` \
                      (wrap it in `declassify(..)` if revealing it is intended)",
                 );
             }

@@ -544,6 +544,42 @@ fn test_generic_enum_typing_and_exhaustiveness() {
 
 }
 
+/// `x?` on a `Result` is its `Ok` payload and needs the enclosing function
+/// to return a `Result` of the same declaration with the same error type;
+/// on an optional it is the payload and needs an optional result. Anything
+/// else is an error that says which rule is broken.
+#[test]
+fn test_propagate_typing() {
+    insta::assert_snapshot!(diagnostics(
+        r#"
+    enum Result[T, E] { Ok(T), Err(E) }
+    enum Other[T, E] { Ok(T), Err(E) }
+    func get() -> Result[i64, bool] { Result.Ok(1) }
+    func opt() -> i64? { 1 }
+
+    func fine() -> Result[str, bool] { let n: i64 = get()?; Result.Ok("x") }
+    func fine_opt() -> f64? { let n: i64 = opt()?; 2.0 }
+    func closure() -> i64 {
+        let f = func() -> Result[i64, bool] { Result.Ok(get()? + 1) };
+        0
+    }
+    func wrong_error() -> Result[i64, str] { Result.Ok(get()?) }
+    func not_result() -> i64 { get()? }
+    func not_optional() -> i64 { opt()? }
+    func other() -> Other[i64, bool] { Other.Ok(get()?) }
+    func on_int(x: i64) -> i64? { x? }
+    func on_other(o: Other[i64, bool]) -> Other[i64, bool] { o? ; o }
+    "#,
+    ), @"
+    422..428: `?` would return this `Err(bool)` from a function that returns `Result[i64, str]`: the error types must be the same (there is no conversion between them); `match` and build the error the function returns
+    459..465: `?` on a `Result[i64, bool]` returns its `Err` early, so the enclosing function must return a `Result[_, bool]`, but it returns `i64`
+    497..503: `?` on an optional returns `nil` early, so the enclosing function must return an optional, but it returns `i64`; unwrap with `!`, or test with `if let`
+    550..556: `?` on a `Result[i64, bool]` returns its `Err` early, so the enclosing function must return a `Result[_, bool]`, but it returns `Other[i64, bool]`
+    590..592: `?` applies to a `Result[T, E]` or an optional `T?`, but this is `i64`
+    652..654: `?` applies to a `Result[T, E]` (an enum `Result` with variants `Ok(T)` and `Err(E)`) or an optional `T?`, but this is `Other[i64, bool]`
+    ");
+}
+
 /// Declarations an enum cannot have yet, or ever: bounds on its
 /// parameters, a generic type without its arguments in a payload, braced
 /// variants, a variant name used twice, and containing itself by value --

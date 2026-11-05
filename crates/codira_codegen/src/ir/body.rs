@@ -40,6 +40,7 @@ use crate::{
 
 mod closures;
 mod effects;
+mod propagate;
 mod safety;
 mod tasks;
 
@@ -523,6 +524,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             Expr::Continue => self.gen_continue(),
             Expr::Match { expr: scrutinee, arms, .. } => self.gen_match(expr, *scrutinee, arms),
             Expr::Unwrap { expr: inner } => self.gen_unwrap(expr, *inner),
+            Expr::Propagate { expr: inner } => self.gen_propagate(expr, *inner),
             Expr::Range { .. } => unreachable!(
                 "inference rejects a range anywhere but a `for` loop's iterable, which `gen_for` lowers itself"
             ),

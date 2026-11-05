@@ -14,6 +14,7 @@ mod resolve;
 use std::{fmt, iter::FromIterator, mem, ops::Deref, sync::Arc};
 
 pub(crate) use infer::{infer_query, substitute_type_params};
+pub use infer::result_variants;
 pub use infer::{ClosureInfo, InferenceResult};
 pub use lower::TypableDef;
 pub(crate) use lower::{

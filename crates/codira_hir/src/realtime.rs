@@ -584,6 +584,9 @@ impl Collector<'_> {
             | Expr::UnaryOp { .. }
             | Expr::Block { .. }
             | Expr::Return { .. }
+            // `x?` returns early (a `Result`'s `Err`, or `nil`): an ordinary
+            // return, not a panic.
+            | Expr::Propagate { .. }
             | Expr::Break { .. }
             | Expr::Continue
             | Expr::Range { .. }
