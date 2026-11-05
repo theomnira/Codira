@@ -1,16 +1,17 @@
 <!--
 Copyright (c) 2026 Omnira CJSC
 Author: Tunjay Akbarli
-Date: October 14, 2026
+Date: November 5, 2026
 
 Functionality: Codira Programming Language
 -->
 
 # Codira Programming Language
-### Stable Version: 26.10
-### Build: October 14, 2026.
+### Stable Version: 26.11
+### Build: November 5, 2026.
 
-Release notes: [RELEASE_NOTES_26.10.md](RELEASE_NOTES_26.10.md)
+Release notes: [RELEASE_NOTES_26.11.md](RELEASE_NOTES_26.11.md)
+(previous: [26.10](RELEASE_NOTES_26.10.md))
 
 _Codira_ is an ahead-of-time compiled, statically typed language for high
 performance systems, built around three ideas: the compiler proves what it
@@ -101,8 +102,8 @@ never run on MTE hardware; CHERI targets are refused) are in progress.
 Each stage is a group of crates in `crates/`. Arrows into `codira_smt` (Z3)
 and `codira_tv` are proofs the compiler asks for before it trusts a
 contract, a transformation, a rewrite rule or a replacement instruction
-sequence. This is the compiler as of the evening of 4 November 2026: amber
-outlines mark what was added or changed since 16 October, dashed outlines
+sequence. This is the compiler as of 5 November 2026 (release 26.11): amber
+outlines mark what was added or changed since 26.10, dashed outlines
 mark parts that are on `main` but unfinished, experimental or opt-in, and the
 grey box lists unfinished work that is not on `main`. Stage 8 works on
 machine code: it reads the instructions the back ends produce.
@@ -113,7 +114,7 @@ flowchart TD
     subgraph LEGEND [" Legend "]
         direction LR
         L1["on main before 16 Oct<br/>(plain outline)"]
-        L2["added 16 Oct - 4 Nov<br/>(amber outline)"]
+        L2["added in 26.11<br/>16 Oct - 5 Nov (amber outline)"]
         L3["on main but unfinished,<br/>experimental or opt-in (dashed)"]
     end
 
@@ -202,17 +203,17 @@ flowchart TD
     %% ---------------------------------------------------------------- 3
     subgraph BACKENDS [" 3. Back ends: codira_codegen and friends "]
         direction TB
-        LLVMGen["codira_codegen<br/>HIR instance to LLVM IR via inkwell<br/>bounds checks, effects, tasks, fuel,<br/>value-struct host wrappers, array assignment,<br/>never-returning functions are noreturn,<br/>ct_select stays a cmov at every -O level"]
+        LLVMGen["codira_codegen<br/>HIR instance to LLVM IR via inkwell<br/>bounds checks, effects, tasks, fuel,<br/>checked integer division, masked shifts,<br/>saturating float casts, value-struct host wrappers,<br/>array assignment, never-returning functions,<br/>ct_select stays a cmov at every -O level"]
         ArrayAlias["array alias classes<br/>TBAA tags for array lengths, elements, handles;<br/>opt-in, CODIRA_ARRAY_TBAA=1"]
         Targets["codira_target<br/>14 targets held to LLVM data layouts<br/>--target-cpu"]
         Native["[native] C, C++, asm in a package<br/>bitcode linked before optimization;<br/>C++ static constructors and destructors run<br/>(.init_array / .fini_array on ELF)"]
         Image["codira_image<br/>direct PE writer (default on Windows),<br/>ELF opt-in, declines what it cannot model"]
-        LLD["codira_lld<br/>in-process LLD (fallback)"]
+        LLD["codira_lld<br/>in-process LLD (fallback);<br/>macOS libraries ad-hoc signed by LLD"]
         Lib[".codiralib<br/>hot-reloadable shared library;<br/>imported std modules get their own"]
         Exe["codira build --exe<br/>standalone executable"]
         Wasm["wasm32-unknown-unknown<br/>module that imports nothing"]
         PTX["@target(gpu)<br/>NVPTX, launched by codira_gpu"]
-        CL["codira_cranelift<br/>codira run --jit, no LLVM, no linker<br/>scalar core only; bool and 8/16-bit values<br/>extended across calls like LLVM"]
+        CL["codira_cranelift<br/>codira run --jit, no LLVM, no linker<br/>scalar core only; same integer, cast and<br/>print semantics as LLVM; narrow values<br/>extended across calls"]
         Quantum["codira_quantum<br/>@target(qpu): circuit IR, simulator,<br/>QIR, OpenQASM 2/3"]
         Circuits["codira_circuits<br/>oblivious function to R1CS, Circom,<br/>Groth16 (attest); Verilog (@target(fpga))"]
         Asm["@asm inline assembly<br/>machine memory intrinsics"]
@@ -246,10 +247,10 @@ flowchart TD
     subgraph RUNTIME [" 4. Runtime: codira_runtime, codira_memory, codira_healing "]
         direction TB
         Loader["codira_libloader + codira_abi<br/>type info, GUIDs, dispatch table"]
-        Reload["Hot reload<br/>relink dispatch table, migrate heap<br/>@renamed, saturating retypes"]
+        Reload["Hot reload<br/>relink dispatch table, migrate heap<br/>@renamed, saturating retypes;<br/>world stopped, only with no thread in Codira code"]
         Snap["Heap snapshots<br/>save and restore the whole GC heap"]
         Cells["Function-value code cells<br/>repointed on every reload"]
-        GC["codira_memory<br/>mark-sweep GC, size-class blocks, heap cap"]
+        GC["codira_memory<br/>mark-sweep GC, size-class blocks, heap cap;<br/>stop-the-world: every thread running Codira code<br/>parks at a safepoint, its stack scanned"]
         Regions["Region arenas with quotas<br/>W^X OS pages"]
         Pool["Worker pool<br/>scope joins, bounded channels"]
         EffRT["Effect handlers<br/>resume, abort across frames"]
@@ -285,8 +286,10 @@ flowchart TD
     %% ---------------------------------------------------------------- quality
     subgraph QUALITY [" 7. Quality "]
         direction LR
-        Diff["Differential testing<br/>seeded random programs on LLVM -O2,<br/>LLVM -O0 and Cranelift; outputs compared;<br/>0 failures in 10,000 programs (release build)"]
+        Diff["Differential testing<br/>seeded random programs on LLVM -O2,<br/>LLVM -O0 and Cranelift; outputs compared;<br/>every former divergence a regression test"]
         Bench["benches/ + scripts/bench.sh<br/>Criterion vs Rust, LuaJIT, Wasm;<br/>baselines recorded, not gated"]
+        CI["CI on Linux, Windows and macOS<br/>Linux and Windows: tests pass;<br/>macOS: 24 of 3,505 tests fail;<br/>nightly format check fails"]
+        Supply["Supply chain<br/>cargo audit: 1 open advisory<br/>(tracing-subscriber via arkworks)"]
     end
     Diff -.->|checks| LLVMGen
     Diff -.->|checks| CL
@@ -348,8 +351,8 @@ flowchart TD
     class L2 added;
     class L3 wip;
     class N2,N3,N6,N7,N8 wip;
-    class MTE,Funis,Ueval,ArrayAlias,Superopt,Profiles wip;
-    class StdLib,Traits,Tasks,Realtime,Envelope,EnvCLI,Certify,ApiDiff,CERT,Fold,LLVMGen,Lib,FsSvc,HashSvc,DbSvc,AiSvc,DbEngine,AiEngine,Diff,Bench,Heracles,Bindings,Native,CL,CTCheck,MCodeIR added;
+    class MTE,Funis,Ueval,ArrayAlias,Superopt,Profiles,CI wip;
+    class StdLib,Traits,Tasks,Realtime,Envelope,EnvCLI,Certify,ApiDiff,CERT,Fold,LLVMGen,Lib,FsSvc,HashSvc,DbSvc,AiSvc,DbEngine,AiEngine,Diff,Bench,Heracles,Bindings,Native,CL,CTCheck,MCodeIR,GC,Reload,LLD,Supply added;
     linkStyle default stroke:#94a3b8,stroke-width:1.5px;
 ```
 
