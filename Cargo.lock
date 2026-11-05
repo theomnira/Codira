@@ -585,6 +585,7 @@ dependencies = [
  "codira_compiler_daemon",
  "codira_cranelift",
  "codira_ctcheck",
+ "codira_fmt",
  "codira_healing",
  "codira_hir",
  "codira_hir_input",
@@ -815,6 +816,13 @@ dependencies = [
  "codira_mir",
  "rustc-hash 1.1.0",
  "smallvec",
+]
+
+[[package]]
+name = "codira_fmt"
+version = "0.6.0-dev"
+dependencies = [
+ "codira_syntax",
 ]
 
 [[package]]

@@ -21,6 +21,7 @@ pretty_env_logger = { workspace = true }
 codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
 codira_certificate = { version = "0.6.0-dev", path = "../codira_certificate" }
 codira_compiler = { version = "0.6.0-dev", path = "../codira_compiler" }
+codira_fmt = { version = "0.6.0-dev", path = "../codira_fmt" }
 codira_hir = { version = "0.6.0-dev", path = "../codira_hir" }
 codira_hir_input = { version = "0.6.0-dev", path = "../codira_hir_input" }
 codira_compiler_daemon = { version = "0.6.0-dev", path = "../codira_compiler_daemon" }

@@ -1,0 +1,16 @@
+[package]
+name = "codira_fmt"
+description = "The official source formatter for Codira, built on the lossless syntax tree"
+keywords = ["language", "codira", "formatter"]
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+codira_syntax = { version = "0.6.0-dev", path = "../codira_syntax" }

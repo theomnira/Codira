@@ -2072,6 +2072,48 @@ after its hash, so `bun --hot` sees rebuilds. Underneath it uses
 `codira bindgen --runtime bun --module <file> --named-exports`, and
 `--print-library` to find the built library.
 
+### Formatting: `codira fmt`
+
+`codira fmt` formats every `.code` file of the enclosing package (or the
+files and directories given) with the one official standard; it has no
+options to configure. `codira fmt --check` writes nothing, lists each file
+that is not formatted with the number of lines that would change, and exits
+with an error if there is any, which is what CI runs; add `--diff` to see the
+changes. `codira fmt --stdin` formats standard input to standard output, for
+editors.
+
+The standard:
+
+- four spaces of indentation per open bracket group (`{`, `(`, `[`), plus one
+  level for a continuation line: one that starts with a binary operator, a
+  `.` of a method chain or a `requires`/`ensures`/`where`/`uses` clause, or
+  that follows a line ending in a binary operator, `=` or `->`; a line that
+  starts with a closing bracket lines up with the line that opened it;
+- one space around binary operators, `=`, compound assignments and `->`,
+  after `,`, `;` and `:`, before `{` and inside `{ }`; no space inside `( )`
+  and `[ ]`, before `,`, `;` and `:`, around `.`, after a prefix operator or
+  `@`, or between a function and its argument list;
+- at most one blank line in a row, none after an opening bracket or before a
+  closing one, none at the start of the file; no trailing whitespace; one
+  newline at the end; `\n` line endings;
+- trailing comments keep the spaces before them, so aligned comments stay
+  aligned.
+
+Line breaks are never added, removed or moved: the grammar is
+newline-sensitive (a line break can end a statement), so where a line breaks
+stays the author's choice. The formatter works on the lossless syntax tree,
+so comments and blank lines are kept. Every result is re-parsed and compared
+with the original before anything is written: the same nodes and tokens in
+the same order (only whitespace may differ) and a line break before exactly
+the same tokens. A file that fails that check, or that has syntax errors, is
+reported and left as it is.
+
+Limits: lines are not wrapped or joined, so there is no maximum width;
+column alignment (of `=` signs or struct fields) is not kept, except for
+trailing comments; the contents of block comments and strings are never
+touched, including their indentation; a pair of tokens no rule covers keeps
+"no space" or becomes one space, whichever it had.
+
 ---
 
 ## 5. End-to-end status today

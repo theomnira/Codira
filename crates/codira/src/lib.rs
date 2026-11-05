@@ -13,7 +13,7 @@ use clap::{Parser, Subcommand};
 /// `codira-launcher` binary runs.
 pub use ops::exe;
 use ops::{
-    api_diff, attest, bindgen, build, certify, check, daemon, envelope, import_c, init,
+    api_diff, attest, bindgen, build, certify, check, daemon, envelope, fmt, import_c, init,
     language_server, new, quantum, query, run, start, synth, test,
 };
 
@@ -44,6 +44,10 @@ enum Command {
 
     /// Type-checks Codira sources and reports diagnostics, emitting nothing
     Check(check::Args),
+
+    /// Format `.code` files with the official standard; `--check` lists
+    /// the files that are not formatted (for CI)
+    Fmt(fmt::Args),
 
     /// Run or control the build daemon, which keeps a compiler warm between
     /// builds
@@ -121,6 +125,7 @@ where
         Command::Certify(args) => certify::certify(args),
         Command::Check(args) => check::check(args),
         Command::Daemon(args) => daemon::daemon(args),
+        Command::Fmt(args) => fmt::fmt(args),
         Command::Bindgen(args) => bindgen::bindgen(args),
         Command::LanguageServer(args) => language_server::language_server(args),
         Command::New(args) => new::new(args),
