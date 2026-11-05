@@ -1,0 +1,4 @@
+[package]
+name = "string_benchmarks"
+authors = []
+version = "0.1.0"

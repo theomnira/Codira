@@ -583,7 +583,11 @@ heap, which this backend does not reach)`).
 
 #### Performance
 
-Measured against Rust's `String` on the same four algorithms -- see
+Measured against Rust's `String` on the same four algorithms: `find` on
+a 10 MB haystack at parity (0.85x Rust's time), parsing 1M integers 1.4x,
+splitting 10 MB into lines 1.7x, and appending 1M short strings with `+=`
+3.9x (each append is a call into the runtime and a compare-and-swap, where
+Rust's `push_str` inlines). See
 `crates/codira_runtime/README.md` ("Strings: measured against Rust") for the
 numbers, the machine, and both programs (`benches/strings/`).
 
