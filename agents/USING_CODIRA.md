@@ -191,6 +191,58 @@ An out-of-range index prints `panic at mod.code:7:13: index out of bounds: the
 length is 3 but the index is -1` to stderr and ends the program with exit
 status 101. A panic cannot be caught from Codira yet.
 
+### Integer arithmetic, shifts and casts
+
+What each operator does, on every integer width (`i8` to `i128`, `u8` to
+`u128`) and on both back ends (LLVM, and Cranelift with `--jit`). None of
+them is undefined behaviour.
+
+- **`+`, `-`, `*` and unary `-`** wrap at the type's width (two's
+  complement): `127i8 + 1i8` is `-128i8`.
+- **`/` and `%`** (and `/=`, `%=`) truncate toward zero, and the remainder
+  has the sign of the dividend: `-7 / 2` is `-3`, `-7 % 2` is `-1`. A zero
+  divisor panics (`attempt to divide by zero`, `attempt to calculate the
+  remainder with a divisor of zero`), and so do the signed `MIN / -1` and
+  `MIN % -1`, whose quotient does not fit (`attempt to divide with
+  overflow`, `attempt to calculate the remainder with overflow`). The panic
+  is reported as an out-of-range index is: `panic at mod.code:5:5: attempt
+  to divide by zero` on stderr, exit status 101.
+
+  The check is a compare and a branch the optimizer knows is cold (two for a
+  signed type, and LLVM drops the `MIN` test when it knows the dividend is
+  not `MIN`). It is left out when the divisor is a positive integer literal,
+  and when the function has a contract and the verifier proves the divisor
+  non-zero (and, signed, the division free of `MIN / -1`): `requires d > 0`
+  does both. That is the same decision the effect analysis makes for
+  `@nopanic` (see below), so a division in a `@nopanic` function never has a
+  check. Measured on x86-64 at `-O 2`, loops of 200 million `i64` and `u32`
+  divisions and remainders by a run-time divisor (constant across the loop,
+  or changing every iteration) run within 2% of the same loops with the
+  divisor proven safe, which is below the run-to-run noise: the division's
+  own latency hides the predicted branch.
+- **`<<` and `>>`** take the shift amount modulo the width: only its low
+  `log2(width)` bits count, read as unsigned, so `x << 65` on an `i64` is
+  `x << 1`, and on a signed type a negative amount `-k` shifts by
+  `width - k` (`1i32 << -1i32` is `i32::MIN`). This is what Rust's
+  `wrapping_shl`, Java and C# do, and what x86-64 and `AArch64` shift
+  instructions do at 32 and 64 bits, so it costs nothing there; an 8- or
+  16-bit shift keeps one `and`. `>>` is arithmetic on a signed type and
+  logical on an unsigned one. The verifier models shifts the same way.
+- **`as` between integers** truncates to a narrower type and sign- or
+  zero-extends (by the *source's* signedness) to a wider one; `bool as` an
+  integer is 0 or 1.
+- **`as` from a float to an integer** rounds toward zero and saturates: a
+  value below the target's range gives its `MIN`, above it its `MAX`, and
+  NaN gives 0 (`300.5 as u8` is `255`, `-1.0e10 as i16` is `-32768`), for
+  every target width, as Rust's `as` does. LLVM implements it with
+  `llvm.fpto{s,u}i.sat`; Cranelift converts to 32 or 64 bits with its
+  saturating conversion and, for an 8- or 16-bit target, clamps and narrows.
+- **`as` from an integer to a float** rounds to the nearest representable
+  value (ties to even), and `f64 as f32` rounds the same way. Float
+  arithmetic is IEEE 754 in the type's own precision, with no fused or
+  reassociated operations; float `/` by zero gives an infinity or NaN, never
+  a panic.
+
 ### Hot-loop builtins: `array_filled`, `select`, `fma`, `likely`, `unlikely`
 
 ```
@@ -217,7 +269,11 @@ if unlikely(i >= limit) { .. }       // branch weights for the optimizer
 - Float sums are not reassociated, so LLVM will not vectorize a float
   reduction on its own. Write the accumulators out (`a0..a3`, each updated with
   `fma`) to get independent dependency chains; integer reductions vectorize at
-  `-O3` without help. There are no vector (`<4 x f64>`) types in the language
+  `-O3` without help.
+- An integer division by a run-time divisor checks it (see "Integer
+  arithmetic, shifts and casts"); `requires d > 0` on the function removes
+  the check, although measured it costs under the noise next to the
+  division itself. There are no vector (`<4 x f64>`) types in the language
   yet: lane-level control and an automatic accumulator split are not done.
 - Tests that read the generated IR: `crates/codira/tests/perf_builtins.rs`.
 
@@ -665,7 +721,10 @@ public func sum_of_squares(n: i32) -> i32 {
   function or `spawn`. It cannot be stored, returned, copied into another
   binding or made the value of a block -- that is what keeps it from
   outliving its scope.
-- Tasks share nothing but channels, so they cannot race on memory.
+- Tasks share nothing but channels, so they cannot race on memory. A task
+  may allocate; a collection on any thread stops it at its next allocation
+  (or finds it parked in a channel operation or join) and scans its stack,
+  so its objects stay alive (see "End-to-end status today").
 - The pool keeps `available_parallelism()` workers running and starts a
   replacement when one blocks on a channel or a nested scope, so blocked
   tasks cannot starve the ones that would unblock them. Mismatched sends and
@@ -1048,10 +1107,12 @@ What counts, exactly (today's code generator and runtime):
 - **Panics**: `a[i]` and `a[i] = v` (bounds check; `a.unchecked_get(i)` is
   the unchecked escape hatch), integer `/` and `%` (and `/=`, `%=`), calling a
   `@runtime_checked` function that has `requires`, and every allocation.
-  Integer division is not checked by the generated code at all -- a zero
-  divisor or `MIN / -1` is undefined behaviour -- so a division only counts
+  An integer division panics on a zero divisor and on a signed `MIN / -1` or
+  `MIN % -1` (see "Integer arithmetic, shifts and casts"), so it only counts
   as safe when its divisor is a positive literal or the function has a
   contract and Z3 proves the divisor non-zero (and, signed, not `MIN / -1`).
+  Exactly those divisions are compiled without the check. Shifts never
+  panic: the amount is taken modulo the width.
 - **May not terminate** (`@realtime` only): a `while` or `loop` without a
   `decreases` measure, or whose measure the verifier does not prove, and
   recursion, direct or mutual. `for` loops are bounded by construction.
@@ -1353,6 +1414,14 @@ public func main() {
 and `str`s; anything else is a compile error. A program that defines its own
 function named `print` calls its own. See `examples/hello`.
 
+All arguments are evaluated first, left to right, and then printed, so an
+argument that calls a function which prints itself does so before any of
+this call's output: with `func g() -> i32 { println("in g"); 7 }`,
+`println("g is ", g())` prints `in g` and then `g is 7`. Integers print in
+decimal; a float prints in the shortest form that reads back as the same
+value in its own type, always with a decimal point or an exponent: `1.0`,
+`0.1` (for `0.1f32` too), `1e20`, `-0.0`, `NaN`, `inf`.
+
 Useful `build` options: `-O 0..3` (default `2`), `--emit-ir`, `--watch`,
 `--target <triple>` (cross-compile), `--manifest-path <path>`, and:
 
@@ -1400,7 +1469,11 @@ covers the scalar core of the language (integers up to 64 bits, floats,
 `bool`; `let`/`var` and assignment; operators and casts; `if`, `loop`,
 `while`, `break`, `return`; calls; `print`/`println` of scalars and string
 literals). A program that uses anything else runs on the LLVM backend instead,
-with a note naming what Cranelift does not compile yet. Measured: a
+with a note naming what Cranelift does not compile yet. What it compiles
+means the same as on LLVM: the same division checks and panic messages,
+shift and cast semantics, argument order and float printing (see "Integer
+arithmetic, shifts and casts"); `crates/codira/tests/differential.rs` runs
+random programs on both and compares. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
 build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time.
 
@@ -1416,6 +1489,43 @@ The executable is the Codira runtime (`codira-launcher`, shipped next to
 unpacks them once into a temporary directory named after their hash; later
 runs load them directly. `main` may return nothing (exit code 0), an integer
 (the exit code) or `bool` (true is success). Host target only for now.
+
+### Superoptimisation: `codira build --superoptimize` (experimental)
+
+```bash
+codira build -O 3 --superoptimize
+# superoptimiser: `mix` at 0x1910: mov rax, rsi; xor rax, rdi; and rsi, rdi;
+#   lea rax, [rax + 2*rsi] => lea rax, [rdi + rsi] (latency 3.2 -> 1.0 cycles,
+#   13 -> 4 bytes, proven by Z3)
+```
+
+After a library is linked, the straight-line integer code that ends each of
+its functions (the instructions just before `ret`) is searched for a cheaper
+sequence of up to three instructions. What it does and guarantees:
+
+- A replacement is written only when Z3 proves it returns the same 64-bit
+  value for every input, it writes no register the original left alone, and
+  it fits in the bytes it replaces (the rest becomes one `nop`, so no address
+  moves). The written bytes are decoded again and proven again; on any
+  mismatch the original stays.
+- Functions that must run in constant time (`oblivious`, `@constant_time`)
+  are never touched, nor are generic functions, functions with an indirect
+  jump, or code a dynamic relocation writes. It composes with
+  `--check-constant-time`, which runs after it, and with `--certify`, whose
+  certificate hashes the rewritten code.
+- "Cheaper" is decided by a cost model whose x86-64 latencies and
+  throughputs were measured on one Intel Emerald Rapids machine; on other
+  processors the choice may not be faster. Instructions an extension
+  provides (BMI1 `andn`) are used only when `--target-cpu` implies it.
+- Results are cached in `target/.superopt-cache`, keyed by the code, the
+  cost profile and the search bounds; a cached answer is re-proven before
+  use, so rebuilds repeat no search.
+
+Limits: x86-64 ELF libraries only (other targets build unchanged, with a
+note); only the code before a `ret`, not loop bodies; 64-bit
+general-purpose register arithmetic only (no memory, flags, 32-bit forms or
+vectors); a function LLVM inlined into its caller is rewritten only where it
+is still called. The search is bounded, so it is not exhaustive.
 
 ### Proof certificates: `codira build --certify`, `codira certify`
 
@@ -2012,7 +2122,9 @@ after its hash, so `bun --hot` sees rebuilds. Underneath it uses
 Verified through the full pipeline (parser → HIR → LLVM → link → run):
 
 - `struct`, `class`, `func`, `let`/`var`, tuples and tuple patterns
-- field access, arithmetic, comparisons, `as` casts
+- field access, arithmetic, comparisons, `as` casts (integer division checked,
+  shifts masked, float-to-integer casts saturating: see "Integer arithmetic,
+  shifts and casts")
 - `if`/`else`, `while`, `loop`, `for` over ranges and arrays, `break`,
   `continue`, short-circuit `&&`/`||`, function calls, methods via `extend`,
   `Type.assoc_fn()` static calls
@@ -2071,13 +2183,65 @@ Runtime (hosts embedding `codira_runtime`):
 
 - The GC heap is a segregated size-class allocator with per-thread bump
   allocation; `Runtime::gc_collect()` collects objects not reachable from
-  host-rooted handles. There are no stack maps: never collect while another
-  thread runs Codira code.
+  host-rooted handles or from a thread running Codira code.
+- Collections stop the world (stack capture for x86-64 and AArch64 on
+  Linux, macOS and Windows; tested on x86-64 Linux only). There are no stack maps, so a collection
+  asks every thread running Codira code to park, scans each parked thread's
+  stack and spilled callee-saved registers conservatively, collects, and
+  resumes them. What is guaranteed:
+  - **No live object is freed**, whichever thread collects and whatever
+    other threads are doing: `gc_collect` from any thread, an allocation at
+    the heap limit on any thread or task, `codira_gc_collect`. The same stop
+    protects `save_heap`/`restore_heap` and the heap migration of a hot
+    reload.
+  - **Which threads count:** a host thread inside `Runtime::invoke`, every
+    `spawn`ed task on the worker pool, and any thread holding
+    `codira_runtime::enter_codira()` (C: between `codira_thread_enter` and
+    `codira_thread_leave`).
+  - **Where threads park:** every GC allocation is a safepoint. A thread
+    waiting in a channel send or receive, a `select`, a scope join or
+    `codira_time_sleep_ns` is already parked and never holds up a
+    collection.
+  - **Hot reload:** `Runtime::update` relinks with the world stopped, and
+    only while no thread is inside Codira code. Otherwise it returns
+    `false` and the next `update` retries, without needing a new file
+    event.
+  - **Cost:** an allocation in Codira code checks one flag; entering
+    Codira code from the host costs about 14 ns, a channel operation about
+    26 ns more; an allocation made by the host outside Codira code costs
+    about 20 ns more than before (x86-64, measured).
+- What is not guaranteed:
+  - **Latency:** a collection waits for every running thread to reach a
+    safepoint. A loop that neither allocates nor blocks delays it until the
+    loop ends (there are no safepoints at loop back-edges). Calls to the
+    file, database and tensor services are not safepoints; a collection
+    waits for them to return.
+  - **Raw function pointers:** a Codira function called through a
+    `FunctionDefinition`'s `fn_ptr` (or `codira_function_fn_ptr`) without
+    the guard is invisible to the collector, and a reload does not wait for
+    it. Take the guard.
+  - **Host functions called from Codira code** run as part of a running
+    thread. One that waits for something only a collecting thread can
+    release (a lock the collector holds, a join) deadlocks with it; wrap
+    such waits in `codira_runtime::blocking`. The same applies to a host
+    thread that holds the guard.
+  - **Unrooted host handles:** a `StructRef` or `ArrayRef` the host keeps
+    after `invoke` returns is not protected; root it, or hold the guard.
+  - **Scope of a stop:** the registry is per process. A collection in one
+    runtime pauses threads running another runtime's code, and a reload
+    waits until no runtime's code runs.
+  - **Unsupported targets:** where a thread's stack cannot be captured, a
+    collection that would need it is refused (`gc_collect` returns `false`,
+    `GarbageCollector::try_collect` returns `CollectRefused`, and an
+    allocation at the heap limit aborts).
 - `Runtime::builder(lib).heap_limit(bytes)` caps the GC heap. An allocation
-  that would exceed it first collects (scanning the allocating thread's stack
-  conservatively; only while one thread allocates) and retries; if memory is
-  still short the process aborts with a message naming the type and limit.
-  It caps the GC heap only, not raw allocations.
+  that would exceed it first collects, with the world stopped as above, and
+  retries before the other threads resume; if memory is still short the
+  process aborts with a message naming the type and limit. It caps the GC
+  heap only, not raw allocations. Tests:
+  `crates/codira_runtime/tests/gc_threads.rs` (tasks allocating and checking
+  patterned objects under a small cap and under collections from a host
+  thread).
 - The runtime provides raw memory services a program reaches with
   `extern "C"` declarations (wrapped in `std/memory/region.code` and
   `std/memory/page.code`): region arenas with byte quotas and bulk reset

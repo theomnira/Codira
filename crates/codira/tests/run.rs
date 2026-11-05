@@ -202,3 +202,38 @@ public func main() {
     assert!(output.status.success(), "{stderr}");
     assert_eq!(String::from_utf8_lossy(&output.stdout), "7 3\n7 8 2\n");
 }
+
+/// A macOS library carries an ad-hoc code signature (written by LLD with
+/// `-adhoc_codesign`): arm64 macOS refuses to map an unsigned one, and the
+/// library is not re-signed after linking.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_libraries_carry_an_ad_hoc_code_signature() {
+    const MH_MAGIC_64: u32 = 0xfeed_facf;
+    const LC_CODE_SIGNATURE: u32 = 0x1d;
+
+    let dir = copy_example("examples/hello");
+    let output = codira_run(dir.path(), &[]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let library = std::fs::read_dir(dir.path().join("target"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .find(|path| path.extension().is_some_and(|ext| ext == "codiralib"))
+        .expect("a library in target/");
+    let bytes = std::fs::read(&library).unwrap();
+    let word = |at: usize| u32::from_le_bytes(bytes[at..at + 4].try_into().unwrap());
+    assert_eq!(word(0), MH_MAGIC_64, "{} is not a 64-bit Mach-O file", library.display());
+    let commands = word(16);
+    let mut at = 32; // sizeof(mach_header_64)
+    let mut signed = false;
+    for _ in 0..commands {
+        signed |= word(at) == LC_CODE_SIGNATURE;
+        at += word(at + 4) as usize;
+    }
+    assert!(signed, "{} has no LC_CODE_SIGNATURE", library.display());
+}

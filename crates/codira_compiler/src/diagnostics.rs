@@ -83,7 +83,7 @@ mod tests {
     #[test]
     fn test_possibly_uninitialized_variable_error() {
         insta::assert_snapshot!(compilation_errors(
-            "\n\nfunc main() {\nlet a;\nif 5>6 {\na = 5\n}\nlet b = a;\n}"
+            "\n\nfunc main() {\nvar a;\nif 5>6 {\na = 5\n}\nlet b = a;\n}"
         ));
     }
 

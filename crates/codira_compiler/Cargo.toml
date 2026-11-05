@@ -24,6 +24,8 @@ codira_project = { version = "0.6.0-dev", path = "../codira_project" }
 codira_diagnostics = { version = "0.6.0-dev", path = "../codira_diagnostics" }
 codira_certificate = { version = "0.6.0-dev", path = "../codira_certificate" }
 codira_ctcheck = { version = "0.6.0-dev", path = "../codira_ctcheck" }
+codira_mcode = { version = "0.6.0-dev", path = "../codira_mcode" }
+codira_superopt = { version = "0.6.0-dev", path = "../codira_superopt" }
 codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }
 annotate-snippets = { workspace = true }
 anyhow = { workspace = true }

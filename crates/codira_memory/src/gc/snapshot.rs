@@ -43,7 +43,7 @@ use crate::{
         array::ArrayHeader,
         heap::{handle_of, header_of, ObjectHeader},
         mark_sweep::array_data_offset,
-        Event, GcPtr, MarkSweep, Observer,
+        safepoint, Event, GcPtr, MarkSweep, Observer,
     },
     r#type::{Type, TypeData, TypeKind},
 };
@@ -237,7 +237,14 @@ where
 {
     /// Writes every object of the heap to `out`. Returns the number of
     /// objects written.
+    ///
+    /// The world is stopped while the heap is read, so the snapshot is
+    /// consistent even while other threads run Codira code.
     pub fn write_snapshot(&self, out: &mut impl Write) -> Result<usize, SnapshotError> {
+        safepoint::stop_the_world(|_| self.write_snapshot_stopped(out))
+    }
+
+    fn write_snapshot_stopped(&self, out: &mut impl Write) -> Result<usize, SnapshotError> {
         let inner = self.heap.inner.read();
         let objects = inner.objects();
         let index_of: FxHashMap<usize, u64> = objects
@@ -338,7 +345,19 @@ where
     /// [`MarkSweep::write_snapshot`] in this heap. `resolve` maps a type
     /// GUID to the runtime's type (usually through its type table). Objects
     /// already in the heap are left alone.
+    ///
+    /// The world is stopped while the objects are rebuilt: no collection can
+    /// run before they are rooted, and allocating them never collects (an
+    /// allocation that would exceed the heap limit fails the restore).
     pub fn read_snapshot(
+        &self,
+        input: &mut impl Read,
+        resolve: impl Fn(&abi::Guid) -> Option<Type>,
+    ) -> Result<RestoredHeap, SnapshotError> {
+        safepoint::stop_the_world(|_| self.read_snapshot_stopped(input, resolve))
+    }
+
+    fn read_snapshot_stopped(
         &self,
         input: &mut impl Read,
         resolve: impl Fn(&abi::Guid) -> Option<Type>,

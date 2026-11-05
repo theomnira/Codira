@@ -57,11 +57,17 @@ use codira_memory::{
     type_table::TypeTable,
 };
 // Re-export some useful types so crates dont have to depend on codira_memory as well.
-pub use codira_memory::{Field, FieldData, HasStaticType, PointerType, StructType, Type};
+pub use codira_memory::{
+    gc::{
+        safepoint::{self, blocking, MutatorGuard},
+        CollectRefused,
+    },
+    Field, FieldData, HasStaticType, PointerType, StructType, Type,
+};
 use codira_project::LOCKFILE_NAME;
 use dispatch_table::DispatchTable;
 use garbage_collector::GarbageCollector;
-use log::{debug, error, info, warn};
+use log::{debug, error, info};
 use notify::{
     event::{ModifyKind, RenameMode},
     Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
@@ -79,6 +85,23 @@ pub use crate::{
     marshal::Marshal,
     reflection::{ArgumentReflection, ReturnTypeReflection},
 };
+
+/// Registers the current thread as running Codira code until the guard is
+/// dropped, so a collection on another thread stops it at a safepoint and
+/// scans its stack instead of freeing objects only it refers to.
+///
+/// [`Runtime::invoke`] and the worker pool that runs `spawn`ed tasks take
+/// this guard themselves. Take it around a call through a raw function
+/// pointer (a [`FunctionDefinition`]'s `fn_ptr`), and while the host holds
+/// unrooted references ([`StructRef`], [`ArrayRef`]) that must survive a
+/// collection started by another thread. Guards nest.
+///
+/// A thread holding a guard must not block on something only a collecting
+/// thread can release; wrap such waits in [`blocking`], which parks the
+/// thread for their duration.
+pub fn enter_codira() -> MutatorGuard {
+    gc::safepoint::enter()
+}
 
 /// Options for the construction of a [`Runtime`].
 pub struct RuntimeOptions {
@@ -207,12 +230,13 @@ impl RuntimeBuilder {
 
     /// Caps the bytes the garbage-collected heap may hold from the system.
     ///
-    /// When an allocation would exceed the cap, the collector runs first
-    /// (treating the allocating thread's stack conservatively as roots, since
-    /// generated code has no stack maps) and the allocation is retried. That
-    /// emergency collection only happens while a single thread allocates in
-    /// the runtime. If the memory still is not there, the process aborts with
-    /// a message naming the type and the limit.
+    /// When an allocation would exceed the cap, the collector runs first and
+    /// the allocation is retried. That collection stops the world like
+    /// [`Runtime::gc_collect`]: every thread running Codira code parks at a
+    /// safepoint and its stack is scanned conservatively (generated code has
+    /// no stack maps), the allocating thread's included. If the memory still
+    /// is not there, the process aborts with a message naming the type and
+    /// the limit.
     ///
     /// This is a cap on the GC heap only, not a memory quota for the program:
     /// raw allocations (`codira_alloc`, region arenas, OS pages) and the
@@ -284,6 +308,8 @@ pub struct Runtime {
     watcher: RecommendedWatcher,
     watcher_rx: Receiver<notify::Result<Event>>,
     renamed_files: HashMap<usize, PathBuf>,
+    /// A relink was due but deferred because Codira code was running.
+    relink_deferred: bool,
     gc: Arc<GarbageCollector>,
     fuel: fuel::FuelCounter,
     /// The code cells function values call through (see `fn_cells`).
@@ -389,6 +415,7 @@ impl Runtime {
             watcher,
             watcher_rx: rx,
             renamed_files: HashMap::new(),
+            relink_deferred: false,
             gc: Arc::new(self::garbage_collector::GarbageCollector::default()),
             fuel: fuel::FuelCounter::new(options.fuel),
             fn_cells: fn_cells::FnCells::default(),
@@ -540,6 +567,13 @@ impl Runtime {
     /// unloaded.
     ///
     /// See [`Assembly::load`] for more information.
+    ///
+    /// A reload never races with running code: it happens with the world
+    /// stopped, and only while no thread (in this process) is inside Codira
+    /// code. If one is -- a host thread in a call made through the C API or
+    /// a raw function pointer, or a call on the current thread -- the reload
+    /// is deferred and `update` returns `false`; a later `update` retries it
+    /// even without new file events.
     pub unsafe fn update(&mut self) -> bool {
         unsafe fn relink_assemblies(
             runtime: &mut Runtime,
@@ -601,26 +635,37 @@ impl Runtime {
             &self.watcher_rx,
             &mut self.renamed_files,
             &mut self.assemblies_to_relink,
-        );
+        ) || self.relink_deferred;
 
         if requires_relink {
             if self.assemblies_to_relink.is_empty() {
                 debug!("The compiler didn't write a codiralib.");
             } else {
-                match relink_assemblies(self) {
-                    Ok((dispatch_table, type_table)) => {
-                        info!("Succesfully reloaded assemblies.");
-
+                // Relinking swaps the code and migrates the heap in place, so
+                // no frame of the old code may be live anywhere: it runs with
+                // the world stopped, and only when no thread is inside Codira
+                // code. Otherwise it is retried by the next `update`.
+                let relinked = gc::safepoint::exclusive(|| {
+                    relink_assemblies(self).map(|(dispatch_table, type_table)| {
                         self.dispatch_table = dispatch_table;
                         self.type_table = type_table;
                         self.assemblies_to_relink.clear();
                         // Function values created before the reload now
                         // call the reloaded code.
                         self.fn_cells.refresh(self.assemblies.values());
-
+                    })
+                });
+                self.relink_deferred = relinked.is_none();
+                match relinked {
+                    Some(Ok(())) => {
+                        info!("Succesfully reloaded assemblies.");
                         return true;
                     }
-                    Err(e) => error!("Failed to relink assemblies: {e}"),
+                    Some(Err(e)) => error!("Failed to relink assemblies: {e}"),
+                    None => info!(
+                        "Deferring the reload: another thread is running Codira code; the next \
+                         update retries."
+                    ),
                 }
             }
         }
@@ -636,9 +681,18 @@ impl Runtime {
         self.gc.as_ref()
     }
 
-    /// Collects all memory that is no longer referenced by rooted objects.
-    /// Returns `true` if memory was reclaimed, `false` otherwise. This
-    /// behavior will likely change in the future.
+    /// Collects all memory that is no longer referenced by rooted objects or
+    /// by a thread running Codira code. Returns `true` if memory was
+    /// reclaimed, `false` otherwise.
+    ///
+    /// Safe to call from any thread, including while other threads run
+    /// Codira code: the collection asks every such thread to stop at its
+    /// next safepoint (an allocation, or a blocking runtime call such as a
+    /// channel operation or a scope join), scans their stacks
+    /// conservatively, collects and resumes them. It therefore waits for the
+    /// longest stretch of Codira code that neither allocates nor blocks.
+    /// Called from a host function that Codira code called, it scans the
+    /// calling thread's Codira frames too.
     pub fn gc_collect(&self) -> bool {
         self.gc.collect()
     }
@@ -667,8 +721,9 @@ impl Runtime {
     /// in a runtime that loaded the same assembly, in this process or
     /// another. Returns the number of objects written.
     ///
-    /// Like a collection, this must not run while another thread executes
-    /// Codira code. Objects whose types hold raw pointers cannot be saved.
+    /// Like a collection, this stops the world while it reads the heap, so
+    /// the snapshot is consistent. Objects whose types hold raw pointers
+    /// cannot be saved.
     pub fn save_heap(&self, path: impl AsRef<Path>) -> Result<usize, gc::SnapshotError> {
         let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
         self.gc.write_snapshot(&mut file)
@@ -915,12 +970,16 @@ fn drain_watcher_events(
                                 renamed_files.insert(tracker, path);
                             }
                             // Without a tracker the two halves of a rename
-                            // cannot be matched up.
+                            // cannot be matched up. macOS's FSEvents reports
+                            // every rename so, as `RenameMode::Any` for each
+                            // path, the compiler's rename of a new library
+                            // onto its path included. The path exists (it was
+                            // just canonicalized), so whatever was renamed
+                            // onto it, the file there has new contents, as in
+                            // the `To` case. The other half, the temporary
+                            // file, is gone or skipped above.
                             (None, _, None) => {
-                                warn!(
-                                    "Ignoring a rename event without a tracker for {}",
-                                    path.to_string_lossy()
-                                );
+                                assemblies_to_relink.insert(path.clone(), path);
                             }
                         }
                     }
@@ -1137,6 +1196,9 @@ impl Runtime {
             });
         }
 
+        // The thread runs Codira code until the result is marshalled: a
+        // collection on another thread scans its stack meanwhile.
+        let _guard = enter_codira();
         let result: ReturnType::CodiraType = unsafe { arguments.invoke(function_info.fn_ptr) };
         Ok(Marshal::marshal_from(result, self))
     }

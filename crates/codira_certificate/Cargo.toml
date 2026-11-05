@@ -14,7 +14,7 @@ license.workspace = true
 
 [dependencies]
 codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }
-object = "0.36.5"
+object = { version = "0.36.5", default-features = false, features = ["std", "read"] }
 serde = { workspace = true, features = ["std"] }
 serde_derive = { workspace = true }
 serde_json = { workspace = true, features = ["std"] }

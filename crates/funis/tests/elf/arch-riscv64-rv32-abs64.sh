@@ -13,6 +13,14 @@ _start:
 .quad _start
 EOF
 
+# funis is built without its RV32 target (see NOTICE), so there is nothing
+# to link the object with.
+out=$(./funis -o $t/exe1 $t/a.o 2>&1 || true)
+if [[ $out == *'unsupported target: riscv32'* ]]; then
+  echo "funis is built without riscv32: skipped"
+  skip
+fi
+
 ./funis -o $t/exe1 $t/a.o --section-start=.text=0x12345678
 readelf -x .data $t/exe1 | grep -F '78563412 00000000'
 

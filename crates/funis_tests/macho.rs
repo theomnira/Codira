@@ -8,8 +8,8 @@ use std::process::{Command, ExitCode, Stdio};
 
 use crate::simulator::{self, Device, Runtime, Simulator};
 use crate::{
-    Mode, Options, Target, fail, make_jobs, parse_options, prepare_work_dir, print_inventory,
-    print_summary, run_jobs, selected_scripts, usage,
+    Listed, Mode, Options, Target, fail, make_jobs, parse_options, prepare_work_dir,
+    print_inventory, print_summary, print_test_list, run_exact, run_jobs, selected_scripts, usage,
 };
 
 /// The simulator triples a run adds to the host's targets by default, and
@@ -137,6 +137,9 @@ pub fn run(cases_dir: &Path, funis: &Path) -> ExitCode {
     let work_dir = prepare_work_dir(funis).unwrap_or_else(|err| fail(err));
     let linker = work_dir.join("ld64.funis");
     let (configs, unavailable) = selected_targets(&options, &linker);
+    if options.terse || options.exact {
+        return run_protocol(&options, cases_dir, &work_dir, configs, &unavailable);
+    }
     let scripts = selected_scripts(cases_dir, &options.patterns).unwrap_or_else(|err| fail(err));
     if options.list {
         let targets = configs.into_iter().map(|config| config.target).collect();
@@ -175,6 +178,59 @@ pub fn run(cases_dir: &Path, funis: &Path) -> ExitCode {
         drop(devices);
     }
     print_summary(&results)
+}
+
+/// The test harness protocol cargo-nextest uses: `--list --format terse`
+/// and `<name> --exact`. A host target has a test per script. A simulator
+/// target is one test, `<label>::all`, which boots its device and runs all
+/// its scripts on it, as booting a whole OS per script would not do; a
+/// simulator without a runtime is listed as ignored.
+fn run_protocol(
+    options: &Options,
+    cases_dir: &Path,
+    work_dir: &Path,
+    configs: Vec<Config>,
+    unavailable: &[String],
+) -> ExitCode {
+    let scripts = selected_scripts(cases_dir, &[]).unwrap_or_else(|err| fail(err));
+    let mut runtimes = Vec::new();
+    let mut listed = Vec::new();
+    for Config { target, runtime } in configs {
+        listed.push(Listed { target, whole: runtime.is_some(), unavailable: None });
+        runtimes.push(runtime);
+    }
+    for triple in unavailable {
+        let sim = Simulator::parse(triple).unwrap();
+        let target = Target { label: sim.label(), arch: None, env: Vec::new() };
+        let reason = format!("no simulator runtime for {triple} is installed");
+        listed.push(Listed { target, whole: true, unavailable: Some(reason) });
+        runtimes.push(None);
+    }
+    if options.list {
+        return print_test_list(&scripts, &listed, options.ignored);
+    }
+    let mut runtimes: Vec<_> = runtimes.into_iter().map(Some).collect();
+    run_exact(options, &scripts, work_dir, &listed, |index| {
+        let runtime = runtimes[index].take().flatten();
+        let config = Config { target: listed[index].target.clone(), runtime };
+        let (targets, devices) = match boot_devices(vec![config]) {
+            Ok(booted) => booted,
+            Err(err) => {
+                eprintln!("funis-tests: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let jobs = match make_jobs(&scripts, work_dir, targets, true) {
+            Ok(jobs) => jobs,
+            Err(err) => {
+                eprintln!("funis-tests: {err}");
+                return ExitCode::FAILURE;
+            }
+        };
+        let results = run_jobs(work_dir, jobs, options);
+        drop(devices);
+        print_summary(&results)
+    })
 }
 
 #[cfg(test)]

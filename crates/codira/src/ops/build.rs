@@ -122,6 +122,17 @@ pub struct Args {
     )]
     check_constant_time: bool,
 
+    /// EXPERIMENTAL: after a library is linked, search for cheaper
+    /// replacements of the straight-line integer code that ends each
+    /// function (x86-64 ELF libraries only). A replacement is written only
+    /// when Z3 proves it computes the same value and it fits in the bytes it
+    /// replaces; the written bytes are decoded and proven again. Functions
+    /// that must run in constant time are never touched. Results are cached
+    /// next to the library, so a rebuild repeats no search. Reports every
+    /// rewrite.
+    #[clap(long, conflicts_with_all = ["watch", "daemon", "emit_ir"])]
+    superoptimize: bool,
+
     /// Target for machine code
     #[clap(long, value_parser=parse_target_triple)]
     target: Option<TargetArg>,
@@ -288,6 +299,7 @@ pub fn build(args: Args) -> Result<ExitStatus, anyhow::Error> {
             driver.set_no_hot_reload(args.no_hot_reload);
             driver.set_certify(args.certify);
             driver.set_check_constant_time(args.check_constant_time);
+            driver.set_superoptimize(args.superoptimize);
             driver.set_hardware_safety(safety);
         },
     )? {

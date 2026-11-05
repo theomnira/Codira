@@ -26,7 +26,7 @@ use crate::{
             array_payload_layout, handle_of, header_of, AllocError, Heap, HeapInner, ObjectHeader,
             PayloadMigration, COLOR_BLACK, COLOR_WHITE,
         },
-        stack_scan, Array as GcArray, Event, GcPtr, GcRuntime, Observer, Stats, TypeTrace,
+        safepoint, Array as GcArray, Event, GcPtr, GcRuntime, Observer, Stats, TypeTrace,
     },
     mapping::{self, resolve_struct_to_struct_edit, Action, FieldMapping, Mapping, MemoryMapper},
     r#type::{Type, TypeData},
@@ -120,8 +120,12 @@ impl TypeTrace for Type {
 ///
 /// Objects live in a segregated size-class heap with inline headers (see the
 /// `gc::heap` module). Roots are the objects the host rooted through
-/// [`GcRuntime::root`]; there are no stack maps, so a collection must only be
-/// started when no Codira code is executing.
+/// [`GcRuntime::root`], plus -- because generated code has no stack maps --
+/// every word on the stack of every thread that runs Codira code, scanned
+/// conservatively. A collection stops the world first: it waits until every
+/// such thread has parked at a safepoint (an allocation) or in a blocking
+/// runtime call, scans their stacks, collects, and resumes them (see
+/// [`safepoint`]).
 pub struct MarkSweep<O>
 where
     O: Observer<Event = Event>,
@@ -193,14 +197,17 @@ where
     /// Allocates an object of type `ty`, or returns why the heap could not
     /// provide the memory.
     ///
+    /// Every allocation is a safepoint: a thread running Codira code parks
+    /// here while another thread collects.
+    ///
     /// When the allocation would exceed the heap limit, the collector runs
-    /// first and the allocation is retried once. Because generated code has
-    /// no stack maps, that collection treats every word on the current
-    /// thread's stack and in its callee-saved registers that points into an
-    /// object as a root (a conservative scan). It only happens when no other
-    /// thread has allocated in this heap, because other threads' stacks
-    /// cannot be scanned; otherwise the allocation fails with
-    /// [`AllocError::LimitExceeded`] without collecting.
+    /// first (stopping the world, so every thread running Codira code is
+    /// parked and its stack scanned conservatively, this thread's included)
+    /// and the allocation is retried once. If the collection cannot run
+    /// safely -- the current thread is itself collecting or migrating, or
+    /// some thread's stack cannot be scanned on this platform -- the
+    /// allocation fails with [`AllocError::LimitExceeded`] without
+    /// collecting.
     pub fn try_alloc(&self, ty: &Type) -> Result<GcPtr, AllocError> {
         assert!(ty.is_concrete());
 
@@ -225,41 +232,109 @@ where
 
     /// Allocates an object with a payload of `layout`, collecting once if
     /// the heap limit is hit and that is safe.
+    #[inline]
     fn alloc_payload(
+        &self,
+        ty: &Type,
+        layout: Layout,
+    ) -> Result<NonNull<ObjectHeader>, AllocError> {
+        if safepoint::is_running() {
+            safepoint::poll();
+            self.alloc_or_collect(ty, layout)
+        } else if safepoint::holds_stop() {
+            // Every other thread is parked, and this one must not start a
+            // collection in the middle of its own stop.
+            self.heap.alloc(ty, layout)
+        } else {
+            // Not running Codira code: allocate in a brief running section,
+            // so no collection can sweep the cell while it is initialized.
+            safepoint::with_allocation_section(|| self.alloc_or_collect(ty, layout))
+        }
+    }
+
+    fn alloc_or_collect(
         &self,
         ty: &Type,
         layout: Layout,
     ) -> Result<NonNull<ObjectHeader>, AllocError> {
         match self.heap.alloc(ty, layout) {
             Err(err @ AllocError::LimitExceeded { .. }) => {
-                if self.heap.only_current_thread_allocates() && self.collect_with_stack_roots() {
-                    self.emergency_collections.fetch_add(1, Ordering::Relaxed);
-                    self.heap.alloc(ty, layout)
-                } else {
-                    Err(err)
+                // Collecting needs this thread to be able to park; a thread
+                // that is exiting cannot.
+                if !safepoint::is_running() {
+                    return Err(err);
                 }
+                // Retry while the world is still stopped: otherwise the
+                // other threads, resumed first, could use up what the
+                // collection freed before this thread gets any of it.
+                //
+                // The new object is rooted until this thread runs again: on
+                // the way out of the stop it is held in frames below the
+                // part of the stack a collection would scan, and another
+                // thread may collect before this one resumes.
+                let (_, result) = self
+                    .collect_stopped_then(|| {
+                        let result = self.heap.alloc(ty, layout);
+                        if let Ok(header) = result {
+                            unsafe { header.as_ref() }
+                                .roots
+                                .fetch_add(1, Ordering::AcqRel);
+                        }
+                        result
+                    })
+                    .map_err(|CollectRefused| err)?;
+                self.emergency_collections.fetch_add(1, Ordering::Relaxed);
+                if let Ok(header) = result {
+                    unsafe { header.as_ref() }
+                        .roots
+                        .fetch_sub(1, Ordering::AcqRel);
+                }
+                result
             }
             result => result,
         }
     }
 
-    /// Collects with the current thread's stack and registers as additional,
-    /// conservative roots. Returns `false` without collecting when the
-    /// platform's stack cannot be scanned.
-    #[inline(never)]
-    fn collect_with_stack_roots(&self) -> bool {
-        let mut words = Vec::with_capacity(4096);
-        if !stack_scan::scan_current_thread(&mut |word| words.push(word)) {
-            return false;
-        }
-        self.collect_impl(Some(&mut words));
-        true
+    /// Collects all memory that is no longer referenced by rooted objects
+    /// or from the stack of a thread running Codira code. Returns `true` if
+    /// memory was reclaimed, `false` otherwise -- including when the
+    /// collection was refused (see [`MarkSweep::try_collect`]).
+    ///
+    /// Safe to call from any thread at any time: the collection stops the
+    /// world first. It waits for every thread running Codira code to reach a
+    /// safepoint, so it can take as long as the longest stretch of Codira
+    /// code that neither allocates nor blocks.
+    pub fn collect(&self) -> bool {
+        self.try_collect().unwrap_or(false)
     }
 
-    /// Collects all memory that is no longer referenced by rooted objects.
-    /// Returns `true` if memory was reclaimed, `false` otherwise.
-    pub fn collect(&self) -> bool {
-        self.collect_impl(None)
+    /// Like [`MarkSweep::collect`], but says when it refused to collect:
+    /// some thread inside Codira code is parked on a platform whose stacks
+    /// cannot be scanned, so collecting could free objects only it refers
+    /// to.
+    pub fn try_collect(&self) -> Result<bool, CollectRefused> {
+        self.collect_stopped_then(|| ()).map(|(freed, ())| freed)
+    }
+
+    /// Stops the world, collects, and runs `then` before resuming the
+    /// other threads. Returns whether memory was reclaimed and what `then`
+    /// returned.
+    fn collect_stopped_then<R>(
+        &self,
+        then: impl FnOnce() -> R,
+    ) -> Result<(bool, R), CollectRefused> {
+        safepoint::stop_the_world(|world| {
+            if world.has_unscannable_threads() {
+                return Err(CollectRefused);
+            }
+            let mut words = world.stack_words();
+            let freed = if words.is_empty() {
+                self.collect_impl(None)
+            } else {
+                self.collect_impl(Some(&mut words))
+            };
+            Ok((freed, then()))
+        })
     }
 
     fn collect_impl(&self, stack_words: Option<&mut Vec<usize>>) -> bool {
@@ -330,6 +405,12 @@ where
         freed > 0
     }
 }
+
+/// [`MarkSweep::try_collect`] refused to collect: a thread inside Codira code
+/// cannot have its stack scanned on this platform.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("a thread running Codira code cannot have its stack scanned on this platform")]
+pub struct CollectRefused;
 
 /// Helper object to work with [`GcPtr`] that represents an array.
 ///
@@ -758,6 +839,19 @@ where
 {
     #[allow(clippy::mutable_key_type)]
     fn map_memory(&self, mapping: Mapping) -> Vec<GcPtr> {
+        // Rewriting objects in place while another thread runs Codira code
+        // would race with it; stop the world (a no-op for the thread that
+        // already holds the stop, as a reload does).
+        safepoint::stop_the_world(|_| self.map_memory_stopped(mapping))
+    }
+}
+
+impl<O> MarkSweep<O>
+where
+    O: Observer<Event = Event>,
+{
+    #[allow(clippy::mutable_key_type)]
+    fn map_memory_stopped(&self, mapping: Mapping) -> Vec<GcPtr> {
         let mut inner = self.heap.inner.write();
         let objects = inner.objects();
 

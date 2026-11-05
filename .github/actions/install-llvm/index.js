@@ -34,6 +34,13 @@ async function execute(cmd) {
             const installScript = path.join(__dirname, "../../../../scripts/install-llvm.sh");
             // run via sudo bash so the script doesn't need the executable bit set
             await exec.exec('sudo', ['bash', installScript]);
+            // apt.llvm.org's packages put the unversioned executables (ld.lld,
+            // llvm-config, ...) only in /usr/lib/llvm-22/bin. Exported as on
+            // the other platforms: codira finds the LLD it spawns there or on
+            // PATH.
+            const llvmPath = "/usr/lib/llvm-22";
+            core.addPath(`${llvmPath}/bin`)
+            core.exportVariable('LLVM_SYS_221_PREFIX', llvmPath)
         } else if (isMacOS) {
             // Codira targets LLVM 22.1 (`inkwell`'s `llvm22-1` feature); llvm@14
             // is the wrong major version entirely and would fail the same way
@@ -44,6 +51,15 @@ async function execute(cmd) {
             core.addPath(`${llvmPath}/bin`)
             core.exportVariable('LLVM_SYS_221_PREFIX', llvmPath)
             core.exportVariable('LIBCLANG_PATH', `${llvmPath}/lib`)
+            // Homebrew ships LLD as a formula of its own, not in llvm@22: the
+            // executables (ld64.lld links Codira's macOS libraries, ld.lld
+            // its cross links) and the headers and static libraries
+            // codira_lld builds against, which CODIRA_LLD_PREFIX points its
+            // build script at.
+            await exec.exec("brew install lld@22")
+            let lldPath = await execute("brew --prefix lld@22");
+            core.addPath(`${lldPath}/bin`)
+            core.exportVariable('CODIRA_LLD_PREFIX', lldPath)
         } else if (isWindows) {
             // The previous URL pointed at `theomnira/llvm-package-windows`,
             // which does not exist (a 404, not a missing release) -- and even
@@ -73,6 +89,16 @@ async function execute(cmd) {
             core.addPath(`${llvmPath}\\bin`)
             core.exportVariable('LLVM_SYS_221_PREFIX', llvmPath)
             core.exportVariable('LIBCLANG_PATH', `${llvmPath}\\bin`)
+
+            // The release's LLVM is linked against a static libxml2 (for
+            // the manifest merging of LLVMWindowsManifest, which lld-link
+            // uses), and llvm-config lists it as `xml2s.lib`, but the
+            // archive does not ship it. vcpkg, which the runners have,
+            // builds it with the same static CRT; it is copied in under the
+            // name llvm-config gives.
+            const vcpkg = process.env.VCPKG_INSTALLATION_ROOT
+            await exec.exec(`${vcpkg}\\vcpkg.exe`, ["install", "libxml2[core]:x64-windows-static"])
+            fs.copyFileSync(`${vcpkg}\\installed\\x64-windows-static\\lib\\libxml2.lib`, `${llvmPath}\\lib\\xml2s.lib`)
         } else {
             core.setFailed(`unsupported platform '${process.platform}'`)
         }

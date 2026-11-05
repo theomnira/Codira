@@ -7,8 +7,8 @@ use std::path::Path;
 use std::process::{Command, ExitCode, Stdio};
 
 use crate::{
-    Mode, Options, Target, fail, make_jobs, parse_options, prepare_work_dir, print_inventory,
-    print_summary, run_jobs, selected_scripts,
+    Listed, Mode, Options, Target, fail, make_jobs, parse_options, prepare_work_dir,
+    print_inventory, print_summary, print_test_list, run_exact, run_jobs, selected_scripts,
 };
 
 struct TargetSpec {
@@ -115,7 +115,7 @@ fn supports_power10() -> bool {
     compiler && qemu
 }
 
-fn all_targets(native: &str) -> (Vec<Target>, Vec<String>) {
+fn all_targets(native: &str) -> (Vec<Target>, Vec<&'static TargetSpec>) {
     let mut targets = Vec::new();
     let mut unavailable = Vec::new();
 
@@ -125,7 +125,7 @@ fn all_targets(native: &str) -> (Vec<Target>, Vec<String>) {
         } else if command_exists(spec.qemu) && command_exists(&format!("{}-gcc", spec.triple)) {
             targets.push(target(spec.machine, Some(spec.triple), None));
         } else {
-            unavailable.push(spec.machine.to_owned());
+            unavailable.push(spec);
         }
     }
 
@@ -140,7 +140,7 @@ fn all_targets(native: &str) -> (Vec<Target>, Vec<String>) {
     (targets, unavailable)
 }
 
-fn selected_targets(options: &Options) -> (Vec<Target>, Vec<String>) {
+fn selected_targets(options: &Options) -> (Vec<Target>, Vec<&'static TargetSpec>) {
     let native = native_machine();
     match &options.mode {
         Mode::Native => (vec![target(&native, None, None)], Vec::new()),
@@ -154,12 +154,31 @@ fn selected_targets(options: &Options) -> (Vec<Target>, Vec<String>) {
 
 /// Runs the ELF test scripts in `cases_dir` with the linker at `funis`.
 /// Command line arguments are substring patterns selecting a subset of
-/// tests.
+/// tests. `--list --format terse` and `--exact` speak the test harness
+/// protocol cargo-nextest uses, with one test per script and target; a
+/// cross target without its toolchain has its tests listed as ignored.
 pub fn run(cases_dir: &Path, funis: &Path) -> ExitCode {
     let options = parse_options();
     let work_dir = prepare_work_dir(funis).unwrap_or_else(|err| fail(err));
     let (targets, unavailable) = selected_targets(&options);
+    if options.terse || options.exact {
+        let scripts = selected_scripts(cases_dir, &[]).unwrap_or_else(|err| fail(err));
+        let missing = unavailable.iter().map(|spec| Listed {
+            target: target(spec.machine, Some(spec.triple), None),
+            whole: false,
+            unavailable: Some(format!(
+                "needs the cross compiler {}-gcc and {}, which are not installed",
+                spec.triple, spec.qemu
+            )),
+        });
+        let listed: Vec<_> = targets.into_iter().map(Listed::available).chain(missing).collect();
+        if options.list {
+            return print_test_list(&scripts, &listed, options.ignored);
+        }
+        return run_exact(&options, &scripts, &work_dir, &listed, |_| unreachable!());
+    }
     let scripts = selected_scripts(cases_dir, &options.patterns).unwrap_or_else(|err| fail(err));
+    let unavailable: Vec<_> = unavailable.iter().map(|spec| spec.machine.to_owned()).collect();
     if options.list {
         return print_inventory(&scripts, &work_dir, targets, &unavailable);
     }

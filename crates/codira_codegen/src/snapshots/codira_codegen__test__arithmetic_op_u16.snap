@@ -1,10 +1,18 @@
 ---
 source: crates/codira_codegen/src/test.rs
 expression: "\n    public func add(a: u16, b: u16) -> u16 { a + b }\n    public func subtract(a: u16, b: u16) -> u16 { a - b }\n    public func multiply(a: u16, b: u16) -> u16 { a * b }\n    public func divide(a: u16, b: u16) -> u16 { a / b }\n    public func remainder(a: u16, b: u16) -> u16 { a % b }\n                        "
+snapshot_kind: text
 ---
 ; == FILE IR (mod) =====================================
 ; ModuleID = 'mod'
 source_filename = "mod"
+
+%DispatchTable = type { ptr }
+
+@dispatchTable = external local_unnamed_addr global %DispatchTable
+@codira.str = private unnamed_addr constant [26 x i8] c"attempt to divide by zero\00"
+@codira.str.2 = private unnamed_addr constant [58 x i8] c"attempt to calculate the remainder with a divisor of zero\00"
+@codira.str.3 = private unnamed_addr constant [9 x i8] c"mod.code\00"
 
 ; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
 define i16 @add(i16 %0, i16 %1) local_unnamed_addr #0 {
@@ -27,16 +35,32 @@ body:
   ret i16 %mul
 }
 
-; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
-define i16 @divide(i16 %0, i16 %1) local_unnamed_addr #0 {
+define i16 @divide(i16 %0, i16 %1) local_unnamed_addr {
 body:
+  %div.zero = icmp eq i16 %1, 0
+  br i1 %div.zero, label %div.by_zero, label %div.nonzero
+
+div.by_zero:                                      ; preds = %body
+  %codira.panic_ptr = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr(ptr nonnull @codira.str, i64 25, ptr nonnull @codira.str.3, i64 8, i32 4, i32 45)
+  unreachable
+
+div.nonzero:                                      ; preds = %body
   %div = udiv i16 %0, %1
   ret i16 %div
 }
 
-; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
-define range(i16 0, -1) i16 @remainder(i16 %0, i16 %1) local_unnamed_addr #0 {
+define range(i16 0, -1) i16 @remainder(i16 %0, i16 %1) local_unnamed_addr {
 body:
+  %div.zero = icmp eq i16 %1, 0
+  br i1 %div.zero, label %div.by_zero, label %div.nonzero
+
+div.by_zero:                                      ; preds = %body
+  %codira.panic_ptr = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr(ptr nonnull @codira.str.2, i64 57, ptr nonnull @codira.str.3, i64 8, i32 5, i32 48)
+  unreachable
+
+div.nonzero:                                      ; preds = %body
   %rem = urem i16 %0, %1
   ret i16 %rem
 }
@@ -47,4 +71,7 @@ attributes #0 = { mustprogress nofree norecurse nosync nounwind willreturn memor
 ; ModuleID = 'group_name'
 source_filename = "group_name"
 
+%DispatchTable = type { ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
 @global_type_lookup_table = global [1 x ptr] zeroinitializer

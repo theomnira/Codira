@@ -1638,7 +1638,14 @@ mod tests {
             .parse_smtlib2("(declare-fun b () Bool)(assert b)")
             .unwrap();
         assert_eq!(ok.len(), 1);
-        assert!(z3_version().starts_with("Z3"));
+        // Z3 4.8 gives its full version as "4.8.12.0", later releases as
+        // "Z3 4.13.0.0"; either way it carries the release's numbers.
+        let version = z3_version();
+        let numbers = version.trim_start_matches("Z3 ");
+        assert!(
+            numbers.starts_with(|c: char| c.is_ascii_digit()),
+            "{version}"
+        );
     }
 
     #[test]

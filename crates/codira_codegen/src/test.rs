@@ -636,6 +636,53 @@ fn if_statement() {
     );
 }
 
+/// An `if` without `else` whose `then` branch is an `if`/`else`, in the
+/// `else` branch of another `if`: the outer `if` once took the inner one's
+/// unit `phi` as its branch value, from a block it does not dominate, which
+/// the module verifier rejects at `-O 0` ("Instruction does not dominate all
+/// uses!"). An `if` without `else` has the unit value.
+#[test]
+fn nested_if_without_else_unoptimized() {
+    test_snapshot_unoptimized(
+        "nested_if_without_else_unoptimized",
+        r#"
+    public func f(a: bool, b: bool, c: bool) -> i32 {
+        var n = 0
+        if a {
+            n = 1
+        } else {
+            if b {
+                if c {
+                    n = 2
+                } else {
+                    n = 3
+                }
+            }
+        }
+        n
+    }
+    "#,
+    );
+}
+
+/// Integer division checks its divisor unless it is a positive literal (or
+/// proven safe): the literal divisors here get no check, the parameter gets
+/// one for zero and, signed, one for `MIN / -1`.
+#[test]
+fn division_checks() {
+    test_snapshot(
+        "division_checks",
+        r#"
+    public func by_literal(a: i64) -> i64 {
+        a / 10 + a % 7
+    }
+    public func by_param(a: i16, b: i16) -> i16 {
+        a / b
+    }
+    "#,
+    );
+}
+
 #[test]
 fn void_return() {
     test_snapshot(

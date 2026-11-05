@@ -345,6 +345,11 @@ pub unsafe extern "C" fn codira_runtime_get_type_info_by_id(
 /// Updates the runtime corresponding to `handle`. If successful, `updated` is
 /// set, otherwise a non-zero error handle is returned.
 ///
+/// A reload is deferred (`updated` is `false`) while any thread is inside
+/// Codira code, as far as the runtime knows: a call made through a raw
+/// function pointer counts only between `codira_thread_enter` and
+/// `codira_thread_leave`. A later update retries it.
+///
 /// If a non-zero error handle is returned, it must be manually destructed using
 /// [`codira_error_destroy`].
 ///

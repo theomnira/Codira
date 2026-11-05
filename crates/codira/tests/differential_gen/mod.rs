@@ -11,12 +11,14 @@
 //!   a stage they share only partly), never a licence the language gives them:
 //!   - integer `+`, `-`, `*`, unary `-` and casts wrap or truncate, which the
 //!     language defines and both backends implement;
-//!   - a shift amount is masked to `0..width`, because shifting by the width
-//!     or more is undefined natively (`agents/USING_CODIRA.md`);
+//!   - a shift amount is taken modulo the operand's width, which the language
+//!     defines (`agents/USING_CODIRA.md`, "Integer arithmetic"); half the
+//!     shifts mask it to `0..width` in the source, the others shift by any
+//!     value, negative and too-wide amounts included;
 //!   - a divisor is forced odd, and for a signed type also non-negative
-//!     (`(d & MAX) | 1`), so it is never zero and never `-1`: integer division
-//!     is not checked by the generated code and `0` or `MIN / -1` would be
-//!     undefined behaviour;
+//!     (`(d & MAX) | 1`), so it is never zero and never `-1`: such a division
+//!     panics (on both backends), and a program that panics is not one whose
+//!     output can be compared;
 //!   - float-to-integer casts saturate (`NaN` gives 0) in both backends, as
 //!     the language defines them;
 //!   - functions only call functions generated before them, so there is no
@@ -32,17 +34,15 @@
 //!   generated: the Cranelift backend refuses both (they reach the catch-all
 //!   "this kind of expression"), and a refused program falls back to LLVM,
 //!   which would compare LLVM with itself.
-//! - Floats are never printed directly: the two backends format them
-//!   differently today (see `known_divergence_float_printing` in
+//! - Floats are printed directly: both backends print them as the runtime's
+//!   formatter does (regression test `float_printing_agrees` in
 //!   `differential.rs`).
-//!   Generated programs print `(x as i64)` and `((x * 4096.0) as i64)` of
-//!   each float result instead, which still compares the float arithmetic.
-//! - Two more constructs are left out by default because of known
-//!   divergences, each behind a `Config` switch so they can be turned back on
-//!   once fixed: float-to-8/16-bit casts (`float_to_narrow_int`) and calls in
-//!   `println` arguments (`calls_in_print_args`). Printing from a function
-//!   without parameters (`print_in_constant_functions`) is on: the Eidos fold
-//!   that dropped such output is fixed.
+//! - Three constructs were once left out because of divergences since fixed,
+//!   and are behind `Config` switches, all on by default: float-to-8/16-bit
+//!   casts (`float_to_narrow_int`), calls in `println` arguments
+//!   (`calls_in_print_args`) and printing from a function without parameters
+//!   (`print_in_constant_functions`). Turning one off reproduces a run from
+//!   before its fix.
 
 use std::fmt::Write as _;
 
@@ -170,16 +170,14 @@ pub struct Config {
     /// Upper bound on the estimated dynamic work of one function (statements
     /// executed, counting callees).
     pub cost_budget: u64,
-    /// Generate casts from a float to an 8- or 16-bit integer. Off by
-    /// default: the Cranelift backend crashes on them today (a known
-    /// divergence, pinned by `known_divergence_float_to_narrow_int_cast` in
-    /// `differential.rs`). A 32- or 64-bit target
-    /// is still generated, and so is a narrowing of its result.
+    /// Generate casts from a float to an 8- or 16-bit integer. On by
+    /// default since the Cranelift backend stopped crashing on them
+    /// (regression test `float_to_narrow_int_cast_agrees`). Off, a 32- or
+    /// 64-bit target is still generated, and so is a narrowing of its result.
     pub float_to_narrow_int: bool,
-    /// Allow calls inside the arguments of `println`. Off by default: when a
-    /// called function prints too, the backends interleave the output
-    /// differently (a known divergence, pinned by
-    /// `known_divergence_print_argument_order`).
+    /// Allow calls inside the arguments of `println`. On by default since
+    /// both backends evaluate every argument before printing any
+    /// (regression test `print_arguments_evaluated_first`).
     pub calls_in_print_args: bool,
     /// Let a function without parameters print (itself or through a call).
     /// On by default since the LLVM path's Eidos constant fold stopped
@@ -193,8 +191,8 @@ impl Default for Config {
             floats: true,
             max_functions: 7,
             cost_budget: 20_000,
-            float_to_narrow_int: false,
-            calls_in_print_args: false,
+            float_to_narrow_int: true,
+            calls_in_print_args: true,
             print_in_constant_functions: true,
         }
     }
@@ -526,12 +524,8 @@ impl Gen<'_> {
                     self.prints = true;
                     let ty = self.any_ty();
                     self.in_print = !self.cfg.calls_in_print_args;
-                    let mut value = self.expr(ty, 2);
+                    let value = self.expr(ty, 2);
                     self.in_print = false;
-                    if ty.is_float() {
-                        // Not printed directly: see the module documentation.
-                        value = format!("({value} as i64)");
-                    }
                     return format!("{ind}println(\"{} \", {value})\n", self.fresh("s"));
                 }
                 17 => {
@@ -708,6 +702,10 @@ impl Gen<'_> {
                 }
                 5 => {
                     let op = *self.rng.pick(&["<<", ">>"]);
+                    if self.rng.chance(50) {
+                        // Any amount: the language takes it modulo the width.
+                        return format!("({} {op} {})", self.expr(ty, d), self.expr(ty, d));
+                    }
                     let mask = Self::int_lit(ty, u64::from(ty.bits() - 1));
                     return format!(
                         "({} {op} ({} & {mask}))",

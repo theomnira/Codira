@@ -173,6 +173,9 @@ pub struct Driver {
     /// Whether every library written has its constant-time functions'
     /// machine code checked ([`Driver::set_check_constant_time`]).
     check_constant_time: bool,
+    /// Whether every library written is superoptimised
+    /// ([`Driver::set_superoptimize`]).
+    superoptimize: bool,
     /// The directory checked by `with_source_directory` is the standard
     /// library itself, whose `root` it already is.
     is_std_itself: bool,
@@ -204,6 +207,7 @@ impl Driver {
             std_loaded: false,
             certify: false,
             check_constant_time: false,
+            superoptimize: false,
             is_std_itself: false,
         }
     }
@@ -436,8 +440,18 @@ impl Driver {
         self.update_keep_function_symbols();
     }
 
+    /// Turns the experimental superoptimiser on or off (`codira build
+    /// --superoptimize`): after a library is linked, the straight-line
+    /// integer tail of each function is searched for a cheaper, proven-equal
+    /// replacement (see `crate::superopt`). Functions keep their symbols in
+    /// the library so their code can be found.
+    pub fn set_superoptimize(&mut self, enabled: bool) {
+        self.superoptimize = enabled;
+        self.update_keep_function_symbols();
+    }
+
     fn update_keep_function_symbols(&mut self) {
-        let keep = self.certify || self.check_constant_time;
+        let keep = self.certify || self.check_constant_time || self.superoptimize;
         if self.db.keep_function_symbols() != keep {
             self.db.set_keep_function_symbols(keep);
         }
@@ -1059,6 +1073,16 @@ impl Driver {
         }
         for (name, verilog) in fpga_modules {
             std::fs::write(assembly_path.with_file_name(format!("{name}.v")), verilog)?;
+        }
+
+        // Rewrites come before the certificate, which hashes the machine
+        // code, and before the constant-time check, which reads it.
+        if self.superoptimize {
+            for line in
+                crate::superopt::optimize_library(&self.db, module_group_id, &assembly_path)?
+            {
+                eprintln!("{line}");
+            }
         }
 
         // A certificate describes exactly one build of the library: write

@@ -1,6 +1,7 @@
 ---
 source: crates/codira_codegen/src/test.rs
 expression: "\n    public func leftshift(a: i16, b: i16) -> i16 { a << b }\n    public func rightshift(a: i16, b: i16) -> i16 { a >> b }\n                        "
+snapshot_kind: text
 ---
 ; == FILE IR (mod) =====================================
 ; ModuleID = 'mod'
@@ -9,14 +10,16 @@ source_filename = "mod"
 ; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
 define i16 @leftshift(i16 %0, i16 %1) local_unnamed_addr #0 {
 body:
-  %left_shift = shl i16 %0, %1
+  %shift.amount = and i16 %1, 15
+  %left_shift = shl i16 %0, %shift.amount
   ret i16 %left_shift
 }
 
 ; Function Attrs: mustprogress nofree norecurse nosync nounwind willreturn memory(none)
 define i16 @rightshift(i16 %0, i16 %1) local_unnamed_addr #0 {
 body:
-  %right_shift = ashr i16 %0, %1
+  %shift.amount = and i16 %1, 15
+  %right_shift = ashr i16 %0, %shift.amount
   ret i16 %right_shift
 }
 

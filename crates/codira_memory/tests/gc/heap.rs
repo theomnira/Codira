@@ -393,7 +393,49 @@ fn heap_limit_exhaustion_is_an_error() {
 }
 
 #[test]
-fn no_emergency_collection_while_another_thread_allocates() {
+fn emergency_collection_scans_every_thread_in_codira_code() {
+    use codira_memory::gc::safepoint;
+
+    let (node, leaf) = node_type();
+    let gc = Arc::new(Gc::default());
+    gc.set_heap_limit(Some(4 * BLOCK));
+
+    let ready = Arc::new(std::sync::Barrier::new(2));
+    let done = Arc::new(std::sync::Barrier::new(2));
+    let other = {
+        let (gc, leaf, ready, done) = (gc.clone(), leaf.clone(), ready.clone(), done.clone());
+        std::thread::spawn(move || {
+            // Like a task: inside Codira code, holding an object referenced
+            // only from its own stack, and blocked in a runtime call.
+            let _guard = safepoint::enter();
+            let held = gc.alloc(&leaf);
+            unsafe { write(held, 0, 33i64) };
+            safepoint::blocking(|| {
+                ready.wait();
+                done.wait();
+            });
+            unsafe { read::<i64>(std::hint::black_box(held), 0) }
+        })
+    };
+    ready.wait();
+
+    // Leaves and nodes share a size class, so a wrongly freed `held` would
+    // be reused and overwritten here.
+    for i in 0..100_000i64 {
+        let n = gc.alloc(&node);
+        unsafe { write(n, 0, i) };
+    }
+    assert!(gc.emergency_collections() > 0);
+    done.wait();
+    assert_eq!(
+        other.join().unwrap(),
+        33,
+        "the other thread's object was freed"
+    );
+}
+
+#[test]
+fn a_thread_outside_codira_code_does_not_hold_up_a_collection() {
     let (_, leaf) = node_type();
     let gc = Arc::new(Gc::default());
     gc.set_heap_limit(Some(2 * BLOCK));
@@ -410,25 +452,11 @@ fn no_emergency_collection_while_another_thread_allocates() {
         })
     };
     ready.wait();
-
-    // Only garbage, but another thread may hold unrooted references the
-    // collector cannot see, so the limit is a hard error.
-    let err = loop {
-        if let Err(err) = gc.try_alloc(&leaf) {
-            break err;
-        }
-    };
-    assert!(matches!(err, AllocError::LimitExceeded { .. }));
-    assert_eq!(gc.emergency_collections(), 0);
-    done.wait();
-    // `join` returns once the thread has fully exited, thread-local
-    // destructors (which hand its cache back to the heap) included.
-    other.join().unwrap();
-
-    // With the other thread gone, allocations collect and succeed.
     for _ in 0..10_000 {
         gc.try_alloc(&leaf)
             .expect("emergency collection reclaims garbage");
     }
     assert!(gc.emergency_collections() >= 1);
+    done.wait();
+    other.join().unwrap();
 }

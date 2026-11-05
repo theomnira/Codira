@@ -238,6 +238,16 @@ fn main() {
 
     build.cpp(true).file("wrapper/lld-c.cpp");
 
+    // LLD's headers and libraries are found next to LLVM's, as in a
+    // from-source build with lld enabled, the LLVM project's Windows release
+    // and Debian's liblld packages. Homebrew installs LLD as a formula of its
+    // own, under a prefix of its own, which CODIRA_LLD_PREFIX names.
+    println!("cargo:rerun-if-env-changed=CODIRA_LLD_PREFIX");
+    let lld_prefix = env::var_os("CODIRA_LLD_PREFIX").map(PathBuf::from);
+    if let Some(prefix) = &lld_prefix {
+        build.include(prefix.join("include"));
+    }
+
     if build.get_compiler().is_like_msvc() {
         build.flag("/std:c++17");
         // Match LLVM's own CRT choice. Prebuilt LLVM/LLD for MSVC is built
@@ -277,6 +287,12 @@ fn main() {
 
     // Link LLVM libraries
     println!("cargo:rustc-link-search=native={libdir}");
+    if let Some(prefix) = &lld_prefix {
+        println!(
+            "cargo:rustc-link-search=native={}",
+            prefix.join("lib").display()
+        );
+    }
     let blacklist = ["LLVMLineEditor"];
     for name in get_link_libraries()
         .iter()
@@ -299,15 +315,35 @@ fn main() {
         println!("cargo:rustc-link-lib=msvcrtd");
     }
 
-    println!("cargo:rustc-link-lib=static=lldCOFF");
-    println!("cargo:rustc-link-lib=static=lldCommon");
-    println!("cargo:rustc-link-lib=static=lldELF");
-    println!("cargo:rustc-link-lib=static=lldMachO");
-    println!("cargo:rustc-link-lib=static=lldMinGW");
-    println!("cargo:rustc-link-lib=static=lldWasm");
-
-    if cfg!(target_os = "macos") {
-        println!("cargo:rustc-link-lib=dylib=xar");
+    // LLD's libraries are static where LLVM's are, and shared where LLD was
+    // built as shared libraries (Homebrew's lld formula). Static ones are
+    // preferred when both are there. (LLD stopped using libxar with LLVM 15,
+    // so it is not linked.)
+    let lib_dirs: Vec<PathBuf> = std::iter::once(PathBuf::from(libdir.trim()))
+        .chain(lld_prefix.iter().map(|prefix| prefix.join("lib")))
+        .collect();
+    let has = |file: &str| lib_dirs.iter().any(|dir| dir.join(file).is_file());
+    for name in [
+        "lldCOFF",
+        "lldCommon",
+        "lldELF",
+        "lldMachO",
+        "lldMinGW",
+        "lldWasm",
+    ] {
+        let kind = if target_env_is("msvc") {
+            "static"
+        } else if has(&format!("lib{name}.a")) {
+            "static"
+        } else if has(&format!("lib{name}{}", target_dylib_extension())) {
+            "dylib"
+        } else {
+            panic!(
+                "LLD's library {name} is in none of {lib_dirs:?}; set CODIRA_LLD_PREFIX to the \
+                 directory LLD is installed in"
+            );
+        };
+        println!("cargo:rustc-link-lib={kind}={name}");
     }
 
     if cfg!(not(target_os = "windows")) {

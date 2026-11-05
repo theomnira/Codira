@@ -1,0 +1,65 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    public func f(a: bool, b: bool, c: bool) -> i32 {\n        var n = 0\n        if a {\n            n = 1\n        } else {\n            if b {\n                if c {\n                    n = 2\n                } else {\n                    n = 3\n                }\n            }\n        }\n        n\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+@global_type_lookup_table = external global [2 x ptr]
+
+define i32 @f(i1 %0, i1 %1, i1 %2) {
+body:
+  %n = alloca i32, align 4
+  %c = alloca i1, align 1
+  store i1 %2, ptr %c, align 1
+  %b = alloca i1, align 1
+  store i1 %1, ptr %b, align 1
+  %a = alloca i1, align 1
+  store i1 %0, ptr %a, align 1
+  store i32 0, ptr %n, align 4
+  %a1 = load i1, ptr %a, align 1
+  br i1 %a1, label %then, label %else
+
+then:                                             ; preds = %body
+  %n2 = load i32, ptr %n, align 4
+  store i32 1, ptr %n, align 4
+  br label %if_merge
+
+else:                                             ; preds = %body
+  %b3 = load i1, ptr %b, align 1
+  br i1 %b3, label %then4, label %if_merge5
+
+then4:                                            ; preds = %else
+  %c6 = load i1, ptr %c, align 1
+  br i1 %c6, label %then7, label %else8
+
+then7:                                            ; preds = %then4
+  %n10 = load i32, ptr %n, align 4
+  store i32 2, ptr %n, align 4
+  br label %if_merge9
+
+else8:                                            ; preds = %then4
+  %n11 = load i32, ptr %n, align 4
+  store i32 3, ptr %n, align 4
+  br label %if_merge9
+
+if_merge9:                                        ; preds = %else8, %then7
+  %iftmp = phi {} [ zeroinitializer, %then7 ], [ zeroinitializer, %else8 ]
+  br label %if_merge5
+
+if_merge5:                                        ; preds = %if_merge9, %else
+  br label %if_merge
+
+if_merge:                                         ; preds = %if_merge5, %then
+  %iftmp12 = phi {} [ zeroinitializer, %then ], [ zeroinitializer, %if_merge5 ]
+  %n13 = load i32, ptr %n, align 4
+  ret i32 %n13
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+@global_type_lookup_table = global [2 x ptr] zeroinitializer

@@ -625,6 +625,11 @@ impl Linker for Ld64Linker {
 
         // Link as dynamic library
         self.args.push("-dylib".to_owned());
+        // An ad-hoc code signature, which arm64 macOS requires before it
+        // maps the library and which x86-64 macOS accepts. LLD writes it as
+        // the last step of the link, so nothing has to re-sign the file
+        // afterwards.
+        self.args.push("-adhoc_codesign".to_owned());
 
         self.add_apple_sdk()?;
         self.args.push("-lSystem".to_owned());
@@ -673,6 +678,20 @@ fn no_sysroot_arg(output_path: &Path) -> String {
         "/winsysroot:{}",
         output_path.with_extension("no-sysroot").display()
     )
+}
+
+/// Whether the object file at `path` refers to a global symbol it does not
+/// define. An object that cannot be read is left for the linker to report.
+fn has_undefined_symbols(path: &Path) -> bool {
+    use object::{Object, ObjectSymbol};
+    let Ok(data) = std::fs::read(path) else {
+        return false;
+    };
+    let Ok(file) = object::File::parse(&*data) else {
+        return false;
+    };
+    file.symbols()
+        .any(|symbol| symbol.is_undefined() && symbol.is_global())
 }
 
 struct MsvcLinker {
@@ -735,6 +754,16 @@ impl Linker for MsvcLinker {
             .ok_or_else(|| LinkerError::PathError(path.to_owned()))?
             .to_owned();
         self.args.push(path_str);
+        // Codira code needs no library as long as LLVM emits no call of its
+        // own, but it does emit some: `memset`/`memcpy` for large stores,
+        // `__chkstk` for a frame over a page, and the C math library for
+        // `sin`, `exp` and the like. An ELF or Mach-O library leaves those
+        // to the loader, which finds them in the process; a DLL must
+        // resolve every symbol when it is linked, so an object that leaves
+        // any undefined is linked against the C runtime.
+        if self.c_runtime.is_none() && has_undefined_symbols(path) {
+            self.c_runtime = Some(false);
+        }
         Ok(())
     }
 

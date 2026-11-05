@@ -1832,7 +1832,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// Generates IR to calculate a binary operation between two expressions.
     fn gen_binary_op(
         &mut self,
-        _tgt_expr: ExprId,
+        tgt_expr: ExprId,
         lhs: ExprId,
         rhs: ExprId,
         op: BinaryOp,
@@ -1865,7 +1865,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         match lhs_type.interned() {
             TyKind::Bool => self.gen_binary_op_bool(lhs, rhs, op),
             TyKind::Float(_) => self.gen_binary_op_float(lhs, rhs, op),
-            TyKind::Int(ty) => self.gen_binary_op_int(lhs, rhs, op, ty.signedness),
+            TyKind::Int(ty) => self.gen_binary_op_int(tgt_expr, lhs, rhs, op, ty.signedness),
             TyKind::Struct(s, _) => {
                 if s.data(self.db).memory_kind == codira_hir::StructMemoryKind::Value {
                     self.gen_binary_op_value_struct(lhs, rhs, op)
@@ -2146,6 +2146,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// Generates IR to calculate a binary operation between two integer values.
     fn gen_binary_op_int(
         &mut self,
+        expr: ExprId,
         lhs_expr: ExprId,
         rhs_expr: ExprId,
         op: BinaryOp,
@@ -2161,6 +2162,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .map(|value| self.opt_deref_value(rhs_expr, value))
             .expect("no rhs value")
             .into_int_value();
+        if let BinaryOp::ArithOp(arith) | BinaryOp::Assignment { op: Some(arith) } = op {
+            if codira_hir::realtime::division_needs_check(self.db, &self.body, &self.infer, expr) {
+                self.gen_division_check(expr, arith, lhs, rhs, signedness);
+            }
+        }
         match op {
             BinaryOp::ArithOp(op) => {
                 Some(self.gen_arith_bin_op_int(lhs, rhs, op, signedness).into())
@@ -2326,6 +2332,92 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .expect("failed to build int compare")
     }
 
+    /// Checks the divisor of the integer division or remainder `expr`
+    /// before it is computed: a zero divisor, and for a signed type
+    /// `MIN / -1` or `MIN % -1` (whose quotient does not fit), call
+    /// `codira.panic` with the location of `expr`. LLVM's `sdiv`, `udiv`,
+    /// `srem` and `urem` are undefined behaviour on those operands.
+    ///
+    /// The effect analysis decides which divisions need the check
+    /// (`codira_hir::realtime::division_needs_check`): a positive literal
+    /// divisor, or one the verifier proved safe, gets none.
+    fn gen_division_check(
+        &mut self,
+        expr: ExprId,
+        op: ArithOp,
+        lhs: IntValue<'ink>,
+        rhs: IntValue<'ink>,
+        signedness: codira_hir::Signedness,
+    ) {
+        let int_type = rhs.get_type();
+        let is_zero = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, rhs, int_type.const_zero(), "div.zero")
+            .expect("failed to build a divisor check");
+        let zero_block = self
+            .context
+            .append_basic_block(self.fn_value, "div.by_zero");
+        let nonzero_block = self
+            .context
+            .append_basic_block(self.fn_value, "div.nonzero");
+        self.builder
+            .build_conditional_branch(is_zero, zero_block, nonzero_block)
+            .expect("failed to branch on a divisor check");
+        self.builder.position_at_end(zero_block);
+        self.gen_panic(
+            if op == ArithOp::Divide {
+                "attempt to divide by zero"
+            } else {
+                "attempt to calculate the remainder with a divisor of zero"
+            },
+            expr,
+        );
+        self.builder.position_at_end(nonzero_block);
+        if !signedness.is_signed() {
+            return;
+        }
+        let bits = int_type.get_bit_width();
+        let min = if bits > 64 {
+            int_type.const_int_arbitrary_precision(&[0, 1 << (bits - 65)])
+        } else {
+            int_type.const_int(1 << (bits - 1), false)
+        };
+        let lhs_min = self
+            .builder
+            .build_int_compare(IntPredicate::EQ, lhs, min, "div.min")
+            .expect("failed to build an overflow check");
+        let rhs_minus_one = self
+            .builder
+            .build_int_compare(
+                IntPredicate::EQ,
+                rhs,
+                int_type.const_all_ones(),
+                "div.minus_one",
+            )
+            .expect("failed to build an overflow check");
+        let overflow = self
+            .builder
+            .build_and(lhs_min, rhs_minus_one, "div.overflow")
+            .expect("failed to build an overflow check");
+        let overflow_block = self
+            .context
+            .append_basic_block(self.fn_value, "div.overflow");
+        let ok_block = self.context.append_basic_block(self.fn_value, "div.ok");
+        self.builder
+            .build_conditional_branch(overflow, overflow_block, ok_block)
+            .expect("failed to branch on an overflow check");
+        self.builder.position_at_end(overflow_block);
+        self.gen_panic(
+            if op == ArithOp::Divide {
+                "attempt to divide with overflow"
+            } else {
+                "attempt to calculate the remainder with overflow"
+            },
+            expr,
+        );
+        self.builder.position_at_end(ok_block);
+    }
+
     fn gen_arith_bin_op_int(
         &mut self,
         lhs: IntValue<'ink>,
@@ -2353,8 +2445,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     self.builder.build_int_unsigned_rem(lhs, rhs, "rem")
                 }
             },
-            ArithOp::LeftShift => self.builder.build_left_shift(lhs, rhs, "left_shift"),
+            ArithOp::LeftShift => {
+                let rhs = self.mask_shift_amount(rhs);
+                self.builder.build_left_shift(lhs, rhs, "left_shift")
+            }
             ArithOp::RightShift => {
+                let rhs = self.mask_shift_amount(rhs);
                 self.builder
                     .build_right_shift(lhs, rhs, signedness.is_signed(), "right_shift")
             }
@@ -2363,6 +2459,22 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             ArithOp::BitXor => self.builder.build_xor(lhs, rhs, "bit_xor"),
         })
         .expect("failed to build int arithmetic operation")
+    }
+
+    /// Shifts take the amount modulo the operand's width (its low
+    /// `log2(width)` bits, read as unsigned), as Rust's wrapping shifts,
+    /// Java and C# do: `x << 65` on an `i64` is `x << 1`, and a negative
+    /// amount `-k` shifts by `width - k`. LLVM's `shl`, `lshr` and `ashr`
+    /// are poison for an amount of the width or more, so the mask is what
+    /// defines them. It costs nothing on x86-64 and `AArch64` at 32 and 64
+    /// bits (their shift instructions mask the same way, and LLVM drops the
+    /// `and`); 8- and 16-bit shifts keep one `and`.
+    fn mask_shift_amount(&self, amount: IntValue<'ink>) -> IntValue<'ink> {
+        let int_type = amount.get_type();
+        let mask = int_type.const_int(u64::from(int_type.get_bit_width() - 1), false);
+        self.builder
+            .build_and(amount, mask, "shift.amount")
+            .expect("failed to mask a shift amount")
     }
 
     fn gen_arith_bin_op_float(
@@ -2778,15 +2890,26 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         // Construct phi block if a value was returned
         if let Some(then_block_ir) = then_block_ir {
-            if let Some((Some(else_block_ir), else_block)) = else_ir_and_block {
-                let phi = self
-                    .builder
-                    .build_phi(then_block_ir.get_type(), "iftmp")
-                    .expect("failed to build phi");
-                phi.add_incoming(&[(&then_block_ir, then_block), (&else_block_ir, else_block)]);
-                Some(phi.as_basic_value())
-            } else {
-                Some(then_block_ir)
+            match else_ir_and_block {
+                Some((Some(else_block_ir), else_block)) => {
+                    let phi = self
+                        .builder
+                        .build_phi(then_block_ir.get_type(), "iftmp")
+                        .expect("failed to build phi");
+                    phi.add_incoming(&[(&then_block_ir, then_block), (&else_block_ir, else_block)]);
+                    Some(phi.as_basic_value())
+                }
+                // The `else` branch never reaches the merge block, so only
+                // the `then` branch's value arrives there.
+                Some((None, _)) => Some(then_block_ir),
+                // Without `else` the `if` is a statement and its value is
+                // unit. The `then` branch's value must not stand in for it:
+                // the merge block is also reached straight from the
+                // condition, so that value (a `phi {}` of an inner `if`,
+                // say) does not dominate the merge block, and an enclosing
+                // `if` that took it as its own branch value built an
+                // invalid phi ("Instruction does not dominate all uses!").
+                None => Some(self.gen_empty()),
             }
         } else if let Some((else_block_ir, _else_block)) = else_ir_and_block {
             // If both the then and the else block never return, the entire if statement

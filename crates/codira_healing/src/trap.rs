@@ -281,6 +281,10 @@ pub fn install() {
 /// abandoned, not completed or undone.
 #[cfg(windows)]
 pub fn protected<T>(f: impl FnOnce() -> T) -> Result<T, FaultInfo> {
+    // A fault resumes below without running the destructors of the frames
+    // it abandons, among them the runtime's mutator guards and blocking
+    // regions: put the thread's collector state back as it is now.
+    let mutator = codira_runtime::safepoint::checkpoint();
     let mut checkpoint = Checkpoint(unsafe { std::mem::zeroed() });
     checkpoint.0.ContextFlags = CONTEXT_FULL;
     // Safety: `checkpoint` is a local that stays alive for the whole call,
@@ -288,6 +292,9 @@ pub fn protected<T>(f: impl FnOnce() -> T) -> Result<T, FaultInfo> {
     unsafe { RtlCaptureContext(&mut checkpoint.0) };
 
     if LAST_FAULT.with(std::cell::Cell::get).is_some() {
+        // Safety: every guard and region entered since the checkpoint
+        // belonged to the frames the fault abandoned.
+        unsafe { codira_runtime::safepoint::restore(mutator) };
         return Err(LAST_FAULT
             .with(std::cell::Cell::take)
             .expect("the handler always records a fault before restoring"));

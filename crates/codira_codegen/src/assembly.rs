@@ -7,7 +7,6 @@
 use std::{path::Path, sync::Arc};
 
 use anyhow::anyhow;
-use apple_codesign::{SigningSettings, UnifiedSigner};
 use inkwell::context::Context;
 use tempfile::NamedTempFile;
 
@@ -256,13 +255,9 @@ pub(crate) fn build_target_assembly(
         .into_shared_object(file.path(), &exported_symbols, native)
         .expect("could not link object file");
 
-    let target = db.target();
-    if target.options.is_like_osx {
-        let signer = UnifiedSigner::new(SigningSettings::default());
-        signer
-            .sign_path_in_place(file.path())
-            .expect("Failed to sign shared object");
-    }
+    // macOS libraries carry an ad-hoc code signature, written by LLD itself
+    // (`-adhoc_codesign`, see the Mach-O linker), so the file needs no
+    // further step here.
 
     Arc::new(TargetAssembly {
         file: Ok(file),

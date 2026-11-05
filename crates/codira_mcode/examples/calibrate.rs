@@ -161,12 +161,18 @@ fn main() {
                 .map(|l| l.split(':').nth(1).unwrap_or("").trim().to_string())
         })
         .unwrap_or_default();
+    // The measurements run x86-64 code, so only an x86-64 host gets this
+    // far; the example still has to compile on the others.
+    #[allow(unused_mut)]
     let mut features: Vec<String> = Vec::new();
-    if std::is_x86_feature_detected!("bmi1") {
-        features.push("bmi1".into());
-    }
-    if std::is_x86_feature_detected!("bmi2") {
-        features.push("bmi2".into());
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("bmi1") {
+            features.push("bmi1".into());
+        }
+        if std::is_x86_feature_detected!("bmi2") {
+            features.push("bmi2".into());
+        }
     }
     let mut p = Profile {
         id,

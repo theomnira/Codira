@@ -17,6 +17,11 @@
 //! made with it is measured before it is believed ([`crate::measure`]).
 
 use std::collections::BTreeMap;
+
+/// The x86-64 profile shipped with the compiler: latencies and throughputs
+/// measured with `examples/calibrate.rs` on an Emerald Rapids virtual
+/// machine, port sets from uops.info.
+pub const X86_64_DEFAULT: &str = include_str!("../profiles/x86_64-emerald-rapids-vm.profile");
 use std::fmt;
 
 use crate::{Block, Isa};

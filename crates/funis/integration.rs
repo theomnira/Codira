@@ -2,7 +2,12 @@
 //! Mach-O tests drive Apple's toolchain, which only macOS has, and the ELF
 //! tests need a toolchain that makes ELF programs, which macOS lacks. On any
 //! other host (Windows) there is nothing to run: the tests need a Unix shell
-//! and a C compiler targeting ELF, so this test reports that it was skipped.
+//! and a C compiler targeting ELF, so its one test is listed as ignored and
+//! says why.
+//!
+//! The harness speaks the protocol cargo-nextest uses for a custom test
+//! harness: `--list --format terse [--ignored]` lists one test per script
+//! and target, `<target>::<script>`, and `<name> --exact` runs one.
 // Vendored from mold (see NOTICE) and kept close to upstream, so that mold's changes keep
 // applying. The workspace turns on extra lints (.cargo/config.toml) that mold's code does not
 // follow, thousands of times over. They are allowed here by name, and nothing else is.
@@ -46,6 +51,9 @@ fn main() -> std::process::ExitCode {
 }
 
 #[cfg(not(unix))]
-fn main() {
-    eprintln!("funis integration tests: skipped, they need a Unix host with a C compiler");
+fn main() -> std::process::ExitCode {
+    funis_tests::run_unsupported(
+        "elf::all",
+        "the shell tests need a Unix host with a shell and a C compiler that makes ELF programs",
+    )
 }

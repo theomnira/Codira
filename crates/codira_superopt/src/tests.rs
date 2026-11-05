@@ -281,3 +281,86 @@ fn constant_time_and_unknown_origins_are_refused_with_a_diagnostic() {
     assert!(superoptimize_cached(&ct, &b, &p, &Config::default(), &dir).is_err());
     assert!(!dir.exists());
 }
+
+#[test]
+fn every_modelled_x86_form_encodes_and_decodes_back() {
+    use crate::library::{encode, from_iced};
+    use codira_mcode::Isa;
+    use iced_x86::{Decoder, DecoderOptions};
+    let forms = [
+        "mov rax, rdi",
+        "mov r9, r15",
+        "mov rax, -2",
+        "mov rcx, 2147483647",
+        "movabs rax, 81985529216486895",
+        "add rax, rcx",
+        "sub r8, rdx",
+        "and rsi, rdi",
+        "or rax, r11",
+        "xor r12, r13",
+        "imul rax, rbx",
+        "add rax, 1",
+        "add rax, -129",
+        "sub rdx, 100000",
+        "and rcx, 127",
+        "or r9, -1",
+        "xor rax, 65535",
+        "imul rax, rdi, 9",
+        "imul r10, rsi, -1000003",
+        "shl rax, 1",
+        "shr rdx, 63",
+        "sar r8, 7",
+        "neg rax",
+        "not r15",
+        "lea rax, [rdi + rsi]",
+        "lea rax, [rdi + 8*rsi]",
+        "lea rax, [rdi + 2*rsi - 5]",
+        "lea rax, [rbp + 4*r13 + 100000]",
+        "lea rax, [rsp + 8]",
+        "lea rax, [r12 + rdi]",
+        "lea rax, [r13]",
+        "lea rax, [8*rdi]",
+        "lea rax, [4*rsi + 12]",
+        "lea rax, [rdi - 16]",
+        "andn rax, rdi, rsi",
+    ];
+    for text in forms {
+        let inst = X86_64::parse(text).unwrap();
+        let bytes = encode(std::slice::from_ref(&inst), 0x1000).unwrap();
+        let mut decoder = Decoder::with_ip(64, &bytes, 0x1000, DecoderOptions::NONE);
+        let decoded = decoder.decode();
+        assert!(
+            !decoder.can_decode(),
+            "`{text}` encoded to more than one instruction"
+        );
+        assert_eq!(
+            from_iced(&decoded).as_ref(),
+            Some(&inst),
+            "`{text}` round trip"
+        );
+    }
+}
+
+#[test]
+fn padding_decodes_as_nops_only() {
+    use crate::library::{encode, from_iced};
+    use codira_mcode::Isa;
+    use iced_x86::{Decoder, DecoderOptions};
+    // A replacement plus padding, decoded instruction by instruction: the
+    // replacement comes back, everything else is a nop.
+    for pad in 0..30 {
+        let inst = X86_64::parse("lea rax, [rdi + rsi]").unwrap();
+        let mut bytes = encode(std::slice::from_ref(&inst), 0).unwrap();
+        bytes.extend(crate::library::nops_for_test(pad));
+        let mut decoder = Decoder::with_ip(64, &bytes, 0, DecoderOptions::NONE);
+        let mut real = Vec::new();
+        while decoder.can_decode() {
+            let i = decoder.decode();
+            assert!(!i.is_invalid());
+            if !crate::library::is_nop_for_test(&i) {
+                real.push(from_iced(&i).unwrap());
+            }
+        }
+        assert_eq!(real, vec![inst]);
+    }
+}

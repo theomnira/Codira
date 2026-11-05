@@ -75,16 +75,19 @@ public func divides_by_zero() -> bool {
         out.contains("test addition_is_wrong ... FAILED: returned false"),
         "{out}"
     );
-    // The child catches the fault and names it only where
-    // `codira_healing::trap` can intercept faults (Windows). Elsewhere the
-    // child dies of the signal, and the runner reports that as a crash; the
-    // test still fails either way.
-    let expected = if cfg!(windows) {
-        "test divides_by_zero ... FAILED: trapped (IntegerDivideByZero)"
-    } else {
-        "test divides_by_zero ... FAILED: crashed (signal: 8"
-    };
-    assert!(out.contains(expected), "{out}");
+    // Integer division by zero is a checked panic, not a hardware fault, on
+    // every platform: the child exits with the panic status and the runner
+    // reports the panic message and its location.
+    let line = out
+        .lines()
+        .find(|line| line.starts_with("test divides_by_zero ... "))
+        .unwrap_or_else(|| panic!("no result for divides_by_zero\n{out}"));
+    assert!(line.contains("FAILED: crashed"), "{out}");
+    assert!(line.contains("101"), "{out}");
+    assert!(
+        line.contains("panic at mod.code:") && line.ends_with("attempt to divide by zero"),
+        "{out}"
+    );
     assert!(
         out.contains("test result: FAILED. 2 passed; 2 failed"),
         "{out}"
