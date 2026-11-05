@@ -1,279 +1,180 @@
 // std/format/format.code
-// String formatting and numeric base conversions for Codira.
-// Provides printf-style formatting, integer-to-string in various bases,
-// and related utilities.
+// String formatting and numeric base conversions.
+//
+// For text with values in it, an interpolated literal is usually simpler and
+// is checked at compile time: `f"{name} is {age}"`. `format` is for a
+// template that is only known at run time.
 
 // ---------------------------------------------------------------------------
 // format
-// Formats a string by substituting placeholders with the provided arguments.
-// Placeholders import curly braces: "{}" for positional, "{0}", "{1}" for
-// explicit indices.
+// Substitutes the placeholders of `template` with `args`: `{}` takes the
+// next argument, `{0}`, `{1}`, .. the argument at that index, and `{{` and
+// `}}` are literal braces. A placeholder without an argument, or one that is
+// not a number, is kept as written.
 //
-// Example: format("Hello, {}! You are {} years old.", "Alice", 30)
+// Example: format("Hello, {}! You are {} years old.", ["Alice", "30"])
 //          -> "Hello, Alice! You are 30 years old."
 // ---------------------------------------------------------------------------
-public func format(template: String, args: Array[String]) -> String {
-    let mut result: String = "";
-    let mut i: usize = 0;
-    let mut arg_index: usize = 0;
+public func format(template: String, args: [String]) -> String {
+    var result = "".to_string();
+    var i: usize = 0;
+    var arg_index: usize = 0;
+    // The start of the text not yet copied: runs of plain text are appended
+    // as one slice, not byte by byte.
+    var copied: usize = 0;
+    let n = template.len();
 
-    while i < template.len() {
-        let ch: u8 = template.byte_at(i);
-
-        // Escape: {{ -> literal {
-        if ch == 0x7B && i + 1 < template.len() && template.byte_at(i + 1) == 0x7B {
-            result = result + "{";
-            i = i + 2;
+    while i < n {
+        let ch = template.byte_at(i);
+        let doubled = i + 1 < n && template.byte_at(i + 1) == ch;
+        if (ch == 0x7Bu8 || ch == 0x7Du8) && doubled {
+            result += template.slice(copied, i + 1);
+            i += 2;
+            copied = i;
             continue;
         }
-
-        // Escape: }} -> literal }
-        if ch == 0x7D && i + 1 < template.len() && template.byte_at(i + 1) == 0x7D {
-            result = result + "}";
-            i = i + 2;
-            continue;
-        }
-
-        // Placeholder: { ... }
-        if ch == 0x7B {
-            let start: usize = i + 1;
-            // Find closing brace.
-            let mut end: usize = start;
-            while end < template.len() && template.byte_at(end) != 0x7D {
-                end = end + 1;
+        if ch == 0x7Bu8 {
+            var end = i + 1;
+            while end < n && template.byte_at(end) != 0x7Du8 {
+                end += 1;
             }
-            let placeholder: String = template.slice(start, end);
-
-            if placeholder.len() == 0 {
-                // Auto-indexed: {}
+            if end == n {
+                // An unclosed brace: the rest is text.
+                break;
+            }
+            result += template.slice(copied, i);
+            let placeholder = template.slice(i + 1, end);
+            if placeholder.is_empty() {
                 if arg_index < args.len() {
-                    result = result + args[arg_index];
-                    arg_index = arg_index + 1;
+                    result += args[arg_index];
+                    arg_index += 1;
                 } else {
-                    result = result + "{}";
+                    result += "{}";
+                }
+            } else if let index = placeholder.parse_i64() {
+                if index >= 0 && (index as usize) < args.len() {
+                    result += args[index as usize];
+                } else {
+                    result += template.slice(i, end + 1);
                 }
             } else {
-                // Explicitly indexed: {0}, {1}, ...
-                let idx: usize = parse_usize(placeholder);
-                if idx < args.len() {
-                    result = result + args[idx];
-                } else {
-                    result = result + "{" + placeholder + "}";
-                }
+                result += template.slice(i, end + 1);
             }
             i = end + 1;
+            copied = i;
             continue;
         }
-
-        // Regular character.
-        result = result + char_from_byte(ch);
-        i = i + 1;
+        i += 1;
     }
+    result += template.slice(copied, n);
     return result;
 }
 
 // ---------------------------------------------------------------------------
-// format_int
-// Formats an integer value in the given base (2..36).
-// Uses lowercase letters a-z for digits above 9.
+// format_int / format_uint
+// The integer in base 2..36, with lower-case letters for digits above 9.
+// A base out of range gives "<invalid base>".
 // ---------------------------------------------------------------------------
 public func format_int(value: i64, base: u32) -> String {
-    if base < 2 || base > 36 {
-        return "<invalid base>";
+    if value < 0 {
+        // The magnitude of `i64::MIN` does not fit an `i64`; as a `u64` it
+        // does (two's complement negation).
+        let magnitude = (0u64 - (value as u64));
+        let digits = format_uint(magnitude, base);
+        if digits.starts_with("<") {
+            return digits;
+        }
+        return "-" + digits;
     }
-    if value == 0 {
-        return "0";
-    }
-
-    let digits: String = "0123456789abcdefghijklmnopqrstuvwxyz";
-    let is_negative: bool = value < 0;
-    let mut v: u64 = 0;
-    if is_negative {
-        v = (-value) as u64;
-    } else {
-        v = value as u64;
-    }
-
-    let mut result: String = "";
-    while v > 0 {
-        let remainder: u64 = v % (base as u64);
-        result = char_from_byte(digits.byte_at(remainder as usize)) + result;
-        v = v / (base as u64);
-    }
-
-    if is_negative {
-        result = "-" + result;
-    }
-    return result;
+    return format_uint(value as u64, base);
 }
 
-// Unsigned overload.
 public func format_uint(value: u64, base: u32) -> String {
     if base < 2 || base > 36 {
-        return "<invalid base>";
+        return "<invalid base>".to_string();
     }
-    if value == 0 {
-        return "0";
-    }
-
-    let digits: String = "0123456789abcdefghijklmnopqrstuvwxyz";
-    let mut v: u64 = value;
-    let mut result: String = "";
-    while v > 0 {
-        let remainder: u64 = v % (base as u64);
-        result = char_from_byte(digits.byte_at(remainder as usize)) + result;
+    let digits = "0123456789abcdefghijklmnopqrstuvwxyz".to_string();
+    // 64 binary digits at most, written from the end.
+    let out = array_filled(0u8, 64);
+    var at: usize = 64;
+    var v = value;
+    loop {
+        at -= 1;
+        out[at] = digits.byte_at((v % (base as u64)) as usize);
         v = v / (base as u64);
+        if v == 0 {
+            break;
+        }
     }
-    return result;
+    // The digits are ASCII: always valid UTF-8.
+    let all = string_from_utf8(out)!;
+    return all.slice(at, 64);
 }
 
 // ---------------------------------------------------------------------------
-// bin
-// Returns the binary (base-2) string representation of `value`, prefixed
-// with "0b".
+// bin / hex / oct (and the unsigned `_u` forms): the integer with a `0b`,
+// `0x` or `0o` prefix, after the sign.
 // ---------------------------------------------------------------------------
 public func bin(value: i64) -> String {
-    if value == 0 {
-        return "0b0";
-    }
-    if value < 0 {
-        return "-0b" + format_int(-value, 2);
-    }
-    return "0b" + format_int(value, 2);
+    return prefixed(value, 2, "0b");
 }
 
-// Unsigned overload.
 public func bin_u(value: u64) -> String {
-    if value == 0 {
-        return "0b0";
-    }
     return "0b" + format_uint(value, 2);
 }
 
-// ---------------------------------------------------------------------------
-// hex
-// Returns the hexadecimal (base-16) string representation of `value`,
-// prefixed with "0x".
-// ---------------------------------------------------------------------------
 public func hex(value: i64) -> String {
-    if value == 0 {
-        return "0x0";
-    }
-    if value < 0 {
-        return "-0x" + format_int(-value, 16);
-    }
-    return "0x" + format_int(value, 16);
+    return prefixed(value, 16, "0x");
 }
 
-// Unsigned overload.
 public func hex_u(value: u64) -> String {
-    if value == 0 {
-        return "0x0";
-    }
     return "0x" + format_uint(value, 16);
 }
 
-// ---------------------------------------------------------------------------
-// oct
-// Returns the octal (base-8) string representation of `value`, prefixed
-// with "0o".
-// ---------------------------------------------------------------------------
 public func oct(value: i64) -> String {
-    if value == 0 {
-        return "0o0";
-    }
-    if value < 0 {
-        return "-0o" + format_int(-value, 8);
-    }
-    return "0o" + format_int(value, 8);
+    return prefixed(value, 8, "0o");
 }
 
-// Unsigned overload.
 public func oct_u(value: u64) -> String {
-    if value == 0 {
-        return "0o0";
-    }
     return "0o" + format_uint(value, 8);
 }
 
+func prefixed(value: i64, base: u32, prefix: String) -> String {
+    let digits = format_int(value, base);
+    if digits.starts_with("-") {
+        return "-" + prefix + digits.slice(1, digits.len());
+    }
+    return prefix + digits;
+}
+
 // ---------------------------------------------------------------------------
-// pad_left
-// Pads `s` on the left with `fill` until it is at least `width` characters.
+// pad_left / pad_right / center
+// `s` padded with copies of `fill` to at least `width` characters (code
+// points), on the left, the right, or both (the extra one on the right).
+// `fill` is one character, usually " " or "0".
 // ---------------------------------------------------------------------------
-public func pad_left(s: String, width: usize, fill: u8) -> String {
-    if s.len() >= width {
+public func pad_left(s: String, width: usize, fill: String) -> String {
+    let chars = s.char_count();
+    if chars >= width {
         return s;
     }
-    let mut result: String = "";
-    let count: usize = width - s.len();
-    let mut i: usize = 0;
-    while i < count {
-        result = result + char_from_byte(fill);
-        i = i + 1;
-    }
-    return result + s;
+    return fill.repeat(width - chars) + s;
 }
 
-// ---------------------------------------------------------------------------
-// pad_right
-// Pads `s` on the right with `fill` until it is at least `width` characters.
-// ---------------------------------------------------------------------------
-public func pad_right(s: String, width: usize, fill: u8) -> String {
-    if s.len() >= width {
+public func pad_right(s: String, width: usize, fill: String) -> String {
+    let chars = s.char_count();
+    if chars >= width {
         return s;
     }
-    let mut result: String = s;
-    let count: usize = width - s.len();
-    let mut i: usize = 0;
-    while i < count {
-        result = result + char_from_byte(fill);
-        i = i + 1;
-    }
-    return result;
+    return s + fill.repeat(width - chars);
 }
 
-// ---------------------------------------------------------------------------
-// center
-// Centers `s` within a field of `width` characters, padded with `fill`.
-// ---------------------------------------------------------------------------
-public func center(s: String, width: usize, fill: u8) -> String {
-    if s.len() >= width {
+public func center(s: String, width: usize, fill: String) -> String {
+    let chars = s.char_count();
+    if chars >= width {
         return s;
     }
-    let total_pad: usize = width - s.len();
-    let left_pad: usize = total_pad / 2;
-    let right_pad: usize = total_pad - left_pad;
-    let mut result: String = "";
-    let mut i: usize = 0;
-    while i < left_pad {
-        result = result + char_from_byte(fill);
-        i = i + 1;
-    }
-    result = result + s;
-    i = 0;
-    while i < right_pad {
-        result = result + char_from_byte(fill);
-        i = i + 1;
-    }
-    return result;
+    let total = width - chars;
+    let left = total / 2;
+    return fill.repeat(left) + s + fill.repeat(total - left);
 }
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-// Parses a decimal usize from a string.
-func parse_usize(s: String) -> usize {
-    let mut result: usize = 0;
-    let mut i: usize = 0;
-    while i < s.len() {
-        let ch: u8 = s.byte_at(i);
-        if ch >= 48 && ch <= 57 {
-            result = result * 10 + (ch - 48) as usize;
-        }
-        i = i + 1;
-    }
-    return result;
-}
-
-extern func char_from_byte(b: u8) -> String;
