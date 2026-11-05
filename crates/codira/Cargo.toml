@@ -31,8 +31,11 @@ codira_runtime = { version = "0.6.0-dev", path = "../codira_runtime" }
 codira_healing = { version = "0.6.0-dev", path = "../codira_healing" }
 codira_language_server = { version = "0.6.0-dev", path = "../codira_language_server" }
 codira_project = { version = "0.6.0-dev", path = "../codira_project" }
+codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }
 codira_syntax = { version = "0.6.0-dev", path = "../codira_syntax" }
+codira_target = { version = "0.6.0-dev", path = "../codira_target" }
 codira_quantum = { version = "0.6.0-dev", path = "../codira_quantum" }
+llvm-sys = "221.0.1"
 semver = { workspace = true }
 codira_circuits = { version = "0.6.0-dev", path = "../codira_circuits" }
 serde_json = { workspace = true, features = ["std"] }

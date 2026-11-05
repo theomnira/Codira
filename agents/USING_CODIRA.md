@@ -2158,6 +2158,38 @@ written, private fields included. Method names, and items outside the
 documented sources (a package's documentation does not link into `std`), are
 not cross-referenced. Doc examples are highlighted but not compiled or run.
 
+### Diagnosing the toolchain: `codira doctor`
+
+`codira doctor` checks what this compiler runs with and prints `[ok  ]`,
+`[warn]` or `[FAIL]` per check, with the exact fix under each problem. It
+exits with an error if any check fails.
+
+- LLVM: the version of the LLVM linked into the compiler, asked of the
+  library itself; 22 is required.
+- target: the host's (or `--target <triple>`) must be a supported triple, and
+  the linked LLVM must have a backend for it.
+- Z3: the version of the linked library; 4.8 or later.
+- LLD: linked into the compiler from the same LLVM, so present whenever the
+  compiler runs.
+- C compiler: the clang `[native]` sources are compiled with (`CODIRA_CLANG`,
+  else the one next to the LLVM the compiler was built with, else `clang`);
+  it must run and must not be newer than LLVM 22, whose bitcode readers only
+  read older bitcode. A failure only inside a package with `[native]`
+  sources; elsewhere a warning.
+- std library: the directory the compiler uses (`CODIRA_STD_PATH` first), or
+  why it finds none.
+- inside a checkout of the compiler's own sources, for contributors:
+  `llvm-config` for LLVM 22 (from `LLVM_SYS_221_PREFIX`, then `PATH`), and
+  nightly rustfmt, which CI formats with.
+- disk space where builds go: a warning below 2 GB (20 GB in a compiler
+  checkout, where a debug build takes 10-20 GB), a failure below 0.5 GB
+  (5 GB).
+
+Limits: it checks the toolchain this binary was built with and can run; it
+does not try a build. Free space is measured with `df` on Unix and
+PowerShell on Windows. Fixes name the package manager of the platform
+(`apt-get` on Linux, Homebrew on macOS, winget or Chocolatey on Windows).
+
 ---
 
 ## 5. End-to-end status today
