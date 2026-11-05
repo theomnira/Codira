@@ -59,10 +59,11 @@ public func write_stderr(message: str) {
 
 // Terminate the process with the given exit code.
 //
-// This function performs orderly shutdown:
-//   1. Runs registered atexit handlers (if any).
-//   2. Flushes and closes all open file descriptors.
-//   3. Returns `code` to the operating system.
+// The runtime ends the process with Rust's `std::process::exit`: the C
+// library's atexit handlers run and the runtime's standard output is
+// flushed, but no Codira code runs on the way out. Files opened through
+// `std.fs` are closed by the operating system, not synced: call `fs_fsync`
+// first for anything that must be durable.
 //
 // Convention:
 //   code == 0  → success
@@ -155,9 +156,9 @@ public func abort_with_message(message: str) -> Never {
 // panic — Unrecoverable error with formatted message
 // =============================================================================
 
-// Terminate with a panic message and source location information.
-// The runtime prints the message, file, line, and column to stderr,
-// then aborts.
+// Terminate with a panic message: writes `panic: <message>` and a newline
+// to stderr, then aborts. No source location is printed (unlike the
+// compiler's own bounds and division checks, which print one).
 //
 //   panic("unexpected None value");
 public func panic(message: str) -> Never {
@@ -178,7 +179,7 @@ public func panic_with_context(context: str, message: str) -> Never {
 
 // Assert that a condition is true.  If false, panic with a message.
 //
-//   assert(index < len, "index out of bounds");
+//   assert_with(index < len, "index out of bounds");
 public func assert_with(condition: bool, message: str) {
     if !condition {
         __panic_in("assertion failed", message);
@@ -192,7 +193,10 @@ public func assert(condition: bool) {
     }
 }
 
-// Debug-only assertion: compiled out in release builds.
+// Debug-only assertion: checked when `codira_is_debug()` is true, which
+// says whether the *runtime* was built with debug assertions, not how the
+// program was built. It is not compiled out: the condition is evaluated
+// and the flag is read on every call.
 public func debug_assert_with(condition: bool, message: str) {
     if codira_is_debug() {
         if !condition {
