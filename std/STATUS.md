@@ -1,7 +1,7 @@
 # Standard library status
 
 What each module of `std/` does today, what shows it, and what stands in
-its way. One row per module that exists (89 files, the prelude included)
+its way. One row per module that exists (92 files, the prelude included)
 and one per module that is planned. This page says what the standard
 library *is*; [ARCHITECTURE.md](ARCHITECTURE.md) says what it should
 become and [ROADMAP.md](ROADMAP.md) in what order.
@@ -10,13 +10,13 @@ become and [ROADMAP.md](ROADMAP.md) in what order.
 
 | status | modules | meaning |
 |---|---:|---|
-| importable | 19 | A program's `import std.<module>.*` checks, builds and loads. |
+| importable | 22 | A program's `import std.<module>.*` checks, builds and loads. |
 | checks-but-not-importable | 4 | Clean when `std/` is checked as one package with its prelude, but a program importing it fails: it imports a module with errors, or uses a prelude name. |
 | fails | 66 | The module's own file has diagnostics. |
 | planned | 52 | No file yet; part of the target layout. |
 | unsupported | 7 | Not planned, with the reason given in its row. |
 
-Of the 19 importable modules, 17 are run end to end by a program against
+Of the 22 importable modules, 20 are run end to end by a program against
 independently computed values; `std.memory.page` and
 `std.builtin.type_aliases` are imported but not run.
 
@@ -80,6 +80,7 @@ path is given.
 | `std.complex.complex` | importable | arithmetic, Smith division, `powi`, `sqrt`, polar (`std_complex_arithmetic`) | — | `complex_norm` overflows above ~1e154 (no `hypot`); see Defects. | L+CI |
 | `std.crypto.hash` | importable | SHA-256, SHA-512, BLAKE3 over raw memory (RustCrypto `sha2`, `blake3` in the runtime) against NIST and BLAKE3 vectors (`a_program_computes_sha256_through_std_crypto_hash`; `crates/codira/tests/fs_and_hash.rs`: `a_codira_program_computes_the_known_answer_digests`) | — | Cryptographic. Not constant time in the length. `@noalloc @nopanic @noblock` are trusted assertions about the runtime. | L+CI |
 | `std.db.db` | importable | snapshot-isolation transactions, commit, conflict, reopen (`db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_commits_reopens_and_reads_back`, `a_codira_program_observes_a_write_write_conflict`) | — | Experimental. Snapshot isolation, not serializable (write skew). One process per directory, no lock file. Whole data set in memory. | L+CI |
+| `std.fs.file` | importable | `read_file(path) -> Result[[u8], FileError]` (`NotFound`, `PermissionDenied`, `IsADirectory`, `Other(code)`), errors passed on with `?` (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`) | — | Reads the whole file into memory; no size limit. The file is closed on every path. No writing: use `std.fs.fs`. | L+CI |
 | `std.fs.fs` | importable | open, read, write, seek, size, fsync, close, remove, rename, directory sync (`a_program_writes_and_reads_a_file_through_std_fs`; `fs_and_hash.rs`: `a_codira_program_writes_reads_renames_and_removes_a_file`) | — | Raw addresses: the runtime checks length and non-null only. Errors are negative codes, not `Result`. Durability claimed on Linux only; `fs_sync_dir` unsupported on Windows. Handles are never closed automatically. | L+CI |
 | `std.hashlib.hash` | importable | FNV-1a 64 over bytes, integers, floats, bools; combiners (`std_hashlib_hash_is_fnv1a`) | — | **Not cryptographic, not DoS-resistant** (unkeyed). `combine_hash` mixes weakly. | L+CI |
 | `std.math.constants` | importable | IEEE values of π, e, limits, infinities, NaN (`std_math_constants_are_the_ieee_values`) | — | Constants are niladic functions (`PI()`) until module-level `let` exists. | L+CI |
@@ -88,7 +89,9 @@ path is given.
 | `std.memory.page` | importable | (imported only; the runtime services are run by `crates/codira_runtime/tests/native_memory.rs` with their own declarations) | — | Raw OS memory; W^X enforced by the runtime; 0 on failure. | L+CI (imported) |
 | `std.memory.region` | importable | arenas with quotas, alloc, used, free (`a_program_uses_std_memory_region_and_its_value_struct`) | — | Untraced memory: GC references stored there are invisible to the collector; stale addresses are not caught. Passing `Region` across modules allocates (value structs are boxed across modules). | L+CI |
 | `std.random.rng` | importable | xoshiro256** seeded by SplitMix64, against a Rust reference implementation (`std_random_rng_is_xoshiro256_starstar`) | — | **Not cryptographic**; seeded only by the caller (no OS entropy service exists). | L+CI |
+| `std.result.result` | importable | `Result[T, E]` with `is_ok`, `is_err`, `ok`, `err`, `unwrap_or`, `unwrap_or_else`, `map`, `map_err`, `and_then`, `or`, `expect`, `unwrap`, `from_optional`; `?` on it (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`; `crates/codira/tests/generic_enums.rs`) | — | `unwrap`, `expect` and `expect_err` panic. Cranelift `--jit` refuses `?`. A postcondition about a returned `Result` comes back Unknown from the verifier. | L+CI |
 | `std.sys.terminate` | importable | `panic` writes `panic: <message>` and aborts; `assert`, `write_stderr` (`std_sys_terminate_panics_with_its_message`) | — | `debug_assert` follows the runtime's build, not the program's. | L+CI |
+| `std.text.ascii` | importable | `is_space`, `is_digit`, `next_word`, `parse_i64` with a `ParseError` naming the offending byte's index (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`) | — | ASCII only. `parse_i64` reports overflow as an error, not a wrap. | L+CI |
 | `std.time.time` | importable | `Duration` arithmetic, monotonic `Instant`, sleep, wall clock (`std_time_measures_and_sleeps`) | — | Duration arithmetic wraps on overflow (except `duration_sub`, which saturates). Wall clock is an `f64` of seconds. | L+CI |
 
 ## Checks but not importable
@@ -182,7 +185,7 @@ is the API layer of the architecture, not a schedule; the milestone is in
 |---|---|---|---|---|---|
 | `std.panic` | planned | core: panic, assert, assert_eq, unreachable, todo (replaces `std.sys.terminate`, `std.sys.assert_compare`) | operators through traits (for `assert_eq`) | `@noalloc`; panics by definition | — |
 | `std.option` | planned | core: helpers for `T?` (replaces `std.collections.optional`) | generic enums | `@noalloc @nopanic` except `unwrap`/`expect` | — |
-| `std.result` | planned | core: `Result[T, E]` combinators | generic enums, `?` (in progress) | `@noalloc @nopanic` except `unwrap`/`expect` | — |
+| `std.result` | planned | core: `Result[T, E]` combinators (a first version exists as `std.result.result`) | moving it to `std.result` | `@noalloc @nopanic` except `unwrap`/`expect` | — |
 | `std.str` | planned | core: operations on `str` (UTF-8 validation, find, split views, trim), byte-indexed | slices of `str` | `@noalloc`; byte indices; `T?` on bad boundaries | — |
 | `std.slice` | planned | core: views, search, sort, binary search (replaces `std.builtin.slice`, `std.collections.span`, `std.builtin.sort`) | growable arrays (in progress), operators through traits | `@noalloc` except `stable_sort` | — |
 | `std.num` | planned | core: integer and float limits, checked/wrapping/saturating/overflowing arithmetic, parsing (replaces the limits in `std.math.constants` and `std.builtin.types`) | module-level constants, `Result` | `@noalloc @nopanic` | — |
