@@ -288,7 +288,7 @@ flowchart TD
         direction LR
         Diff["Differential testing<br/>seeded random programs on LLVM -O2,<br/>LLVM -O0 and Cranelift; outputs compared;<br/>every former divergence a regression test"]
         Bench["benches/ + scripts/bench.sh<br/>Criterion vs Rust, LuaJIT, Wasm;<br/>baselines recorded, not gated"]
-        CI["CI on Linux, Windows and macOS<br/>Linux and Windows: tests pass;<br/>macOS: 24 of 3,505 tests fail;<br/>nightly format check fails"]
+        CI["CI on Linux, Windows and macOS<br/>Linux and Windows: all tests but a stale<br/>generated header pass (now regenerated);<br/>macOS: 23 more of 3,517 fail (Funis Mach-O, 6 codegen);<br/>nightly format check fails"]
         Supply["Supply chain<br/>cargo audit: 1 open advisory<br/>(tracing-subscriber via arkworks)"]
     end
     Diff -.->|checks| LLVMGen
