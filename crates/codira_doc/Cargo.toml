@@ -1,0 +1,17 @@
+[package]
+name = "codira_doc"
+description = "Static, searchable HTML API documentation for Codira packages"
+keywords = ["language", "codira", "documentation"]
+categories.workspace = true
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+documentation.workspace = true
+readme.workspace = true
+homepage.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+codira_syntax = { version = "0.6.0-dev", path = "../codira_syntax" }
+pulldown-cmark = { workspace = true }

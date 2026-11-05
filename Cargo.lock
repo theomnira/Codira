@@ -585,6 +585,7 @@ dependencies = [
  "codira_compiler_daemon",
  "codira_cranelift",
  "codira_ctcheck",
+ "codira_doc",
  "codira_fmt",
  "codira_healing",
  "codira_hir",
@@ -594,6 +595,7 @@ dependencies = [
  "codira_quantum",
  "codira_runtime",
  "codira_skeptic",
+ "codira_syntax",
  "log",
  "pretty_env_logger",
  "semver",
@@ -807,6 +809,14 @@ version = "0.6.0-dev"
 dependencies = [
  "codira_hir",
  "codira_syntax",
+]
+
+[[package]]
+name = "codira_doc"
+version = "0.6.0-dev"
+dependencies = [
+ "codira_syntax",
+ "pulldown-cmark 0.9.6",
 ]
 
 [[package]]

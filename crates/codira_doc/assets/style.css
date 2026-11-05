@@ -1,0 +1,64 @@
+/* Codira API documentation. */
+:root {
+  --bg: #ffffff; --fg: #1d1f23; --muted: #5f6670; --border: #d9dde3;
+  --code-bg: #f4f6f8; --link: #1a5fb4; --kw: #8a2be2; --st: #2a7a2a;
+  --nu: #b35900; --cm: #6b7280; --at: #a0522d;
+  --effect-bg: #fff1e0; --effect-fg: #8a4b00; --pure-bg: #e8f5e9; --pure-fg: #23632a;
+  --bad-bg: #fde8e8; --bad-fg: #9b1c1c;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c; --fg: #e3e5e8; --muted: #9aa1ab; --border: #33373e;
+    --code-bg: #1f2227; --link: #78aeff; --kw: #c792ea; --st: #8bd17c;
+    --nu: #f2a65a; --cm: #8b939e; --at: #e0a37a;
+    --effect-bg: #3a2a14; --effect-fg: #f5c27a; --pure-bg: #183020; --pure-fg: #9be0a5;
+    --bad-bg: #3d1717; --bad-fg: #ffb3b3;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { position: sticky; top: 0; z-index: 2; display: flex; gap: 16px; align-items: center;
+  padding: 10px 16px; background: var(--bg); border-bottom: 1px solid var(--border); }
+header .home { font-weight: 600; color: var(--fg); text-decoration: none; }
+#search { flex: 1; max-width: 520px; padding: 6px 10px; font: inherit; color: var(--fg);
+  background: var(--code-bg); border: 1px solid var(--border); border-radius: 6px; }
+#results { position: absolute; top: 48px; left: 16px; right: 16px; max-width: 760px; margin: 0;
+  padding: 0; list-style: none; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; max-height: 70vh; overflow: auto; display: none; }
+#results.open { display: block; }
+#results li a { display: block; padding: 6px 10px; color: var(--fg); text-decoration: none; }
+#results li a:hover, #results li.sel a { background: var(--code-bg); }
+#results .k { color: var(--muted); font-size: 0.85em; margin-left: 6px; }
+#results .s { display: block; color: var(--muted); font-size: 0.85em; }
+main { max-width: 960px; margin: 0 auto; padding: 16px; }
+a { color: var(--link); }
+code, pre { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+pre { background: var(--code-bg); padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+pre.sig { border-left: 3px solid var(--link); white-space: pre-wrap; }
+.item { border-top: 1px solid var(--border); padding-top: 8px; margin-top: 18px; }
+.item h3 { margin: 0 0 6px; display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.item h3 > a:first-child { color: var(--fg); text-decoration: none; font-family: ui-monospace, monospace; }
+.kind { color: var(--muted); font-size: 0.8em; font-weight: normal; }
+.srclink { margin-left: auto; font-size: 0.8em; font-weight: normal; }
+.method { margin-left: 24px; }
+.badges { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.badge { font-size: 0.8em; padding: 1px 8px; border-radius: 10px; border: 1px solid var(--border); }
+.badge.effect { background: var(--effect-bg); color: var(--effect-fg); border-color: transparent; }
+.badge.pure, .badge.met { background: var(--pure-bg); color: var(--pure-fg); border-color: transparent; }
+.badge.violated { background: var(--bad-bg); color: var(--bad-fg); border-color: transparent; }
+.badge.extern, .badge.trusted { background: var(--bad-bg); color: var(--bad-fg); border-color: transparent; }
+.badge.attr { background: var(--code-bg); }
+.contracts .label { font-size: 0.8em; color: var(--muted); }
+.contracts pre { margin: 4px 0; }
+.empty, .src, .count { color: var(--muted); }
+table.modules { border-collapse: collapse; width: 100%; }
+table.modules td { padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+pre.source { padding: 0; }
+pre.source .line { display: block; padding: 0 12px 0 0; }
+pre.source .line:target { background: var(--effect-bg); }
+pre.source .ln { display: inline-block; width: 4.5em; padding-right: 12px; text-align: right;
+  color: var(--muted); text-decoration: none; user-select: none; }
+.kw { color: var(--kw); } .st { color: var(--st); } .nu { color: var(--nu); }
+.cm { color: var(--cm); font-style: italic; } .at { color: var(--at); }
+a.ty { color: var(--link); text-decoration: none; } a.ty:hover { text-decoration: underline; }

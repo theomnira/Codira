@@ -21,6 +21,7 @@ pretty_env_logger = { workspace = true }
 codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
 codira_certificate = { version = "0.6.0-dev", path = "../codira_certificate" }
 codira_compiler = { version = "0.6.0-dev", path = "../codira_compiler" }
+codira_doc = { version = "0.6.0-dev", path = "../codira_doc" }
 codira_fmt = { version = "0.6.0-dev", path = "../codira_fmt" }
 codira_hir = { version = "0.6.0-dev", path = "../codira_hir" }
 codira_hir_input = { version = "0.6.0-dev", path = "../codira_hir_input" }
@@ -30,6 +31,7 @@ codira_runtime = { version = "0.6.0-dev", path = "../codira_runtime" }
 codira_healing = { version = "0.6.0-dev", path = "../codira_healing" }
 codira_language_server = { version = "0.6.0-dev", path = "../codira_language_server" }
 codira_project = { version = "0.6.0-dev", path = "../codira_project" }
+codira_syntax = { version = "0.6.0-dev", path = "../codira_syntax" }
 codira_quantum = { version = "0.6.0-dev", path = "../codira_quantum" }
 semver = { workspace = true }
 codira_circuits = { version = "0.6.0-dev", path = "../codira_circuits" }

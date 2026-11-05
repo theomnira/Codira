@@ -12,6 +12,7 @@ pub mod certify;
 pub mod check;
 pub mod counterexample;
 pub mod daemon;
+pub mod doc;
 pub mod envelope;
 pub mod exe;
 pub mod fmt;

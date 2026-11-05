@@ -2114,6 +2114,47 @@ trailing comments; the contents of block comments and strings are never
 touched, including their indentation; a pair of tokens no rule covers keeps
 "no space" or becomes one space, whichever it had.
 
+### API documentation: `codira doc`
+
+`codira doc` writes HTML documentation for the enclosing package to
+`target/doc/` (`--out` elsewhere); `codira doc --std` documents the standard
+library this compiler uses (`CODIRA_STD_PATH`, if set). The output is static
+files: open `index.html` directly, no server is needed. It has:
+
+- one page per module (`std.collections.array.html`), with each `public`
+  item (`--private` adds the rest): its signature, attributes, `requires` and
+  `ensures` clauses and doc comment, and the methods of its `extend` blocks;
+- doc comments in Markdown. `///` comments directly above an item are its
+  documentation; an item with none is documented by a plain `//` block
+  directly above it (no blank line between), without decorative rule lines.
+  `//!` comments document the module; without them, the comment block that
+  opens the file does;
+- cross-references: a type name in a signature links to that type, and
+  `[name]` or `[module.name]` in a doc comment links to the item. A name is
+  linked only when it resolves to one documented item (the current module
+  first); an ambiguous one stays text;
+- examples: code blocks in doc comments (unlabelled, or marked `codira`) are
+  highlighted with the compiler's own lexer;
+- for each function, the envelope the effect analysis infers, as badges:
+  "allocates", "may block", "may panic", "may not terminate", "calls foreign
+  code", "spawns tasks", "performs effects", "touches secrets", and a list of
+  what it is free of. Hovering a badge shows the call chain down to the cause.
+  A declared `@envelope` shows as met or NOT MET; on an `extern` function it
+  shows as trusted and unchecked;
+- a highlighted page per source file with line anchors, linked from every
+  item;
+- a search box (press `/`) over every module and item name and summary.
+
+`--undocumented` lists the public items without documentation;
+`--no-envelopes` skips the effect analysis.
+
+Limits: the envelope is the source-level analysis `codira envelope` reports,
+which is conservative: a call it cannot see into, such as a compiler
+intrinsic, counts as every effect. Struct and enum declarations are shown as
+written, private fields included. Method names, and items outside the
+documented sources (a package's documentation does not link into `std`), are
+not cross-referenced. Doc examples are highlighted but not compiled or run.
+
 ---
 
 ## 5. End-to-end status today
