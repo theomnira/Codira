@@ -71,7 +71,7 @@ path is given.
 
 | module | status | what works (test) | blocked by | safety | platforms |
 |---|---|---|---|---|---|
-| `std.base64.base64` | importable | base64, base32, base16 encode/decode over `[u8]` against RFC 4648 vectors (`std_base64_matches_the_standard_test_vectors`) | — | Lenient, non-canonical decoder: accepts malformed input (`QQ=A` decodes to two bytes, see Defects); not for validation. Not constant time. | L+CI |
+| `std.base64.base64` | importable | base64, base32, base16 encode/decode over `[u8]` against the standard test vectors (`std_base64_matches_the_standard_test_vectors`) | — | Lenient, non-canonical decoder: accepts malformed input (`QQ=A` decodes to two bytes, see Defects); not for validation. Not constant time. | L+CI |
 | `std.bit.bit` | importable | counts, reversal, byte swap, rotations, widths, floor/ceil powers of two on `u64`/`u32` (`std_bit_operations_are_exact`) | — | `bit_ceil` above 2^63 returns 1. | L+CI |
 | `std.bit.mask` | importable | masks, field extract/insert, bit select, single-bit ops (`std_bit_operations_are_exact`) | — | A bit position >= 64 is taken modulo 64 (shifts are masked). | L+CI |
 | `std.builtin.type_aliases` | importable | `Never` = `never` | — | — | L+CI (imported) |
