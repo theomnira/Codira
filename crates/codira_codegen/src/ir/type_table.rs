@@ -172,6 +172,15 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
             if builtin == codira_hir::BuiltinFn::ArrayFilled {
                 self.collect_type(self.hir_types.type_id(&infer[expr_id]));
             }
+            // So do `copy`, `map` and `filter`.
+            if let codira_hir::BuiltinFn::Array(
+                codira_hir::ArrayMethod::Copy
+                | codira_hir::ArrayMethod::Map
+                | codira_hir::ArrayMethod::Filter,
+            ) = builtin
+            {
+                self.collect_type(self.hir_types.type_id(&infer[expr_id]));
+            }
         } else if let codira_hir::Expr::Call { callee, .. } = expr {
             match infer[*callee].as_callable_def() {
                 Some(codira_hir::CallableDef::Function(hir_fn)) => {
@@ -184,6 +193,11 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
             }
         } else if let codira_hir::Expr::Array(..) = expr {
             self.collect_type(self.hir_types.type_id(&infer[expr_id]));
+        } else if let codira_hir::Expr::Index { index, .. } = expr {
+            // A slice, `xs[lo..hi]`, is a new array.
+            if matches!(body[*index], codira_hir::Expr::Range { .. }) {
+                self.collect_type(self.hir_types.type_id(&infer[expr_id]));
+            }
         }
 
         // Recurse further

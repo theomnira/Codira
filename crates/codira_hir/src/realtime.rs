@@ -33,7 +33,10 @@
 //!
 //! * constructing a `class` (any garbage-collected struct): a record literal, a
 //!   tuple-constructor call, or a unit value -- the `new` intrinsic;
-//! * an array literal -- `new_array`. Arrays cannot grow today;
+//! * an array literal -- `new_array`; `xs.push(..)`, `insert`, `reserve` and
+//!   `append`, which grow the buffer when it is full (`codira.array_grow`);
+//!   `copy`, `map`, `filter` and slicing `xs[lo..hi]`, which make a new
+//!   array;
 //! * `print`/`println`: the runtime formats numbers into a heap string and
 //!   writes under standard output's lock;
 //! * `channel(n)`, `scope { .. }` (its task bookkeeping; its end waits for
@@ -53,6 +56,8 @@
 //!
 //! Panic (anything that ends the call abnormally):
 //!
+//! * `xs.insert(i, x)` and `xs.remove(i)`, which check `i` like indexing;
+//!   slicing `xs[lo..hi]`, which checks `lo <= hi <= len`;
 //! * `a[i]` and `a[i] = v`: the bounds check calls
 //!   `codira.panic_index_out_of_bounds`. `a.unchecked_get(i)` has no check and
 //!   is the documented escape hatch (an out-of-range index there reads
@@ -614,6 +619,11 @@ impl Collector<'_> {
             // through a function value is unknown (below); what the literal
             // itself does is allocate. Its body is still visited, which can
             // only over-approximate.
+            // A closure literal an array method compiles in place
+            // (`xs.map(func(x) { .. })`) is no function value: its body is
+            // part of this function, and is visited below.
+            Expr::Closure { .. }
+                if crate::is_inlined_closure_arg(&self.frame.body, &self.frame.infer, expr) => {}
             Expr::Closure { .. } => self.source(
                 expr,
                 EffectSet::GC_ALLOC,
@@ -725,6 +735,13 @@ impl Collector<'_> {
                 EffectSet::of(&[Effect::Panic]),
                 "postfix `!` panics when the optional is `nil`",
             ),
+            Expr::Index { index, .. } if matches!(body[*index], Expr::Range { .. }) => {
+                self.source(
+                    expr,
+                    EffectSet::GC_ALLOC,
+                    "slicing allocates a new array, and panics when the range is out of bounds",
+                );
+            }
             Expr::Index { .. } => self.source(
                 expr,
                 EffectSet::of(&[Effect::Panic]),
@@ -824,6 +841,54 @@ impl Collector<'_> {
             | BuiltinFn::ArrayLen
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen => {}
+            BuiltinFn::Array(method) => self.array_method(expr, method),
+        }
+    }
+
+    /// A method of `[T]`: growing the buffer or making a new array
+    /// allocates (and so can block and panic), `insert` and `remove` check
+    /// their index. A closure argument compiled in place adds nothing of its
+    /// own (its body is visited as part of this function); a function value
+    /// passed instead is called through, which the analysis cannot see.
+    fn array_method(&mut self, expr: ExprId, method: crate::ArrayMethod) {
+        if method.allocates() {
+            let what = match method {
+                crate::ArrayMethod::Copy
+                | crate::ArrayMethod::Map
+                | crate::ArrayMethod::Filter => format!("`{}` allocates a new array", method.name()),
+                _ => format!(
+                    "`{}` can grow the array, which allocates a new buffer",
+                    method.name()
+                ),
+            };
+            self.source(expr, EffectSet::GC_ALLOC, what);
+        }
+        if method.checks_index() {
+            self.source(
+                expr,
+                EffectSet::of(&[Effect::Panic]),
+                format!(
+                    "`{}` panics when the index is out of range",
+                    method.name()
+                ),
+            );
+        }
+        if let (Some(index), Expr::MethodCall { args, .. }) =
+            (method.closure_arg(), &self.frame.body[expr])
+        {
+            if let Some(&arg) = args.get(index) {
+                if !crate::is_inlined_closure_literal(&self.frame.body, arg) {
+                    self.source(
+                        expr,
+                        EffectSet::ALL,
+                        format!(
+                            "`{}` calls a function value, whose code the analysis cannot see \
+                             (a closure literal without `return` is compiled in place instead)",
+                            method.name()
+                        ),
+                    );
+                }
+            }
         }
     }
 

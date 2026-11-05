@@ -73,6 +73,12 @@ fn collect_expr<'ink>(
             collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
             *needs_alloc = true;
         }
+        // The array methods grow, sort, search and copy through the
+        // runtime, and check indices like indexing does.
+        if let codira_hir::BuiltinFn::Array(_) = builtin {
+            collect_array_intrinsics(context, target, intrinsics);
+            *needs_alloc = true;
+        }
     } else if let Expr::Call { callee, .. } = expr {
         match infer[*callee].as_callable_def() {
             Some(codira_hir::CallableDef::Struct(_)) => {
@@ -152,6 +158,14 @@ fn collect_expr<'ink>(
         );
     }
 
+    // Slicing makes a new array and checks its range.
+    if let Expr::Index { index, .. } = expr {
+        if matches!(body[*index], Expr::Range { .. }) {
+            collect_array_intrinsics(context, target, intrinsics);
+            *needs_alloc = true;
+        }
+    }
+
     if let Expr::Array(_) = expr {
         collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
         *needs_alloc = true;
@@ -170,6 +184,25 @@ fn collect_expr<'ink>(
             infer,
         );
     });
+}
+
+/// Collects every runtime function an array method or a slice may call.
+fn collect_array_intrinsics<'ink>(
+    context: &'ink Context,
+    target: &TargetData,
+    intrinsics: &mut IntrinsicsMap<'ink>,
+) {
+    for intrinsic in intrinsics::array_functions() {
+        collect_intrinsic(context, target, intrinsic, intrinsics);
+    }
+    collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
+    collect_intrinsic(context, target, &intrinsics::str_eq, intrinsics);
+    collect_intrinsic(
+        context,
+        target,
+        &intrinsics::panic_index_out_of_bounds,
+        intrinsics,
+    );
 }
 
 /// Collects all intrinsics from the specified `body`.

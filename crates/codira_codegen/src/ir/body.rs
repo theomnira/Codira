@@ -38,6 +38,7 @@ use crate::{
     value::Global,
 };
 
+mod arrays;
 mod closures;
 mod effects;
 mod merge;
@@ -538,7 +539,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             } => self.gen_field(expr, *receiver_expr, name),
             Expr::Array(exprs) => self.gen_array(expr, exprs).map(Into::into),
             Expr::Tuple(exprs) => self.gen_tuple(expr, exprs),
-            Expr::Index { base, index } => self.gen_index(expr, *base, *index),
+            Expr::Index { base, index } => match body[*index] {
+                // `xs[lo..hi]`: a copy of those elements (see `arrays`).
+                Expr::Range {
+                    start,
+                    end,
+                    inclusive,
+                } => self.gen_array_slice(expr, *base, start, end, inclusive),
+                _ => self.gen_index(expr, *base, *index),
+            },
             Expr::Cast { expr: operand, .. } => self.gen_cast(expr, *operand),
             Expr::Perform { args, .. } => self.gen_perform(expr, args),
             Expr::Handle { body: handled, arms } => self.gen_handle(expr, *handled, arms),
@@ -574,7 +583,10 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     ) -> Option<BasicValueEnum<'ink>> {
         match builtin {
             BuiltinFn::Channel => unreachable!("lowered by `gen_channel_new`"),
-            BuiltinFn::ArrayLen | BuiltinFn::ArrayUncheckedGet | BuiltinFn::StrLen => {
+            BuiltinFn::ArrayLen
+            | BuiltinFn::ArrayUncheckedGet
+            | BuiltinFn::StrLen
+            | BuiltinFn::Array(_) => {
                 unreachable!("method builtins are lowered by `gen_builtin_method`")
             }
             BuiltinFn::Print | BuiltinFn::Println => {
@@ -920,6 +932,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             | BuiltinFn::Channel => {
                 unreachable!("free-function builtins are lowered by `gen_builtin_call`")
             }
+            BuiltinFn::Array(_) => unreachable!("array methods are lowered by `gen_array_method`"),
         }
     }
 
@@ -1473,6 +1486,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         args: &[ExprId],
     ) -> Option<BasicValueEnum<'ink>> {
         if let Some(builtin) = self.infer.builtin_call(tgt_expr) {
+            if let BuiltinFn::Array(method) = builtin {
+                return self.gen_array_method(tgt_expr, method, receiver, args);
+            }
             return self.gen_builtin_method(builtin, receiver, args);
         }
 
@@ -3756,8 +3772,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         } = body[iterable]
         {
             self.gen_for_range(pat, start, end, inclusive, body_expr)
+        } else if self.infer.builtin_call(iterable)
+            == Some(BuiltinFn::Array(codira_hir::ArrayMethod::Enumerate))
+        {
+            // `for (i, x) in xs.enumerate()`: the array loop, binding pairs.
+            let Expr::MethodCall { receiver, .. } = body[iterable] else {
+                unreachable!("`enumerate()` is a method call")
+            };
+            self.gen_for_array(pat, receiver, body_expr, Some(iterable))
         } else {
-            self.gen_for_array(pat, iterable, body_expr)
+            self.gen_for_array(pat, iterable, body_expr, None)
         }
     }
 
@@ -3900,14 +3924,23 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
     /// `for x in array`: visits each element in order.
     ///
-    /// The array and its length are read once, before the first iteration;
-    /// the index never leaves `0..len`, so the element loads need no bounds
-    /// check -- the loop costs what hand-written unchecked indexing would.
+    /// The array and its length are read once, before the first iteration,
+    /// and the loop also stops at the array's current length, read on every
+    /// iteration: an element the body pushes is not visited, and a body that
+    /// shortens the array ends the loop at its new end (see `arrays`). So
+    /// the element loads need no bounds check, and when nothing in the loop
+    /// writes a length LLVM hoists the second load and folds the two tests
+    /// into one -- the loop costs what hand-written unchecked indexing
+    /// would.
+    ///
+    /// `enumerate` is the `xs.enumerate()` expression when the loop binds
+    /// `(index, element)` pairs.
     fn gen_for_array(
         &mut self,
         pat: PatId,
         iterable: ExprId,
         body_expr: ExprId,
+        enumerate: Option<ExprId>,
     ) -> Option<BasicValueEnum<'ink>> {
         let element_ty = self.infer[iterable]
             .as_array()
@@ -3926,6 +3959,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .expect("failed to load an array's length");
         array_tbaa::tag_value(length, ArrayAccess::Length);
         let length = length.into_int_value();
+        let pair_ty = enumerate.map(|enumerate| {
+            let pair = self.infer[enumerate]
+                .as_array()
+                .expect("`enumerate()` is an array of pairs")
+                .clone();
+            self.hir_types
+                .get_basic_type(&pair)
+                .expect("a pair is a basic type")
+                .into_struct_type()
+        });
 
         let counter = self
             .new_alloca_builder()
@@ -3940,23 +3983,35 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             body_expr,
             counter,
             length_type,
-            &|this, index| {
-                this.builder
-                    .build_int_compare(IntPredicate::ULT, index, length, "in_range")
-                    .expect("failed to compare a for loop index")
-            },
+            &|this, index| this.gen_live_in_range(array, index, length),
             &|this, index| {
                 let elements = array.get_elements(&this.builder);
                 let element_basic_ty = array.element_ty();
-                // Safety: `index < length`, checked by the loop condition.
+                // Safety: `index` is below the current length, checked by
+                // the loop condition.
                 let element_ptr = unsafe {
                     this.builder
                         .build_gep(element_basic_ty, elements, &[index], "element_ptr")
                         .expect("failed to build GEP for a for loop element")
                 };
-                this.builder
+                let element = this
+                    .builder
                     .build_load(element_basic_ty, element_ptr, "element")
-                    .expect("failed to load a for loop element")
+                    .expect("failed to load a for loop element");
+                match pair_ty {
+                    None => element,
+                    Some(pair_ty) => {
+                        let pair = this
+                            .builder
+                            .build_insert_value(pair_ty.get_undef(), index, 0, "pair.index")
+                            .expect("failed to build an index pair");
+                        this.builder
+                            .build_insert_value(pair, element, 1, "pair")
+                            .expect("failed to build an index pair")
+                            .into_struct_value()
+                            .into()
+                    }
+                }
             },
             None,
         )

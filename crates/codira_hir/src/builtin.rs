@@ -34,6 +34,12 @@
 
 use crate::name::Name;
 
+mod array;
+
+pub use array::{
+    is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, ElementRequirement,
+};
+
 /// A function provided by the compiler rather than declared in source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinFn {
@@ -81,6 +87,9 @@ pub enum BuiltinFn {
     ArrayUncheckedGet,
     /// `s.len()` on a `str`: its length in bytes, as `usize`.
     StrLen,
+    /// A method of `[T]` that grows, searches, orders or iterates it
+    /// (`push`, `sort`, `map`, ...; see [`ArrayMethod`]).
+    Array(ArrayMethod),
 }
 
 impl BuiltinFn {
@@ -113,6 +122,7 @@ impl BuiltinFn {
             BuiltinFn::Fma => "fma",
             BuiltinFn::ArrayLen | BuiltinFn::StrLen => "len",
             BuiltinFn::ArrayUncheckedGet => "unchecked_get",
+            BuiltinFn::Array(method) => method.name(),
         }
     }
 

@@ -26,6 +26,7 @@ use crate::{
     BinaryOp, BuiltinFn, CallableDef, Function, HirDatabase, HirDisplay, Name, Path, Trait,
 };
 
+mod array_methods;
 mod closures;
 mod effects;
 mod exhaustive;
@@ -1149,6 +1150,12 @@ impl InferenceResultBuilder<'_> {
 
                 TyKind::Tuple(elem_tys.len(), elem_tys.into_iter().collect()).intern()
             }
+            Expr::Index { base, index } if matches!(self.body[*index], Expr::Range { .. }) => {
+                let Expr::Range { start, end, .. } = self.body[*index] else {
+                    unreachable!("matched above")
+                };
+                self.infer_array_slice(*base, start, end, expected)
+            }
             Expr::Index { base, index } => {
                 let elem_ty = if expected.ty.is_unknown() {
                     self.type_variables.new_type_var()
@@ -2141,7 +2148,10 @@ impl InferenceResultBuilder<'_> {
                 }
                 ty
             }
-            BuiltinFn::ArrayLen | BuiltinFn::ArrayUncheckedGet | BuiltinFn::StrLen => {
+            BuiltinFn::ArrayLen
+            | BuiltinFn::ArrayUncheckedGet
+            | BuiltinFn::StrLen
+            | BuiltinFn::Array(_) => {
                 unreachable!("method builtins are resolved by `infer_builtin_method`")
             }
         }
@@ -2159,6 +2169,11 @@ impl InferenceResultBuilder<'_> {
     ) -> Option<Ty> {
         let receiver_ty = self.normalize(receiver_ty);
         let builtin = match (receiver_ty.interned(), method_name.as_str()?) {
+            (TyKind::Array(elem), name) if crate::ArrayMethod::from_name(name).is_some() => {
+                let method = crate::ArrayMethod::from_name(name).expect("matched above");
+                let elem = elem.clone();
+                return Some(self.infer_array_method(tgt_expr, method, &elem, args));
+            }
             (TyKind::Array(_), "len") => BuiltinFn::ArrayLen,
             (TyKind::Array(_), "unchecked_get") => BuiltinFn::ArrayUncheckedGet,
             (TyKind::Str, "len") => BuiltinFn::StrLen,
@@ -2463,6 +2478,7 @@ impl InferenceResultBuilder<'_> {
             *ty = resolved;
         }
         self.check_capture_types(&closures, &pat_types);
+        self.check_array_methods(&expr_types);
         let instantiations = self.resolve_instantiations();
         InferenceResult {
             //            field_resolutions: self.field_resolutions,

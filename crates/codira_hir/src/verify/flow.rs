@@ -558,7 +558,8 @@ impl Checker<'_> {
                         | BuiltinFn::Channel
                         | BuiltinFn::ArrayLen
                         | BuiltinFn::ArrayUncheckedGet
-                        | BuiltinFn::StrLen,
+                        | BuiltinFn::StrLen
+                        | BuiltinFn::Array(_),
                     ) => {}
                     None => self.check_call(id, args, None),
                 }

@@ -155,3 +155,27 @@ pub fn print_functions() -> [&'static dyn Intrinsic; 8] {
         &print_bool,
     ]
 }
+
+runtime_functions! {
+    /// Makes room in `array` for at least `min_capacity` elements: moves its
+    /// elements to a larger buffer (the capacity at least doubles). The
+    /// array keeps its handle.
+    pub fn array_grow(array: *const *mut ffi::c_void, min_capacity: usize, alloc_handle: *mut ffi::c_void) -> () = "codira.array_grow";
+
+    /// Sorts the `len` elements at `data`, of the element kind `kind`, in
+    /// place (unstable; floats by IEEE 754 total order).
+    pub fn array_sort(data: *mut u8, len: usize, kind: u32) -> () = "codira.array_sort";
+
+    /// Searches the sorted `len` elements at `data` for the value at `key`:
+    /// an index of an equal element, or -1.
+    pub fn array_binary_search(data: *mut u8, len: usize, kind: u32, key: *const u8) -> i64 = "codira.array_binary_search";
+
+    /// Reverses the `len` elements of `stride` bytes at `data` in place.
+    pub fn array_reverse(data: *mut u8, len: usize, stride: usize) -> () = "codira.array_reverse";
+}
+
+/// Every runtime function the array methods lower to (`push`, `sort`, ...),
+/// collected together like [`print_functions`].
+pub fn array_functions() -> [&'static dyn Intrinsic; 4] {
+    [&array_grow, &array_sort, &array_binary_search, &array_reverse]
+}

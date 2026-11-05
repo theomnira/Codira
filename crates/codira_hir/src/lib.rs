@@ -22,7 +22,10 @@ pub use self::code_model::{
     Session, Struct, StructMemoryKind, Trait, TypeAlias, VariantKind,
 };
 pub use crate::{
-    builtin::BuiltinFn,
+    builtin::{
+        is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, BuiltinFn,
+        ElementRequirement,
+    },
     db::{
         AstDatabase, AstDatabaseStorage, DefDatabase, DefDatabaseStorage, HirDatabase,
         HirDatabaseStorage, InternDatabase, InternDatabaseStorage,
