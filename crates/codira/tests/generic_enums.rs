@@ -42,6 +42,11 @@ fn codira_run(dir: &Path, extra: &[&str]) -> std::process::Output {
         .arg("--color")
         .arg("disable")
         .args(extra)
+        // This source tree's standard library, never another checkout's.
+        .env(
+            "CODIRA_STD_PATH",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        )
         .output()
         .expect("failed to spawn codira")
 }

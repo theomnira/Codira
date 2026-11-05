@@ -1065,3 +1065,53 @@ public func main() {
         "{stderr}"
     );
 }
+
+/// `std.result.result`, `std.fs.file` and `std.text.ascii` import together:
+/// a file is read as a `Result`, its words parsed with `?`, and a missing
+/// file and a bad word come back as errors.
+#[test]
+fn std_result_fs_file_and_text_ascii_read_and_parse_a_file() {
+    let work = tempfile::tempdir().unwrap();
+    let good = work.path().join("good.txt");
+    std::fs::write(&good, "40 -3\n5\n").unwrap();
+    let bad = work.path().join("bad.txt");
+    std::fs::write(&bad, "7 x").unwrap();
+    let program = r#"
+import std.result.result.{Result}
+import std.fs.file.{read_file, FileError}
+import std.text.ascii.{next_word, parse_i64, ParseError}
+
+enum Problem { Io(FileError), Parse(ParseError) }
+
+func total(path: str) -> Result[i64, Problem] {
+    let bytes = read_file(path)?
+    var sum: i64 = 0
+    var at: usize = 0
+    while let (start, end) = next_word(bytes, at) {
+        sum += parse_i64(bytes, start, end)?
+        at = end
+    }
+    Result.Ok(sum)
+}
+
+func show(r: Result[i64, Problem]) {
+    match r {
+        Result.Ok(v) -> println(v),
+        Result.Err(Problem.Io(FileError.NotFound)) -> println("not found"),
+        Result.Err(Problem.Io(_)) -> println("io"),
+        Result.Err(Problem.Parse(ParseError.InvalidDigit(at))) -> println(at),
+        Result.Err(Problem.Parse(_)) -> println("parse"),
+    }
+}
+
+public func main() {
+    show(total("{good}"))
+    show(total("{bad}"))
+    show(total("{good}.missing"))
+}
+"#
+    .replace("{good}", good.to_str().unwrap())
+    .replace("{bad}", bad.to_str().unwrap());
+    let (_dir, stdout) = run_ok(&[("mod.code", &program)]);
+    assert_eq!(stdout, "42\n2\nnot found\n");
+}
