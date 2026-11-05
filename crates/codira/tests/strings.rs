@@ -102,3 +102,337 @@ public func main() {
          170141183460469231731687303715884105727\n[]\n"
     );
 }
+
+#[test]
+fn appending_in_a_loop_shares_nothing_it_should_not() {
+    let out = run_ok(
+        r#"
+public func main() {
+    var s = "".to_string()
+    for i in 0..5 {
+        s += i.to_string()
+        s += ","
+    }
+    println(s)
+    // `a` ends at its buffer's fill: `b` and then `c` both start from it,
+    // and neither may see the other's bytes.
+    let a = "ab".to_string() + "c"
+    let b = a + "X"
+    let c = a + "Y"
+    println(a, " ", b, " ", c)
+    var t = a
+    t += "Z"
+    println(a, " ", t)
+    // Appending a string to itself.
+    var d = "xy".to_string()
+    d += d
+    d = d + d
+    println(d)
+    // Building a long string.
+    var long = "".to_string()
+    var i = 0
+    while i < 10000 {
+        long += "abc"
+        i += 1
+    }
+    println(long.len())
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        "0,1,2,3,4,\nabc abcX abcY\nabc abcZ\nxyxyxyxy\n30000\n"
+    );
+}
+
+#[test]
+fn equality_ordering_and_hashing() {
+    let out = run_ok(
+        r#"
+public func main() {
+    let a = "apple".to_string()
+    let b = "app".to_string() + "le"
+    println(a == b, " ", a != b, " ", a == "apple", " ", "apple" == a, " ", a == "apples")
+    println(a < "banana", " ", "banana" < a, " ", a <= b, " ", a >= b, " ", a > "apple")
+    println("abc" < "abd", " ", "é" > "z")
+    println(a.hash() == b.hash(), " ", a.hash() == "pear".to_string().hash())
+    println("".to_string().hash())
+}
+"#,
+    );
+    // FNV-1a 64 of nothing is its offset basis.
+    assert_eq!(
+        out,
+        "true false true true false\ntrue false true true false\ntrue true\ntrue false\n\
+         14695981039346656037\n"
+    );
+}
+
+#[test]
+fn lengths_chars_and_bytes() {
+    let out = run_ok(
+        r#"
+public func main() {
+    let s = "héllo, 世界".to_string()
+    println(s.len(), " ", s.char_count())
+    let cs = s.chars()
+    println(cs.len(), " ", cs[1], " ", cs[7])
+    let bs = s.bytes()
+    bs[0] = 72u8
+    println(bs.len(), " ", bs[0], " ", bs[1], " ", s.byte_at(0), " ", s)
+    for c in "abc".to_string().chars() {
+        print(c, " ")
+    }
+    println()
+}
+"#,
+    );
+    assert_eq!(out, "14 9\n9 233 19990\n14 72 195 104 héllo, 世界\n97 98 99 \n");
+}
+
+#[test]
+fn searching() {
+    let out = run_ok(
+        r#"
+public func main() {
+    let s = "the cat sat on the mat".to_string()
+    println(s.find("the")!, " ", s.rfind("the")!, " ", s.find("dog") == nil)
+    if let i = s.find("sat") { println("sat at ", i) }
+    println(s.contains("mat"), " ", s.contains("dog"), " ", s.contains(""))
+    println(s.starts_with("the"), " ", s.ends_with("mat"), " ", s.starts_with("cat"))
+    let needle = "on".to_string()
+    println(s.find(needle)!)
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        "0 15 true\nsat at 8\ntrue false true\ntrue true false\n12\n"
+    );
+}
+
+#[test]
+fn splitting_trimming_and_slicing() {
+    let out = run_ok(
+        r#"
+public func main() {
+    let csv = "a,b,,c".to_string()
+    let parts = csv.split(",")
+    println(parts.len())
+    for p in parts { print("[", p, "]") }
+    println()
+    let text = "one\ntwo\r\nthree\n".to_string()
+    let lines = text.lines()
+    println(lines.len(), " ", lines[1], " ", lines[2].len())
+    let padded = "  \t hi there \n".to_string()
+    println("[", padded.trim(), "] [", padded.trim_start(), "] [", padded.trim_end(), "]")
+    println("[", "   ".to_string().trim(), "]")
+    let s = "héllo".to_string()
+    println(s.slice(0, 1), " ", s.slice(1, 3), " ", s.slice(3, 6), " [", s.slice(2 - 1, 1), "]")
+    // A view can be appended to without disturbing what it came from.
+    var head = s.slice(0, 3)
+    head += "!"
+    println(head, " ", s)
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        "4\n[a][b][][c]\n3 two 5\n[hi there] [hi there \n] [  \t hi there]\n[]\n\
+         h é llo []\nhé! héllo\n"
+    );
+}
+
+#[test]
+fn case_replace_and_repeat() {
+    let out = run_ok(
+        r#"
+public func main() {
+    let s = "Hello, Wörld".to_string()
+    println(s.to_upper(), " ", s.to_lower())
+    println(s.replace("l", "L"), " ", s.replace("Wörld", "you"), " ", s.replace("zz", "y"))
+    println("ab".to_string().repeat(3), " [", "ab".to_string().repeat(0), "]")
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        "HELLO, WöRLD hello, wörld\nHeLLo, WörLd Hello, you Hello, Wörld\nababab []\n"
+    );
+}
+
+#[test]
+fn parsing_numbers() {
+    let out = run_ok(
+        r#"
+func show_i(s: String) {
+    if let v = s.parse_i64() { println(s, " -> ", v) } else { println(s, " -> nil") }
+}
+
+func show_f(s: String) {
+    if let v = s.parse_f64() { println(s, " -> ", v) } else { println(s, " -> nil") }
+}
+
+public func main() {
+    show_i("42".to_string())
+    show_i("-9223372036854775808".to_string())
+    show_i("9223372036854775808".to_string())
+    show_i(" 1".to_string())
+    show_i("+7".to_string())
+    show_i("".to_string())
+    show_f("2.5".to_string())
+    show_f("1e3".to_string())
+    show_f("abc".to_string())
+    let total = "10,20,30".to_string().split(",")
+    var sum = 0i64
+    for t in total { sum += t.parse_i64()! }
+    println(sum)
+}
+"#,
+    );
+    assert_eq!(
+        out,
+        "42 -> 42\n-9223372036854775808 -> -9223372036854775808\n\
+         9223372036854775808 -> nil\n 1 -> nil\n+7 -> 7\n -> nil\n\
+         2.5 -> 2.5\n1e3 -> 1000.0\nabc -> nil\n60\n"
+    );
+}
+
+#[test]
+fn from_utf8_validates_and_copies() {
+    let out = run_ok(
+        r#"
+public func main() {
+    let good = [104u8, 105u8, 0xC3u8, 0xA9u8]
+    let s = string_from_utf8(good)!
+    good[0] = 72u8
+    println(s, " ", s.len())
+    let bad = [0xC3u8, 0x28u8]
+    println(string_from_utf8(bad) == nil)
+    println(string_from_utf8([0xEDu8, 0xA0u8, 0x80u8]) == nil)
+}
+"#,
+    );
+    assert_eq!(out, "hié 4\ntrue\ntrue\n");
+}
+
+#[test]
+fn strings_in_structs_classes_arrays_and_functions() {
+    let out = run_ok(
+        r#"
+struct Named {
+    name: String,
+    age: i64,
+}
+
+class Person {
+    var name: String
+}
+
+func greet(who: String) -> String {
+    "hello " + who
+}
+
+public func main() {
+    let n = Named { name: "ann".to_string(), age: 3 }
+    let p = Person { name: "bob".to_string() }
+    p.name += "by"
+    let names = [n.name, p.name, greet(n.name)]
+    names[0] = names[0].to_upper()
+    for x in names { print(x, ";") }
+    println()
+    let maybe: String? = nil
+    println(maybe == nil)
+    let opt: String? = "x".to_string()
+    println(opt!)
+}
+"#,
+    );
+    assert_eq!(out, "ANN;bobby;hello ann;\ntrue\nx\n");
+}
+
+#[test]
+fn slicing_off_a_char_boundary_panics_with_its_location() {
+    let err = run_panics(
+        r#"
+public func main() {
+    let s = "héllo".to_string()
+    println(s.slice(0, 2))
+}
+"#,
+    );
+    assert!(
+        err.contains(
+            "panic at mod.code:4:13: byte index 2 is not a char boundary; it is inside 'é' (bytes 1..3)"
+        ),
+        "{err}"
+    );
+}
+
+#[test]
+fn out_of_range_indices_panic() {
+    let err = run_panics(
+        r#"
+public func main() {
+    let s = "abc".to_string()
+    let n = -1
+    println(s.slice(n, 2))
+}
+"#,
+    );
+    assert!(
+        err.contains(
+            "panic at mod.code:5:13: string slice -1..2 is out of range for a string of length 3"
+        ),
+        "{err}"
+    );
+    let err = run_panics(
+        r#"
+public func main() {
+    let s = "abc".to_string()
+    println(s.slice(2, 1))
+}
+"#,
+    );
+    assert!(err.contains("string slice 2..1 starts after it ends"), "{err}");
+    let err = run_panics(
+        r#"
+public func main() {
+    let s = "abc".to_string()
+    println(s.byte_at(3))
+}
+"#,
+    );
+    assert!(
+        err.contains(
+            "panic at mod.code:4:13: index out of bounds: the length is 3 but the index is 3"
+        ),
+        "{err}"
+    );
+    let err = run_panics(
+        r#"
+public func main() {
+    let parts = "abc".to_string().split("")
+    println(parts.len())
+}
+"#,
+    );
+    assert!(err.contains("`split` was given an empty separator"), "{err}");
+}
+
+#[test]
+fn type_errors_are_reported() {
+    let out = build_fails(
+        r#"
+public func main() {
+    let s = "abc".to_string()
+    let a = s + 1
+    let b = s.find(3)
+    let e = s.nope()
+}
+"#,
+    );
+    assert!(out.contains("cannot apply binary operator"), "{out}");
+    assert!(out.contains("`find` takes a `String` or a `str`, not `"), "{out}");
+    assert!(out.contains("method `nope` does not exist"), "{out}");
+}

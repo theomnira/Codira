@@ -105,8 +105,12 @@ impl StringOp {
             )
             .then_some(ToString);
         }
-        if !matches!(receiver, TyKind::String) {
-            return None;
+        // A `str` has the methods too: the literal is copied into a `String`
+        // first (its own `len` is the `str` builtin, which copies nothing).
+        match receiver {
+            TyKind::String => {}
+            TyKind::Str if name != "len" => {}
+            _ => return None,
         }
         Some(match name {
             "len" => Len,
@@ -208,13 +212,14 @@ impl StringOp {
 
     /// Whether the operation allocates on the GC heap (for the effect
     /// analysis). `to_string()` on a `String` returns it unchanged; the views
-    /// (`trim`, `slice`) share the receiver's buffer.
+    /// (`trim`, `slice`) share the receiver's buffer; every method of a
+    /// `str` copies it into a `String` first.
     pub fn allocates(self, receiver: Option<&TyKind>) -> bool {
         use StringOp::*;
         match self {
             Chars | Bytes | Split | Lines | ToUpper | ToLower | Replace | Repeat | FromUtf8 => true,
             ToString => !matches!(receiver, Some(TyKind::String)),
-            _ => false,
+            _ => matches!(receiver, Some(TyKind::Str)),
         }
     }
 
