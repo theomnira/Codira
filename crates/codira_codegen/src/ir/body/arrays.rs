@@ -93,8 +93,29 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     .build_int_nuw_add(len, usize_ty.const_int(1, false), "len.next")
                     .expect("failed to add to a length");
                 self.ensure_capacity(array, new_len);
-                self.store_element(array, len, value);
-                self.set_array_len(array, new_len);
+                // One load of the payload pointer for both stores: nothing
+                // between them can move the payload, and reloading it after
+                // the element store (which LLVM cannot tell apart from the
+                // object header without the alias classes) costs a load per
+                // push.
+                let payload = array.get_payload_ptr(&self.builder);
+                let elements = array.elements_in(&self.builder, payload);
+                // Safety: `len < capacity`, made so just above.
+                let slot = unsafe {
+                    self.builder
+                        .build_gep(array.element_ty(), elements, &[len], "push.slot")
+                        .expect("failed to build GEP for an element")
+                };
+                let store = self
+                    .builder
+                    .build_store(slot, value)
+                    .expect("failed to store an element");
+                array_tbaa::tag(store, ArrayAccess::Element);
+                let store = self
+                    .builder
+                    .build_store(array.length_ptr_in(&self.builder, payload), new_len)
+                    .expect("failed to store an array's length");
+                array_tbaa::tag(store, ArrayAccess::Length);
                 Some(self.gen_empty())
             }
             ArrayMethod::Pop | ArrayMethod::Last => {

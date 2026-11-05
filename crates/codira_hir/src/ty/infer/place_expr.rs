@@ -12,6 +12,8 @@ impl InferenceResultBuilder<'_> {
     pub(super) fn check_place_expression(&mut self, resolver: &Resolver, expr: ExprId) -> bool {
         match &self.body[expr] {
             Expr::Path(p) => self.check_place_path(resolver, p),
+            // A slice, `xs[lo..hi]`, is a new array, not a place.
+            Expr::Index { index, .. } if matches!(self.body[*index], Expr::Range { .. }) => false,
             Expr::Index { base, .. } => self.check_place_expression(resolver, *base),
             Expr::Field { .. } | Expr::Array(_) => true,
             _ => false,

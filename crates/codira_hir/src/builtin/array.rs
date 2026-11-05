@@ -301,6 +301,7 @@ mod tests {
     func f(xs: [i64]) { xs.push(1, 2) }
     func g(xs: [i64]) { xs.push(1.5) }
     func h(ws: [str]) -> str? { ws.min() }
+    func i(xs: [i64]) { xs[0..1] = [2] }
     "#,
         );
         let count = |needle: &str| diags.matches(needle).count();
@@ -334,8 +335,14 @@ mod tests {
             1,
             "{diags}"
         );
+        // A slice is a copy, not a place.
+        assert_eq!(
+            count("invalid left hand side of expression"),
+            1,
+            "{diags}"
+        );
         // And `f` (two arguments) and `g` (a float pushed onto `[i64]`).
-        assert_eq!(diags.lines().count(), 8, "{diags}");
+        assert_eq!(diags.lines().count(), 9, "{diags}");
     }
 
     #[test]

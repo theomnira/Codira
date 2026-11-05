@@ -27,14 +27,21 @@
 //! Why this is sound. An array value points at a garbage-collector object
 //! header whose first word points at the payload: the length, the capacity,
 //! then the elements inline. A tagged element access addresses
-//! `elements + i * size` with `0 <= i < length <= capacity`, inside the
-//! payload's element storage, never in the payload header (length,
-//! capacity) and never in the object header, which is a different
-//! allocation. A tagged length access is the payload's first field. The
-//! handle load reads the object header's first word, which generated code
-//! never writes; it is written only by runtime functions (allocation, hot
-//! reload), which are calls. Lengths are written only when an array is
-//! created (Codira arrays do not grow). `unchecked_get` is deliberately not
+//! `elements + i * size` with `0 <= i < capacity` (below the length, or, for
+//! `push`, at the length after the capacity check), inside the payload's
+//! element storage, never in the payload header (length, capacity) and
+//! never in the object header, which is a different allocation. A tagged
+//! length access is a field of the payload header: the length, or the
+//! capacity, which the array methods load with the same tag. The handle load
+//! reads the object header's first word, which generated code never writes;
+//! it is written only by runtime functions (allocation, hot reload, and
+//! growth, which moves the payload to a bigger buffer), which are calls, so
+//! LLVM reloads the handle after them. Arrays grow: lengths are written when
+//! an array is created and by `push`, `pop`, `insert`, `remove`, `clear` and
+//! `append`, always with the length tag, so a length write never passes an
+//! element access of the same array in a way the tags would hide (they are
+//! different words), and a later length read still sees it (same tag).
+//! `unchecked_get` is deliberately not
 //! tagged: an out-of-range index there may read another array's header.
 //! Raw-memory intrinsics, inline assembly and foreign code emit no tags, so
 //! they are never assumed not to alias anything. Assumptions: foreign code

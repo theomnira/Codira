@@ -688,8 +688,10 @@ impl HeapInner {
     /// with room for `new_capacity` elements, for a growing array (`push`,
     /// `reserve`, ...).
     ///
-    /// The array header and the `length` elements in use are copied; the
-    /// slots past the length are left uninitialized, which is sound because
+    /// The array header and the `length` elements in use are copied (an
+    /// out-of-line buffer is `realloc`ed, which copies it whole or moves its
+    /// pages); the slots past the length are left uninitialized, which is
+    /// sound because
     /// nothing reads them (the collector, heap snapshots and hot-reload
     /// migration stop at the length, and generated code checks every index
     /// against it). An old out-of-line buffer is freed; an old inline
@@ -725,19 +727,41 @@ impl HeapInner {
             new_layout.align().max(SMALL_PAYLOAD_ALIGN),
         )
         .map_err(|_layout_error| AllocError::TooLarge)?;
-        self.reserve(layout.size())?;
-        let buffer =
-            NonNull::new(std::alloc::alloc(layout)).ok_or(AllocError::SystemOutOfMemory {
-                requested: layout.size(),
-            })?;
-        std::ptr::copy_nonoverlapping((*hdr).data, buffer.as_ptr(), used);
-        (*buffer.as_ptr().cast::<ArrayHeader>()).capacity = new_capacity;
-        self.committed += layout.size();
         let key = hdr as usize;
-        if let Some((previous, previous_layout)) = self.out_of_line.insert(key, (buffer, layout)) {
-            std::alloc::dealloc(previous.as_ptr(), previous_layout);
-            self.committed -= previous_layout.size();
-        }
+        let buffer = match self.out_of_line.get(&key).copied() {
+            // Already out of line: `realloc`, which for a large buffer moves
+            // pages instead of copying bytes.
+            Some((previous, previous_layout)) if previous_layout.align() == layout.align() => {
+                self.reserve(layout.size().saturating_sub(previous_layout.size()))?;
+                let buffer = NonNull::new(std::alloc::realloc(
+                    previous.as_ptr(),
+                    previous_layout,
+                    layout.size(),
+                ))
+                .ok_or(AllocError::SystemOutOfMemory {
+                    requested: layout.size(),
+                })?;
+                self.committed = self.committed - previous_layout.size() + layout.size();
+                buffer
+            }
+            _ => {
+                self.reserve(layout.size())?;
+                let buffer = NonNull::new(std::alloc::alloc(layout)).ok_or(
+                    AllocError::SystemOutOfMemory {
+                        requested: layout.size(),
+                    },
+                )?;
+                std::ptr::copy_nonoverlapping((*hdr).data, buffer.as_ptr(), used);
+                self.committed += layout.size();
+                if let Some((previous, previous_layout)) = self.out_of_line.remove(&key) {
+                    std::alloc::dealloc(previous.as_ptr(), previous_layout);
+                    self.committed -= previous_layout.size();
+                }
+                buffer
+            }
+        };
+        (*buffer.as_ptr().cast::<ArrayHeader>()).capacity = new_capacity;
+        self.out_of_line.insert(key, (buffer, layout));
         (*hdr).flags |= FLAG_OUT_OF_LINE;
         (*hdr).data = buffer.as_ptr();
         self.global_bytes += new_layout.size() as isize - old_size as isize;
