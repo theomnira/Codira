@@ -55,7 +55,6 @@
 // no assertion is made.
 // =============================================================================
 
-import root.builtin.types.*;
 
 extern "C" {
     func codira_ai_tensor_new(data_addr: usize, shape_addr: usize, rank: usize) -> i64;

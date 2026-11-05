@@ -3,9 +3,10 @@ source: crates/codira_compiler/tests/stdlib_import_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-17 of 89 std modules are importable from a program
+19 of 89 std modules are importable from a program
 
 importable:
+  std.ai.runtime
   std.base64.base64
   std.bit.bit
   std.bit.mask
@@ -13,6 +14,7 @@ importable:
   std.collections.optional
   std.complex.complex
   std.crypto.hash
+  std.db.db
   std.fs.fs
   std.hashlib.hash
   std.math.constants
@@ -39,8 +41,6 @@ std.ai.nn.layer
     check (70 diagnostics): std/ai/nn/layer.code:42: access of private type `y.shape`
 std.ai.quantize
     check (35 diagnostics): std/ai/quantize.code:38: module-level `let` is not supported yet: `SYMMETRIC_MAX` would not be defined, and no name can refer to it; write a function returning the value (`func SYMMETRIC_MAX() -> T { .. }`), as `std.math.constants` does `public let SYMMETRIC_MAX: f32 = 127.0;`
-std.ai.runtime
-    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
 std.ai.tensor.buffer
     check (22 diagnostics): std/ai/tensor/buffer.code:81: undefined value `SIZE_F32`
 std.ai.tensor.raw
@@ -116,8 +116,6 @@ std.collections.string
 std.complex.complex_string
     check (78 diagnostics): std/complex/complex_string.code:17: cannot apply binary operator `float_to_string(z.real) + "+"`
     needs: `String`
-std.db.db
-    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
 std.ffi.cstring
     check (47 diagnostics): std/ffi/cstring.code:12: undefined type `Array[u8]`
 std.ffi.unsafe_union

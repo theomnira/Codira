@@ -1246,12 +1246,16 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
   (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
   which is not what a program sees).
-- **Importable today** (17 of 89 modules), each run from a program in
+- **Importable today** (19 of 89 modules), each run from a program in
   `crates/codira/tests/std_imports.rs` against independently computed
   values, except `std.memory.page` and `std.builtin.type_aliases` (check,
   build and load; not run):
   - `std.crypto.hash` (SHA-256, SHA-512, BLAKE3), `std.fs.fs`,
     `std.memory.region`, `std.memory.page`.
+  - `std.db.db` (the storage engine's transactions) and `std.ai.runtime`
+    (f32 tensors and a Linear layer): wrappers over the runtime's database
+    and tensor services, run by `crates/codira/tests/db_and_ai.rs`.
+    Experimental; see the runtime section for their limits.
   - `std.bit.bit`, `std.bit.mask`: bit counts, reversal, byte swaps,
     rotations, masks and fields on `u64`/`u32`. Exact. `bit_ceil` needs a
     result that fits (`value` at most 2^63).

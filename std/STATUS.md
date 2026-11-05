@@ -10,13 +10,13 @@ become and [ROADMAP.md](ROADMAP.md) in what order.
 
 | status | modules | meaning |
 |---|---:|---|
-| importable | 17 | A program's `import std.<module>.*` checks, builds and loads. |
-| checks-but-not-importable | 6 | Clean when `std/` is checked as one package with its prelude, but a program importing it fails: it imports a module with errors, or uses a prelude name. |
+| importable | 19 | A program's `import std.<module>.*` checks, builds and loads. |
+| checks-but-not-importable | 4 | Clean when `std/` is checked as one package with its prelude, but a program importing it fails: it imports a module with errors, or uses a prelude name. |
 | fails | 66 | The module's own file has diagnostics. |
 | planned | 52 | No file yet; part of the target layout. |
 | unsupported | 7 | Not planned, with the reason given in its row. |
 
-Of the 17 importable modules, 15 are run end to end by a program against
+Of the 19 importable modules, 17 are run end to end by a program against
 independently computed values; `std.memory.page` and
 `std.builtin.type_aliases` are imported but not run.
 
@@ -71,6 +71,7 @@ path is given.
 
 | module | status | what works (test) | blocked by | safety | platforms |
 |---|---|---|---|---|---|
+| `std.ai.runtime` | importable | f32 tensors, matmul, add, relu, softmax, a Linear layer trained by SGD (`crates/codira/tests/db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_trains_a_linear_layer_and_the_loss_falls`) | — | Experimental. Tensors are not traced by the GC and must be freed. | L+CI |
 | `std.base64.base64` | importable | base64, base32, base16 encode/decode over `[u8]` against the standard test vectors (`std_base64_matches_the_standard_test_vectors`) | — | Lenient, non-canonical decoder: accepts malformed input (`QQ=A` decodes to two bytes, see Defects); not for validation. Not constant time. | L+CI |
 | `std.bit.bit` | importable | counts, reversal, byte swap, rotations, widths, floor/ceil powers of two on `u64`/`u32` (`std_bit_operations_are_exact`) | — | `bit_ceil` above 2^63 returns 1. | L+CI |
 | `std.bit.mask` | importable | masks, field extract/insert, bit select, single-bit ops (`std_bit_operations_are_exact`) | — | A bit position >= 64 is taken modulo 64 (shifts are masked). | L+CI |
@@ -78,6 +79,7 @@ path is given.
 | `std.collections.optional` | importable | `some`, `none`, `unwrap` (panics on none), `unwrap_or`, `or_opt` (`std_collections_optional_unwraps_and_panics_on_none`) | — | Superseded by the language's `T?`. | L+CI |
 | `std.complex.complex` | importable | arithmetic, Smith division, `powi`, `sqrt`, polar (`std_complex_arithmetic`) | — | `complex_norm` overflows above ~1e154 (no `hypot`); see Defects. | L+CI |
 | `std.crypto.hash` | importable | SHA-256, SHA-512, BLAKE3 over raw memory (RustCrypto `sha2`, `blake3` in the runtime) against NIST and BLAKE3 vectors (`a_program_computes_sha256_through_std_crypto_hash`; `crates/codira/tests/fs_and_hash.rs`: `a_codira_program_computes_the_known_answer_digests`) | — | Cryptographic. Not constant time in the length. `@noalloc @nopanic @noblock` are trusted assertions about the runtime. | L+CI |
+| `std.db.db` | importable | snapshot-isolation transactions, commit, conflict, reopen (`db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_commits_reopens_and_reads_back`, `a_codira_program_observes_a_write_write_conflict`) | — | Experimental. Snapshot isolation, not serializable (write skew). One process per directory, no lock file. Whole data set in memory. | L+CI |
 | `std.fs.fs` | importable | open, read, write, seek, size, fsync, close, remove, rename, directory sync (`a_program_writes_and_reads_a_file_through_std_fs`; `fs_and_hash.rs`: `a_codira_program_writes_reads_renames_and_removes_a_file`) | — | Raw addresses: the runtime checks length and non-null only. Errors are negative codes, not `Result`. Durability claimed on Linux only; `fs_sync_dir` unsupported on Windows. Handles are never closed automatically. | L+CI |
 | `std.hashlib.hash` | importable | FNV-1a 64 over bytes, integers, floats, bools; combiners (`std_hashlib_hash_is_fnv1a`) | — | **Not cryptographic, not DoS-resistant** (unkeyed). `combine_hash` mixes weakly. | L+CI |
 | `std.math.constants` | importable | IEEE values of π, e, limits, infinities, NaN (`std_math_constants_are_the_ieee_values`) | — | Constants are niladic functions (`PI()`) until module-level `let` exists. | L+CI |
@@ -94,9 +96,7 @@ path is given.
 | module | status | what works (test) | blocked by | safety | platforms |
 |---|---|---|---|---|---|
 | `std.ai.algorithm.functional` | checks-but-not-importable | — | its import `std.ai.tensor.buffer` fails (module-level `let` `SIZE_F32`) | — | — |
-| `std.ai.runtime` | checks-but-not-importable | f32 tensors, matmul, add, relu, softmax, a Linear layer trained by SGD (`crates/codira/tests/db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_trains_a_linear_layer_and_the_loss_falls`) | an unused `import root.builtin.types.*`, which fails on `f16` | Experimental. Tensors are not traced by the GC and must be freed. | L+CI (source) |
 | `std.builtin.string_literal` | checks-but-not-importable | — | its import `std.ai.tensor.raw` fails (module-level `let`) | — | — |
-| `std.db.db` | checks-but-not-importable | snapshot-isolation transactions, commit, conflict, reopen (`db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_commits_reopens_and_reads_back`, `a_codira_program_observes_a_write_write_conflict`) | an unused `import root.builtin.types.*`, which fails on `f16` | Experimental. Snapshot isolation, not serializable (write skew). One process per directory, no lock file. Whole data set in memory. | L+CI (source) |
 | `std.math.sequence` | checks-but-not-importable | — | `std.collections.list` (`Pointer[T]`); *needs: `List` (std.collections.list)* | — | — |
 | `std.prelude` | checks-but-not-importable | — | imports all of `std/` (1051 diagnostics); programs have no prelude by design | — | — |
 

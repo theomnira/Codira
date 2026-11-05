@@ -354,7 +354,7 @@ name is the only one that survives.
 
 ### Migration plan
 
-Only the 17 importable modules have users; every other module can move
+Only the 19 importable modules have users; every other module can move
 or disappear without a compatibility step.
 
 1. **New name first.** Create the new module (`std/panic/mod.code` is
