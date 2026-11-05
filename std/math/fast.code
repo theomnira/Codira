@@ -20,7 +20,9 @@ func quiet_nan_f32() -> f32 {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Fast approximate 1/sqrt(x) using the famous bit-hack + one Newton step.
-/// Max relative error: ~0.175 %.
+/// Max relative error: ~0.175 %, for positive normal `x`. Zero, subnormals,
+/// infinity, NaN and negative `x` give finite values that are not
+/// 1/sqrt(x) (`fast_rsqrt(0.0)` is about 2e19, not infinity).
 public func fast_rsqrt(x: f32) -> f32 {
     let half = 0.5 as f32 * x;
     let i = bitcast_f32_to_u32(x);
@@ -32,7 +34,9 @@ public func fast_rsqrt(x: f32) -> f32 {
     return y_refined;
 }
 
-/// Fast approximate sqrt(x) built on fast_rsqrt.
+/// Fast approximate sqrt(x) built on fast_rsqrt, with its error bound for
+/// positive normal `x`. Returns 0 for `x <= 0` (negative `x` included,
+/// where `sqrt` gives NaN); infinity gives negative infinity.
 public func fast_sqrt(x: f32) -> f32 {
     if x <= 0.0 as f32 {
         return 0.0 as f32;
@@ -200,10 +204,12 @@ public func fast_pow(base: f32, exp: f32) -> f32 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Fast integer-exponent power (exact)
+// Integer-exponent power by repeated squaring
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Raises `base` to a non-negative integer power via squaring (exact).
+/// Raises `base` to a non-negative integer power via squaring. Not exact:
+/// each of the up to 2 * log2(exp) multiplications rounds, so the error
+/// grows with `exp` (`pow` is usually more accurate).
 public func fast_ipow_f64(base: f64, exp: u32) -> f64 {
     var result: f64 = 1.0;
     var b = base;
