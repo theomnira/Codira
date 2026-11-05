@@ -375,6 +375,12 @@ impl State<'_> {
                 },
             },
             TyKind::Tuple(0, _) | TyKind::Never => return Ok(None),
+            TyKind::String => {
+                return Err(
+                    "a `String` (strings live on the GC heap, which this backend does not reach)"
+                        .to_owned(),
+                )
+            }
             _ => {
                 return Err(format!(
                     "a value of type `{}`",

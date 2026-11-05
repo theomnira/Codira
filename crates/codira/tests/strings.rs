@@ -553,3 +553,26 @@ public func main() {
     assert!(out.contains("error: cannot find value"), "{out}");
     assert_eq!(out.matches("error: invalid literal value").count(), 2, "{out}");
 }
+
+/// The Cranelift backend has no GC heap: a program using `String` runs on
+/// LLVM instead, with a note that says why, and prints the same.
+#[test]
+fn jit_runs_strings_on_llvm_and_says_why() {
+    let dir = package_with(
+        r#"
+public func main() {
+    let s = "jit".to_string() + "?"
+    println(s)
+}
+"#,
+    );
+    let output = codira_run(dir.path(), &["--jit"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
+    assert_eq!(stdout.replace("\r\n", "\n"), "jit?\n");
+    assert!(
+        stderr.contains("a `String` (strings live on the GC heap, which this backend does not reach)"),
+        "{stderr}"
+    );
+}
