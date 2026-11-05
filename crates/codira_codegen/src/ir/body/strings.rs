@@ -178,6 +178,57 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         }
     }
 
+    /// Boxes a `String` value on the GC heap, for the host and for a call
+    /// through the dispatch table: one pointer to an object of the
+    /// `String` value-struct type holding the three words.
+    pub(super) fn box_string(&mut self, value: BasicValueEnum<'ink>) -> PointerValue<'ink> {
+        let (new_fn_ty, new_fn_ptr) = self.dispatch_table.gen_intrinsic_lookup(
+            self.external_globals.dispatch_table,
+            &self.builder,
+            &intrinsics::new,
+        );
+        let type_info = self.string_type_handle(&TyKind::String.intern());
+        let allocator = self.get_allocator_handle_ptr();
+        let handle = self
+            .builder
+            .build_indirect_call(
+                new_fn_ty,
+                new_fn_ptr,
+                &[type_info.into(), allocator.into()],
+                "string.box",
+            )
+            .expect("failed to build call to `new`")
+            .try_as_basic_value()
+            .basic()
+            .expect("`new` returns a handle")
+            .into_pointer_value();
+        let data = self
+            .builder
+            .build_load(self.context.ptr_type(inkwell::AddressSpace::default()), handle, "string.box.data")
+            .expect("failed to load a box's payload")
+            .into_pointer_value();
+        self.builder
+            .build_store(data, value)
+            .expect("failed to store a boxed string");
+        handle
+    }
+
+    /// The `String` value in a box made by [`Self::box_string`].
+    pub(super) fn unbox_string(&self, handle: BasicValueEnum<'ink>) -> BasicValueEnum<'ink> {
+        let data = self
+            .builder
+            .build_load(
+                self.context.ptr_type(inkwell::AddressSpace::default()),
+                handle.into_pointer_value(),
+                "string.box.data",
+            )
+            .expect("failed to load a box's payload")
+            .into_pointer_value();
+        self.builder
+            .build_load(self.hir_types.get_string_type(), data, "string")
+            .expect("failed to load a boxed string")
+    }
+
     /// Prints a `String`.
     pub(super) fn gen_print_string(&mut self, arg: ExprId, value: BasicValueEnum<'ink>) {
         let (data, len) = self.string_text(arg, value);
@@ -280,6 +331,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         if op == StringOp::ToString {
             return Some(self.gen_to_string(receiver, receiver_value));
         }
+        // A method called on a `str` works on a `String` copy of it.
+        let receiver_value = if matches!(self.infer[receiver].interned(), TyKind::Str) {
+            self.gen_to_string(receiver, receiver_value)
+        } else {
+            receiver_value
+        };
         let usize_type = self.hir_types.get_usize_type();
         let (buf, start, len) = self.string_fields(receiver_value.into_struct_value());
         let data = self.string_data(buf, start);

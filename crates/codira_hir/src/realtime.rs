@@ -985,18 +985,16 @@ impl Collector<'_> {
         let Some(sig) = callee.ty(self.db).callable_sig(self.db) else {
             return;
         };
-        let boxed = sig
-            .params()
-            .iter()
-            .chain(std::iter::once(sig.ret()))
-            .filter_map(crate::Ty::as_struct)
-            .find(|s| s.data(self.db).memory_kind == StructMemoryKind::Value);
-        if let Some(s) = boxed {
+        let mut values = sig.params().iter().chain(std::iter::once(sig.ret()));
+        let boxed = values.clone().filter_map(crate::Ty::as_struct)
+            .find(|s| s.data(self.db).memory_kind == StructMemoryKind::Value)
+            .map(|s| format!("the struct `{}`", s.name(self.db)))
+            .or_else(|| values.any(crate::Ty::is_string).then(|| "a `String`".to_string()));
+        if let Some(boxed) = boxed {
             let what = format!(
                 "the call to `{}` in another module goes through the runtime's dispatch table, \
-                 which boxes the struct `{}` on the GC heap",
+                 which boxes {boxed} on the GC heap",
                 callee.name(self.db),
-                s.name(self.db)
             );
             self.out.sources.push(Source {
                 effects: EffectSet::GC_ALLOC,

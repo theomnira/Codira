@@ -468,7 +468,9 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             TyKind::Enum(..) => Some(self.get_enum_type(ty).into()),
             TyKind::Bool => Some(self.get_bool_type().into()),
             TyKind::Str => Some(self.get_str_type().into()),
-            TyKind::String => Some(self.get_string_type().into()),
+            // Boxed on the GC heap like a value struct, so that the host and the
+            // dispatch table pass one pointer (see `ir::body::strings`).
+            TyKind::String => Some(self.context.ptr_type(AddressSpace::default()).into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             // A runtime handle (see `ir::body::tasks`).
             TyKind::Channel(_) | TyKind::Session(..) => Some(self.get_usize_type().into()),

@@ -110,9 +110,10 @@ fn collect_expr<'ink>(
                         .iter()
                         .chain(std::iter::once(sig.ret()))
                         .any(|ty| {
-                            ty.as_struct().is_some_and(|s| {
-                                s.data(db).memory_kind == codira_hir::StructMemoryKind::Value
-                            })
+                            ty.is_string()
+                                || ty.as_struct().is_some_and(|s| {
+                                    s.data(db).memory_kind == codira_hir::StructMemoryKind::Value
+                                })
                         })
                 });
                 if boxes_a_value_struct {

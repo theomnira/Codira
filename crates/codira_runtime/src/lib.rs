@@ -86,6 +86,7 @@ pub use crate::{
     },
     marshal::Marshal,
     reflection::{ArgumentReflection, ReturnTypeReflection},
+    string::{RootedString, StringRef},
 };
 
 /// Registers the current thread as running Codira code until the guard is

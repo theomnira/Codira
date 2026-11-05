@@ -203,6 +203,11 @@ impl Ty {
 }
 
 impl Ty {
+    /// Whether this is `String`.
+    pub fn is_string(&self) -> bool {
+        matches!(self.interned(), TyKind::String)
+    }
+
     /// Constructs an instance of the unit type `()`
     pub fn unit() -> Self {
         TyKind::Tuple(0, Substitution::empty()).intern()
@@ -568,6 +573,10 @@ impl FnSig {
 
     pub fn marshallable(&self, db: &dyn HirDatabase) -> bool {
         for ty in self.params_and_return.iter() {
+            // A `String` crosses boxed, like a value struct.
+            if ty.is_string() {
+                return false;
+            }
             if let Some(s) = ty.as_struct() {
                 if s.data(db).memory_kind == StructMemoryKind::Value {
                     return false;

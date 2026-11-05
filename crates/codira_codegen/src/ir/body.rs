@@ -354,6 +354,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     } else {
                         param
                     }
+                } else if ty.is_string() {
+                    self.unbox_string(param)
                 } else {
                     param
                 }
@@ -384,6 +386,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 } else {
                     value
                 }
+            } else if fn_ret_type.is_string() {
+                self.box_string(value).into()
             } else {
                 value
             };
@@ -2784,6 +2788,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                                 .into();
                         }
                     }
+                    if param_ty.is_string() {
+                        return self.box_string((*arg).try_into().expect("a String value")).into();
+                    }
                     *arg
                 })
                 .collect();
@@ -2854,6 +2861,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     return ret_value
                         .map(|value| deref_heap_value(&self.builder, value, struct_ty));
                 }
+            }
+            if sig.ret().is_string() {
+                return ret_value.map(|value| self.unbox_string(value));
             }
         }
 

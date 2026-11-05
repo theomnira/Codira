@@ -44,11 +44,17 @@ use std::{
     sync::{atomic::AtomicUsize, atomic::Ordering, Arc},
 };
 
-use codira_memory::{gc::Array as _, Type};
+use std::ptr::NonNull;
+
+use codira_memory::{
+    gc::{Array as _, GcPtr, HasIndirectionPtr, RawGcPtr},
+    HasStaticType, Type,
+};
 
 use crate::{
     builtins::{embedded_str, report_panic},
-    get_allocator, get_type_info, FunctionDefinition, GarbageCollector, IntoFunctionDefinition,
+    get_allocator, get_type_info, ArgumentReflection, FunctionDefinition, GarbageCollector,
+    IntoFunctionDefinition, Marshal, ReturnTypeReflection, Runtime,
 };
 
 /// The three words of a `String` value, as the compiler lays it out.
@@ -803,6 +809,193 @@ extern "C" fn string_from_utf8(
         let bytes = std::slice::from_raw_parts(elements(array), len);
         write(out, alloc.string(&[bytes], len));
         1
+    }
+}
+
+/// A Codira `String` held by the host: returned by [`Runtime::invoke`], read
+/// from a field with `StructRef::get`, or made with [`StringRef::new`] to
+/// pass to Codira code.
+///
+/// Like [`crate::StructRef`] and [`crate::ArrayRef`] it does not keep the
+/// string alive: [`StringRef::root`] it to hold it across calls. Its bytes
+/// never change, so reading them needs no lock.
+///
+/// Across the host boundary (and between modules) a `String` travels boxed:
+/// as one pointer to a GC object holding the three words, the convention of
+/// value structs.
+#[derive(Clone)]
+pub struct StringRef<'r> {
+    raw: RawString,
+    runtime: &'r Runtime,
+}
+
+/// The boxed `String` of the host calling convention: a GC handle to an
+/// object of type `core::String`.
+#[repr(transparent)]
+#[derive(Clone, Copy)]
+pub struct BoxedString(GcPtr);
+
+impl<'r> StringRef<'r> {
+    /// A new string holding a copy of `text`, allocated on `runtime`'s heap.
+    pub fn new(runtime: &'r Runtime, text: &str) -> Self {
+        let ty = <u8 as HasStaticType>::type_info().array_type();
+        let mut handle = match runtime.gc.try_alloc_array(&ty, text.len()) {
+            Ok(handle) => handle,
+            Err(err) => out_of_memory(&ty, &err.to_string()),
+        };
+        // Safety: every element is written right below.
+        unsafe { handle.set_length(text.len()) };
+        let raw: RawGcPtr = handle.as_raw().into();
+        let buf = raw.cast::<*mut u8>();
+        // Safety: the array was made with room for `text.len()` bytes.
+        unsafe {
+            std::ptr::copy_nonoverlapping(text.as_ptr(), elements(buf), text.len());
+        }
+        Self {
+            raw: RawString {
+                buf,
+                start: 0,
+                len: text.len(),
+            },
+            runtime,
+        }
+    }
+
+    /// The text.
+    pub fn as_str(&self) -> &str {
+        // Safety: a `String` is valid UTF-8 and its bytes never change; the
+        // buffer is alive while the caller keeps the string reachable.
+        unsafe { text(string_bytes(self.raw.buf, self.raw.start, self.raw.len)) }
+    }
+
+    /// The length in bytes.
+    pub fn len(&self) -> usize {
+        self.raw.len
+    }
+
+    /// Whether the string is empty.
+    pub fn is_empty(&self) -> bool {
+        self.raw.len == 0
+    }
+
+    /// The three words of the value.
+    pub fn raw(&self) -> RawString {
+        self.raw
+    }
+
+    /// Roots the string's buffer so that it survives collections.
+    pub fn root(self) -> RootedString {
+        RootedString {
+            handle: (!self.raw.buf.is_null()).then(|| {
+                crate::garbage_collector::GcRootPtr::new(
+                    &self.runtime.gc,
+                    GcPtr::from(self.raw.buf.cast::<*mut c_void>()),
+                )
+            }),
+            start: self.raw.start,
+            len: self.raw.len,
+        }
+    }
+
+    fn string_type(runtime: &Runtime) -> Type {
+        runtime
+            .get_type_info_by_name("core::String")
+            .expect("the loaded program uses no `String`, so the runtime has no type for one")
+    }
+}
+
+impl std::fmt::Debug for StringRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Debug::fmt(self.as_str(), f)
+    }
+}
+
+impl std::fmt::Display for StringRef<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A [`StringRef`] whose buffer is rooted. Obtain a `StringRef` with
+/// [`RootedString::as_ref`] to read it.
+pub struct RootedString {
+    handle: Option<crate::garbage_collector::GcRootPtr>,
+    start: usize,
+    len: usize,
+}
+
+impl RootedString {
+    /// The string, for reading or passing to Codira code.
+    pub fn as_ref<'r>(&self, runtime: &'r Runtime) -> StringRef<'r> {
+        let buf = self.handle.as_ref().map_or(std::ptr::null(), |handle| {
+            let raw: RawGcPtr = handle.handle().into();
+            raw.cast::<*mut u8>()
+        });
+        StringRef {
+            raw: RawString {
+                buf,
+                start: self.start,
+                len: self.len,
+            },
+            runtime,
+        }
+    }
+}
+
+impl ReturnTypeReflection for StringRef<'_> {
+    fn accepts_type(ty: &Type) -> bool {
+        ty.name() == "core::String"
+    }
+
+    fn type_hint() -> &'static str {
+        "String"
+    }
+}
+
+impl ArgumentReflection for StringRef<'_> {
+    fn type_info(&self, runtime: &Runtime) -> Type {
+        Self::string_type(runtime)
+    }
+}
+
+impl<'r> Marshal<'r> for StringRef<'r> {
+    type CodiraType = BoxedString;
+
+    fn marshal_from<'rt>(value: BoxedString, runtime: &'rt Runtime) -> Self
+    where
+        Self: 'r,
+        'rt: 'r,
+    {
+        // Safety: a boxed `String` holds the three words of one.
+        let raw = unsafe { value.0.deref::<RawString>().read_unaligned() };
+        StringRef { raw, runtime }
+    }
+
+    fn marshal_into(self) -> BoxedString {
+        let ty = Self::string_type(self.runtime);
+        let mut handle = match self.runtime.gc.try_alloc(&ty) {
+            Ok(handle) => handle,
+            Err(err) => out_of_memory(&ty, &err.to_string()),
+        };
+        // Safety: the object was allocated with the layout of a `String`.
+        unsafe { handle.deref_mut::<RawString>().write_unaligned(self.raw) };
+        BoxedString(handle)
+    }
+
+    fn marshal_from_ptr<'rt>(ptr: NonNull<BoxedString>, runtime: &'rt Runtime, _ty: &Type) -> Self
+    where
+        Self: 'r,
+        'rt: 'r,
+    {
+        // A field or an element holds the three words inline.
+        // Safety: the caller passes the address of a `String` value.
+        let raw = unsafe { ptr.cast::<RawString>().as_ptr().read_unaligned() };
+        StringRef { raw, runtime }
+    }
+
+    fn marshal_to_ptr(value: Self, ptr: NonNull<BoxedString>, _ty: &Type) {
+        // Safety: the caller passes the address of a `String` slot.
+        unsafe { ptr.cast::<RawString>().as_ptr().write_unaligned(value.raw) };
     }
 }
 
