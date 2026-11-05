@@ -1266,8 +1266,11 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     hash tables and fingerprints of trusted data only.
   - `std.base64.base64`: base64, base32 and base16 encode and decode over
     `[u8]` (encoded text is its ASCII bytes), standard alphabets with `=`
-    padding; decoding skips bytes outside the alphabet and returns an empty
-    array for invalid input.
+    padding; decoding is lenient: it skips bytes outside the alphabet,
+    returns an empty array only for a few malformed inputs (a base64 group
+    starting with `=`, odd-length or non-hex base16), accepts other
+    malformed input without an error, and is not canonical (`QQ==` and
+    `QR==` both decode to `A`). Not for input that must be validated.
   - `std.random.rng`: xoshiro256** with the state in a `Rng` the caller
     holds, seeded by SplitMix64 (`rng_seeded(seed)`, `rng_next_u64`,
     `rng_next_f64`, `rng_range_i64`, `rng_next_bool`). **Not

@@ -18,6 +18,13 @@
 //
 // An empty array is also the decoding of empty input, so a caller that must
 // tell invalid input from empty input checks for empty input first.
+//
+// Decoding is lenient, not validating: other malformed input is accepted
+// without an error, and the decoding is not canonical (the unused bits of a
+// final group are ignored, so `QQ==` and `QR==` both decode to `A`). Do not
+// use it where input must be rejected unless it is exactly well formed
+// (signatures, tokens, anything compared after decoding). Not constant
+// time: the time depends on the bytes, so it is not for secret keys either.
 
 // `=`, the padding byte.
 func PAD() -> u8 { 61 }
