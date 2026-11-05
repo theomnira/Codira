@@ -1850,3 +1850,57 @@ fn trait_bounds_in_every_position() {
         ]
     );
 }
+
+// --------------------------------------------------------------------------
+// Postfix `?`: error propagation
+// --------------------------------------------------------------------------
+
+/// The kinds of the nodes of `src`'s one `let` initializer, outermost first,
+/// down its first-child chain.
+fn spine(src: &str) -> Vec<SyntaxKind> {
+    let mut kinds = Vec::new();
+    let mut node = Some(only_initializer(src).syntax().clone());
+    while let Some(current) = node {
+        kinds.push(current.kind());
+        node = current.first_child();
+    }
+    kinds
+}
+
+/// `x?` is postfix and chains with calls, fields and `!` like any other
+/// postfix operator; `x??` is `(x?)?`, since a `??` hole is an atom and
+/// can never directly follow an expression.
+#[test]
+fn propagate_expr_is_postfix() {
+    use SyntaxKind::{
+        BIN_EXPR, CALL_EXPR, METHOD_CALL_EXPR, NAME_REF, PATH, PATH_EXPR, PATH_SEGMENT,
+        PROPAGATE_EXPR, TRY_EXPR,
+    };
+    assert_eq!(spine("f(x)?")[..2], [PROPAGATE_EXPR, CALL_EXPR]);
+    assert_eq!(
+        spine("f(x)?.g()")[..3],
+        [METHOD_CALL_EXPR, PROPAGATE_EXPR, CALL_EXPR]
+    );
+    assert_eq!(
+        spine("x??")[..3],
+        [PROPAGATE_EXPR, PROPAGATE_EXPR, PATH_EXPR]
+    );
+    assert_eq!(spine("x?!")[..2], [TRY_EXPR, PROPAGATE_EXPR]);
+    assert_eq!(spine("a? + b?")[..2], [BIN_EXPR, PROPAGATE_EXPR]);
+    assert_eq!(spine("x?")[1..], [PATH_EXPR, PATH, PATH_SEGMENT, NAME_REF]);
+}
+
+/// `??` is still a hole where an expression starts -- after `=`, as an
+/// argument, and on a line of its own -- and `T?` is still an optional
+/// type.
+#[test]
+fn propagate_expr_leaves_holes_and_optional_types_alone() {
+    use SyntaxKind::{HOLE_EXPR, OPTIONAL_TYPE};
+    assert_eq!(spine("??"), [HOLE_EXPR]);
+    let file = SourceFile::parse("func f(a: i32?) -> i32? {\n    let x: i32? = g(??)\n    ??\n}");
+    assert!(file.errors().is_empty(), "{:?}", file.errors());
+    let kinds: Vec<SyntaxKind> = file.syntax_node().descendants().map(|n| n.kind()).collect();
+    assert_eq!(kinds.iter().filter(|k| **k == HOLE_EXPR).count(), 2);
+    assert_eq!(kinds.iter().filter(|k| **k == OPTIONAL_TYPE).count(), 3);
+    assert!(!kinds.contains(&SyntaxKind::PROPAGATE_EXPR));
+}

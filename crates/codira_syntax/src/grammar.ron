@@ -327,6 +327,7 @@ Grammar(
         "HANDLER_ARM_LIST",
         "HANDLER_ARM",
         "TRY_EXPR",
+        "PROPAGATE_EXPR",
         "HOLE_EXPR",
         "CHOOSE_EXPR",
 
@@ -679,6 +680,9 @@ Grammar(
             options: [ "Path", "ParamList", ["body", "Expr"] ]
         ),
         "TryExpr": (options: ["Expr"]),
+        // `expr?` -- error propagation: the `Ok` payload of a `Result`, or
+        // the value inside an optional, else an early return.
+        "PropagateExpr": (options: ["Expr"]),
         // `??` -- a hole `codira synth` fills with an expression proven to
         // meet the function's contract.
         "HoleExpr": (),
@@ -721,7 +725,9 @@ Grammar(
                 "ScopeExpr",
                 "HandleExpr",
                 "TryExpr",
+                "PropagateExpr",
                 "TransferExpr",
+
                 "ChannelRecvExpr",
                 "ChannelSendExpr",
                 "SelectExpr",
