@@ -58,8 +58,13 @@ pub enum PrimitiveType {
     /// Primitive because a literal has to have a type before any library
     /// exists to give it one -- the compiler produces these itself, from a
     /// `"..."` token, with nothing to resolve. `String`, which owns and can
-    /// grow its bytes, is a library type built on top.
+    /// grow its bytes, is the compiler-known type below.
     Str,
+    /// `String`: an owned, always valid UTF-8 string on the GC heap. Known
+    /// to the compiler (rather than written in `std`) so that every program
+    /// has it without an import, literals convert to it, and its operations
+    /// compile to direct runtime calls.
+    String,
 }
 
 impl PrimitiveType {
@@ -67,6 +72,7 @@ impl PrimitiveType {
     pub const ALL: &'static [(Name, PrimitiveType)] = &[
         (name![bool], PrimitiveType::Bool),
         (name![str], PrimitiveType::Str),
+        (name![String], PrimitiveType::String),
 
         (name![isize], PrimitiveType::Int(PrimitiveInt::ISIZE)),
         (name![i8], PrimitiveType::Int(PrimitiveInt::I8)),
@@ -98,6 +104,7 @@ impl PrimitiveType {
         match self {
             PrimitiveType::Bool => "bool",
             PrimitiveType::Str => "str",
+            PrimitiveType::String => "String",
             PrimitiveType::Int(PrimitiveInt {
                 signedness,
                 bitness,

@@ -409,6 +409,7 @@ fn is_capturable(ty: &Ty) -> bool {
             | TyKind::Optional(_)
             | TyKind::Enum(..)
             | TyKind::Str
+            | TyKind::String
             // Concrete in every instance of a generic function.
             | TyKind::TypeParam(..)
     )

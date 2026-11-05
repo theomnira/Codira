@@ -56,7 +56,7 @@ impl ImplTarget {
         match ty.interned() {
             TyKind::Struct(s, _) => Some(ImplTarget::Struct(s.id)),
             TyKind::Enum(e, _) => Some(ImplTarget::Enum(e.id)),
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => {
+            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::String => {
                 Some(ImplTarget::Primitive(ty.clone()))
             }
             _ => None,

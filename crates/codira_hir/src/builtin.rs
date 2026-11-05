@@ -39,6 +39,9 @@ mod array;
 pub use array::{
     is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, ElementRequirement,
 };
+mod string;
+
+pub use string::{StringArg, StringOp};
 
 /// A function provided by the compiler rather than declared in source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -90,6 +93,9 @@ pub enum BuiltinFn {
     /// A method of `[T]` that grows, searches, orders or iterates it
     /// (`push`, `sort`, `map`, ...; see [`ArrayMethod`]).
     Array(ArrayMethod),
+    /// A method of `String`, `to_string()` on a primitive, or
+    /// `string_from_utf8` (see [`StringOp`]).
+    String(StringOp),
 }
 
 impl BuiltinFn {
@@ -105,6 +111,7 @@ impl BuiltinFn {
         BuiltinFn::Likely,
         BuiltinFn::Unlikely,
         BuiltinFn::Fma,
+        BuiltinFn::String(StringOp::FromUtf8),
     ];
 
     /// The name a program calls this builtin by.
@@ -123,6 +130,7 @@ impl BuiltinFn {
             BuiltinFn::ArrayLen | BuiltinFn::StrLen => "len",
             BuiltinFn::ArrayUncheckedGet => "unchecked_get",
             BuiltinFn::Array(method) => method.name(),
+            BuiltinFn::String(op) => op.name(),
         }
     }
 

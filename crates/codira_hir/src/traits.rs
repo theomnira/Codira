@@ -800,7 +800,7 @@ fn signature_mismatch(
 fn is_primitive(ty: &Ty) -> bool {
     matches!(
         ty.interned(),
-        TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str
+        TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str | TyKind::String
     )
 }
 

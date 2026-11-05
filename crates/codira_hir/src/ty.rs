@@ -70,6 +70,17 @@ pub enum TyKind {
     /// literal containing a NUL byte is still one string.
     Str,
 
+    /// The owned, growable, always valid UTF-8 string type. Written as
+    /// `String`.
+    ///
+    /// A value of three words -- a reference to a GC-heap byte buffer (a
+    /// `[u8]` array object), the offset of the string's first byte in it and
+    /// its byte length -- so that a slice, a `trim` and the pieces of a
+    /// `split` share the buffer instead of copying it. The bytes a value
+    /// covers are never changed once written; appending writes only past
+    /// the end of every value (see `codira_runtime`'s `string` module).
+    String,
+
     /// A tuple type. For example `(f32, f64, bool)`.
     Tuple(usize, Substitution),
 
@@ -356,6 +367,9 @@ impl Ty {
             // compiler rather than by a declaration site, so the name is a
             // constant.
             TyKind::Str => Some("core::str".to_string()),
+            // Structural for the same reason: one `String`, laid out by the
+            // compiler.
+            TyKind::String => Some("core::String".to_string()),
             TyKind::Float(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Int(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Array(ty) => Some(format!("[{}]", ty.display(db))),
@@ -595,6 +609,7 @@ impl HirDisplay for Ty {
             TyKind::Int(ty) => write!(f, "{ty}"),
             TyKind::Bool => write!(f, "bool"),
             TyKind::Str => write!(f, "str"),
+            TyKind::String => write!(f, "String"),
             // The parameter's written name is what the reader needs; the
             // (owner, index) identity is an implementation detail.
             TyKind::TypeParam(_, name) => write!(f, "{name}"),

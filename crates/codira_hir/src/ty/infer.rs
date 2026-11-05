@@ -23,7 +23,8 @@ use crate::{
         op, Substitution, Ty, TyKind, TypableDef, TypeWalk,
     },
     type_ref::LocalTypeRefId,
-    BinaryOp, BuiltinFn, CallableDef, Function, HirDatabase, HirDisplay, Name, Path, Trait,
+    BinaryOp, BuiltinFn, CallableDef, Function, HirDatabase, HirDisplay, Name, Path, StringOp,
+    Trait,
 };
 
 mod array_methods;
@@ -33,6 +34,7 @@ mod exhaustive;
 mod place_expr;
 mod propagate;
 pub use propagate::result_variants;
+mod strings;
 mod tasks;
 mod type_variable;
 mod unify;
@@ -824,6 +826,12 @@ impl InferenceResultBuilder<'_> {
                         self.check_captured_assignment(tgt_expr, *lhs);
                         self.check_immutable_assignment(tgt_expr, *lhs);
                     };
+                    // `+`, `+=` and comparisons on `String` and `str`.
+                    if let Some(ty) = self.infer_string_binary_op(tgt_expr, *op, *rhs, &lhs_ty) {
+                        let ty = self.resolve_ty_as_far_as_possible(ty);
+                        self.set_expr_type(tgt_expr, ty.clone());
+                        return ty;
+                    }
                     let rhs_expected = op::binary_op_rhs_expectation(*op, lhs_ty.clone());
                     if matches!(lhs_ty.interned(), TyKind::TypeParam(..))
                         && rhs_expected.is_unknown()
@@ -1984,7 +1992,7 @@ impl InferenceResultBuilder<'_> {
                         self.diagnostics.push(InferenceDiagnostic::ExprError {
                             id: arg.into(),
                             message: format!(
-                                "`{}` cannot print a value of type `{}`: only integers, floats, `bool` and `str` are printable",
+                                "`{}` cannot print a value of type `{}`: only integers, floats, `bool`, `str` and `String` are printable",
                                 builtin.name(),
                                 ty.display(self.db)
                             ),
@@ -2153,10 +2161,12 @@ impl InferenceResultBuilder<'_> {
                 }
                 ty
             }
+            BuiltinFn::String(op @ StringOp::FromUtf8) => self.infer_string_free_fn(tgt_expr, op, args),
             BuiltinFn::ArrayLen
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen
-            | BuiltinFn::Array(_) => {
+            | BuiltinFn::Array(_)
+            | BuiltinFn::String(_) => {
                 unreachable!("method builtins are resolved by `infer_builtin_method`")
             }
         }
@@ -2173,6 +2183,9 @@ impl InferenceResultBuilder<'_> {
         args: &[ExprId],
     ) -> Option<Ty> {
         let receiver_ty = self.normalize(receiver_ty);
+        if let Some(op) = strings::string_method(&receiver_ty, method_name.as_str()?) {
+            return Some(self.infer_string_method(tgt_expr, op, &receiver_ty, args));
+        }
         let builtin = match (receiver_ty.interned(), method_name.as_str()?) {
             (TyKind::Array(elem), name) if crate::ArrayMethod::from_name(name).is_some() => {
                 let method = crate::ArrayMethod::from_name(name).expect("matched above");
@@ -3349,6 +3362,7 @@ fn is_printable(ty: &Ty) -> bool {
             | TyKind::Float(_)
             | TyKind::Bool
             | TyKind::Str
+            | TyKind::String
             | TyKind::Unknown
             | TyKind::InferenceVar(InferTy::Int(_) | InferTy::Float(_))
     )

@@ -225,6 +225,7 @@ fn classify(ty: &Ty) -> Class {
         // that the language has not chosen. `Other` rejects it rather than
         // picking.
         | TyKind::Str
+        | TyKind::String
         | TyKind::Never => Class::Other,
     }
 }

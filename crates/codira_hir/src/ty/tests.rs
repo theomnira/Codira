@@ -2536,8 +2536,8 @@ fn infer_builtin_print() {
     }
     "#),
     @r#"
-    104..118: `println` cannot print a value of type `Point`: only integers, floats, `bool` and `str` are printable
-    120..126: `println` cannot print a value of type `[{integer}]`: only integers, floats, `bool` and `str` are printable
+    104..118: `println` cannot print a value of type `Point`: only integers, floats, `bool`, `str` and `String` are printable
+    120..126: `println` cannot print a value of type `[{integer}]`: only integers, floats, `bool`, `str` and `String` are printable
     165..170: expected function type
     34..129 '{     ... 2]) }': ()
     40..79 'printl... true)': ()

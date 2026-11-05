@@ -457,6 +457,7 @@ fn ty_to_mir_type(ty: &Ty, layout: &TargetDataLayout) -> Option<TypeId> {
         // A string has no MIR type: this pass models scalars, and a
         // fat pointer is neither an integer nor a float.
         TyKind::Str
+        | TyKind::String
         | TyKind::TypeParam(..)
         | TyKind::Tuple(..)
         | TyKind::Struct(..)

@@ -24,7 +24,7 @@ pub use self::code_model::{
 pub use crate::{
     builtin::{
         is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, BuiltinFn,
-        ElementRequirement,
+        ElementRequirement, StringArg, StringOp,
     },
     db::{
         AstDatabase, AstDatabaseStorage, DefDatabase, DefDatabaseStorage, HirDatabase,

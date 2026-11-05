@@ -729,6 +729,7 @@ impl Collector<'_> {
                 {
                     self.division(expr, *lhs, *rhs, *op);
                 }
+                self.string_operator(expr, *lhs, *op);
             }
             Expr::Unwrap { .. } => self.source(
                 expr,
@@ -842,6 +843,7 @@ impl Collector<'_> {
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen => {}
             BuiltinFn::Array(method) => self.array_method(expr, method),
+            BuiltinFn::String(op) => self.string_op(expr, op),
         }
     }
 
@@ -889,6 +891,57 @@ impl Collector<'_> {
                     );
                 }
             }
+        }
+    }
+
+    /// A builtin string operation (see [`crate::StringOp`]).
+    fn string_op(&mut self, expr: ExprId, op: crate::StringOp) {
+        let receiver = match &self.frame.body[expr] {
+            Expr::MethodCall { receiver, .. } => Some(self.frame.infer[*receiver].clone()),
+            _ => None,
+        };
+        if op.allocates(receiver.as_ref().map(crate::Ty::interned)) {
+            self.source(
+                expr,
+                EffectSet::GC_ALLOC,
+                format!("`{}` allocates a new string or array", op.name()),
+            );
+        } else if op.panics() {
+            self.source(
+                expr,
+                EffectSet::of(&[Effect::Panic]),
+                format!(
+                    "`{}` panics on an out-of-range index or a split character",
+                    op.name()
+                ),
+            );
+        }
+    }
+
+    /// `a + b` and `s += t` on strings allocate the result (an append that
+    /// fits the buffer still may not, so it counts as allocating); comparing
+    /// strings has no effect.
+    fn string_operator(&mut self, expr: ExprId, lhs: ExprId, op: Option<BinaryOp>) {
+        let text = matches!(
+            self.frame.infer[lhs].interned(),
+            TyKind::String | TyKind::Str
+        );
+        if text
+            && matches!(
+                op,
+                Some(
+                    BinaryOp::ArithOp(ArithOp::Add)
+                        | BinaryOp::Assignment {
+                            op: Some(ArithOp::Add)
+                        }
+                )
+            )
+        {
+            self.source(
+                expr,
+                EffectSet::GC_ALLOC,
+                "string concatenation allocates (or grows) a buffer",
+            );
         }
     }
 
