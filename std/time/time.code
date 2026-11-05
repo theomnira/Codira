@@ -207,8 +207,9 @@ public func perf_counter_ns() -> u64 {
 
 // ---------------------------------------------------------------------------
 // time_function
-// Measures the wall-clock time taken to execute `f` and returns the
-// elapsed Duration along with the function's return value.
+// Measures the time taken to execute `f`, by the monotonic clock (not the
+// wall clock, which can jump), and returns the elapsed Duration along with
+// the function's return value.
 // ---------------------------------------------------------------------------
 public struct TimedResult[T] {
     value: T,
