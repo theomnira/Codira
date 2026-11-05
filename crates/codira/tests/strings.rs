@@ -436,3 +436,52 @@ public func main() {
     assert!(out.contains("`find` takes a `String` or a `str`, not `"), "{out}");
     assert!(out.contains("method `nope` does not exist"), "{out}");
 }
+
+#[test]
+fn a_str_converts_to_a_string_where_one_is_expected() {
+    let out = run_ok(
+        r#"
+class Person {
+    var name: String
+}
+
+func greet(who: String) -> String {
+    if who.is_empty() { return "nobody" }
+    "hi " + who
+}
+
+public func main() {
+    let s: String = "typed"
+    var t = s
+    t = "reassigned"
+    let p = Person { name: "ann" }
+    p.name = "bob"
+    let names: [String] = ["x", "y"]
+    println(s, " ", t, " ", p.name, " ", names[1], " ", greet("cat"), " ", greet(""))
+    let csv = "1,2,3".split(",")
+    println(csv.len(), " ", "  pad ".trim(), "|", "abc".to_upper(), " ", "a-b".replace("-", "+"))
+}
+"#,
+    );
+    assert_eq!(out, "typed reassigned bob y hi cat nobody\n3 pad|ABC a+b\n");
+}
+
+#[test]
+fn strings_are_values_that_nothing_can_change_through_another_name() {
+    let out = run_ok(
+        r#"
+public func main() {
+    let base = "ab".to_string()
+    var x = base
+    var y = base
+    x += "1"
+    y += "2"
+    let parts = (x + "," + y).split(",")
+    var z = parts[0]
+    z += "!"
+    println(base, " ", x, " ", y, " ", parts[0], " ", parts[1], " ", z)
+}
+"#,
+    );
+    assert_eq!(out, "ab ab1 ab2 ab1 ab2 ab1!\n");
+}

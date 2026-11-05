@@ -694,6 +694,15 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         }
     }
 
+    /// A `str` used where a `String` is expected becomes a `String` copy.
+    pub(super) fn gen_string_conversion(
+        &mut self,
+        expr: ExprId,
+        value: BasicValueEnum<'ink>,
+    ) -> BasicValueEnum<'ink> {
+        self.gen_to_string(expr, value)
+    }
+
     /// `string_from_utf8(bytes)`.
     pub(super) fn gen_string_from_utf8(
         &mut self,

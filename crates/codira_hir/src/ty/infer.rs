@@ -104,6 +104,9 @@ pub struct InferenceResult {
     /// `T` used where a `T?` is expected. Maps each such expression to the
     /// optional type it becomes; the expression's own type stays `T`.
     pub(crate) optional_wraps: FxHashMap<ExprId, Ty>,
+    /// `str` expressions used where a `String` is expected, which become a
+    /// `String` copy of the text. The expression's own type stays `str`.
+    pub(crate) string_conversions: FxHashSet<ExprId>,
 
     /// The enum variant each `Shape.Circle(..)`/`Shape.Point` expression
     /// constructs.
@@ -274,6 +277,12 @@ impl InferenceResult {
         self.optional_wraps.get(&expr)
     }
 
+    /// Whether `expr`, a `str`, is converted to a `String` where it is
+    /// used (see `string_conversions`).
+    pub fn is_string_conversion(&self, expr: ExprId) -> bool {
+        self.string_conversions.contains(&expr)
+    }
+
     /// The types a call of a generic function instantiated the callee's
     /// generic parameters with, in the order of the callee's
     /// [`Function::generic_environment`]. `None` when `call` does not call
@@ -318,6 +327,7 @@ impl InferenceResult {
                 .iter()
                 .map(|(expr, ty)| (*expr, f(ty)))
                 .collect(),
+            string_conversions: self.string_conversions.clone(),
             variant_exprs: self.variant_exprs.clone(),
             variant_pats: self.variant_pats.clone(),
             propagations: self
@@ -466,6 +476,7 @@ struct InferenceResultBuilder<'a> {
     field_calls: FxHashSet<ExprId>,
     /// Expressions implicitly wrapped into an optional
     optional_wraps: FxHashMap<ExprId, Ty>,
+    string_conversions: FxHashSet<ExprId>,
 
     /// Variant constructions and variant patterns (see `InferenceResult`).
     variant_exprs: FxHashMap<ExprId, EnumVariant>,
@@ -508,6 +519,7 @@ impl<'a> InferenceResultBuilder<'a> {
             field_calls: FxHashSet::default(),
 
             optional_wraps: FxHashMap::default(),
+            string_conversions: FxHashSet::default(),
             variant_exprs: FxHashMap::default(),
             pat_variants: FxHashMap::default(),
             propagations: FxHashMap::default(),
@@ -717,6 +729,9 @@ impl InferenceResultBuilder<'_> {
         if let Some(wrapped) = self.try_wrap_optional(expr, &ty, &expected.ty) {
             return wrapped;
         }
+        if let Some(converted) = self.try_convert_to_string(expr, &ty, &expected.ty) {
+            return converted;
+        }
         let ty = if !self.coerce(&ty, &expected.ty) {
             self.diagnostics.push(InferenceDiagnostic::MismatchedTypes {
                 expected: expected.ty.clone(),
@@ -851,7 +866,7 @@ impl InferenceResultBuilder<'_> {
                     }
                     let lhs_is_optional =
                         matches!(self.normalize(&lhs_ty).interned(), TyKind::Optional(_));
-                    let rhs_ty = if lhs_is_optional {
+                    let rhs_ty = if lhs_is_optional || lhs_ty.is_string() {
                         self.infer_expr_coerce(*rhs, &Expectation::has_type(rhs_expected))
                     } else {
                         self.infer_expr(*rhs, &Expectation::has_type(rhs_expected))
@@ -2515,6 +2530,7 @@ impl InferenceResultBuilder<'_> {
             field_calls: self.field_calls,
 
             optional_wraps,
+            string_conversions: self.string_conversions,
             variant_exprs: self.variant_exprs,
             variant_pats: self.pat_variants,
             propagations,

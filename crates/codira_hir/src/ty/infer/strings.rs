@@ -112,6 +112,21 @@ impl InferenceResultBuilder<'_> {
         }
     }
 
+    /// The implicit `str` to `String` conversion: a `str` used where a
+    /// `String` is expected (an argument, a `let` with a type, a field, a
+    /// return value, an assignment to a `String`) becomes a `String` copy of
+    /// its text. Records `expr` for code generation and returns `String`,
+    /// or `None` when no conversion applies.
+    pub(super) fn try_convert_to_string(&mut self, expr: ExprId, ty: &Ty, expected: &Ty) -> Option<Ty> {
+        let expected = self.normalize(expected);
+        let actual = self.normalize(ty);
+        if !(expected.is_string() && matches!(actual.interned(), TyKind::Str)) {
+            return None;
+        }
+        self.string_conversions.insert(expr);
+        Some(expected)
+    }
+
     /// Infers a binary operator whose left operand has type `lhs_ty`, if it
     /// is a string operator; `None` hands the expression back to the
     /// ordinary operator rules.

@@ -581,6 +581,13 @@ impl Collector<'_> {
 
     fn visit(&mut self, expr: ExprId) {
         let body = Arc::clone(&self.frame.body);
+        if self.frame.infer.is_string_conversion(expr) {
+            self.source(
+                expr,
+                EffectSet::GC_ALLOC,
+                "a `str` used as a `String` is copied to the heap",
+            );
+        }
         match &body[expr] {
             // Nothing of their own; their operands are visited below.
             Expr::Missing
@@ -907,14 +914,12 @@ impl Collector<'_> {
                 format!("`{}` allocates a new string or array", op.name()),
             );
         } else if op.panics() {
-            self.source(
-                expr,
-                EffectSet::of(&[Effect::Panic]),
-                format!(
-                    "`{}` panics on an out-of-range index or a split character",
-                    op.name()
-                ),
-            );
+            let what = if op == crate::StringOp::Slice {
+                "`slice` panics on a range out of bounds or off a character boundary"
+            } else {
+                "`byte_at` panics on an index out of bounds"
+            };
+            self.source(expr, EffectSet::of(&[Effect::Panic]), what);
         }
     }
 

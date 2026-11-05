@@ -1020,3 +1020,54 @@ fn envelope_values_and_their_direction_of_change() {
         vec![("allocation", Movement::Widened)]
     );
 }
+
+#[test]
+fn string_operations_count_as_allocating_or_panicking() {
+    let source = r#"
+    func make(n: i64) -> String { n.to_string() }
+    func join(a: String, b: String) -> String { a + b }
+    func grow(s: String) -> String { var t = s; t += "x"; t }
+    func measure(s: String) -> usize { s.len() + s.char_count() }
+    func compare(a: String, b: String) -> bool { a == b && a < "z" && s_find(a) }
+    func s_find(a: String) -> bool { a.find("q") == nil && a.starts_with("p") }
+    func view(s: String) -> String { s.trim() }
+    func cut(s: String) -> String { s.slice(0, 1) }
+    func byte(s: String) -> u8 { s.byte_at(0) }
+    func pieces(s: String) -> [String] { s.split(",") }
+    func literal_method() -> bool { "abc".contains("b") }
+    "#;
+    let alloc = set(&[Effect::Alloc, Effect::Block, Effect::Panic]);
+    assert_eq!(effects_of(source, "make"), alloc);
+    assert_eq!(effects_of(source, "join"), alloc);
+    assert_eq!(effects_of(source, "grow"), alloc);
+    assert_eq!(effects_of(source, "pieces"), alloc);
+    // A method of a `str` copies it into a `String` first.
+    assert_eq!(effects_of(source, "literal_method"), alloc);
+    assert_eq!(effects_of(source, "measure"), EffectSet::NONE);
+    assert_eq!(effects_of(source, "compare"), EffectSet::NONE);
+    assert_eq!(effects_of(source, "view"), EffectSet::NONE);
+    assert_eq!(effects_of(source, "cut"), set(&[Effect::Panic]));
+    assert_eq!(effects_of(source, "byte"), set(&[Effect::Panic]));
+
+    let diags = diagnostics(
+        r#"
+    @noalloc
+    func label(n: i64) -> String { n.to_string() }
+    @nopanic
+    func first(s: String) -> String { s.slice(0, 1) }
+    @noalloc @nopanic
+    func fine(s: String) -> bool { s.len() > 2 && s.trim() == "a" }
+    "#,
+    );
+    assert!(
+        diags.contains("`label` is `@noalloc` but allocates here: `to_string` allocates a new string or array"),
+        "{diags}"
+    );
+    assert!(
+        diags.contains(
+            "`first` is `@nopanic` but may panic here: `slice` panics on a range out of bounds"
+        ),
+        "{diags}"
+    );
+    assert!(!diags.contains("`fine`"), "{diags}");
+}

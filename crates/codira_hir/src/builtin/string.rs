@@ -230,3 +230,64 @@ impl StringOp {
         matches!(self, StringOp::ByteAt | StringOp::Slice | StringOp::Split)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::tests::diagnostics;
+
+    #[test]
+    fn string_programs_type_check() {
+        let diags = diagnostics(
+            r#"
+    struct Named { name: String, n: i64 }
+    func f(s: String, t: String) -> String {
+        var out = s + t + "lit" + 3.to_string() + 2.5.to_string() + true.to_string()
+        out += "x"
+        out += t
+        let parts: [String] = out.split(",")
+        let first: usize? = out.find("x")
+        let n: i64? = parts[0].parse_i64()
+        let x: f64? = parts[0].parse_f64()
+        let cs: [u32] = out.chars()
+        let bs: [u8] = out.bytes()
+        let b: u8 = out.byte_at(0)
+        let h: u64 = out.hash()
+        let ok: bool = out == t && out != "a" && out < t && "a" <= out && out.is_empty()
+        let v: String? = string_from_utf8(bs)
+        let named = Named { name: out.trim().to_upper(), n: 1 }
+        let lit: String = "a,b".split(",")[0] + "x".repeat(2)
+        named.name.slice(0, 1).replace("a", t)
+    }
+    "#,
+        );
+        assert_eq!(diags, "", "{diags}");
+    }
+
+    #[test]
+    fn misuse_of_strings_is_reported() {
+        let diags = diagnostics(
+            r#"
+    func f(s: String) {
+        let a = s + 1
+        let b = s.find(3)
+        let c = s.split()
+        let d = s.slice(1)
+        let e = string_from_utf8(s)
+        let g = s - s
+        let h = [1].to_string()
+        let i: String = 5
+        let j: String = "converted"
+    }
+    "#,
+        );
+        let count = |needle: &str| diags.matches(needle).count();
+        assert_eq!(count("cannot apply binary operator"), 2, "{diags}");
+        assert_eq!(count("`find` takes a `String` or a `str`, not `"), 1, "{diags}");
+        assert_eq!(count("takes 1 parameters but 0 parameters was supplied"), 1, "{diags}");
+        assert_eq!(count("takes 2 parameters but 1 parameters was supplied"), 1, "{diags}");
+        assert!(diags.contains("method `to_string` does not exist"), "{diags}");
+        // `string_from_utf8(s)` and `let i: String = 5`; the `str` assigned
+        // to a `String` converts.
+        assert_eq!(count("mismatched type"), 2, "{diags}");
+    }
+}

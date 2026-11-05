@@ -411,6 +411,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// individual construct has to know about the conversion.
     fn gen_expr(&mut self, expr: ExprId) -> Option<inkwell::values::BasicValueEnum<'ink>> {
         let value = self.gen_expr_inner(expr)?;
+        // A `str` used where a `String` is expected: see `strings`.
+        let value = if self.infer.is_string_conversion(expr) {
+            self.gen_string_conversion(expr, value)
+        } else {
+            value
+        };
         match self.infer.optional_wrap(expr).cloned() {
             Some(optional_ty) => Some(self.wrap_optional(&optional_ty, value)),
             None => Some(value),

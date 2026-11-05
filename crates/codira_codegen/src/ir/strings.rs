@@ -34,6 +34,7 @@ pub(crate) fn uses_strings(body: &Body, infer: &InferenceResult, expr: ExprId) -
 pub(crate) fn needs_string_types(infer: &InferenceResult, expr: ExprId) -> bool {
     matches!(infer[expr].interned(), TyKind::String)
         || matches!(infer.builtin_call(expr), Some(BuiltinFn::String(_)))
+        || infer.is_string_conversion(expr)
 }
 
 /// The types the runtime's string functions are handed handles of: the
