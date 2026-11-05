@@ -1,262 +1,200 @@
 // =============================================================================
-// std/sys/arg.code — Command-line argument access
+// std/sys/arg.code — Command-line arguments and environment variables
 // =============================================================================
 //
-// This module provides functions for accessing command-line arguments
-// passed to the process at launch.
-//
-// The argument list is initialized by the runtime before `main()` is
-// called and remains immutable for the lifetime of the process.
+// The process's command-line arguments and environment, as `String`s. They
+// are the arguments of the process the program runs in: for a standalone
+// executable (`codira build --exe`) its own; under `codira run`, the `codira`
+// command line. Text that is not UTF-8 has each bad byte replaced by U+FFFD.
+// The environment is read once, the first time it is asked for: a variable
+// set after that is not seen.
 //
 // Functions:
-//   argc()           — number of arguments (including the program name)
-//   argv(index)      — argument at the given index as a String
-//   argv_all()       — all arguments as an Array[String]
-//   program_name()   — the program name (argv[0])
-//   args()           — arguments excluding the program name
-//   has_flag(name)   — check whether a flag like "--verbose" is present
-//   get_option(name) — get the value of "--key=value" or "--key value"
+//   argc()                 — number of arguments (the program name included)
+//   argv(index)            — argument `index`, or `nil`
+//   argv_all()             — every argument
+//   program_name()         — argument 0, or "" when there is none
+//   args()                 — the arguments after the program name
+//   has_flag(name)         — whether an argument is exactly `name`
+//   get_option(name)       — the value of `name=value` or `name value`
+//   positional_arg(n)      — the n-th (1-based) argument not starting with '-'
+//   env_get(name)          — an environment variable's value, or `nil`
 // =============================================================================
 
-import root.builtin.types.*;
-import root.builtin.error.*;
-import root.builtin.traits.*;
-
-// =============================================================================
-// Raw access
-// =============================================================================
-
-// Return the number of command-line arguments, including the program name.
-//
-// This is equivalent to C's `argc`.
-//
-//   // Invocation: ./myapp foo bar
-//   argc()  // 3
-public func argc() -> i32 {
-    return __intrinsic_argc();
+extern "C" {
+    func codira_args_count() -> i64;
+    func codira_arg_len(index: i64) -> i64;
+    func codira_arg_byte(index: i64, at: i64) -> i32;
+    func codira_env_count() -> i64;
+    func codira_env_entry_len(index: i64) -> i64;
+    func codira_env_entry_byte(index: i64, at: i64) -> i32;
 }
 
-// Return the command-line argument at `index` as a String.
-//
-// Index 0 is the program name / path.
-// Panics if `index` is out of range.
-//
-//   // Invocation: ./myapp hello world
-//   argv(0)  // "./myapp"
-//   argv(1)  // "hello"
-//   argv(2)  // "world"
-public func argv(index: i32) -> String {
-    let count = __intrinsic_argc();
-    if index < 0 | index >= count {
-        __panic("argv: index "
-            + __intrinsic_to_string(index)
-            + " out of range [0, "
-            + __intrinsic_to_string(count)
-            + ")");
+// The number of command-line arguments, the program name included (C's
+// `argc`).
+public func argc() -> i64 {
+    return codira_args_count();
+}
+
+// Argument `index` (0 is the program name), or `nil` when there is none.
+public func argv(index: i64) -> String? {
+    let len = codira_arg_len(index);
+    if len < 0 {
+        return nil;
     }
-    return __intrinsic_argv(index);
-}
-
-// Return the command-line argument at `index`, or an error if out of range.
-public func argv_checked(index: i32) -> Result[String, Error] {
-    let count = __intrinsic_argc();
-    if index < 0 | index >= count {
-        return Result.err(Error.out_of_bounds(index as usize, count as usize));
+    let bytes = array_filled(0u8, len as usize);
+    var at: i64 = 0;
+    while at < len {
+        bytes[at] = codira_arg_byte(index, at) as u8;
+        at += 1;
     }
-    return Result.ok(__intrinsic_argv(index));
+    // The runtime hands out UTF-8 only.
+    return string_from_utf8(bytes);
 }
 
-// =============================================================================
-// Bulk access
-// =============================================================================
-
-// Return all command-line arguments as an array of strings.
-//
-//   let all = argv_all();
-//   // all[0] is the program name, all[1..] are user arguments
-public func argv_all() -> Array[String] {
-    let count = __intrinsic_argc();
-    let result = Array.with_capacity(count as usize);
-    var i: i32 = 0;
-    while i < count {
-        result.push(__intrinsic_argv(i));
-        i = i + 1;
-    }
-    return result;
+// Every argument, the program name first.
+public func argv_all() -> [String] {
+    return strings_from(0);
 }
 
-// Return the program name / executable path (argv[0]).
-//
-//   program_name()  // e.g. "./myapp" or "/usr/bin/myapp"
+// The program name (argument 0), or "" when there is none.
 public func program_name() -> String {
-    if __intrinsic_argc() == 0 {
-        return "";
+    if let name = argv(0) {
+        return name;
     }
-    return __intrinsic_argv(0);
+    return "".to_string();
 }
 
-// Return all arguments EXCEPT the program name.
-//
-//   // Invocation: ./myapp --verbose input.txt
-//   args()  // ["--verbose", "input.txt"]
-public func args() -> Array[String] {
-    let count = __intrinsic_argc();
-    var n = count - 1;
-    if n < 0 {
-        n = 0;
-    }
-    let result = Array.with_capacity(n as usize);
-    var i: i32 = 1;
-    while i < count {
-        result.push(__intrinsic_argv(i));
-        i = i + 1;
-    }
-    return result;
+// The arguments after the program name.
+public func args() -> [String] {
+    return strings_from(1);
 }
 
-// =============================================================================
-// Flag / option parsing helpers
-// =============================================================================
-
-// Return true if any argument exactly matches `flag_name`.
-//
-// Typically used for boolean flags:
-//   has_flag("--verbose")
-//   has_flag("-v")
-//   has_flag("--help")
+// Whether some argument after the program name is exactly `flag_name`
+// (`has_flag("--verbose")`).
 public func has_flag(flag_name: String) -> bool {
-    let count = __intrinsic_argc();
-    var i: i32 = 1;
-    while i < count {
-        if __intrinsic_argv(i) == flag_name {
+    var i: i64 = 1;
+    while i < argc() {
+        if argv(i)! == flag_name {
             return true;
         }
-        i = i + 1;
+        i += 1;
     }
     return false;
 }
 
-// Get the value associated with a named option.
-//
-// Supports two forms:
-//   --key=value   (single argument)
-//   --key value   (two consecutive arguments)
-//
-// Returns the value string on success, or an error if not found.
-//
-//   get_option("--output")
-//   // Invocation: ./app --output=result.txt
-//   // Returns: Ok("result.txt")
-//
-//   get_option("--output")
-//   // Invocation: ./app --output result.txt
-//   // Returns: Ok("result.txt")
-public func get_option(name: String) -> Result[String, Error] {
-    let count = __intrinsic_argc();
+// The value of the option `name`, written `name=value` or as `name value`
+// (two arguments), or `nil` when it is not given (or given last, without a
+// value).
+public func get_option(name: String) -> String? {
     let prefix = name + "=";
-    let prefix_len = prefix.len();
-
-    var i: i32 = 1;
+    let count = argc();
+    var i: i64 = 1;
     while i < count {
-        let arg = __intrinsic_argv(i);
-
-        // Check --key=value form.
+        let arg = argv(i)!;
         if arg.starts_with(prefix) {
-            let value = arg.substring(prefix_len, arg.len());
-            return Result.ok(value);
+            return arg.slice(prefix.len(), arg.len());
         }
-
-        // Check --key value form.
         if arg == name {
-            let next = i + 1;
-            if next < count {
-                return Result.ok(__intrinsic_argv(next));
-            }
-            return Result.err(Error.new("option '" + name + "' requires a value"));
+            return argv(i + 1);
         }
-
-        i = i + 1;
+        i += 1;
     }
-
-    return Result.err(Error.not_found("option '" + name + "'"));
+    return nil;
 }
 
-// Get the value associated with a named option, or return a default.
+// The value of the option `name`, or `default_value`.
 public func get_option_or(name: String, default_value: String) -> String {
-    let result = get_option(name);
-    if result.is_ok() {
-        return result.unwrap();
+    if let value = get_option(name) {
+        return value;
     }
     return default_value;
 }
 
-// =============================================================================
-// Positional argument helpers
-// =============================================================================
-
-// Return the Nth positional argument (1-indexed, skipping flags/options).
-//
-// A positional argument is any argument that does not start with '-'.
-//
-//   // Invocation: ./app --verbose input.txt output.txt
-//   positional_arg(1)  // "input.txt"
-//   positional_arg(2)  // "output.txt"
-public func positional_arg(n: i32) -> Result[String, Error] {
-    let count = __intrinsic_argc();
-    var positional_index: i32 = 0;
-    var i: i32 = 1;
-    while i < count {
-        let arg = __intrinsic_argv(i);
+// The `n`-th (1-based) argument after the program name that does not start
+// with '-', or `nil`.
+public func positional_arg(n: i64) -> String? {
+    var seen: i64 = 0;
+    var i: i64 = 1;
+    while i < argc() {
+        let arg = argv(i)!;
         if !arg.starts_with("-") {
-            positional_index = positional_index + 1;
-            if positional_index == n {
-                return Result.ok(arg);
+            seen += 1;
+            if seen == n {
+                return arg;
             }
         }
-        i = i + 1;
+        i += 1;
     }
-    return Result.err(Error.not_found("positional argument #" + __intrinsic_to_string(n)));
+    return nil;
 }
 
-// Count the number of positional arguments (those not starting with '-').
-public func positional_count() -> i32 {
-    let count = __intrinsic_argc();
-    var result: i32 = 0;
-    var i: i32 = 1;
-    while i < count {
-        let arg = __intrinsic_argv(i);
-        if !arg.starts_with("-") {
-            result = result + 1;
+// How many arguments after the program name do not start with '-'.
+public func positional_count() -> i64 {
+    var count: i64 = 0;
+    var i: i64 = 1;
+    while i < argc() {
+        if !argv(i)!.starts_with("-") {
+            count += 1;
         }
-        i = i + 1;
+        i += 1;
     }
-    return result;
+    return count;
 }
 
-// =============================================================================
-// Environment variable access (related convenience)
-// =============================================================================
-
-// Get an environment variable by name.
-// Returns the value or an error if not set.
-public func env_get(name: String) -> Result[String, Error] {
-    let val = __intrinsic_getenv(name);
-    if val.is_null() {
-        return Result.err(Error.not_found("environment variable '" + name + "'"));
+// The value of the environment variable `name`, or `nil` when it is not
+// set.
+public func env_get(name: String) -> String? {
+    let prefix = name + "=";
+    var i: i64 = 0;
+    while i < codira_env_count() {
+        let entry = env_entry(i);
+        if entry.starts_with(prefix) {
+            return entry.slice(prefix.len(), entry.len());
+        }
+        i += 1;
     }
-    return Result.ok(val);
+    return nil;
 }
 
-// Get an environment variable or a default.
+// The value of the environment variable `name`, or `default_value`.
 public func env_get_or(name: String, default_value: String) -> String {
-    let result = env_get(name);
-    if result.is_ok() {
-        return result.unwrap();
+    if let value = env_get(name) {
+        return value;
     }
     return default_value;
 }
 
-// Check whether an environment variable is set.
+// Whether the environment variable `name` is set.
 public func env_has(name: String) -> bool {
-    return env_get(name).is_ok();
+    return env_get(name) != nil;
+}
+
+// Environment entry `index`, as `NAME=value`.
+func env_entry(index: i64) -> String {
+    let len = codira_env_entry_len(index);
+    let bytes = array_filled(0u8, len as usize);
+    var at: i64 = 0;
+    while at < len {
+        bytes[at] = codira_env_entry_byte(index, at) as u8;
+        at += 1;
+    }
+    return string_from_utf8(bytes)!;
+}
+
+// The arguments from `first` on, as a new array.
+func strings_from(first: i64) -> [String] {
+    let count = argc() - first;
+    if count <= 0 {
+        return "".to_string().lines();
+    }
+    // A `[String]` of `count` elements, overwritten below: the pieces of
+    // `count - 1` commas are `count`.
+    let out = ",".repeat(count - 1).split(",");
+    var i: i64 = 0;
+    while i < count {
+        out[i] = argv(first + i)!;
+        i += 1;
+    }
+    return out;
 }
