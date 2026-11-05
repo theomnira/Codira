@@ -138,6 +138,139 @@ runtime_functions! {
     pub fn panic_index_out_of_bounds(index: u64, index_is_signed: u8, len: u64, file: *const u8, file_len: usize, line: u32, column: u32) -> () = "codira.panic_index_out_of_bounds";
 }
 
+runtime_functions! {
+    /// A new `String` of the `len` bytes at `data` (valid UTF-8), written to
+    /// `out`. `ty` is the `[u8]` type handle, `alloc` the allocator handle.
+    pub fn string_from_bytes(data: *const u8, len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_from_bytes";
+
+    /// `buf/start/len + data[..data_len]`, appended in place when it can be.
+    pub fn string_append(buf: *const ffi::c_void, start: usize, len: usize, data: *const u8, data_len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_append";
+
+    /// A new `String` of `a` followed by `b`.
+    pub fn string_concat(a: *const u8, a_len: usize, b: *const u8, b_len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_concat";
+
+    /// 1 when the two strings' bytes are equal.
+    pub fn string_eq(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> u8 = "codira.string_eq";
+
+    /// -1, 0 or 1 by byte order.
+    pub fn string_cmp(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> i64 = "codira.string_cmp";
+
+    /// FNV-1a 64 of the bytes.
+    pub fn string_hash(data: *const u8, len: usize) -> u64 = "codira.string_hash";
+
+    /// The number of code points.
+    pub fn string_char_count(data: *const u8, len: usize) -> usize = "codira.string_char_count";
+
+    /// Byte offset of the first match, or -1.
+    pub fn string_find(hay: *const u8, hay_len: usize, needle: *const u8, len: usize) -> i64 = "codira.string_find";
+
+    /// Byte offset of the last match, or -1.
+    pub fn string_rfind(hay: *const u8, hay_len: usize, needle: *const u8, len: usize) -> i64 = "codira.string_rfind";
+
+    /// 1 when `needle` occurs in `hay`.
+    pub fn string_contains(hay: *const u8, hay_len: usize, needle: *const u8, len: usize) -> u8 = "codira.string_contains";
+
+    /// 1 when `s` starts with `p`.
+    pub fn string_starts_with(s: *const u8, s_len: usize, p: *const u8, p_len: usize) -> u8 = "codira.string_starts_with";
+
+    /// 1 when `s` ends with `p`.
+    pub fn string_ends_with(s: *const u8, s_len: usize, p: *const u8, p_len: usize) -> u8 = "codira.string_ends_with";
+
+    /// The pieces between occurrences of `sep`, as a `[String]` (`ty`);
+    /// panics at the location given on an empty separator.
+    pub fn string_split(buf: *const ffi::c_void, start: usize, len: usize, sep: *const u8, sep_len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, file: *const u8, file_len: usize, line: u32, column: u32) -> *const ffi::c_void = "codira.string_split";
+
+    /// The lines, as a `[String]` (`ty`).
+    pub fn string_lines(buf: *const ffi::c_void, start: usize, len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void) -> *const ffi::c_void = "codira.string_lines";
+
+    /// Trims (`mode` 0 both ends, 1 the start, 2 the end): returns the new
+    /// length and writes the offset to `out_offset`.
+    pub fn string_trim(data: *const u8, len: usize, mode: u8, out_offset: *mut u8) -> usize = "codira.string_trim";
+
+    /// ASCII upper- (`upper` 1) or lower-casing into a new `String`.
+    pub fn string_change_case(data: *const u8, len: usize, upper: u8, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_change_case";
+
+    /// Every `from` replaced by `to`, into a new `String`.
+    pub fn string_replace(data: *const u8, len: usize, from: *const u8, from_len: usize, to: *const u8, to_len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_replace";
+
+    /// `count` copies (a negative signed count is none), into a new `String`.
+    pub fn string_repeat(data: *const u8, len: usize, count: u64, signed: u8, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_repeat";
+
+    /// Panics at the location given unless `start..end` is a valid slice of
+    /// the string: in range, ordered, on character boundaries.
+    pub fn string_check_slice(data: *const u8, len: usize, start: u64, start_signed: u8, end: u64, end_signed: u8, file: *const u8, file_len: usize, line: u32, column: u32) -> () = "codira.string_check_slice";
+
+    /// 1 and the value at `out` when the string is a decimal `i64`.
+    pub fn string_parse_i64(data: *const u8, len: usize, out: *mut u8) -> u8 = "codira.string_parse_i64";
+
+    /// 1 and the value at `out` when the string is an `f64`.
+    pub fn string_parse_f64(data: *const u8, len: usize, out: *mut u8) -> u8 = "codira.string_parse_f64";
+
+    /// A signed integer in decimal, as a new `String`.
+    pub fn string_from_i64(value: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_from_i64";
+
+    /// An unsigned integer in decimal, as a new `String`.
+    pub fn string_from_u64(value: u64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_from_u64";
+
+    /// A 128-bit integer, as its halves, in decimal.
+    pub fn string_from_i128(low: u64, high: u64, signed: u8, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_from_i128";
+
+    /// An `f64` as `print` writes it.
+    pub fn string_from_f64(value: f64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_from_f64";
+
+    /// An `f32` as `print` writes it.
+    pub fn string_from_f32(value: f32, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_from_f32";
+
+    /// `true` or `false`.
+    pub fn string_from_bool(value: u8, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_from_bool";
+
+    /// The code points as a new `[u32]` (`ty`).
+    pub fn string_chars(data: *const u8, len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void) -> *const ffi::c_void = "codira.string_chars";
+
+    /// A copy of the bytes as a new `[u8]` (`ty`).
+    pub fn string_to_bytes(data: *const u8, len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void) -> *const ffi::c_void = "codira.string_to_bytes";
+
+    /// 1 and a new `String` at `out` when the `[u8]` holds valid UTF-8.
+    pub fn string_from_utf8(array: *const ffi::c_void, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> u8 = "codira.string_from_utf8";
+}
+
+/// Every runtime function a `String` operation may need, collected together
+/// like [`print_functions`]: a module that uses strings at all gets them all.
+pub fn string_functions() -> [&'static dyn Intrinsic; 30] {
+    [
+        &string_from_bytes,
+        &string_append,
+        &string_concat,
+        &string_eq,
+        &string_cmp,
+        &string_hash,
+        &string_char_count,
+        &string_find,
+        &string_rfind,
+        &string_contains,
+        &string_starts_with,
+        &string_ends_with,
+        &string_split,
+        &string_lines,
+        &string_trim,
+        &string_change_case,
+        &string_replace,
+        &string_repeat,
+        &string_check_slice,
+        &string_parse_i64,
+        &string_parse_f64,
+        &string_from_i64,
+        &string_from_u64,
+        &string_from_i128,
+        &string_from_f64,
+        &string_from_f32,
+        &string_from_bool,
+        &string_chars,
+        &string_to_bytes,
+        &string_from_utf8,
+    ]
+}
+
 /// Every runtime function a `print`/`println` call may need, collected
 /// together so the dispatch table has all of them whenever a module prints
 /// anything at all. Which ones a given call uses depends on its argument

@@ -165,6 +165,14 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
     fn collect_expr(&mut self, expr_id: ExprId, body: &Arc<Body>, infer: &InferenceResult) {
         let expr = &body[expr_id];
 
+        // String operations allocate `[u8]` buffers and `[String]`/`[u32]`
+        // arrays through the runtime, which needs their types.
+        if crate::ir::strings::needs_string_types(infer, expr_id) {
+            for ty in crate::ir::strings::runtime_types() {
+                self.collect_type(self.hir_types.type_id(&ty));
+            }
+        }
+
         // If this expression is a call, store it in the dispatch table. A
         // builtin call (`print`/`println`) has no callee signature to collect.
         if let Some(builtin) = infer.builtin_call(expr_id) {

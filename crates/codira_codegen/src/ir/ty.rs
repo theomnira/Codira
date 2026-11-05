@@ -370,6 +370,21 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
         )
     }
 
+    /// Returns the IR type of a `String`: `{ ptr buffer, usize start, usize
+    /// len }`, where `buffer` is a reference to a `[u8]` array object (see
+    /// `codira_runtime`'s `string` module for what the three words mean).
+    pub fn get_string_type(&self) -> StructType<'ink> {
+        let _ = self.get_array_type(&TyKind::Int(codira_hir::IntTy::u8()).intern());
+        self.context.struct_type(
+            &[
+                self.context.ptr_type(AddressSpace::default()).into(),
+                self.get_usize_type().into(),
+                self.get_usize_type().into(),
+            ],
+            false,
+        )
+    }
+
     /// Returns the IR type of `T?`: `{ i1 present, T payload }`.
     ///
     /// No allocation and no pointer: an optional is a value exactly as large
@@ -400,6 +415,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             TyKind::Enum(..) => Some(self.get_enum_type(ty).into()),
             TyKind::Bool => Some(self.get_bool_type().into()),
             TyKind::Str => Some(self.get_str_type().into()),
+            TyKind::String => Some(self.get_string_type().into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             // A runtime handle (see `ir::body::tasks`).
             TyKind::Channel(_) | TyKind::Session(..) => Some(self.get_usize_type().into()),
@@ -452,6 +468,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             TyKind::Enum(..) => Some(self.get_enum_type(ty).into()),
             TyKind::Bool => Some(self.get_bool_type().into()),
             TyKind::Str => Some(self.get_str_type().into()),
+            TyKind::String => Some(self.get_string_type().into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             // A runtime handle (see `ir::body::tasks`).
             TyKind::Channel(_) | TyKind::Session(..) => Some(self.get_usize_type().into()),
@@ -478,6 +495,7 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             }
             TyKind::Bool => Some(self.get_bool_type().into()),
             TyKind::Str => Some(self.get_str_type().into()),
+            TyKind::String => Some(self.get_string_type().into()),
             TyKind::Array(element_ty) => Some(self.get_array_reference_type(element_ty).into()),
             // A runtime handle (see `ir::body::tasks`).
             TyKind::Channel(_) | TyKind::Session(..) => Some(self.get_usize_type().into()),
@@ -658,7 +676,9 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             // adding a tuple case to every consumer of `TypeIdData`: a tuple
             // is, to the runtime, just an anonymous value struct.
             // An optional is structural too, and identified the same way.
-            TyKind::Tuple(..) | TyKind::Optional(_) => {
+            // `String` is a value struct to the runtime (see
+            // `code_gen::symbols`), identified by its constant name.
+            TyKind::Tuple(..) | TyKind::Optional(_) | TyKind::String => {
                 {
                     let read_only = self.tuple_ty_to_type_id.borrow();
                     if let Some(id) = read_only.get(ty.interned()) {

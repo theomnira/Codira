@@ -219,7 +219,11 @@ fn get_type_definition_array<'ink>(
                     )),
                 }
             }
-            TyKind::Tuple(..) | TyKind::Optional(_) | TyKind::Enum(..) | TyKind::Str => {
+            TyKind::Tuple(..)
+            | TyKind::Optional(_)
+            | TyKind::Enum(..)
+            | TyKind::Str
+            | TyKind::String => {
                 gen_structural_definition(&type_info, context, hir_types, ir_type_builder, db)
             }
             _ => unreachable!("unsupported export type"),
@@ -268,6 +272,16 @@ fn gen_structural_definition<'ink>(
         TyKind::Str => (
             vec!["data".to_string(), "len".to_string()],
             vec![
+                TyKind::Int(codira_hir::IntTy::usize()).intern(),
+                TyKind::Int(codira_hir::IntTy::usize()).intern(),
+            ],
+        ),
+        // The buffer is a `[u8]` array object, which the collector traces
+        // and a heap snapshot or hot reload carries like any other field.
+        TyKind::String => (
+            vec!["buf".to_string(), "start".to_string(), "len".to_string()],
+            vec![
+                TyKind::Array(TyKind::Int(codira_hir::IntTy::u8()).intern()).intern(),
                 TyKind::Int(codira_hir::IntTy::usize()).intern(),
                 TyKind::Int(codira_hir::IntTy::usize()).intern(),
             ],

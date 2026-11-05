@@ -26,6 +26,7 @@ pub mod function;
 pub(crate) mod intrinsic_ops;
 mod intrinsics;
 mod reference;
+pub(crate) mod strings;
 pub mod ty;
 pub(crate) mod type_table;
 pub mod types;

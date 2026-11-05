@@ -57,7 +57,7 @@ fn collect_structural_types(
         };
         let structural = match inner.interned() {
             TyKind::Tuple(arity, _) => *arity > 0 && !holds_handle(),
-            TyKind::Optional(_) | TyKind::Str => true,
+            TyKind::Optional(_) | TyKind::Str | TyKind::String => true,
             _ => false,
         };
         if structural && inner.guid_string(db).is_some() {

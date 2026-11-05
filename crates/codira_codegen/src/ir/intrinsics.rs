@@ -62,6 +62,20 @@ fn collect_expr<'ink>(
             collect_intrinsic(context, target, intrinsic, intrinsics);
         }
     }
+    // A string operation calls the runtime's string functions, and most of
+    // them allocate.
+    if crate::ir::strings::uses_strings(body, infer, expr_id) {
+        for intrinsic in intrinsics::string_functions() {
+            collect_intrinsic(context, target, intrinsic, intrinsics);
+        }
+        collect_intrinsic(
+            context,
+            target,
+            &intrinsics::panic_index_out_of_bounds,
+            intrinsics,
+        );
+        *needs_alloc = true;
+    }
     if let Some(builtin) = infer.builtin_call(expr_id) {
         if builtin != codira_hir::BuiltinFn::Channel {
             for intrinsic in intrinsics::print_functions() {

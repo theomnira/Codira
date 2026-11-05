@@ -44,6 +44,7 @@ mod effects;
 mod merge;
 mod propagate;
 mod safety;
+mod strings;
 mod tasks;
 
 pub(crate) use effects::has_evidence;
@@ -463,6 +464,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     if builtin == BuiltinFn::ArrayFilled {
                         return self.gen_array_filled(expr, args);
                     }
+                    if let BuiltinFn::String(_) = builtin {
+                        return self.gen_string_from_utf8(expr, args);
+                    }
                     return self.gen_builtin_call(builtin, args);
                 }
 
@@ -586,7 +590,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             BuiltinFn::ArrayLen
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen
-            | BuiltinFn::Array(_) => {
+            | BuiltinFn::Array(_)
+            | BuiltinFn::String(_) => {
                 unreachable!("method builtins are lowered by `gen_builtin_method`")
             }
             BuiltinFn::Print | BuiltinFn::Println => {
@@ -929,7 +934,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             | BuiltinFn::Unlikely
             | BuiltinFn::Fma
             | BuiltinFn::ArrayFilled
-            | BuiltinFn::Channel => {
+            | BuiltinFn::Channel
+            | BuiltinFn::String(_) => {
                 unreachable!("free-function builtins are lowered by `gen_builtin_call`")
             }
             BuiltinFn::Array(_) => unreachable!("array methods are lowered by `gen_array_method`"),
@@ -1012,6 +1018,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let ty = self.infer[arg].clone();
         match ty.interned() {
             TyKind::Str => self.gen_print_str(value.into_struct_value()),
+            TyKind::String => self.gen_print_string(arg, value),
             TyKind::Int(int_ty) => {
                 let int_value = value.into_int_value();
                 let signed = int_ty.signedness == codira_hir::Signedness::Signed;
@@ -1489,6 +1496,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             if let BuiltinFn::Array(method) = builtin {
                 return self.gen_array_method(tgt_expr, method, receiver, args);
             }
+            if let BuiltinFn::String(op) = builtin {
+                return self.gen_string_method(op, tgt_expr, receiver, args);
+            }
             return self.gen_builtin_method(builtin, receiver, args);
         }
 
@@ -1872,9 +1882,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 | TyKind::Tuple(..)
                 | TyKind::Enum(..)
                 | TyKind::Function(_)
-                | TyKind::Array(_),
+                | TyKind::Array(_)
+                | TyKind::String,
                 BinaryOp::Assignment { op: None },
             ) => return self.gen_plain_assignment(lhs, rhs),
+            (TyKind::String | TyKind::Str, _) => {
+                return self.gen_string_binary_op(lhs, rhs, op);
+            }
             (TyKind::Enum(..), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
                 return self.gen_enum_eq(lhs, rhs, &lhs_type.clone(), negated)
             }
