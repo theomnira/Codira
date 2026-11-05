@@ -562,9 +562,11 @@ of a table hashed with it can make them all collide.
   `restore_heap` carry strings with the objects that hold them, and a hot
   reload keeps a `String` field's value across layout changes like any
   value-struct field. Tests: `crates/codira_runtime/tests/strings.rs`
-  (collections under a 2 MB heap cap and from a host thread while strings
-  are built, sliced and compared; a snapshot; a reload that reorders and
-  adds fields).
+  (collections under a 2 MB heap cap while strings are built, sliced and
+  compared; a snapshot; a reload that reorders and adds fields) and
+  `strings_host_gc.rs` (collections from a host thread, paced: a host that
+  collects back to back leaves Codira code about one allocation per
+  collection, because every collection stops the world).
 - **Host API**: `codira_runtime::StringRef` is a `String` held by the host,
   like `StructRef` and `ArrayRef`: returned by `Runtime::invoke`, read from
   a field with `StructRef::get::<StringRef>("name")` or from a

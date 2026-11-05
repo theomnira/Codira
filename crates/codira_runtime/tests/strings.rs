@@ -5,10 +5,9 @@
 //! Functionality:
 //! - `String` and the runtime: strings passed to and from the host
 //!   (`StringRef`), read from fields, kept alive by the collector under a
-//!   small heap cap and host collections, carried through a heap snapshot and
-//!   through a hot reload that changes the layout around them.
-use std::sync::atomic::{AtomicBool, Ordering};
-
+//!   small heap cap, carried through a heap snapshot and
+//!   through a hot reload that changes the layout around them. Collections
+//!   from a host thread are in `strings_host_gc.rs`.
 use codira_runtime::{ArrayRef, StringRef, StructRef};
 use codira_test::CompileAndRunTestDriver;
 
@@ -125,36 +124,6 @@ fn heap_limit_collections_keep_live_strings_intact() {
     let gc = driver.runtime.gc();
     assert!(gc.emergency_collections() > 0, "the cap was never reached");
     assert!(gc.committed_bytes() <= 32 * BLOCK);
-}
-
-/// A host thread collects in a loop while Codira code builds, slices and
-/// compares strings.
-#[test]
-fn host_collections_keep_live_strings_intact() {
-    let driver = CompileAndRunTestDriver::new(STRESS, |builder| builder)
-        .expect("Failed to build test driver");
-    let gc = driver.runtime.gc();
-    let done = AtomicBool::new(false);
-    std::thread::scope(|s| {
-        s.spawn(|| {
-            while !done.load(Ordering::Relaxed) {
-                gc.collect();
-                std::thread::yield_now();
-            }
-        });
-        // Stops the collecting thread even when an assertion fails.
-        struct SetOnDrop<'a>(&'a AtomicBool);
-        impl Drop for SetOnDrop<'_> {
-            fn drop(&mut self) {
-                self.0.store(true, Ordering::Relaxed);
-            }
-        }
-        let _done = SetOnDrop(&done);
-        for seed in 1..4i64 {
-            let bad: i64 = driver.runtime.invoke("churn", (seed, 20_000i64)).unwrap();
-            assert_eq!(bad, 0, "a collection freed or changed a live string");
-        }
-    });
 }
 
 const PROGRAM: &str = r#"
