@@ -172,9 +172,7 @@ impl ArrayMethod {
     /// The position of the closure argument, for the methods that take one.
     pub fn closure_arg(self) -> Option<usize> {
         match self {
-            ArrayMethod::Map | ArrayMethod::Filter | ArrayMethod::Any | ArrayMethod::All => {
-                Some(0)
-            }
+            ArrayMethod::Map | ArrayMethod::Filter | ArrayMethod::Any | ArrayMethod::All => Some(0),
             ArrayMethod::Fold => Some(1),
             _ => None,
         }
@@ -244,10 +242,155 @@ pub fn is_inlined_closure_arg(
     if !is_inlined_closure_literal(body, closure) {
         return false;
     }
-    body.exprs().any(|(expr, e)| match (e, infer.builtin_call(expr)) {
-        (crate::Expr::MethodCall { args, .. }, Some(crate::BuiltinFn::Array(method))) => method
-            .closure_arg()
-            .is_some_and(|index| args.get(index) == Some(&closure)),
-        _ => false,
-    })
+    body.exprs()
+        .any(|(expr, e)| match (e, infer.builtin_call(expr)) {
+            (crate::Expr::MethodCall { args, .. }, Some(crate::BuiltinFn::Array(method))) => method
+                .closure_arg()
+                .is_some_and(|index| args.get(index) == Some(&closure)),
+            _ => false,
+        })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::tests::diagnostics;
+
+    #[test]
+    fn array_methods_type_check() {
+        let diags = diagnostics(
+            r#"
+    struct P { x: i64 }
+    func ok(xs: [i64], ps: [P], ws: [str]) -> i64 {
+        xs.push(1)
+        let last: i64? = xs.pop()
+        xs.insert(0, 2)
+        let r: i64 = xs.remove(0)
+        xs.reserve(10)
+        xs.append([3, 4])
+        let n: usize = xs.capacity()
+        let found: bool = xs.contains(3)
+        let at: usize? = xs.index_of(3)
+        xs.sort()
+        ws.sort()
+        xs.reverse()
+        let half: [f64] = xs.map(func(x) { x as f64 / 2.0 })
+        let big: [i64] = xs.filter(func(x) { x > 2 })
+        let total: i64 = xs.fold(0, func(acc, x) { acc + x })
+        let any: bool = xs.any(func(x) { x == 3 }) || ps.all(func(p) { p.x > 0 })
+        let s: i64 = xs.sum() + xs.min()! + xs.max()!
+        let part: [i64] = xs[0..2]
+        for (i, x) in xs.enumerate() { }
+        ps.push(P { x: 1 })
+        r + total + s
+    }
+    "#,
+        );
+        assert_eq!(diags, "", "{diags}");
+    }
+
+    #[test]
+    fn array_methods_report_what_they_need() {
+        let diags = diagnostics(
+            r#"
+    struct P { x: i64 }
+    func a(ps: [P]) { ps.sort() }
+    func b(ws: [str]) -> str { ws.sum() }
+    func c(ps: [P], p: P) -> bool { ps.contains(p) }
+    func d[T](xs: [T]) { xs.sort() }
+    func e(xs: [i64]) { let pairs = xs.enumerate() }
+    func f(xs: [i64]) { xs.push(1, 2) }
+    func g(xs: [i64]) { xs.push(1.5) }
+    func h(ws: [str]) -> str? { ws.min() }
+    "#,
+        );
+        let count = |needle: &str| diags.matches(needle).count();
+        assert_eq!(
+            count("`sort` needs an array of integers, floats, `bool` or `str`, not of `P`"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("`sum` needs an array of integers or floats, not of `str`"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("`contains` needs an array of integers, floats, `bool` or `str`, not of `P`"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("inside a generic function the element type is not known yet"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("`enumerate()` can only be the iterable of a `for` loop"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("`min` needs an array of integers, floats or `bool`, not of `str`"),
+            1,
+            "{diags}"
+        );
+        // And `f` (two arguments) and `g` (a float pushed onto `[i64]`).
+        assert_eq!(diags.lines().count(), 8, "{diags}");
+    }
+
+    #[test]
+    fn effects_of_array_methods() {
+        let diags = diagnostics(
+            r#"
+    @noalloc
+    func grows(xs: [i64]) { xs.push(1) }
+    @noalloc
+    func maps(xs: [i64]) -> [i64] { xs.map(func(x) { x + 1 }) }
+    @noalloc
+    func slices(xs: [i64]) -> [i64] { xs[0..1] }
+    @noalloc @nopanic
+    func folds(xs: [i64]) -> i64 {
+        let more = if xs.any(func(x) { x > 3 }) { 1 } else { 0 }
+        xs.fold(0, func(acc, x) { acc + x }) + xs.sum() + more
+    }
+    @nopanic
+    func removes(xs: [i64]) -> i64 { xs.remove(0) }
+    @noalloc
+    func calls_through(xs: [i64], f: func(i64) -> bool) -> bool { xs.all(f) }
+    @noalloc
+    func shrinks(xs: [i64]) -> i64 {
+        xs.clear()
+        if let v = xs.pop() { v } else { 0 }
+    }
+    "#,
+        );
+        let count = |needle: &str| diags.matches(needle).count();
+        assert_eq!(
+            count("`grows` is `@noalloc` but allocates here: `push` can grow the array"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("`maps` is `@noalloc` but allocates here: `map` allocates a new array"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("`slices` is `@noalloc` but allocates here: slicing allocates a new array"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(count("`folds`"), 0, "{diags}");
+        assert_eq!(
+            count("`removes` is `@nopanic` but may panic here: `remove` panics when the index"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("`calls_through` is `@noalloc` but allocates here: `all` calls a function value"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(count("`shrinks`"), 0, "{diags}");
+    }
 }

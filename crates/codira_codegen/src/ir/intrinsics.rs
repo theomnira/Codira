@@ -197,6 +197,7 @@ fn collect_array_intrinsics<'ink>(
     }
     collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
     collect_intrinsic(context, target, &intrinsics::str_eq, intrinsics);
+    collect_intrinsic(context, target, &intrinsics::panic, intrinsics);
     collect_intrinsic(
         context,
         target,

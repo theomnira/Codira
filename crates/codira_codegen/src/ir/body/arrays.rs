@@ -276,20 +276,18 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             ArrayMethod::Sum => {
                 let len = self.array_len(array);
                 let zero = array.element_ty().const_zero();
-                let total = self.gen_reduce(array, len, zero, |this, acc, x| {
-                    match (acc, x) {
-                        (BasicValueEnum::IntValue(a), BasicValueEnum::IntValue(b)) => this
-                            .builder
-                            .build_int_add(a, b, "sum")
-                            .expect("failed to add")
-                            .into(),
-                        (BasicValueEnum::FloatValue(a), BasicValueEnum::FloatValue(b)) => this
-                            .builder
-                            .build_float_add(a, b, "sum")
-                            .expect("failed to add")
-                            .into(),
-                        _ => unreachable!("inference allows `sum` on numbers only"),
-                    }
+                let total = self.gen_reduce(array, len, zero, |this, acc, x| match (acc, x) {
+                    (BasicValueEnum::IntValue(a), BasicValueEnum::IntValue(b)) => this
+                        .builder
+                        .build_int_add(a, b, "sum")
+                        .expect("failed to add")
+                        .into(),
+                    (BasicValueEnum::FloatValue(a), BasicValueEnum::FloatValue(b)) => this
+                        .builder
+                        .build_float_add(a, b, "sum")
+                        .expect("failed to add")
+                        .into(),
+                    _ => unreachable!("inference allows `sum` on numbers only"),
                 });
                 Some(total)
             }
@@ -365,8 +363,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     let keep = this
                         .call_callee(&callee, &[element], args[0])?
                         .into_int_value();
-                    let keep_block = this.context.append_basic_block(this.fn_value, "filter.keep");
-                    let next_block = this.context.append_basic_block(this.fn_value, "filter.next");
+                    let keep_block = this
+                        .context
+                        .append_basic_block(this.fn_value, "filter.keep");
+                    let next_block = this
+                        .context
+                        .append_basic_block(this.fn_value, "filter.next");
                     this.builder
                         .build_conditional_branch(keep, keep_block, next_block)
                         .expect("failed to branch on a filter");
@@ -438,7 +440,9 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 self.builder
                     .build_store(result, bool_ty.const_int(u64::from(!is_any), false))
                     .expect("failed to store a result");
-                let done = self.context.append_basic_block(self.fn_value, "quantifier.done");
+                let done = self
+                    .context
+                    .append_basic_block(self.fn_value, "quantifier.done");
                 let len = self.array_len(array);
                 self.gen_element_loop(array, len, |this, _, element| {
                     let verdict = this
@@ -453,8 +457,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                             .build_not(verdict, "rejected")
                             .expect("failed to negate")
                     };
-                    let stop = this.context.append_basic_block(this.fn_value, "quantifier.stop");
-                    let next = this.context.append_basic_block(this.fn_value, "quantifier.next");
+                    let stop = this
+                        .context
+                        .append_basic_block(this.fn_value, "quantifier.stop");
+                    let next = this
+                        .context
+                        .append_basic_block(this.fn_value, "quantifier.next");
                     this.builder
                         .build_conditional_branch(decided, stop, next)
                         .expect("failed to branch");
@@ -509,7 +517,58 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         } else {
             end_index
         };
-        let start_index = self.gen_checked_index(expr, start, start_value, end_index, true);
+        let start_index = self.index_to_length_type(start, start_value, usize_ty);
+        let ordered = self
+            .builder
+            .build_int_compare(IntPredicate::ULE, start_index, end_index, "ordered")
+            .expect("failed to compare slice bounds");
+        let negative = if self.is_signed_int(start) {
+            self.builder
+                .build_int_compare(
+                    IntPredicate::SLT,
+                    start_value,
+                    start_value.get_type().const_zero(),
+                    "negative",
+                )
+                .expect("failed to compare a slice bound")
+        } else {
+            self.context.bool_type().const_zero()
+        };
+        let narrowed = if start_value.get_type().get_bit_width() > usize_ty.get_bit_width() {
+            let wide_end = self
+                .builder
+                .build_int_z_extend(end_index, start_value.get_type(), "end.wide")
+                .expect("failed to widen a slice bound");
+            self.builder
+                .build_int_compare(IntPredicate::UGT, start_value, wide_end, "too_far")
+                .expect("failed to compare a slice bound")
+        } else {
+            self.context.bool_type().const_zero()
+        };
+        let bad = self
+            .builder
+            .build_or(negative, narrowed, "bad")
+            .expect("failed to combine slice checks");
+        let ordered = self
+            .builder
+            .build_and(
+                ordered,
+                self.builder
+                    .build_not(bad, "good")
+                    .expect("failed to negate"),
+                "ordered",
+            )
+            .expect("failed to combine slice checks");
+        let ok_block = self.context.append_basic_block(self.fn_value, "slice.ok");
+        let fail_block = self
+            .context
+            .append_basic_block(self.fn_value, "slice.reversed");
+        self.builder
+            .build_conditional_branch(ordered, ok_block, fail_block)
+            .expect("failed to branch on slice bounds");
+        self.builder.position_at_end(fail_block);
+        self.gen_panic("slice starts after its end", expr);
+        self.builder.position_at_end(ok_block);
         let count = self
             .builder
             .build_int_sub(end_index, start_index, "count")
@@ -554,7 +613,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// The address of element `index`, from a fresh load of the payload
     /// pointer.
-    fn element_ptr(&self, array: RuntimeArrayValue<'ink>, index: IntValue<'ink>) -> PointerValue<'ink> {
+    fn element_ptr(
+        &self,
+        array: RuntimeArrayValue<'ink>,
+        index: IntValue<'ink>,
+    ) -> PointerValue<'ink> {
         let elements = array.get_elements(&self.builder);
         // Safety: callers keep `index` within the capacity (or at its end,
         // for an address only used with a zero-length move).
@@ -567,7 +630,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Loads element `index`, which the caller has checked is below the
     /// length.
-    fn load_element(&self, array: RuntimeArrayValue<'ink>, index: IntValue<'ink>) -> BasicValueEnum<'ink> {
+    fn load_element(
+        &self,
+        array: RuntimeArrayValue<'ink>,
+        index: IntValue<'ink>,
+    ) -> BasicValueEnum<'ink> {
         let ptr = self.element_ptr(array, index);
         let value = self
             .builder
@@ -657,7 +724,9 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .unwrap_basic()
             .into_int_value();
         let grow = self.context.append_basic_block(self.fn_value, "array.grow");
-        let ready = self.context.append_basic_block(self.fn_value, "array.ready");
+        let ready = self
+            .context
+            .append_basic_block(self.fn_value, "array.ready");
         self.builder
             .build_conditional_branch(full, grow, ready)
             .expect("failed to branch on a capacity");
@@ -696,7 +765,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 .expect("failed to widen a bound");
             (index, wide)
         } else {
-            (self.index_to_length_type(index_expr, index, length_type), bound)
+            (
+                self.index_to_length_type(index_expr, index, length_type),
+                bound,
+            )
         };
         let predicate = if inclusive {
             IntPredicate::ULE
@@ -857,7 +929,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             }
             _ => self
                 .builder
-                .build_int_compare(IntPredicate::EQ, a.into_int_value(), b.into_int_value(), "eq")
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    a.into_int_value(),
+                    b.into_int_value(),
+                    "eq",
+                )
                 .expect("failed to compare"),
         }
     }
@@ -947,9 +1024,15 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .builder
             .get_insert_block()
             .expect("the builder is positioned");
-        let cond = self.context.append_basic_block(self.fn_value, "reduce.cond");
-        let body = self.context.append_basic_block(self.fn_value, "reduce.body");
-        let done = self.context.append_basic_block(self.fn_value, "reduce.done");
+        let cond = self
+            .context
+            .append_basic_block(self.fn_value, "reduce.cond");
+        let body = self
+            .context
+            .append_basic_block(self.fn_value, "reduce.body");
+        let done = self
+            .context
+            .append_basic_block(self.fn_value, "reduce.done");
         self.builder
             .build_unconditional_branch(cond)
             .expect("failed to branch");
@@ -1182,10 +1265,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 self.gen_expr(*closure_body)
             }
             Callee::Direct(function) => {
-                let args: Vec<BasicMetadataValueEnum<'ink>> =
-                    values.iter().map(|&v| BasicMetadataValueEnum::from(v)).collect();
-                let never = self
-                    .infer[arg]
+                let args: Vec<BasicMetadataValueEnum<'ink>> = values
+                    .iter()
+                    .map(|&v| BasicMetadataValueEnum::from(v))
+                    .collect();
+                let never = self.infer[arg]
                     .as_function()
                     .is_some_and(|(_, ret)| ret.is_never());
                 let result = self.gen_call(None, *function, &args);
