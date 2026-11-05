@@ -20,6 +20,7 @@ pub mod fmt;
 pub mod import_c;
 pub mod init;
 pub mod language_server;
+pub mod lint;
 pub mod new;
 pub mod quantum;
 pub mod query;

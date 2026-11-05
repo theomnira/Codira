@@ -14,7 +14,7 @@ use clap::{Parser, Subcommand};
 pub use ops::exe;
 use ops::{
     api_diff, attest, bindgen, build, certify, check, daemon, doc, doctor, envelope, fmt, import_c,
-    init, language_server, new, quantum, query, run, start, synth, test,
+    init, language_server, lint, new, quantum, query, run, start, synth, test,
 };
 
 #[derive(Parser)]
@@ -56,6 +56,11 @@ enum Command {
     /// Check the toolchain (LLVM, Z3, LLD, the C compiler, the target, the
     /// standard library, disk space) and print the fix for each problem
     Doctor(doctor::Args),
+
+    /// Lints that use what the compiler knows: allocations in loops, large
+    /// copies, unused code, suspicious `extern`/`@asm`, unproven divisions,
+    /// `@noalloc` candidates
+    Lint(lint::Args),
 
     /// Run or control the build daemon, which keeps a compiler warm between
     /// builds
@@ -136,6 +141,7 @@ where
         Command::Fmt(args) => fmt::fmt(args),
         Command::Doc(args) => doc::doc(args),
         Command::Doctor(args) => doctor::doctor(args),
+        Command::Lint(args) => lint::lint(args),
         Command::Bindgen(args) => bindgen::bindgen(args),
         Command::LanguageServer(args) => language_server::language_server(args),
         Command::New(args) => new::new(args),

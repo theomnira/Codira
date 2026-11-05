@@ -2194,6 +2194,61 @@ does not try a build. Free space is measured with `df` on Unix and
 PowerShell on Windows. Fixes name the package manager of the platform
 (`apt-get` on Linux, Homebrew on macOS, winget or Chocolatey on Windows).
 
+### Lints: `codira lint`
+
+`codira lint` reports what the compiler knows about the package beyond
+style. Each lint reports only what the compiler established, never a guess
+from the text; `codira lint --list` lists them:
+
+- `alloc-in-loop`: an allocation the effect analysis finds inside a loop (a
+  `class` constructed, an array literal, `print`, a cross-module call that
+  boxes a value struct), or a call in a loop to a function whose summary
+  allocates, with the chain down to the allocation. Allocations the
+  analysis only assumes, in foreign code or behind a `perform`, are not
+  reported. A `for` loop's iterable is evaluated once and does not count; a
+  closure body is not part of the loop.
+- `large-copy`: a parameter whose type is a value struct or tuple of at
+  least 128 bytes (a lower bound: fields summed without padding), copied on
+  every call. Generic types are not sized and not reported.
+- `unused`: a private function, struct, enum, constant or type alias that
+  nothing in the package names. Items with an attribute other than
+  `@noalloc`, `@nopanic`, `@noblock`, `@realtime`, `@envelope` or `@inline`
+  (they may be entry points), trait implementations, names starting with
+  `_` and `main` are left alone. A method is private unless marked `public`,
+  and method calls check visibility, so a non-public method that nothing in
+  its package calls can be called from nowhere.
+- `extern-assertion`: an `extern "C"` function trusted to be `@noalloc` or
+  `@noblock` (or `@realtime`, or by its `@envelope`) whose C library
+  namesake is documented to allocate or block (`malloc`, `printf`, `sleep`,
+  `read`, `pthread_mutex_lock`, ...).
+- `extern-gc-reference`: an `extern "C"` function that takes or returns a
+  `class`; C code that keeps the pointer holds a reference the collector
+  does not see.
+- `asm`: an `@asm` variant marked `pure: true` that has no output (the
+  optimiser may delete every call) or clobbers memory.
+- `unproven-division`: an integer `/` or `%` whose divisor the compiler did
+  not prove safe, so it is checked at run time and can panic. It is the same
+  decision the code generators follow; a `requires` that proves the divisor
+  non-zero (and, signed, rules out `MIN / -1`) removes the check and the
+  finding.
+- `noalloc-candidate` (off by default, `--warn noalloc-candidate`): a public
+  function the analysis proves never allocates that is not declared
+  `@noalloc`.
+
+Findings are warnings: the command fails only for a lint named with
+`--deny <lint>` (`--deny all` for every one). To silence a lint: `--allow
+<lint>`; a comment `// codira-lint: allow(<lint>, ...)` on the reported line
+or the line above it; `//! codira-lint: allow(<lint>)` for the whole file;
+`allow(all)` for every lint. `--path <dir>` lints a directory of sources,
+such as `std/`, instead of a package.
+
+Limits: `unused` works by name, so an item shadowed by another of the same
+name anywhere in the package counts as used, and it does not see uses from
+other packages (hence only private items). `large-copy` reports parameters,
+not other copies. `extern-assertion` knows a fixed list of C library
+functions, not every one. Lints run on what parses; `codira check` reports
+syntax errors.
+
 ---
 
 ## 5. End-to-end status today
