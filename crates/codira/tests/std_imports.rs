@@ -1114,4 +1114,142 @@ public func main() {
     .replace("{bad}", bad.to_str().unwrap());
     let (_dir, stdout) = run_ok(&[("mod.code", &program)]);
     assert_eq!(stdout, "42\n2\nnot found\n");
+
+/// `Map`, `Set`, `Deque`, `BinaryHeap` and `Counter` from `std.collections`,
+/// on the growable arrays, against values worked out by hand.
+#[test]
+fn std_collections_map_set_deque_heap_and_counter() {
+    let program = r#"
+import std.collections.map.{Map}
+import std.collections.set.{Set}
+import std.collections.deque.{Deque}
+import std.collections.binary_heap.{BinaryHeap}
+import std.collections.counter.{Counter}
+import std.cmp.cmp.{min_of, max_of}
+
+public func main() {
+    let m: Map[i64, i64] = Map.new()
+    for i in 0..1000 {
+        m.insert(i, i * i);
+    }
+    println(m.len(), " ", m.get(10)!, " ", m.get(1000) == nil, " ", m.contains_key(999))
+    println(m.insert(10, 5)!, " ", m.get(10)!, " ", m.len())
+    for i in 0..500 {
+        m.remove(i * 2);
+    }
+    println(m.len(), " ", m.get(10) == nil, " ", m.get(11)!, " ", m.get_or(10, -1))
+    println(m.keys().len(), " ", m.values().sum())
+    m.clear()
+    println(m.len(), " ", m.get(11) == nil)
+
+    let ages: Map[str, f64] = Map.new()
+    ages.insert("ada", 36.5)
+    ages.insert("alan", 41.0)
+    println(ages.get("ada")!, " ", ages.get("bob") == nil, " ", ages.len())
+
+    let s: Set[str] = Set.new()
+    println(s.insert("a"), " ", s.insert("b"), " ", s.insert("a"), " ", s.len())
+    println(s.contains("b"), " ", s.remove("b"), " ", s.remove("b"), " ", s.len())
+    let t = Set.from_array([1, 2, 3, 4])
+    let u = Set.from_array([3, 4, 5])
+    println(t.union(u).len(), " ", t.intersection(u).len(), " ", t.difference(u).len())
+    println(t.is_subset(u), " ", Set.from_array([3]).is_subset(u))
+
+    let q: Deque[i64] = Deque.new()
+    for i in 0..10 { q.push_back(i) }
+    for i in 1..5 { q.push_front(-i) }
+    println(q.len(), " ", q.front()!, " ", q.back()!, " ", q.get(4))
+    println(q.pop_back()!, " ", q.pop_front()!, " ", q.len())
+    var total = 0
+    while let x = q.pop_front() { total += x }
+    println(total, " ", q.is_empty(), " ", q.pop_back() == nil)
+
+    let h: BinaryHeap[i64] = BinaryHeap.new()
+    for x in [5, 1, 8, 3, 9, 2, 8] { h.push(x) }
+    print(h.peek()!, ":")
+    while let x = h.pop() { print(" ", x) }
+    println()
+    let sorted = BinaryHeap.from_array(["pear", "fig", "apple"]).to_sorted_array()
+    println(sorted[0], " ", sorted[2], " ", min_of(3, 2), " ", max_of(1.5, 0.5))
+
+    let words = Counter.from_array(["a", "b", "a", "c", "a", "b"])
+    println(words.count("a"), " ", words.count("z"), " ", words.len(), " ", words.total())
+    println(words.most_common()!, " ", words.subtract("a"), " ", words.count("a"))
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    assert_eq!(
+        stdout,
+        "1000 100 true true\n\
+         100 5 1000\n\
+         500 true 121 -1\n\
+         500 166666500\n\
+         0 true\n\
+         36.5 true 2\n\
+         true true false 2\n\
+         true true false 1\n\
+         5 2 2\n\
+         false true\n\
+         14 -4 9 0\n\
+         9 -4 12\n\
+         30 true true\n\
+         9: 9 8 8 5 3 2 1\n\
+         apple pear 2 1.5\n\
+         3 0 3 6\n\
+         a true 2\n"
+    );
+}
+
+/// `Map[i64, i64]` replays random insertions, lookups and removals the same
+/// way Rust's `HashMap` does.
+#[test]
+fn std_collections_map_matches_rust_hash_map() {
+    let mut state = 0x1234_5678_u64;
+    let mut next = move || {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state
+    };
+    let mut reference = std::collections::HashMap::new();
+    let mut code = String::from(
+        "import std.collections.map.{Map}\n\npublic func main() {\n    \
+         let m: Map[i64, i64] = Map.new()\n",
+    );
+    let mut expected = String::new();
+    for _ in 0..1500 {
+        let key = (next() % 300) as i64;
+        let value = (next() % 1000) as i64;
+        match next() % 4 {
+            0 | 1 => {
+                code.push_str(&format!(
+                    "    if let o = m.insert({key}, {value}) {{ print(o, \",\") }} \
+                     else {{ print(\"-,\") }}\n"
+                ));
+                match reference.insert(key, value) {
+                    Some(old) => expected.push_str(&format!("{old},")),
+                    None => expected.push_str("-,"),
+                }
+            }
+            2 => {
+                code.push_str(&format!(
+                    "    if let o = m.remove({key}) {{ print(o, \",\") }} \
+                     else {{ print(\"-,\") }}\n"
+                ));
+                match reference.remove(&key) {
+                    Some(old) => expected.push_str(&format!("{old},")),
+                    None => expected.push_str("-,"),
+                }
+            }
+            _ => {
+                code.push_str(&format!("    print(m.get_or({key}, -1), \",\")\n"));
+                let found = reference.get(&key).copied().unwrap_or(-1);
+                expected.push_str(&format!("{found},"));
+            }
+        }
+    }
+    code.push_str("    println(m.len())\n}\n");
+    expected.push_str(&format!("{}\n", reference.len()));
+    let (_dir, stdout) = run_ok(&[("mod.code", &code)]);
+    assert_eq!(stdout, expected);
 }

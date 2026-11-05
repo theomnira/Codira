@@ -1,211 +1,157 @@
 // std/collections/deque.code
-// Deque[T] — double-ended queue backed by a circular (ring) buffer.
-// Supports O(1) amortised push/pop at both front and back.
+// Deque[T]: a double-ended queue, a ring buffer on a growable array.
+//
+//     import std.collections.deque.{Deque}
+//
+//     let q: Deque[i64] = Deque.new()
+//     q.push_back(1)
+//     q.push_front(0)
+//     while let x = q.pop_front() { println(x) }
+//
+// `push_front`, `push_back`, `pop_front` and `pop_back` are O(1) (amortized:
+// a full buffer doubles), `get` is O(1). A `Deque` is a class: assigning or
+// passing it shares the one queue.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Deque[T]
-// ─────────────────────────────────────────────────────────────────────────────
+import root.sys.terminate.{panic};
 
 public class Deque[T] {
-    buf:   Pointer[T],
-    cap:   usize,
-    head:  usize,   // index of the front element
-    tail:  usize,   // index *after* the last element
-    len:   usize,
+    // The ring: element `i` of the queue is `buffer[(head + i) & mask]`.
+    // Its length is the capacity, 0 or a power of two; the slots that hold
+    // no element hold a copy of one, which is never read (a type parameter
+    // has no default value to fill them with).
+    buffer: [T],
+    head: usize,
+    count: usize,
 }
 
-// ── Construction ─────────────────────────────────────────────────────────────
-
-/// Creates an empty deque with default capacity (8).
-public func deque_new[T]() -> Deque[T] {
-    return deque_with_capacity(8);
-}
-
-/// Creates an empty deque with at least `cap` slots.
-public func deque_with_capacity[T](cap: usize) -> Deque[T] {
-    let real_cap = next_power_of_two_deque(cap);
-    let buf = heap_alloc(real_cap);
-    return Deque[T] { buf: buf, cap: real_cap, head: 0, tail: 0, len: 0 };
-}
-
-func next_power_of_two_deque(n: usize) -> usize {
-    var p: usize = 1;
-    while p < n {
-        p = p * 2;
+extend Deque[T] {
+    // An empty queue. It allocates nothing until the first push.
+    public func new() -> Deque[T] {
+        Deque { buffer: [], head: 0, count: 0 }
     }
-    return p;
-}
 
-// ── Internal ─────────────────────────────────────────────────────────────────
-
-/// Wraps an index within the circular buffer capacity.
-func wrap(index: usize, cap: usize) -> usize {
-    return index & (cap - 1);
-}
-
-/// Grows the ring buffer to double its current capacity, reordering elements.
-func deque_grow[T](this: Deque[T]) -> Deque[T] {
-    let new_cap = this.cap * 2;
-    let new_buf = heap_alloc(new_cap);
-    // Linearise the old circular buffer into the new buffer
-    var i: usize = 0;
-    while i < this.len {
-        let src_idx = wrap(this.head + i, this.cap);
-        raw_store(new_buf, i, raw_load(this.buf, src_idx));
-        i = i + 1;
+    // A queue of the elements of `items`, first to last.
+    public func from_array(items: [T]) -> Deque[T] {
+        let q: Deque[T] = Deque.new()
+        for item in items {
+            q.push_back(item)
+        }
+        q
     }
-    heap_free(this.buf);
-    return Deque[T] { buf: new_buf, cap: new_cap, head: 0, tail: this.len, len: this.len };
-}
 
-// ── Core API ─────────────────────────────────────────────────────────────────
-
-/// Returns the number of elements.
-public func len[T](this: Deque[T]) -> usize {
-    return this.len;
-}
-
-/// Returns true if the deque is empty.
-public func is_empty[T](this: Deque[T]) -> bool {
-    return this.len == 0;
-}
-
-/// Returns the front element without removing it. Panics if empty.
-public func front[T](this: Deque[T]) -> T {
-    if this.len == 0 {
-        panic("Deque.front: deque is empty");
+    // The number of elements.
+    public func len(self) -> usize {
+        self.count
     }
-    return raw_load(this.buf, this.head);
-}
 
-/// Returns the back element without removing it. Panics if empty.
-public func back[T](this: Deque[T]) -> T {
-    if this.len == 0 {
-        panic("Deque.back: deque is empty");
+    public func is_empty(self) -> bool {
+        self.count == 0
     }
-    let idx = wrap(this.tail - 1 + this.cap, this.cap);
-    return raw_load(this.buf, idx);
-}
 
-// ── Push / Pop ───────────────────────────────────────────────────────────────
-
-/// Pushes an element to the back.
-public func push_back[T](this: Deque[T], value: T) -> Deque[T] {
-    var out = this;
-    if out.len == out.cap {
-        out = deque_grow(out);
+    // Adds `value` after the last element.
+    public func push_back(self, value: T) {
+        if self.count == self.buffer.len() {
+            self.grow(value)
+        }
+        let mask = self.buffer.len() - 1
+        self.buffer[(self.head + self.count) & mask] = value
+        self.count += 1
     }
-    raw_store(out.buf, out.tail, value);
-    out.tail = wrap(out.tail + 1, out.cap);
-    out.len = out.len + 1;
-    return out;
-}
 
-/// Pushes an element to the front.
-public func push_front[T](this: Deque[T], value: T) -> Deque[T] {
-    var out = this;
-    if out.len == out.cap {
-        out = deque_grow(out);
+    // Adds `value` before the first element.
+    public func push_front(self, value: T) {
+        if self.count == self.buffer.len() {
+            self.grow(value)
+        }
+        let mask = self.buffer.len() - 1
+        self.head = (self.head + mask) & mask
+        self.buffer[self.head] = value
+        self.count += 1
     }
-    out.head = wrap(out.head - 1 + out.cap, out.cap);
-    raw_store(out.buf, out.head, value);
-    out.len = out.len + 1;
-    return out;
-}
 
-/// Removes and returns the front element. Panics if empty.
-public func pop_front[T](this: Deque[T]) -> (Deque[T], T) {
-    if this.len == 0 {
-        panic("Deque.pop_front: deque is empty");
+    // Removes and returns the first element, or `nil` when empty.
+    public func pop_front(self) -> T? {
+        if self.count == 0 {
+            return nil
+        }
+        let value = self.buffer[self.head]
+        self.head = (self.head + 1) & (self.buffer.len() - 1)
+        self.count -= 1
+        value
     }
-    let val = raw_load(this.buf, this.head);
-    let out = this;
-    out.head = wrap(out.head + 1, out.cap);
-    out.len = out.len - 1;
-    return (out, val);
-}
 
-/// Removes and returns the back element. Panics if empty.
-public func pop_back[T](this: Deque[T]) -> (Deque[T], T) {
-    if this.len == 0 {
-        panic("Deque.pop_back: deque is empty");
+    // Removes and returns the last element, or `nil` when empty.
+    public func pop_back(self) -> T? {
+        if self.count == 0 {
+            return nil
+        }
+        self.count -= 1
+        self.buffer[(self.head + self.count) & (self.buffer.len() - 1)]
     }
-    let out = this;
-    out.tail = wrap(out.tail - 1 + out.cap, out.cap);
-    let val = raw_load(out.buf, out.tail);
-    out.len = out.len - 1;
-    return (out, val);
-}
 
-// ── Element access ───────────────────────────────────────────────────────────
-
-/// Returns the element at logical index `i` (0 = front). Panics if out of bounds.
-public func deque_get[T](this: Deque[T], i: usize) -> T {
-    if i >= this.len {
-        panic("Deque.get: index out of bounds");
+    // The first element, or `nil` when empty.
+    public func front(self) -> T? {
+        if self.count == 0 { nil } else { self.buffer[self.head] }
     }
-    let physical = wrap(this.head + i, this.cap);
-    return raw_load(this.buf, physical);
-}
 
-/// Sets the element at logical index `i`. Panics if out of bounds.
-public func deque_set[T](this: Deque[T], i: usize, value: T) -> Deque[T] {
-    if i >= this.len {
-        panic("Deque.set: index out of bounds");
+    // The last element, or `nil` when empty.
+    public func back(self) -> T? {
+        if self.count == 0 {
+            nil
+        } else {
+            self.buffer[(self.head + self.count - 1) & (self.buffer.len() - 1)]
+        }
     }
-    let physical = wrap(this.head + i, this.cap);
-    raw_store(this.buf, physical, value);
-    return this;
-}
 
-// ── Bulk ─────────────────────────────────────────────────────────────────────
-
-/// Removes all elements without freeing the backing buffer.
-public func clear[T](this: Deque[T]) -> Deque[T] {
-    let out = this;
-    out.head = 0;
-    out.tail = 0;
-    out.len  = 0;
-    return out;
-}
-
-/// Converts the deque into a List[T] (front-to-back order).
-public func deque_to_list[T](this: Deque[T]) -> List[T] {
-    var out = list_with_capacity(this.len);
-    var i: usize = 0;
-    while i < this.len {
-        out = push(out, deque_get(this, i));
-        i = i + 1;
+    // Element `index` from the front. Panics unless `index < len()`.
+    public func get(self, index: usize) -> T {
+        if index >= self.count {
+            panic("Deque.get: index out of bounds")
+        }
+        self.buffer[(self.head + index) & (self.buffer.len() - 1)]
     }
-    return out;
-}
 
-// ── Iteration ────────────────────────────────────────────────────────────────
-
-public struct DequeIter[T] {
-    deque: Deque[T],
-    pos:   usize,
-}
-
-/// Returns a front-to-back iterator.
-public func iter[T](this: Deque[T]) -> DequeIter[T] {
-    return DequeIter[T] { deque: this, pos: 0 };
-}
-
-/// Advances the iterator.
-public func iter_next[T](it: DequeIter[T]) -> (DequeIter[T], Optional[T]) {
-    if it.pos >= it.deque.len {
-        return (it, none());
+    // Replaces element `index` from the front. Panics unless
+    // `index < len()`.
+    public func set(self, index: usize, value: T) {
+        if index >= self.count {
+            panic("Deque.set: index out of bounds")
+        }
+        self.buffer[(self.head + index) & (self.buffer.len() - 1)] = value
     }
-    let val = deque_get(it.deque, it.pos);
-    let next = DequeIter[T] { deque: it.deque, pos: it.pos + 1 };
-    return (next, some(val));
-}
 
-// ── Cleanup ──────────────────────────────────────────────────────────────────
+    // Removes every element, keeping the buffer.
+    public func clear(self) {
+        self.head = 0
+        self.count = 0
+    }
 
-public func drop[T](this: Deque[T]) {
-    if this.cap > 0 {
-        heap_free(this.buf);
+    // The elements, first to last, in a new array.
+    public func to_array(self) -> [T] {
+        let out: [T] = []
+        out.reserve(self.count)
+        for index in 0..self.count {
+            out.push(self.buffer[(self.head + index) & (self.buffer.len() - 1)])
+        }
+        out
+    }
+
+    // Moves the elements to a buffer twice the size (at least 4), first
+    // element first; `filler` fills the free slots.
+    func grow(self, filler: T) {
+        var size = self.buffer.len() * 2
+        if size < 4 {
+            size = 4
+        }
+        let buffer: [T] = []
+        buffer.reserve(size)
+        for index in 0..self.count {
+            buffer.push(self.buffer[(self.head + index) & (self.buffer.len() - 1)])
+        }
+        while buffer.len() < size {
+            buffer.push(filler)
+        }
+        self.buffer = buffer
+        self.head = 0
     }
 }

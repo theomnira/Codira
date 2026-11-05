@@ -3,19 +3,22 @@ source: crates/codira_compiler/tests/stdlib_import_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-22 of 92 std modules are importable from a program
+23 of 91 std modules are importable from a program
 
 importable:
-  std.ai.runtime
   std.base64.base64
   std.bit.bit
   std.bit.mask
   std.builtin.type_aliases
+  std.cmp.cmp
+  std.collections.binary_heap
+  std.collections.counter
+  std.collections.deque
+  std.collections.map
   std.collections.optional
+  std.collections.set
   std.complex.complex
   std.crypto.hash
-  std.db.db
-  std.fs.file
   std.fs.fs
   std.hashlib.hash
   std.math.constants
@@ -24,9 +27,7 @@ importable:
   std.memory.page
   std.memory.region
   std.random.rng
-  std.result.result
   std.sys.terminate
-  std.text.ascii
   std.time.time
 
 blocked:
@@ -44,6 +45,8 @@ std.ai.nn.layer
     check (70 diagnostics): std/ai/nn/layer.code:42: access of private type `y.shape`
 std.ai.quantize
     check (35 diagnostics): std/ai/quantize.code:38: module-level `let` is not supported yet: `SYMMETRIC_MAX` would not be defined, and no name can refer to it; write a function returning the value (`func SYMMETRIC_MAX() -> T { .. }`), as `std.math.constants` does `public let SYMMETRIC_MAX: f32 = 127.0;`
+std.ai.runtime
+    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
 std.ai.tensor.buffer
     check (22 diagnostics): std/ai/tensor/buffer.code:81: undefined value `SIZE_F32`
 std.ai.tensor.raw
@@ -71,7 +74,7 @@ std.builtin.simd
 std.builtin.slice
     check (63 diagnostics): std/builtin/slice.code:51: the type `Pointer[T]` mentions the generic parameter `T`, which `from_ref` does not declare: a generic type needs its arguments written out, e.g. `Box[i32]` rather than `Box`
 std.builtin.sort
-    check (106 diagnostics): std/builtin/sort.code:41: undefined value `__intrinsic_ilog2`
+    check (106 diagnostics): std/builtin/sort.code:38: undefined value `__intrinsic_ilog2`
 std.builtin.string_literal
     check (22 diagnostics): std/ai/tensor/raw.code:72: module-level `let` is not supported yet: `SIZE_F32` would not be defined, and no name can refer to it; write a function returning the value (`func SIZE_F32() -> T { .. }`), as `std.math.constants` does `public let SIZE_F32: usize = 4;`
 std.builtin.swap
@@ -86,30 +89,18 @@ std.builtin.types
     needs: the `f16` and `bf16` types, and sizeof/alignof intrinsics it does not declare
 std.collections.array
     check (50 diagnostics): std/collections/array.code:12: undefined type `FixedBuf[T, N]`
-std.collections.binary_heap
-    check (45 diagnostics): std/collections/binary_heap.code:11: undefined type `Pointer[T]`
-    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.bitset
     check (44 diagnostics): std/collections/bitset.code:10: module-level `let` is not supported yet: `BITS_PER_WORD` would not be defined, and no name can refer to it; write a function returning the value (`func BITS_PER_WORD() -> T { .. }`), as `std.math.constants` does `let BITS_PER_WORD: usize = 64;`
     needs: `Pointer[u64]` (std.memory.pointer)
-std.collections.counter
-    check (64 diagnostics): std/collections/counter.code:11: undefined type `Dict[T, usize]`
-    needs: `Dict` (std.collections.dict)
-std.collections.deque
-    check (26 diagnostics): std/collections/deque.code:10: undefined type `Pointer[T]`
-    needs: `Pointer[T]` (std.memory.pointer)
 std.collections.dict
     check (119 diagnostics): std/collections/dict.code:14: module-level `let` is not supported yet: `BUCKET_EMPTY` would not be defined, and no name can refer to it; write a function returning the value (`func BUCKET_EMPTY() -> T { .. }`), as `std.math.constants` does `let BUCKET_EMPTY: u8 = 0;`
-    needs: `Pointer[T]` (std.memory.pointer)
+    needs: `Pointer[T]` (std.memory.pointer); superseded by `Map` (std.collections.map)
 std.collections.linked_list
     check (134 diagnostics): std/collections/linked_list.code:11: undefined type `Pointer[Node[T]]`
     needs: `Pointer[T]` (std.memory.pointer)
 std.collections.list
     check (55 diagnostics): std/collections/list.code:10: undefined type `Pointer[T]`
-    needs: `Pointer[T]` (std.memory.pointer)
-std.collections.set
-    check (100 diagnostics): std/collections/set.code:15: module-level `let` is not supported yet: `SET_EMPTY` would not be defined, and no name can refer to it; write a function returning the value (`func SET_EMPTY() -> T { .. }`), as `std.math.constants` does `let SET_EMPTY: u8 = 0;`
-    needs: `Pointer[T]` (std.memory.pointer)
+    needs: `Pointer[T]` (std.memory.pointer); superseded by the growable `[T]`, whose `push`, `pop`, `insert`, `sort`, `map`, .. are builtin methods
 std.collections.span
     check (31 diagnostics): std/collections/span.code:11: undefined type `Pointer[T]`
     needs: `Pointer[T]` (std.memory.pointer)
@@ -119,6 +110,8 @@ std.collections.string
 std.complex.complex_string
     check (78 diagnostics): std/complex/complex_string.code:17: cannot apply binary operator `float_to_string(z.real) + "+"`
     needs: `String`
+std.db.db
+    check (7 diagnostics): std/builtin/types.code:81: undefined type `f16`
 std.ffi.cstring
     check (47 diagnostics): std/ffi/cstring.code:12: undefined type `Array[u8]`
 std.ffi.unsafe_union
@@ -156,13 +149,13 @@ std.math.sequence
 std.memory.alloc
     check (93 diagnostics): std/memory/alloc.code:59: mismatched type `0`
 std.memory.arc_pointer
-    check (84 diagnostics): std/memory/arc_pointer.code:59: undefined value `__intrinsic_sizeof`
+    check (84 diagnostics): std/memory/arc_pointer.code:55: undefined value `__intrinsic_sizeof`
 std.memory.memory
     check (37 diagnostics): std/memory/memory.code:31: undefined value `__intrinsic_memcpy`
 std.memory.owned_pointer
-    check (63 diagnostics): std/memory/owned_pointer.code:87: undefined value `__intrinsic_addr_to_ref`
+    check (63 diagnostics): std/memory/owned_pointer.code:86: undefined value `__intrinsic_addr_to_ref`
 std.memory.pointer
-    check (44 diagnostics): std/memory/pointer.code:143: undefined value `__panic`
+    check (44 diagnostics): std/memory/pointer.code:140: undefined value `__panic`
     needs: std.builtin.traits and std.builtin.types, `String`, and intrinsics the compiler does not have (`__intrinsic_to_hex`, `__intrinsic_type_name`)
 std.memory.unsafe_pointer
     check (51 diagnostics): std/memory/unsafe_pointer.code:89: undefined type `Pointer[T]`
@@ -177,10 +170,10 @@ std.os.process
 std.pathlib.path
     check (75 diagnostics): std/pathlib/path.code:12: undefined type `String`
 std.prelude
-    check (1051 diagnostics): std/ai/tensor/raw.code:72: module-level `let` is not supported yet: `SIZE_F32` would not be defined, and no name can refer to it; write a function returning the value (`func SIZE_F32() -> T { .. }`), as `std.math.constants` does `public let SIZE_F32: usize = 4;`
+    check (957 diagnostics): std/ai/tensor/raw.code:72: module-level `let` is not supported yet: `SIZE_F32` would not be defined, and no name can refer to it; write a function returning the value (`func SIZE_F32() -> T { .. }`), as `std.math.constants` does `public let SIZE_F32: usize = 4;`
 std.random.random
     check (87 diagnostics): std/random/random.code:27: module-level `var` is not supported yet: there is no module-level state, so `_global_rng` would not exist at run time; keep the state in a value the functions that use it pass along, or in a class instance `let mut _global_rng: RngState = RngState { s0: 0, s1: 0, s2:...`
-    needs: module-level mutable state (its generator is a global, and the compiler rejects a module-level `var`); and the growable `Array`
+    needs: module-level mutable state (its generator is a global, and the compiler rejects a module-level `var`)
 std.sys.arg
     check (134 diagnostics): std/sys/arg.code:36: undefined value `__intrinsic_argc`
 std.sys.assert_compare

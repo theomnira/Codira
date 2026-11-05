@@ -62,7 +62,7 @@ const KNOWN_BLOCKERS: &[(&str, &str)] = &[
     (
         "random.random",
         "module-level mutable state (its generator is a global, and the compiler rejects a \
-         module-level `var`); and the growable `Array`",
+         module-level `var`)",
     ),
     (
         "builtin.types",
@@ -77,22 +77,22 @@ const KNOWN_BLOCKERS: &[(&str, &str)] = &[
         "std.builtin.traits and std.builtin.types, `String`, and intrinsics the compiler \
          does not have (`__intrinsic_to_hex`, `__intrinsic_type_name`)",
     ),
-    ("collections.list", "`Pointer[T]` (std.memory.pointer)"),
-    ("collections.string", "`Pointer[u8]` (std.memory.pointer)"),
-    ("collections.deque", "`Pointer[T]` (std.memory.pointer)"),
     (
-        "collections.binary_heap",
-        "`Pointer[T]` (std.memory.pointer)",
+        "collections.list",
+        "`Pointer[T]` (std.memory.pointer); superseded by the growable `[T]`, whose \
+         `push`, `pop`, `insert`, `sort`, `map`, .. are builtin methods",
     ),
+    ("collections.string", "`Pointer[u8]` (std.memory.pointer)"),
     ("collections.span", "`Pointer[T]` (std.memory.pointer)"),
     (
         "collections.linked_list",
         "`Pointer[T]` (std.memory.pointer)",
     ),
     ("collections.bitset", "`Pointer[u64]` (std.memory.pointer)"),
-    ("collections.set", "`Pointer[T]` (std.memory.pointer)"),
-    ("collections.dict", "`Pointer[T]` (std.memory.pointer)"),
-    ("collections.counter", "`Dict` (std.collections.dict)"),
+    (
+        "collections.dict",
+        "`Pointer[T]` (std.memory.pointer); superseded by `Map` (std.collections.map)",
+    ),
     ("math.sequence", "`List` (std.collections.list)"),
     ("math.polynomial", "`List` (std.collections.list)"),
     (

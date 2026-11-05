@@ -1,0 +1,225 @@
+// std/collections/map.code
+// Map[K, V]: a hash map from keys to values, on growable arrays.
+//
+//     import std.collections.map.{Map}
+//
+//     let ages: Map[str, i64] = Map.new()
+//     ages.insert("ada", 36)
+//     if let age = ages.get("ada") { println(age) }
+//
+// Open addressing with linear probing over a power-of-two table, one state
+// byte per slot (empty, full, or deleted), grown to twice the size when
+// three quarters of the slots are full or deleted, so a lookup is
+// expected O(1). Keys need `Hashable` (std.hashlib.hash) and `Eq`
+// (std.cmp.cmp); every integer and float type, `bool` and `str` have both.
+//
+// NOT DoS-RESISTANT: the hashes are fixed and unseeded, so whoever chooses
+// the keys can make them all collide and every operation O(n). Do not fill
+// a map with keys an adversary picks.
+//
+// A `Map` is a class: assigning it or passing it shares the one map. Keys
+// and values are stored by value (a class is stored as its reference). A
+// float key that is NaN is never found again (`nan.eq(nan)` is false).
+
+import root.hashlib.hash.{Hashable};
+import root.cmp.cmp.{Eq};
+
+public class Map[K, V] {
+    // Slot `i` holds `slot_keys[i]` and `slot_values[i]` when `slots[i]` is
+    // FULL.
+    // Slots that are not full hold a copy of some key and value, which is
+    // never read: arrays of a type parameter have no default value to fill
+    // them with.
+    slot_keys: [K],
+    slot_values: [V],
+    // EMPTY (0), FULL (1) or DELETED (2) per slot; the length is the
+    // table's size, 0 or a power of two.
+    slots: [u8],
+    // The FULL slots.
+    count: usize,
+    // The FULL and DELETED slots: a probe stops only at an EMPTY one.
+    used: usize,
+}
+
+extend Map[K: Hashable + Eq, V] {
+    // An empty map. It allocates nothing until the first insertion.
+    public func new() -> Map[K, V] {
+        Map { slot_keys: [], slot_values: [], slots: [], count: 0, used: 0 }
+    }
+
+    // The number of entries.
+    public func len(self) -> usize {
+        self.count
+    }
+
+    public func is_empty(self) -> bool {
+        self.count == 0
+    }
+
+    // The number of slots: the map grows when three quarters are used.
+    public func capacity(self) -> usize {
+        self.slots.len()
+    }
+
+    // The value stored for `key`, or `nil`.
+    public func get(self, key: K) -> V? {
+        let slot = self.find(key)
+        if slot < self.slots.len() { self.slot_values[slot] } else { nil }
+    }
+
+    // The value stored for `key`, or `default`.
+    public func get_or(self, key: K, default: V) -> V {
+        let slot = self.find(key)
+        if slot < self.slots.len() { self.slot_values[slot] } else { default }
+    }
+
+    public func contains_key(self, key: K) -> bool {
+        self.find(key) < self.slots.len()
+    }
+
+    // Stores `value` for `key`; returns the value it replaces, or `nil`
+    // when `key` is new.
+    public func insert(self, key: K, value: V) -> V? {
+        if (self.used + 1) * 4 > self.slots.len() * 3 {
+            self.rehash(key, value)
+        }
+        let size = self.slots.len()
+        let mask = size - 1
+        var slot = (key.hash_value() as usize) & mask
+        var reuse = size
+        loop {
+            let state = self.slots[slot]
+            if state == 0 {
+                break
+            }
+            if state == 2 {
+                if reuse == size {
+                    reuse = slot
+                }
+            } else if self.slot_keys[slot].eq(key) {
+                let old = self.slot_values[slot]
+                self.slot_values[slot] = value
+                return old
+            }
+            slot = (slot + 1) & mask
+        }
+        if reuse < size {
+            slot = reuse
+        } else {
+            self.used += 1
+        }
+        self.slot_keys[slot] = key
+        self.slot_values[slot] = value
+        self.slots[slot] = 1
+        self.count += 1
+        nil
+    }
+
+    // Removes `key`; returns its value, or `nil` when it was not there.
+    public func remove(self, key: K) -> V? {
+        let slot = self.find(key)
+        if slot >= self.slots.len() {
+            return nil
+        }
+        self.slots[slot] = 2
+        self.count -= 1
+        self.slot_values[slot]
+    }
+
+    // Removes every entry and gives the table's memory back.
+    public func clear(self) {
+        self.slot_keys = []
+        self.slot_values = []
+        self.slots = []
+        self.count = 0
+        self.used = 0
+    }
+
+    // Every key, in table order (which is not insertion order).
+    public func keys(self) -> [K] {
+        let out: [K] = []
+        out.reserve(self.count)
+        for (slot, state) in self.slots.enumerate() {
+            if state == 1 {
+                out.push(self.slot_keys[slot])
+            }
+        }
+        out
+    }
+
+    // Every value, in the same order as `keys()`.
+    public func values(self) -> [V] {
+        let out: [V] = []
+        out.reserve(self.count)
+        for (slot, state) in self.slots.enumerate() {
+            if state == 1 {
+                out.push(self.slot_values[slot])
+            }
+        }
+        out
+    }
+
+    // The slot holding `key`, or the table size when it is absent.
+    func find(self, key: K) -> usize {
+        let size = self.slots.len()
+        if size == 0 {
+            return 0
+        }
+        let mask = size - 1
+        var slot = (key.hash_value() as usize) & mask
+        loop {
+            let state = self.slots[slot]
+            if state == 0 {
+                return size
+            }
+            if state == 1 && self.slot_keys[slot].eq(key) {
+                return slot
+            }
+            slot = (slot + 1) & mask
+        }
+    }
+
+    // Rebuilds the table with room for one more entry: twice the size, or
+    // the same size when deleted slots are most of what is used. `key` and
+    // `value` fill the slots that are not full.
+    func rehash(self, key: K, value: V) {
+        var size = self.slots.len()
+        if self.count * 2 >= size {
+            size = size * 2
+        }
+        if size < 8 {
+            size = 8
+        }
+        let old_keys = self.slot_keys
+        let old_values = self.slot_values
+        let old_states = self.slots
+        let keys: [K] = []
+        let values: [V] = []
+        keys.reserve(size)
+        values.reserve(size)
+        for _ in 0..size {
+            keys.push(key)
+            values.push(value)
+        }
+        self.slot_keys = keys
+        self.slot_values = values
+        self.slots = array_filled(0u8, size)
+        self.count = 0
+        self.used = 0
+        let mask = size - 1
+        for (old, state) in old_states.enumerate() {
+            if state == 1 {
+                let k = old_keys[old]
+                var slot = (k.hash_value() as usize) & mask
+                while self.slots[slot] != 0 {
+                    slot = (slot + 1) & mask
+                }
+                self.slot_keys[slot] = k
+                self.slot_values[slot] = old_values[old]
+                self.slots[slot] = 1
+                self.count += 1
+                self.used += 1
+            }
+        }
+    }
+}

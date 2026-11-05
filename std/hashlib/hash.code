@@ -162,3 +162,58 @@ public func hash_bool(value: bool) -> u64 {
     }
     return hash_u64(0);
 }
+
+// ---------------------------------------------------------------------------
+// mix64
+// Scrambles all 64 bits of `value` into every bit of the result (the
+// finalizer of MurmurHash3): a bijection, five operations. What the
+// integer `Hashable` implementations below use, so that keys differing in
+// a few bits, or only in their high bits, spread over a table.
+// ---------------------------------------------------------------------------
+public func mix64(value: u64) -> u64 {
+    var x: u64 = value;
+    x = x ^ (x >> 33);
+    x = x * 0xFF51AFD7ED558CCD;
+    x = x ^ (x >> 33);
+    x = x * 0xC4CEB9FE1A85EC53;
+    return x ^ (x >> 33);
+}
+
+// ---------------------------------------------------------------------------
+// Hashable for the primitive types: integers through `mix64`, floats as
+// `hash_f64` normalizes them (so equal values hash the same), `bool` as 0
+// or 1, `str` with FNV-1a over its bytes. NOT DoS-resistant: the hashes are
+// fixed and unseeded, so anyone who chooses the keys can make them collide.
+// ---------------------------------------------------------------------------
+extern "codira-intrinsic" {
+    func str_data(s: str) -> usize;
+    func str_len(s: str) -> usize;
+    func load_u8(addr: usize) -> u8;
+}
+
+extend i8: Hashable { func hash_value(self) -> u64 { mix64(self as i64 as u64) } }
+extend i16: Hashable { func hash_value(self) -> u64 { mix64(self as i64 as u64) } }
+extend i32: Hashable { func hash_value(self) -> u64 { mix64(self as i64 as u64) } }
+extend i64: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
+extend isize: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
+extend u8: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
+extend u16: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
+extend u32: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
+extend u64: Hashable { func hash_value(self) -> u64 { mix64(self) } }
+extend usize: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
+extend bool: Hashable { func hash_value(self) -> u64 { if self { mix64(1) } else { mix64(0) } } }
+extend f64: Hashable { func hash_value(self) -> u64 { hash_f64(self) } }
+extend f32: Hashable { func hash_value(self) -> u64 { hash_f64(self as f64) } }
+extend str: Hashable {
+    func hash_value(self) -> u64 {
+        let data = str_data(self);
+        let len = str_len(self);
+        var h: u64 = 0xCBF29CE484222325;
+        var i: usize = 0;
+        while i < len {
+            h = (h ^ (load_u8(data + i) as u64)) * 0x00000100000001B3;
+            i = i + 1;
+        }
+        return h;
+    }
+}
