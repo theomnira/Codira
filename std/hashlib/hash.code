@@ -26,8 +26,9 @@ public trait Hashable {
 
 // ---------------------------------------------------------------------------
 // hash
-// Convenience function that hashes any Hashable value using the default
-// hashing algorithm (FNV-1a 64-bit).
+// Convenience function that hashes any Hashable value: it returns the
+// type's own `hash_value`, whatever algorithm that uses (the `hash_*`
+// functions below use FNV-1a 64-bit).
 // ---------------------------------------------------------------------------
 public func hash[T: Hashable](value: T) -> u64 {
     return value.hash_value();
@@ -39,8 +40,10 @@ public func hash[T: Hashable](value: T) -> u64 {
 // inspired by boost::hash_combine. This is useful when hashing composite
 // types (structs with multiple fields, tuples, etc.).
 //
-// The magic constant 0x9E3779B97F4A7C15 is derived from the golden ratio
-// and provides good avalanche properties.
+// The magic constant 0x9E3779B97F4A7C15 is derived from the golden ratio.
+// The mixing is weak: `value` enters by one addition, so a change in it
+// can leave most output bits unchanged (no avalanche). Fine for combining
+// hashes that are already well mixed; not a hash function by itself.
 // ---------------------------------------------------------------------------
 public func combine_hash(seed: u64, value: u64) -> u64 {
     let golden: u64 = 0x9E3779B97F4A7C15;
