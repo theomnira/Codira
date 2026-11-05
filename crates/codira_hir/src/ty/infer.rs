@@ -1157,7 +1157,12 @@ impl InferenceResultBuilder<'_> {
                 self.infer_array_slice(*base, start, end, expected)
             }
             Expr::Index { base, index } => {
-                let elem_ty = if expected.ty.is_unknown() {
+                // An optional expected type is reached by wrapping the
+                // element afterwards (`xs[i]` where an `i64?` is expected),
+                // not by an array of optionals.
+                let expects_optional =
+                    matches!(self.normalize(&expected.ty).interned(), TyKind::Optional(_));
+                let elem_ty = if expected.ty.is_unknown() || expects_optional {
                     self.type_variables.new_type_var()
                 } else {
                     expected.ty.clone()
