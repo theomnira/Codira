@@ -1114,6 +1114,7 @@ public func main() {
     .replace("{bad}", bad.to_str().unwrap());
     let (_dir, stdout) = run_ok(&[("mod.code", &program)]);
     assert_eq!(stdout, "42\n2\nnot found\n");
+}
 
 /// `Map`, `Set`, `Deque`, `BinaryHeap` and `Counter` from `std.collections`,
 /// on the growable arrays, against values worked out by hand.

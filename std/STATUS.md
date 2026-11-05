@@ -1,7 +1,7 @@
 # Standard library status
 
 What each module of `std/` does today, what shows it, and what stands in
-its way. One row per module that exists (92 files, the prelude included)
+its way. One row per module that exists (94 files, the prelude included)
 and one per module that is planned. This page says what the standard
 library *is*; [ARCHITECTURE.md](ARCHITECTURE.md) says what it should
 become and [ROADMAP.md](ROADMAP.md) in what order.
@@ -10,13 +10,13 @@ become and [ROADMAP.md](ROADMAP.md) in what order.
 
 | status | modules | meaning |
 |---|---:|---|
-| importable | 22 | A program's `import std.<module>.*` checks, builds and loads. |
+| importable | 28 | A program's `import std.<module>.*` checks, builds and loads. |
 | checks-but-not-importable | 4 | Clean when `std/` is checked as one package with its prelude, but a program importing it fails: it imports a module with errors, or uses a prelude name. |
-| fails | 66 | The module's own file has diagnostics. |
+| fails | 62 | The module's own file has diagnostics. |
 | planned | 52 | No file yet; part of the target layout. |
 | unsupported | 7 | Not planned, with the reason given in its row. |
 
-Of the 22 importable modules, 20 are run end to end by a program against
+Of the 28 importable modules, 26 are run end to end by a program against
 independently computed values; `std.memory.page` and
 `std.builtin.type_aliases` are imported but not run.
 
@@ -76,13 +76,19 @@ path is given.
 | `std.bit.bit` | importable | counts, reversal, byte swap, rotations, widths, floor/ceil powers of two on `u64`/`u32` (`std_bit_operations_are_exact`) | — | `bit_ceil` above 2^63 returns 1. | L+CI |
 | `std.bit.mask` | importable | masks, field extract/insert, bit select, single-bit ops (`std_bit_operations_are_exact`) | — | A bit position >= 64 is taken modulo 64 (shifts are masked). | L+CI |
 | `std.builtin.type_aliases` | importable | `Never` = `never` | — | — | L+CI (imported) |
+| `std.cmp.cmp` | importable | traits `Eq` and `Ord` for every integer and float type, `bool` and `str`; `min_of`, `max_of`, `str_equal`, `str_compare` (`std_collections_map_set_deque_heap_and_counter`) | — | IEEE floats: a NaN is not equal to itself, so a NaN key is never found again. | L+CI |
+| `std.collections.binary_heap` | importable | `BinaryHeap[T: Ord]`, a max-heap: `push`, `pop`, `peek`, `to_sorted_array` (`std_collections_map_set_deque_heap_and_counter`) | — | A class: copies share the heap. | L+CI |
+| `std.collections.counter` | importable | `Counter[T]` on `Map`: `add`, `subtract`, `count`, `total`, `most_common` (`std_collections_map_set_deque_heap_and_counter`) | — | Unkeyed hash: **not DoS-resistant**. | L+CI |
+| `std.collections.deque` | importable | `Deque[T]`, a ring buffer: push and pop at both ends, `get`, `set` (`std_collections_map_set_deque_heap_and_counter`) | — | A class: copies share the queue. `get`/`set` out of range panic. | L+CI |
+| `std.collections.map` | importable | `Map[K, V]`, open addressing with tombstones counted toward growth: `insert`, `get`, `get_or`, `remove`, `contains_key`, `keys`, `values` (`std_collections_map_set_deque_heap_and_counter`; `std_collections_map_matches_rust_hash_map`, random operations against Rust's `HashMap`) | — | Unkeyed hash: **not DoS-resistant**. About 1.6x slower than Rust's `HashMap` with the same hash function on 1M inserts. | L+CI |
 | `std.collections.optional` | importable | `some`, `none`, `unwrap` (panics on none), `unwrap_or`, `or_opt` (`std_collections_optional_unwraps_and_panics_on_none`) | — | Superseded by the language's `T?`. | L+CI |
+| `std.collections.set` | importable | `Set[T]` on `Map`: `insert`, `contains`, `remove`, `union`, `intersection`, `difference`, `is_subset` (`std_collections_map_set_deque_heap_and_counter`) | — | Unkeyed hash: **not DoS-resistant**. | L+CI |
 | `std.complex.complex` | importable | arithmetic, Smith division, `powi`, `sqrt`, polar (`std_complex_arithmetic`) | — | `complex_norm` overflows above ~1e154 (no `hypot`); see Defects. | L+CI |
 | `std.crypto.hash` | importable | SHA-256, SHA-512, BLAKE3 over raw memory (RustCrypto `sha2`, `blake3` in the runtime) against NIST and BLAKE3 vectors (`a_program_computes_sha256_through_std_crypto_hash`; `crates/codira/tests/fs_and_hash.rs`: `a_codira_program_computes_the_known_answer_digests`) | — | Cryptographic. Not constant time in the length. `@noalloc @nopanic @noblock` are trusted assertions about the runtime. | L+CI |
 | `std.db.db` | importable | snapshot-isolation transactions, commit, conflict, reopen (`db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_commits_reopens_and_reads_back`, `a_codira_program_observes_a_write_write_conflict`) | — | Experimental. Snapshot isolation, not serializable (write skew). One process per directory, no lock file. Whole data set in memory. | L+CI |
 | `std.fs.file` | importable | `read_file(path) -> Result[[u8], FileError]` (`NotFound`, `PermissionDenied`, `IsADirectory`, `Other(code)`), errors passed on with `?` (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`) | — | Reads the whole file into memory; no size limit. The file is closed on every path. No writing: use `std.fs.fs`. | L+CI |
 | `std.fs.fs` | importable | open, read, write, seek, size, fsync, close, remove, rename, directory sync (`a_program_writes_and_reads_a_file_through_std_fs`; `fs_and_hash.rs`: `a_codira_program_writes_reads_renames_and_removes_a_file`) | — | Raw addresses: the runtime checks length and non-null only. Errors are negative codes, not `Result`. Durability claimed on Linux only; `fs_sync_dir` unsupported on Windows. Handles are never closed automatically. | L+CI |
-| `std.hashlib.hash` | importable | FNV-1a 64 over bytes, integers, floats, bools; combiners (`std_hashlib_hash_is_fnv1a`) | — | **Not cryptographic, not DoS-resistant** (unkeyed). `combine_hash` mixes weakly. | L+CI |
+| `std.hashlib.hash` | importable | FNV-1a 64 over bytes, integers, floats, bools; combiners; `Hashable` for every integer and float type and `bool` (the MurmurHash3 finalizer) and `str` (FNV-1a) (`std_hashlib_hash_is_fnv1a`) | — | **Not cryptographic, not DoS-resistant** (unkeyed). `combine_hash` mixes weakly. | L+CI |
 | `std.math.constants` | importable | IEEE values of π, e, limits, infinities, NaN (`std_math_constants_are_the_ieee_values`) | — | Constants are niladic functions (`PI()`) until module-level `let` exists. | L+CI |
 | `std.math.fast` | importable | f32 approximations within their stated error (`std_math_fast_is_within_its_stated_error`) | — | Bounds hold for positive normal inputs only; `fast_pow`, `fast_tan` have none; `fast_ipow_*` is not exact. | L+CI |
 | `std.math.math` | importable | libm-backed and intrinsic functions, rounding, `gcd`, `factorial`, classification, within 2 ulp of Rust's libm on the tested points (`std_math_math_matches_libm`) | — | `factorial`, `ipow`, `lcm` wrap on overflow. `tanh` is NaN above ~355; `sinh`/`tanh` lose all accuracy near 0 (untested; see Defects). | L+CI |
@@ -131,14 +137,10 @@ path is given.
 | `std.builtin.tuple` | fails | — | undefined type `String` | Duplicates language tuples. | — |
 | `std.builtin.types` | fails | — | undefined type `f16`; *needs: the `f16` and `bf16` types, and sizeof/alignof intrinsics it does not declare* | — | — |
 | `std.collections.array` | fails | — | undefined `FixedBuf[T, N]` (const generics) | — | — |
-| `std.collections.binary_heap` | fails | — | *needs: `Pointer[T]` (std.memory.pointer)* | — | — |
 | `std.collections.bitset` | fails | — | module-level `let` (`BITS_PER_WORD`); *needs: `Pointer[u64]` (std.memory.pointer)* | — | — |
-| `std.collections.counter` | fails | — | *needs: `Dict` (std.collections.dict)* | — | — |
-| `std.collections.deque` | fails | — | *needs: `Pointer[T]` (std.memory.pointer)* | — | — |
 | `std.collections.dict` | fails | — | module-level `let` (`BUCKET_EMPTY`); *needs: `Pointer[T]` (std.memory.pointer)* | Duplicate keys after a removal; can loop forever when tombstones fill the table (see Defects). Unkeyed hash: not DoS-resistant. | — |
 | `std.collections.linked_list` | fails | — | *needs: `Pointer[T]` (std.memory.pointer)* | — | — |
 | `std.collections.list` | fails | — | *needs: `Pointer[T]` (std.memory.pointer)* | — | — |
-| `std.collections.set` | fails | — | module-level `let` (`SET_EMPTY`); *needs: `Pointer[T]` (std.memory.pointer)* | Same defects as `std.collections.dict`. | — |
 | `std.collections.span` | fails | — | *needs: `Pointer[T]` (std.memory.pointer)* | Unchecked lifetime. | — |
 | `std.collections.string` | fails | — | *needs: `Pointer[u8]` (std.memory.pointer)* | — | — |
 | `std.complex.complex_string` | fails | — | `+` on strings; *needs: `String`* | — | — |
@@ -191,12 +193,12 @@ is the API layer of the architecture, not a schedule; the milestone is in
 | `std.num` | planned | core: integer and float limits, checked/wrapping/saturating/overflowing arithmetic, parsing (replaces the limits in `std.math.constants` and `std.builtin.types`) | module-level constants, `Result` | `@noalloc @nopanic` | — |
 | `std.mem` | planned | core: copy, fill, compare, align, `size_of` (replaces `std.memory.memory`) | sizeof/alignof intrinsics | `@noalloc` | — |
 | `std.ptr` | planned | core (unsafe): one raw typed pointer (replaces `std.memory.pointer`, `std.memory.unsafe_pointer`) | — | Explicitly unsafe | — |
-| `std.cmp` | planned | fundamental: `Eq`, `Ord`, `Ordering`, min/max | generic enums, operators through traits | `@noalloc @nopanic` | — |
+| `std.cmp` | planned | fundamental: `Eq`, `Ord`, `Ordering`, min/max | operators through traits (`Eq`/`Ord` exist as `std.cmp.cmp`) | `@noalloc @nopanic` | — |
 | `std.ops` | planned | fundamental: operator traits | operators through traits | — | — |
 | `std.convert` | planned | fundamental: `From`/`Into`/`TryFrom` | generic traits | — | — |
 | `std.iter` | planned | fundamental: `Iterator`, adapters (`map`, `filter`, `zip`, `enumerate`, `chain`, `take`, `fold`, ...) | generic traits with associated types; closures in generic code | Adapters `@noalloc`; `collect` allocates | — |
 | `std.string` | planned | fundamental: owned UTF-8 `String` (replaces `std.collections.string`, `std.builtin.string_literal`) | `String` (in progress) | Allocates; byte indices | — |
-| `std.collections` | planned | fundamental: `Array` (growable), `Map`, `Set`, `Deque`, `BinaryHeap`, `BitSet`, ordered map (replaces today's `std.collections.*`) | growable arrays and Map/Set/Deque/BinaryHeap (in progress) | Keyed default hasher (DoS-resistant) | — |
+| `std.collections` | planned | fundamental: `Array` (growable), `Map`, `Set`, `Deque`, `BinaryHeap`, `BitSet`, ordered map (replaces today's `std.collections.*`) | `BitSet`, ordered map, a keyed hasher; `Map`, `Set`, `Deque`, `BinaryHeap` exist under `std.collections.*` on growable arrays | Keyed default hasher (DoS-resistant) | — |
 | `std.hash` | planned | fundamental: `Hash`/`Hasher` traits, FNV-1a, a keyed default hasher (replaces `std.hashlib.*`) | generic traits, in-place parameters | Default hasher keyed per process | — |
 | `std.fmt` | planned | fundamental: `Display`/`Debug` traits, number formatting and parsing (replaces `std.format.*`) | `String`, generic traits, derive | — | — |
 | `std.alloc` | planned | fundamental: `Region`, pages, aligned allocation, allocator interface (replaces `std.memory.region`, `std.memory.page`, `std.memory.alloc`) | — | Raw memory | — |
@@ -283,7 +285,6 @@ Line numbers are as of this page's commit.
 | `std/builtin/error.code:140`, `std/builtin/tuple.code:86,139,189,246,312` (every `eq` there), `std/builtin/range.code:87,126,170,248,251`, `std/memory/alloc.code:128` | `&` where `&&` is meant, in equality and range tests. A systematic substitution; every `&` between comparisons in `std/` should be reviewed. |
 | `std/collections/dict.code:145` | `set` inserts at the first tombstone without looking further along the probe sequence, so a key removed and re-set while another copy sits later in the chain is stored twice. |
 | `std/collections/dict.code:164` | Tombstones are not counted toward the load factor, so after enough insert/remove cycles no empty bucket remains and `get` of a missing key loops forever. Same in `get_or_default`, `get_optional`, `remove`, `contains_key`. |
-| `std/collections/set.code:109` | The same two defects as `dict.code` in `add` and the lookups. |
 | `std/random/random.code:130` | `randint(I64_MIN, I64_MAX)`: the range count wraps to 0 and the modulo by 0 panics. `std.random.rng.rng_range_i64` handles this. |
 | `std/random/random.code:199,216,233` | `shuffle`, `random_choice` and `random_sample` reduce with `%`, which is biased (the module's own `randint` uses rejection sampling). |
 | `std/random/random.code:251` | `_platform_random_seed` is provided by nothing: the runtime has no entropy service, so "seeded from system entropy" cannot happen. |
