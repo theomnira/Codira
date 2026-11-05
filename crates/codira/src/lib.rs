@@ -13,8 +13,8 @@ use clap::{Parser, Subcommand};
 /// `codira-launcher` binary runs.
 pub use ops::exe;
 use ops::{
-    api_diff, attest, bindgen, build, certify, check, daemon, doc, doctor, envelope, fmt, import_c,
-    init, language_server, lint, new, quantum, query, run, start, synth, test,
+    api_diff, attest, bench, bindgen, build, certify, check, daemon, doc, doctor, envelope, fmt,
+    import_c, init, language_server, lint, new, quantum, query, run, start, synth, test,
 };
 
 #[derive(Parser)]
@@ -92,6 +92,11 @@ enum Command {
     /// each in its own process
     Test(test::Args),
 
+    /// Build the package with its `benches/` optimised and time every
+    /// `@bench` function: median, MAD and confidence interval, with a saved
+    /// baseline and regression detection
+    Bench(bench::Args),
+
     /// Find the functions that can satisfy a predicate over `result` and
     /// their parameters (e.g. "result < 0"), with a witness input for each
     Query(query::Args),
@@ -151,6 +156,7 @@ where
         Command::Quantum(args) => quantum::quantum(args),
         Command::Attest(args) => attest::attest(args),
         Command::Test(args) => test::test(args),
+        Command::Bench(args) => bench::bench(args),
         Command::Query(args) => query::query(args),
         Command::Envelope(args) => envelope::envelope(args),
         Command::Synth(args) => synth::synth(args),

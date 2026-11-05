@@ -2249,6 +2249,63 @@ not other copies. `extern-assertion` knows a fixed list of C library
 functions, not every one. Lints run on what parses; `codira check` reports
 syntax errors.
 
+### Benchmarks: `codira bench`
+
+```codira
+// benches/work.code
+import root.work
+
+@bench
+public func work_once() -> i64 { work(10) }        // called once per iteration
+
+@bench
+public func work_looped(n: i64) -> i64 {           // runs `n` iterations itself
+    var acc = 0
+    var i = 0
+    while i < n { acc += work(10 + (i & 1)); i += 1 }
+    acc
+}
+```
+
+`codira bench` builds the package with every `.code` file under `benches/`
+(mounted under a `benches` module, as `codira test` mounts `tests/`), at
+`-O3` (`-O` to change), and times every `public` `@bench` function in
+`src/` or `benches/`. `codira bench <text>` runs only the benchmarks whose
+name contains the text. A benchmark returns `()`, `bool`, an integer or a
+float, which the runner receives so the work is not optimised away. With no
+parameters it is called once per iteration, and every iteration includes a
+call through the runtime; the run starts by measuring that call overhead on
+an empty benchmark. With one `i64` parameter it runs that many iterations
+itself, so the overhead is paid once per sample. That is the form for
+anything that takes less than a few microseconds. Keep its loop body from
+being folded to a constant (vary an input with the iteration number, as
+above).
+
+Each benchmark runs in its own processes: `--rounds` of them (3), each
+warming up for `--warm-up-ms` (300), sizing its samples from the warm-up,
+then taking its share of `--samples` (50) over its share of
+`--measurement-ms` (1000). The report per benchmark: the median time per
+iteration, the median absolute deviation, a 95% confidence interval for the
+median (from order statistics, no distribution assumed), the mean without
+severe outliers, the outliers outside Tukey's fences, and the spread of the
+round medians.
+
+`--save-baseline <name>` writes the samples to
+`target/bench/baselines/<name>.json`. `--baseline <name>` compares with
+them. A benchmark is "REGRESSED" or "improved" only when the Mann-Whitney U
+test rejects "no change" (p < 0.05) *and* its median moved by more than both
+`--threshold` percent (2) and the spread between rounds of either run.
+Samples within one process are not independent: frequency scaling, memory
+layout and the machine's load move a whole process. A regression makes the
+command fail, and so does a `@bench` that is not `public` or has another
+signature.
+
+Limits: times are wall-clock, on a machine that is not quiesced by the
+runner (no CPU pinning, no frequency control), so compare baselines taken on
+the same machine. The call overhead depends on how the `codira` binary
+itself was built (a debug build of the compiler is slower). Allocation and
+memory use are not measured.
+
 ---
 
 ## 5. End-to-end status today
