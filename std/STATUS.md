@@ -10,13 +10,13 @@ become and [ROADMAP.md](ROADMAP.md) in what order.
 
 | status | modules | meaning |
 |---|---:|---|
-| importable | 28 | A program's `import std.<module>.*` checks, builds and loads. |
+| importable | 34 | A program's `import std.<module>.*` checks, builds and loads. |
 | checks-but-not-importable | 4 | Clean when `std/` is checked as one package with its prelude, but a program importing it fails: it imports a module with errors, or uses a prelude name. |
-| fails | 62 | The module's own file has diagnostics. |
+| fails | 56 | The module's own file has diagnostics. |
 | planned | 52 | No file yet; part of the target layout. |
 | unsupported | 7 | Not planned, with the reason given in its row. |
 
-Of the 28 importable modules, 26 are run end to end by a program against
+Of the 34 importable modules, 32 are run end to end by a program against
 independently computed values; `std.memory.page` and
 `std.builtin.type_aliases` are imported but not run.
 
@@ -73,6 +73,7 @@ path is given.
 |---|---|---|---|---|---|
 | `std.ai.runtime` | importable | f32 tensors, matmul, add, relu, softmax, a Linear layer trained by SGD (`crates/codira/tests/db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_trains_a_linear_layer_and_the_loss_falls`) | — | Experimental. Tensors are not traced by the GC and must be freed. | L+CI |
 | `std.base64.base64` | importable | base64, base32, base16 encode/decode over `[u8]` against the standard test vectors (`std_base64_matches_the_standard_test_vectors`) | — | Lenient, non-canonical decoder: accepts malformed input (`QQ=A` decodes to two bytes, see Defects); not for validation. Not constant time. | L+CI |
+| `std.base64.base64_string` | importable | base64, base32, base16 between `[u8]` and `String` against the standard test vectors (`std_string_modules_work`) | — | Lenient decoder, as `std.base64.base64`. Not constant time. | L+CI |
 | `std.bit.bit` | importable | counts, reversal, byte swap, rotations, widths, floor/ceil powers of two on `u64`/`u32` (`std_bit_operations_are_exact`) | — | `bit_ceil` above 2^63 returns 1. | L+CI |
 | `std.bit.mask` | importable | masks, field extract/insert, bit select, single-bit ops (`std_bit_operations_are_exact`) | — | A bit position >= 64 is taken modulo 64 (shifts are masked). | L+CI |
 | `std.builtin.type_aliases` | importable | `Never` = `never` | — | — | L+CI (imported) |
@@ -83,12 +84,16 @@ path is given.
 | `std.collections.map` | importable | `Map[K, V]`, open addressing with tombstones counted toward growth: `insert`, `get`, `get_or`, `remove`, `contains_key`, `keys`, `values` (`std_collections_map_set_deque_heap_and_counter`; `std_collections_map_matches_rust_hash_map`, random operations against Rust's `HashMap`) | — | Unkeyed hash: **not DoS-resistant**. About 1.6x slower than Rust's `HashMap` with the same hash function on 1M inserts. | L+CI |
 | `std.collections.optional` | importable | `some`, `none`, `unwrap` (panics on none), `unwrap_or`, `or_opt` (`std_collections_optional_unwraps_and_panics_on_none`) | — | Superseded by the language's `T?`. | L+CI |
 | `std.collections.set` | importable | `Set[T]` on `Map`: `insert`, `contains`, `remove`, `union`, `intersection`, `difference`, `is_subset` (`std_collections_map_set_deque_heap_and_counter`) | — | Unkeyed hash: **not DoS-resistant**. | L+CI |
+| `std.collections.string` | importable | on the built-in `String`: `join`, `insert`, `remove`, `substring`, `reverse`, `count`, `compare`, `split_whitespace`, code points (`std_string_modules_work`) | — | Byte indices; out-of-range or off-boundary indices panic. | L+CI |
 | `std.complex.complex` | importable | arithmetic, Smith division, `powi`, `sqrt`, polar (`std_complex_arithmetic`) | — | `complex_norm` overflows above ~1e154 (no `hypot`); see Defects. | L+CI |
+| `std.complex.complex_string` | importable | `complex_to_string` (`std_string_modules_work`) | — | — | L+CI |
 | `std.crypto.hash` | importable | SHA-256, SHA-512, BLAKE3 over raw memory (RustCrypto `sha2`, `blake3` in the runtime) against NIST and BLAKE3 vectors (`a_program_computes_sha256_through_std_crypto_hash`; `crates/codira/tests/fs_and_hash.rs`: `a_codira_program_computes_the_known_answer_digests`) | — | Cryptographic. Not constant time in the length. `@noalloc @nopanic @noblock` are trusted assertions about the runtime. | L+CI |
 | `std.db.db` | importable | snapshot-isolation transactions, commit, conflict, reopen (`db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_commits_reopens_and_reads_back`, `a_codira_program_observes_a_write_write_conflict`) | — | Experimental. Snapshot isolation, not serializable (write skew). One process per directory, no lock file. Whole data set in memory. | L+CI |
+| `std.format.format` | importable | `format(template, [args])` with `{}` and `{0}`, `format_int`/`format_uint` in a base, `hex`/`bin`/`oct`, `pad_left`/`pad_right`/`center` (`std_string_modules_work`) | — | A template is read at run time: an unmatched placeholder is kept as written, not an error (`f".."` is checked at compile time). | L+CI |
 | `std.fs.file` | importable | `read_file(path) -> Result[[u8], FileError]` (`NotFound`, `PermissionDenied`, `IsADirectory`, `Other(code)`), errors passed on with `?` (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`) | — | Reads the whole file into memory; no size limit. The file is closed on every path. No writing: use `std.fs.fs`. | L+CI |
 | `std.fs.fs` | importable | open, read, write, seek, size, fsync, close, remove, rename, directory sync (`a_program_writes_and_reads_a_file_through_std_fs`; `fs_and_hash.rs`: `a_codira_program_writes_reads_renames_and_removes_a_file`) | — | Raw addresses: the runtime checks length and non-null only. Errors are negative codes, not `Result`. Durability claimed on Linux only; `fs_sync_dir` unsupported on Windows. Handles are never closed automatically. | L+CI |
 | `std.hashlib.hash` | importable | FNV-1a 64 over bytes, integers, floats, bools; combiners; `Hashable` for every integer and float type and `bool` (the MurmurHash3 finalizer) and `str` (FNV-1a) (`std_hashlib_hash_is_fnv1a`) | — | **Not cryptographic, not DoS-resistant** (unkeyed). `combine_hash` mixes weakly. | L+CI |
+| `std.hashlib.string_hash` | importable | `hash_string`, `hash_string_bytes`: FNV-1a 64, compared with Rust's (`std_string_modules_work`) | — | **Not cryptographic, not DoS-resistant.** | L+CI |
 | `std.math.constants` | importable | IEEE values of π, e, limits, infinities, NaN (`std_math_constants_are_the_ieee_values`) | — | Constants are niladic functions (`PI()`) until module-level `let` exists. | L+CI |
 | `std.math.fast` | importable | f32 approximations within their stated error (`std_math_fast_is_within_its_stated_error`) | — | Bounds hold for positive normal inputs only; `fast_pow`, `fast_tan` have none; `fast_ipow_*` is not exact. | L+CI |
 | `std.math.math` | importable | libm-backed and intrinsic functions, rounding, `gcd`, `factorial`, classification, within 2 ulp of Rust's libm on the tested points (`std_math_math_matches_libm`) | — | `factorial`, `ipow`, `lcm` wrap on overflow. `tanh` is NaN above ~355; `sinh`/`tanh` lose all accuracy near 0 (untested; see Defects). | L+CI |
@@ -96,6 +101,7 @@ path is given.
 | `std.memory.region` | importable | arenas with quotas, alloc, used, free (`a_program_uses_std_memory_region_and_its_value_struct`) | — | Untraced memory: GC references stored there are invisible to the collector; stale addresses are not caught. Passing `Region` across modules allocates (value structs are boxed across modules). | L+CI |
 | `std.random.rng` | importable | xoshiro256** seeded by SplitMix64, against a Rust reference implementation (`std_random_rng_is_xoshiro256_starstar`) | — | **Not cryptographic**; seeded only by the caller (no OS entropy service exists). | L+CI |
 | `std.result.result` | importable | `Result[T, E]` with `is_ok`, `is_err`, `ok`, `err`, `unwrap_or`, `unwrap_or_else`, `map`, `map_err`, `and_then`, `or`, `expect`, `unwrap`, `from_optional`; `?` on it (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`; `crates/codira/tests/generic_enums.rs`) | — | `unwrap`, `expect` and `expect_err` panic. Cranelift `--jit` refuses `?`. A postcondition about a returned `Result` comes back Unknown from the verifier. | L+CI |
+| `std.sys.arg` | importable | `args`, `argv`, `program_name`, `has_flag`, `get_option`, `positional_arg`, `env_get`, `env_has` as `String`/`String?` (`std_string_modules_work`) | — | Under `codira run` the arguments are the `codira` command line's, not the program's. | L+CI |
 | `std.sys.terminate` | importable | `panic` writes `panic: <message>` and aborts; `assert`, `write_stderr` (`std_sys_terminate_panics_with_its_message`) | — | `debug_assert` follows the runtime's build, not the program's. | L+CI |
 | `std.text.ascii` | importable | `is_space`, `is_digit`, `next_word`, `parse_i64` with a `ParseError` naming the offending byte's index (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`) | — | ASCII only. `parse_i64` reports overflow as an error, not a wrap. | L+CI |
 | `std.time.time` | importable | `Duration` arithmetic, monotonic `Instant`, sleep, wall clock (`std_time_measures_and_sleeps`) | — | Duration arithmetic wraps on overflow (except `duration_sub`, which saturates). Wall clock is an `f64` of seconds. | L+CI |
@@ -123,7 +129,6 @@ path is given.
 | `std.ai.tensor.raw` | fails | — | module-level `let` (`SIZE_F32`) | Raw loads and stores. | — |
 | `std.ai.tensor.shape` | fails | — | module-level `let` (`MAX_RANK`) | — | — |
 | `std.atomic.atomic` | fails | — | module-level `let` (`RELAXED`); *needs: module-level `let` (its orderings), `String`, and in-place parameters (`mut`), none of which the compiler has: it rejects the first and the last* | No atomic intrinsics are declared to the compiler yet. | — |
-| `std.base64.base64_string` | fails | — | module-level `let` (`B64_ALPHABET`); *needs: `String`, the growable `Array[u8]`, and module-level `let`* | — | — |
 | `std.builtin.bool` | fails | — | undefined type `String` | Duplicates the primitive `bool`. | — |
 | `std.builtin.dtype` | fails | — | 231 diagnostics (`!` on a method call; a Mojo-style `DType`) | — | — |
 | `std.builtin.error` | fails | — | undefined type `String` | `eq` uses `&` for `&&` (see Defects). | — |
@@ -142,11 +147,8 @@ path is given.
 | `std.collections.linked_list` | fails | — | *needs: `Pointer[T]` (std.memory.pointer)* | — | — |
 | `std.collections.list` | fails | — | *needs: `Pointer[T]` (std.memory.pointer)* | — | — |
 | `std.collections.span` | fails | — | *needs: `Pointer[T]` (std.memory.pointer)* | Unchecked lifetime. | — |
-| `std.collections.string` | fails | — | *needs: `Pointer[u8]` (std.memory.pointer)* | — | — |
-| `std.complex.complex_string` | fails | — | `+` on strings; *needs: `String`* | — | — |
 | `std.ffi.cstring` | fails | — | undefined type `Array[u8]` | — | — |
 | `std.ffi.unsafe_union` | fails | — | undefined type `Array[u8]` | Not a C union: a byte array, not layout-compatible. | — |
-| `std.format.format` | fails | — | *needs: `String`* | — | — |
 | `std.format.repr` | fails | — | *needs: `String`* | — | — |
 | `std.gpu.globals` | fails | — | module-level `let` (`WARP_SIZE`) | No kernel launch exists. | — |
 | `std.gpu.host_info` | fails | — | module-level `let` (`KB`) | — | — |
@@ -155,7 +157,6 @@ path is given.
 | `std.gpu.profiler` | fails | — | undefined type `String` | — | — |
 | `std.gpu.warp` | fails | — | 547 diagnostics (module-level `let` first) | — | — |
 | `std.hashlib.hasher` | fails | — | undefined type `Array[u8]`; *needs: in-place parameters: its writers take the hasher as `mut`, and the compiler has only by-copy parameters (it rejects `mut`); and `String`* | `AHasher` uses fixed seeds: not DoS-resistant. | — |
-| `std.hashlib.string_hash` | fails | — | *needs: `String`* | Not cryptographic. | — |
 | `std.math.polynomial` | fails | — | *needs: `List` (std.collections.list)* | — | — |
 | `std.memory.alloc` | fails | — | 93 diagnostics (`&` for `&&` among them) | — | — |
 | `std.memory.arc_pointer` | fails | — | undefined `__intrinsic_sizeof` | Counts change only on explicit `clone`/`destroy`; copies are uncounted. | — |
@@ -169,7 +170,6 @@ path is given.
 | `std.os.process` | fails | — | undefined type `Never` (not imported); `_platform_*` services do not exist | — | — |
 | `std.pathlib.path` | fails | — | undefined type `String`; `_platform_*` services do not exist | — | — |
 | `std.random.random` | fails | — | module-level `var`; *needs: module-level mutable state (its generator is a global, and the compiler rejects a module-level `var`); and the growable `Array`* | Not cryptographic. Its entropy source `_platform_random_seed` does not exist. `shuffle`/`random_choice` have modulo bias (see Defects). | — |
-| `std.sys.arg` | fails | — | undefined `__intrinsic_argc` (no argument service exists) | — | — |
 | `std.sys.assert_compare` | fails | — | `==` on a type parameter; *needs: operators on a type parameter (`==`, `<` through traits) and `String` (`Stringable`)* | — | — |
 | `std.sys.info` | fails | — | module-level `let` (`os_is_linux`) | — | — |
 | `std.sys.intrinsics` | fails | — | undefined trait `StringLiteral` | Unsafe by design. | — |
@@ -197,7 +197,7 @@ is the API layer of the architecture, not a schedule; the milestone is in
 | `std.ops` | planned | fundamental: operator traits | operators through traits | — | — |
 | `std.convert` | planned | fundamental: `From`/`Into`/`TryFrom` | generic traits | — | — |
 | `std.iter` | planned | fundamental: `Iterator`, adapters (`map`, `filter`, `zip`, `enumerate`, `chain`, `take`, `fold`, ...) | generic traits with associated types; closures in generic code | Adapters `@noalloc`; `collect` allocates | — |
-| `std.string` | planned | fundamental: owned UTF-8 `String` (replaces `std.collections.string`, `std.builtin.string_literal`) | `String` (in progress) | Allocates; byte indices | — |
+| `std.string` | planned | fundamental: owned UTF-8 `String` (replaces `std.collections.string`, `std.builtin.string_literal`) | moving the built-in `String`'s extras into `std.string` | Allocates; byte indices | — |
 | `std.collections` | planned | fundamental: `Array` (growable), `Map`, `Set`, `Deque`, `BinaryHeap`, `BitSet`, ordered map (replaces today's `std.collections.*`) | `BitSet`, ordered map, a keyed hasher; `Map`, `Set`, `Deque`, `BinaryHeap` exist under `std.collections.*` on growable arrays | Keyed default hasher (DoS-resistant) | — |
 | `std.hash` | planned | fundamental: `Hash`/`Hasher` traits, FNV-1a, a keyed default hasher (replaces `std.hashlib.*`) | generic traits, in-place parameters | Default hasher keyed per process | — |
 | `std.fmt` | planned | fundamental: `Display`/`Debug` traits, number formatting and parsing (replaces `std.format.*`) | `String`, generic traits, derive | — | — |
@@ -207,7 +207,7 @@ is the API layer of the architecture, not a schedule; the milestone is in
 | `std.io` | planned | application: `Reader`/`Writer`, buffered I/O, stdin/stdout/stderr | `Result`, growable arrays, trait objects or generic traits; runtime stdin/stdout services | — | — |
 | `std.fs` | planned | application: `File`, directories, metadata, `read_to_end`/`write_all` with `Result` (replaces `std.fs.fs`, `std.os.os`, file parts of `std.pathlib.path`) | `Result`, `String`; runtime directory services | Typed handles; `Result` errors | — |
 | `std.path` | planned | application: one `Path` type and pure path functions, per-platform separators (replaces `std.os.path`, `std.pathlib.path`) | `String` | — | — |
-| `std.env` | planned | application: arguments, environment variables, current directory (replaces `std.os.env`, `std.sys.arg`) | `String`; runtime services for args and environment | — | — |
+| `std.env` | planned | application: arguments, environment variables, current directory (replaces `std.os.env`, `std.sys.arg`) | a current-directory service; `std.sys.arg` has arguments and environment | — | — |
 | `std.process` | planned | application: exit, abort, pid, spawning commands (replaces `std.os.process`, exit/abort of `std.sys.terminate`) | `String`, `Result`; runtime process services | — | — |
 | `std.thread` | planned | application: OS threads beyond `spawn` (names, sleep, available parallelism) | runtime thread services | — | — |
 | `std.sync` | planned | application: `Mutex`, `RwLock`, `Once`, `Condvar`, `Barrier`; also covers the proposed `concurrent` | in-place parameters or classes; runtime lock services that park for the GC | — | — |

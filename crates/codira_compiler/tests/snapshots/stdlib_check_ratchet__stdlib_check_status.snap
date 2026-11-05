@@ -3,8 +3,8 @@ source: crates/codira_compiler/tests/stdlib_check_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-29 of 89 std files check clean
-0 syntax, 2202 semantic
+38 of 94 std files check clean
+0 syntax, 2012 semantic
 
    0 syntax     0 semantic  ai/algorithm/functional.code
    0 syntax    11 semantic  ai/algorithm/reduction.code
@@ -36,16 +36,18 @@ snapshot_kind: text
    0 syntax    67 semantic  builtin/tuple.code
    0 syntax     0 semantic  builtin/type_aliases.code
    0 syntax     7 semantic  builtin/types.code
+   0 syntax     0 semantic  cmp/cmp.code
    0 syntax    44 semantic  collections/array.code
-   0 syntax    36 semantic  collections/binary_heap.code
+   0 syntax     0 semantic  collections/binary_heap.code
    0 syntax    31 semantic  collections/bitset.code
-   0 syntax    46 semantic  collections/counter.code
-   0 syntax    14 semantic  collections/deque.code
+   0 syntax     0 semantic  collections/counter.code
+   0 syntax     0 semantic  collections/deque.code
    0 syntax   109 semantic  collections/dict.code
    0 syntax   101 semantic  collections/linked_list.code
    0 syntax    42 semantic  collections/list.code
+   0 syntax     0 semantic  collections/map.code
    0 syntax     0 semantic  collections/optional.code
-   0 syntax    94 semantic  collections/set.code
+   0 syntax     0 semantic  collections/set.code
    0 syntax    17 semantic  collections/span.code
    0 syntax     0 semantic  collections/string.code
    0 syntax     0 semantic  complex/complex.code
@@ -56,6 +58,7 @@ snapshot_kind: text
    0 syntax    34 semantic  ffi/unsafe_union.code
    0 syntax     0 semantic  format/format.code
    0 syntax     9 semantic  format/repr.code
+   0 syntax     0 semantic  fs/file.code
    0 syntax     0 semantic  fs/fs.code
    0 syntax    30 semantic  gpu/globals.code
    0 syntax    71 semantic  gpu/host_info.code
@@ -87,6 +90,7 @@ snapshot_kind: text
    0 syntax     0 semantic  prelude.code
    0 syntax    85 semantic  random/random.code
    0 syntax     0 semantic  random/rng.code
+   0 syntax     0 semantic  result/result.code
    0 syntax     0 semantic  sys/arg.code
    0 syntax     4 semantic  sys/assert_compare.code
    0 syntax    49 semantic  sys/info.code
@@ -94,4 +98,5 @@ snapshot_kind: text
    0 syntax     0 semantic  sys/terminate.code
    0 syntax    23 semantic  testing/suite.code
    0 syntax    34 semantic  testing/testing.code
+   0 syntax     0 semantic  text/ascii.code
    0 syntax     0 semantic  time/time.code

@@ -82,7 +82,6 @@ const KNOWN_BLOCKERS: &[(&str, &str)] = &[
         "`Pointer[T]` (std.memory.pointer); superseded by the growable `[T]`, whose \
          `push`, `pop`, `insert`, `sort`, `map`, .. are builtin methods",
     ),
-    ("collections.string", "`Pointer[u8]` (std.memory.pointer)"),
     ("collections.span", "`Pointer[T]` (std.memory.pointer)"),
     (
         "collections.linked_list",
