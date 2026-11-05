@@ -33,6 +33,7 @@ pub mod native_memory;
 mod native_process;
 pub mod native_time;
 mod reflection;
+pub mod string;
 mod tasks;
 mod utils;
 
@@ -369,6 +370,9 @@ impl Runtime {
 
         // Growing arrays, and the array operations generated code delegates.
         options.user_functions.extend(native_array::functions());
+
+        // The functions compiled `String` operations lower to.
+        options.user_functions.extend(string::definitions());
 
         // Raw memory services for `std/memory/{region,page}.code`
         options.user_functions.extend(native_memory::functions());
