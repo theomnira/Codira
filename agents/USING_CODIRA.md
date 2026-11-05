@@ -93,6 +93,9 @@ struct super true trait uses var where while
 
 The path separator is **`.`** (like Python/Swift), not `::`.
 
+`f"..."` (an `f` directly before the quote) is an interpolated string
+literal, `f"x = {x}"`: see "Strings".
+
 ### Functions
 
 ```codira
@@ -383,6 +386,211 @@ buffer; the handle, so every reference to the array, stays the same.
   capacity, and the handle is still written only by runtime calls, after
   which LLVM reloads it. The capacity is loaded with the length tag (it is
   the payload header's other word).
+
+### Strings: `str` and `String`
+
+```codira
+let lit = "héllo"                     // str: static bytes, allocates nothing
+let s = lit.to_string()               // String: owned, on the GC heap
+let t: String = "converted"           // a str converts where a String is expected
+var log = "".to_string()
+for i in 0..3 { log += f"[{i}]" }     // "[0][1][2]", appended in place
+let parts = "a,b,,c".split(",")       // [String]: ["a", "b", "", "c"]
+if let n = parts[0].parse_i64() { println(n) } else { println("not a number") }
+println(s.len(), " bytes, ", s.char_count(), " chars")   // 6 bytes, 5 chars
+println(s.slice(0, 3))                // "hé" (byte range; panics off a char boundary)
+```
+
+There are two string types:
+
+- **`str`** is a literal: an address and a byte length of static bytes in
+  the program image. It allocates nothing, ever. It has `len()`, can be
+  printed, compared (`==`, `<`) and passed to the runtime with
+  `str_data`/`str_len`; every other method first copies it into a
+  `String`.
+- **`String`** is the owned string, always valid UTF-8. It is the one string
+  type a program builds, stores, returns and passes around; there is no
+  separate borrowed type and no lifetime to write.
+
+#### The design, and why
+
+`String` is known to the compiler and backed by the runtime, not written in
+`std`: every program has it without an import, literals convert to it, it
+has operators and interpolation, and its operations are direct calls into
+Rust code in the runtime (validation, search, splitting and number parsing
+are Rust's own `str` implementations).
+
+A `String` value is three words: a reference to a buffer on the GC heap
+(an ordinary `[u8]` array object), the offset of the string's first byte in
+it, and its length. That gives one type the roles Rust splits between
+`String` and `&str`:
+
+- **Values, not references.** The bytes a `String` covers are never
+  written again. `let b = a` copies three words, and nothing done through
+  `a` can change `b`, so a string is safe to keep as a map key, to store in
+  a class, or to hand to another module.
+- **Cheap views.** `slice`, `trim`, `trim_start`, `trim_end`, and the pieces
+  of `split` and `lines` are new values over the same buffer: no bytes are
+  copied, and the GC keeps the buffer alive while any view of it exists. Rust
+  needs `&str` and a lifetime for this; here the collector does that job.
+- **Appending in place.** `s += t` (and `s + t`) writes into the buffer only
+  past the end of every existing value: when `s` ends exactly at the
+  buffer's fill and there is room, the bytes go there and the fill rises
+  (with a compare-and-swap, so two appends racing on one buffer cannot both
+  win); otherwise the bytes are copied into a new buffer, which doubles the
+  capacity when `s` was at the fill (it is being built up) and is exact
+  otherwise. A loop of `s += piece` is amortized O(1) per byte, as Rust's
+  `push_str` is, with no builder type. Appending to a value that does not
+  end at the fill (an older copy, a view in the middle) copies.
+
+Considered and not chosen: a *mutable* growable string shared by reference
+(as arrays and classes are) needs no offset word, but `let b = a;
+a.push_str(..)` would change `b`, which is a classic source of bugs with
+string keys; an *immutable* string with a separate builder type is one more
+concept, and without the in-place append every `+=` copies (quadratic
+loops); a `std` type over a byte array would need an import in every
+program and could not have literals convert to it.
+
+What this costs: a `String` is 24 bytes rather than 8; a small view keeps
+its whole buffer alive (as a Go slice or an old Java substring does: copy
+it, `s.slice(a, b).to_upper()` or `f"{v}"`, to let the buffer go); and a
+call to a function of *another module* boxes a `String` argument or result
+on the GC heap, as it boxes a value struct.
+
+#### Operations
+
+Construction and conversion:
+
+- `x.to_string()` on a `str`, any integer, float or `bool` (formatted as
+  `print` writes them: `1.0`, `-0.0`, `NaN`), or a `String` (itself, no
+  copy).
+- A `str` used where a `String` is expected -- an argument, a `let` with a
+  type, a field, an array element, a return value, an assignment to a
+  `String` -- converts implicitly (a copy).
+- `string_from_utf8(bytes: [u8]) -> String?`: a copy of the bytes if they
+  are valid UTF-8, else `nil`.
+- Interpolation: `f"x = {x}, p.y = {p.y}, {self.name}"` is a `String`. A
+  hole is a variable optionally followed by fields, as in Rust's
+  `format!("{x}")` -- no calls, no operators -- and is converted with
+  `to_string()`, so it type-checks like that call (a hole of a type without
+  `to_string` is an error at the literal). `{{` and `}}` are literal braces.
+  The first piece becomes a `String` and the rest are appended to it.
+
+Operators: `a + b` (either side a `String` or a `str`; the result is a new
+`String`), `s += t` (`s` a `String` place, `t` a `String` or `str`), and
+`==`, `!=`, `<`, `<=`, `>`, `>=` between any mix of `String` and `str`, by
+bytes -- which for UTF-8 is code-point order. `print`/`println` print a
+`String` like a `str`.
+
+Methods (text arguments take a `String` or a `str`, so a literal argument
+costs nothing):
+
+| method | result | notes |
+|---|---|---|
+| `len()`, `is_empty()` | `usize`, `bool` | bytes; inline |
+| `char_count()` | `usize` | code points (one pass) |
+| `chars()` | `[u32]` | the code points, a new array |
+| `bytes()` | `[u8]` | a **copy**: changing it changes no string |
+| `byte_at(i)` | `u8` | bounds-checked like `a[i]` |
+| `find(p)`, `rfind(p)` | `usize?` | byte offset of the first / last match |
+| `contains(p)`, `starts_with(p)`, `ends_with(p)` | `bool` | |
+| `split(sep)` | `[String]` | Rust's `str::split`; views; an empty `sep` panics |
+| `lines()` | `[String]` | Rust's `str::lines` (`\n`, `\r\n`, no empty last line); views |
+| `trim()`, `trim_start()`, `trim_end()` | `String` | Unicode `White_Space`, as Rust; views |
+| `slice(start, end)` | `String` | the byte range; a view |
+| `to_upper()`, `to_lower()` | `String` | ASCII letters only (see below) |
+| `replace(from, to)` | `String` | Rust's `str::replace` |
+| `repeat(n)` | `String` | a negative `n` repeats nothing |
+| `parse_i64()`, `parse_f64()` | `i64?`, `f64?` | Rust's `from_str`: no white space, `+`/`-` sign, `inf`, `NaN` |
+| `hash()` | `u64` | FNV-1a 64 of the bytes |
+| `to_string()` | `String` | itself |
+
+`std.collections.string` adds what is written in Codira on top: `join`,
+`insert`, `remove`, `reverse`, `count`, `compare`, `split_whitespace`,
+`string_from_code_point(s)`. `std.format.format` has `format(template,
+[args])`, `format_int(value, base)`, `hex`/`bin`/`oct` and padding.
+
+#### Safety
+
+- **Always valid UTF-8.** Literals are checked by the compiler;
+  `string_from_utf8` validates; slicing checks character boundaries; every
+  other operation (concatenation, case mapping, replacing, splitting,
+  trimming, number formatting) maps valid UTF-8 to valid UTF-8. There is no
+  unchecked constructor.
+- **Every index is checked.** `slice(start, end)` panics unless `0 <= start
+  <= end <= len()` and both are character boundaries; `byte_at(i)` panics
+  out of range. The report names the call: `panic at mod.code:4:13: byte
+  index 2 is not a char boundary; it is inside 'é' (bytes 1..3)`, `string
+  slice -1..2 is out of range for a string of length 3`, `index out of
+  bounds: the length is 3 but the index is 3`; exit status 101.
+- **Bytes are a copy.** `bytes()` returns a new `[u8]`; `string_from_utf8`
+  copies its input. Nothing gives a program a mutable view of a string's
+  buffer.
+- The UTF-8 validation and the slice check are tested against Rust's
+  `std::str` with seeded random byte arrays and ranges (property tests in
+  `crates/codira_runtime/src/string.rs`), and so are search, split, lines,
+  trim, case mapping, replace, repeat, parse and format; a random tree of
+  appends checks that no existing value ever changes.
+
+#### Unicode: what is and is not handled
+
+A "char" is a Unicode scalar value (a code point, `u32`), as in Rust: there
+is no `char` type and no grapheme clusters (`"é"` written as `e` plus a
+combining accent is two chars). `to_upper`/`to_lower` change ASCII letters
+only (`"Wörld".to_upper()` is `"WöRLD"`); full Unicode case mapping, which
+can change the length (`ß` to `SS`), is not done. Ordering is by code point,
+not by any locale's collation. `trim` uses Unicode's `White_Space`
+property, as Rust's does.
+
+`hash()` (and `std.hashlib.string_hash`) is FNV-1a: fast and deterministic,
+and **not resistant to hash flooding** -- an attacker who chooses the keys
+of a table hashed with it can make them all collide.
+
+#### Effects, the GC, hot reload and the host
+
+- **Allocates** (so rejected by `@noalloc`): `to_string()` on anything but a
+  `String`, the implicit `str`-to-`String` conversion, `+` and `+=`
+  (counted as allocating even when the append fits), `chars`, `bytes`,
+  `split`, `lines`, `to_upper`/`to_lower`, `replace`, `repeat`,
+  `string_from_utf8`, interpolation, and every method called on a `str`.
+  `len`, `is_empty`, comparisons, `find`/`rfind`/`contains`/
+  `starts_with`/`ends_with`, `char_count`, `hash`, `parse_*` and the views
+  (`trim*`, `slice`) allocate nothing. **Panics** (`@nopanic`): `slice` and
+  `byte_at`, besides every allocation.
+- The buffer is a GC array, so the collector traces it, conservatively from
+  the stack (a view keeps its buffer alive). `Runtime::save_heap` /
+  `restore_heap` carry strings with the objects that hold them, and a hot
+  reload keeps a `String` field's value across layout changes like any
+  value-struct field. Tests: `crates/codira_runtime/tests/strings.rs`
+  (collections under a 2 MB heap cap and from a host thread while strings
+  are built, sliced and compared; a snapshot; a reload that reorders and
+  adds fields).
+- **Host API**: `codira_runtime::StringRef` is a `String` held by the host,
+  like `StructRef` and `ArrayRef`: returned by `Runtime::invoke`, read from
+  a field with `StructRef::get::<StringRef>("name")` or from a
+  `[String]` with `ArrayRef<StringRef>`, made with `StringRef::new(&runtime,
+  "text")` to pass as an argument, read with `as_str()`, and kept alive
+  across calls with `root()` (`RootedString`). Unrooted, it is not
+  protected from a collection.
+- Strings cannot be sent between tasks (only scalars and channels cross).
+
+#### Back ends
+
+The LLVM back end compiles all of the above. The Cranelift back end
+(`codira run --jit`) has no GC heap: a program that uses `String` runs on
+LLVM instead, with a note saying so (`... a `String` (strings live on the GC
+heap, which this backend does not reach)`).
+
+#### Performance
+
+Measured against Rust's `String` on the same four algorithms -- see
+`crates/codira_runtime/README.md` ("Strings: measured against Rust") for the
+numbers, the machine, and both programs (`benches/strings/`).
+
+Not done yet: a `push_str` method (write `+=`); `match` on a `String`
+scrutinee; iterating a string directly (`for c in s.chars()` iterates the
+array of code points); a `char` type; Unicode case mapping and
+normalization; `format`-style width and precision in interpolation holes.
 
 ### Integer arithmetic, shifts and casts
 
@@ -1414,16 +1622,19 @@ What counts, exactly (today's code generator and runtime):
   `filter`, slicing `xs[lo..hi]`), a closure (except one an array method
   compiles in place, see "Growable arrays and collections"),
   `print`/`println`, `channel(n)`, `scope`, `spawn`, a channel send, `select`
-  (even with `default`), opening a session (`S.open()`), and a
+  (even with `default`), opening a session (`S.open()`), making or
+  growing a `String` (see "Strings" for exactly which operations), and a
   call to a function of *another module* that takes or returns a value
-  struct (the cross-module calling convention boxes it). String literals,
-  value structs, tuples and effect handler records allocate nothing.
+  struct or a `String` (the cross-module calling convention boxes it).
+  String literals, views of a `String` (`slice`, `trim`), value structs,
+  tuples and effect handler records allocate nothing.
 - **Blocks**: channel send and receive (also on a session endpoint, and
   `ep.choose(..)` and `offer`), `select`, the end of a `scope`, and the
   allocations above.
 - **Panics**: `a[i]` and `a[i] = v` (bounds check; `a.unchecked_get(i)` is
   the unchecked escape hatch), `xs.insert(i, x)`, `xs.remove(i)` and slicing
-  (their index checks), integer `/` and `%` (and `/=`, `%=`), calling a
+  (their index checks), `s.slice(a, b)` and `s.byte_at(i)` on a
+  `String`, integer `/` and `%` (and `/=`, `%=`), calling a
   `@runtime_checked` function that has `requires`, and every allocation.
   An integer division panics on a zero divisor and on a signed `MIN / -1` or
   `MIN % -1` (see "Integer arithmetic, shifts and casts"), so it only counts
@@ -1564,7 +1775,7 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
   (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
   which is not what a program sees).
-- **Importable today** (28 of 94 modules), each run from a program in
+- **Importable today** (@@IMPORTABLE@@ modules), each run from a program in
   `crates/codira/tests/std_imports.rs` against independently computed
   values, except `std.memory.page` and `std.builtin.type_aliases` (check,
   build and load; not run):
@@ -1620,13 +1831,20 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     wall clock, sleep), `std.complex.complex`, `std.collections.optional`
     (a generic `Optional[T]` struct; `unwrap` of an empty one panics;
     `to_native`/`from_native` convert to and from `T?`).
-- **Waiting for the language**: what is written against `String` (most of
-  `std.format`, `std.os`, `std.pathlib`, `std.testing`, `std.sys.info`, and
-  the `*_string` halves split off from the modules above:
-  `std.base64.base64_string`, `std.hashlib.string_hash`,
-  `std.complex.complex_string`); what is still written on `Pointer[T]`
+  - Built on `String`: `std.collections.string` (`join`, `insert`,
+    `remove`, `reverse`, `count`, `split_whitespace`, code points),
+    `std.format.format` (`format(template, [args])`, `format_int`,
+    `hex`/`bin`/`oct`, padding), `std.hashlib.string_hash`,
+    `std.complex.complex_string`, `std.base64.base64_string` (the encodings
+    of `std.base64.base64` between `[u8]` and `String`) and `std.sys.arg`
+    (the process's arguments and environment variables, as `String`s and
+    `String?`s; under `codira run` they are the `codira` command line's).
+- **Waiting for the language**: what is written against `String` and
+  something else the language lacks (`std.os` and `std.pathlib`: module-level
+  `let`s; `std.testing`: trait objects; `std.sys.info`: module-level `let`s;
+  `std.format.repr`: trait objects); what is still written on `Pointer[T]`
   (`std.collections.list` and `std.collections.dict`, superseded by `[T]`
-  and `Map`, `span`, `linked_list`, `bitset`, `string`, and through `List`,
+  and `Map`, `span`, `linked_list`, `bitset`, and through `List`,
   `std.math.sequence` and `std.math.polynomial`); `std.builtin.traits` (generic traits);
   `std.sys.assert_compare` (`assert_eq` and friends: operators on a type
   parameter); `std.random.random` (a global generator: there is no
@@ -1750,8 +1968,8 @@ public func main() {
 }
 ```
 
-`print`/`println` accept any number of integers (any width), floats, `bool`s
-and `str`s; anything else is a compile error. A program that defines its own
+`print`/`println` accept any number of integers (any width), floats, `bool`s,
+`str`s and `String`s; anything else is a compile error. A program that defines its own
 function named `print` calls its own. See `examples/hello`.
 
 All arguments are evaluated first, left to right, and then printed, so an
@@ -2700,6 +2918,12 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
 - `array_filled(v, n)`, `select`, `fma`, `likely`/`unlikely` (see "Hot-loop
   builtins"; not supported by the Cranelift `--jit` backend, which refuses them)
 - `str` literals, and `print`/`println` (`codira run` shows the output)
+- `String`: construction (`to_string()`, the implicit conversion of a
+  `str`, `string_from_utf8`), `+`, `+=`, comparisons, every method in
+  "Strings", interpolated literals `f"..{x}.."`, strings in fields, arrays,
+  optionals, parameters and results, across modules, to and from the host
+  (`StringRef`), through collections, heap snapshots and hot reload
+  (Cranelift `--jit` runs such programs on LLVM; see "Strings")
 - optionals (`T?`, `nil`, `if let`, `while let`, postfix `!`, `== nil`) and
   `match` over literals, tuples, strings and optionals, checked exhaustive
 - `enum` with payloads: construction, `match`/`if let`/`while let` with
@@ -2931,7 +3155,7 @@ types").
 Parsed but **not yet lowered** -- the compiler stops with "... is not
 supported by the code generator yet" naming the construct: postfix `^`. Not available at
 all yet: generic traits, trait objects (dynamic dispatch),
-`String`, module-level `let` and `var` (rejected with "module-level `let`
+`match` on a `String`, module-level `let` and `var` (rejected with "module-level `let`
 is not supported yet"), in-place parameters (`inout`/`mut`/`out` and
 `mut T`/`&mut T`, rejected with "... are not supported yet"), the
 standard library's
