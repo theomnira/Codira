@@ -541,7 +541,6 @@ fn test_generic_enum_typing_and_exhaustiveness() {
     667..673: `==` compares only enums whose payloads are all numbers or `bool`s, and `Maybe` has others; `match` on it instead
     706..719: mismatched type
     ");
-
 }
 
 /// `x?` on a `Result` is its `Ok` payload and needs the enclosing function

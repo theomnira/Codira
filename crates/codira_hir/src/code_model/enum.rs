@@ -36,7 +36,6 @@ use crate::{
         lower::{lower_types, LowerTyMap},
         substitute_type_params, Substitution, TypeWalk,
     },
-
     type_ref::{LocalTypeRefId, TypeRefMap, TypeRefSourceMap},
     visibility::RawVisibility,
     DefDatabase, DiagnosticSink, HasSource, HasVisibility, HirDatabase, HirDisplay, Name,

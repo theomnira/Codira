@@ -1572,7 +1572,6 @@ impl InferenceResultBuilder<'_> {
                     Some(args),
                     expected,
                 ));
-
             }
         }
 
@@ -3195,7 +3194,6 @@ impl InferenceResultBuilder<'_> {
                 TyKind::InferenceVar(InferTy::Int(_) | InferTy::Float(_))
             )
         }) {
-
             self.diagnostics.push(InferenceDiagnostic::ExprError {
                 id: tgt_expr.into(),
                 message: format!(

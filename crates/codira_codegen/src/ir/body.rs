@@ -3675,8 +3675,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     ) -> Option<BasicValueEnum<'ink>> {
         let lhs_value = self.gen_expr(lhs)?.into_struct_value();
         let rhs_value = self.gen_expr(rhs)?.into_struct_value();
-        let layout =
-            codira_hir::mono::enum_layout(self.db, enum_ty).expect("`==` on an enum type");
+        let layout = codira_hir::mono::enum_layout(self.db, enum_ty).expect("`==` on an enum type");
 
         let b = &self.builder;
         let field = |value: StructValue<'ink>, idx: u32| {

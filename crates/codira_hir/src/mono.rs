@@ -312,7 +312,6 @@ fn type_depth(ty: &Ty) -> usize {
         }
         TyKind::Struct(_, args)
         | TyKind::Enum(_, args)
-
         | TyKind::Tuple(_, args)
         | TyKind::FnDef(_, args)
         | TyKind::Function(args) => args.iter().map(type_depth).max().unwrap_or(0),

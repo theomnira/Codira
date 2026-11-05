@@ -423,7 +423,6 @@ pub(crate) fn type_for_def(db: &dyn HirDatabase, def: TypableDef, ns: Namespace)
         (TypableDef::TypeAlias(t), Namespace::Types) => type_for_type_alias(db, t),
         (TypableDef::Enum(e), Namespace::Types) => e.ty(db),
 
-
         // 'error' cases:
         (TypableDef::Function(_), Namespace::Types)
         | (

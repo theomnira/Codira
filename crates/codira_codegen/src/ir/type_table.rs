@@ -275,7 +275,6 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
         }
     }
 
-
     /// Constructs a `TypeTable` from all *used* types.
     pub fn build(self) -> TypeTable<'ink> {
         let mut entries = Vec::from_iter(self.entries);

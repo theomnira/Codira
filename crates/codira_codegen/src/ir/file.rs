@@ -171,7 +171,6 @@ pub(crate) fn gen_file_ir<'ink>(
         }
     }
 
-
     // Tuples, optionals and `str` have no declaration to export them from,
     // but the runtime needs their layout as soon as one crosses into it --
     // as a parameter, a return value, a field or an array element. Every one
