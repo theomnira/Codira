@@ -547,7 +547,12 @@ slots and host-held handles are never rewritten. The words of
 `root_region` (task-group results waiting to be joined, the chunks of
 `@region` arenas) are scanned conservatively like stack words, so what they
 refer to is pinned the same way. Blocks in which a
-thread's allocation cache holds a run are left alone. Hot-reload migration
+thread's allocation cache holds a run are left alone. The words of root
+regions (task-group results, `@region` arena chunks registered as root
+spans) are read with the conservative roots, so what they refer to is
+pinned too. While Cascade is attached (`MarkSweep::enable_cascade`),
+relocation is off whatever the setting: Cascade's buffers and queues hold
+object addresses that evacuation does not rewrite. Hot-reload migration
 and heap snapshots run in their own stops and see a heap in which every
 reference is current.
 
