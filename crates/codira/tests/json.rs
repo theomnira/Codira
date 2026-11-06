@@ -247,6 +247,27 @@ fn parse_outcomes(stdout: &[u8]) -> Vec<Outcome> {
 /// xorshift64*: deterministic, so every run checks the same cases.
 struct Rng(u64);
 
+/// The fuzzing tests' seed: `default`, or `CODIRA_JSON_FUZZ_SEED` when set
+/// (the gate runner sets a fresh one; a failure prints it).
+fn fuzz_seed(default: u64) -> u64 {
+    let seed = std::env::var("CODIRA_JSON_FUZZ_SEED")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default);
+    eprintln!("json fuzz seed: {seed}");
+    seed
+}
+
+/// How many times more cases the fuzzing tests run
+/// (`CODIRA_JSON_FUZZ_SCALE`, default 1).
+fn fuzz_scale() -> usize {
+    std::env::var("CODIRA_JSON_FUZZ_SCALE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1)
+        .max(1)
+}
+
 impl Rng {
     fn next(&mut self) -> u64 {
         self.0 ^= self.0 >> 12;
@@ -724,9 +745,10 @@ fn mutate(rng: &mut Rng, text: &str) -> String {
 /// value.
 #[test]
 fn mutated_texts_agree_with_serde_json() {
-    let mut rng = Rng(0xbad_c0de_f00d);
+    let mut rng = Rng(fuzz_seed(0xbad_c0de_f00d));
+    let scale = fuzz_scale();
     let mut texts = Vec::new();
-    for i in 0..4000 {
+    for i in 0..4000 * scale {
         let v = rng.value(4);
         let text = if i % 3 == 0 {
             serde_json::to_string_pretty(&v).unwrap()
@@ -758,7 +780,10 @@ fn mutated_texts_agree_with_serde_json() {
         }
     }
     // The mutations leave a good share valid, so both paths are exercised.
-    assert!(accepted > 400 && accepted < 3600, "{accepted} accepted");
+    assert!(
+        accepted > 400 * scale && accepted < 3600 * scale,
+        "{accepted} accepted"
+    );
 }
 
 /// Random bytes and every prefix of valid texts: the parser answers every
@@ -766,9 +791,10 @@ fn mutated_texts_agree_with_serde_json() {
 /// is not UTF-8, and agrees with `serde_json` on the rest.
 #[test]
 fn random_bytes_and_truncations_never_crash() {
-    let mut rng = Rng(0x0dd_ba11);
+    let mut rng = Rng(fuzz_seed(0x0dd_ba11));
+    let scale = fuzz_scale();
     let mut cases = Vec::new();
-    for _ in 0..3000 {
+    for _ in 0..3000 * scale {
         let n = rng.below(40) as usize;
         let alphabet = b"{}[],:\"\\0123456789-+.eEtrufalsn \n\t\x00\x1f\x7f\xc3\xa9\xff";
         let bytes: Vec<u8> = (0..n)
@@ -782,7 +808,7 @@ fn random_bytes_and_truncations_never_crash() {
             .collect();
         cases.push(Case::new(bytes));
     }
-    for _ in 0..40 {
+    for _ in 0..40 * scale {
         let text = serde_json::to_string(&rng.value(4)).unwrap();
         for end in 0..=text.len() {
             cases.push(Case::new(text.as_bytes()[..end].to_vec()));
