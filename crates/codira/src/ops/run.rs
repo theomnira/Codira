@@ -95,7 +95,7 @@ pub fn run(args: Args) -> anyhow::Result<ExitStatus> {
     )?;
 
     if args.jit {
-        if let Some(status) = run_jit(&manifest_path, &config, colors, &args.entry)? {
+        if let Some(status) = run_jit(&manifest_path, &config, colors, &args.entry, &heap)? {
             return Ok(status);
         }
     }
@@ -130,6 +130,7 @@ fn run_jit(
     config: &Config,
     colors: codira_compiler::DisplayColor,
     entry: &str,
+    heap: &crate::ops::heap::HeapSettings,
 ) -> anyhow::Result<Option<ExitStatus>> {
     let (_package, driver) =
         codira_compiler::Driver::with_package_path(manifest_path, config.clone())?;
@@ -138,7 +139,17 @@ fn run_jit(
         return Ok(Some(ExitStatus::Error));
     }
     let start = std::time::Instant::now();
-    let program = match codira_cranelift::compile(driver.db(), entry) {
+    // The same heap limit and pacing a runtime started by `codira run` gets.
+    let options = codira_cranelift::Options {
+        heap_limit: heap.limit,
+        heap_limit_note: heap.limit.map(|_| heap.note()),
+        gc_policy: Some(codira_runtime::GcPolicy {
+            growth_percent: heap.growth,
+            ..codira_runtime::GcPolicy::default()
+        }),
+        ..codira_cranelift::Options::default()
+    };
+    let program = match codira_cranelift::compile_with(driver.db(), entry, options) {
         Ok(program) => program,
         Err(unsupported) => {
             eprintln!(
@@ -147,6 +158,7 @@ fn run_jit(
             return Ok(None);
         }
     };
+    heap.warn_if_unlimited();
     let timings = std::env::var_os("CODIRA_JIT_TIMINGS").is_some();
     if timings {
         eprintln!(

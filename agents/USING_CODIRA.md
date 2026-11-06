@@ -3248,6 +3248,10 @@ runs random programs on both and compares. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
 build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time and the run time.
 
+`--jit` gets the heap limit and pacing `codira run` gives a runtime
+(`--heap-limit`, `--gc-growth`, the environment and `[runtime]`), and
+running out of memory ends the program with the same report and status.
+
 The collector treats JIT frames as it treats AOT frames: the entry point
 runs registered as a thread running Codira code, every allocation and
 growth is a safepoint, and a stopped thread's stack is scanned

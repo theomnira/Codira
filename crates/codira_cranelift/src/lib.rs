@@ -128,7 +128,7 @@ pub enum Returned {
 }
 
 /// How to compile.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default)]
 pub struct Options {
     /// Ask Cranelift for a stack map at every call for the GC handles live
     /// across it (see the crate documentation). Off by default: nothing
@@ -139,6 +139,12 @@ pub struct Options {
     /// `codira_runtime::RuntimeBuilder::heap_limit` sets for a runtime: at
     /// the limit an allocation collects first. `None` for no limit.
     pub heap_limit: Option<usize>,
+    /// What the out-of-memory report says about the limit (where it came
+    /// from, how to raise it), as `RuntimeBuilder::heap_limit_note` sets.
+    pub heap_limit_note: Option<String>,
+    /// The collector's pacing, as `RuntimeBuilder::gc_policy` sets; `None`
+    /// for the collector's default.
+    pub gc_policy: Option<codira_runtime::GcPolicy>,
 }
 
 /// A program compiled to machine code, ready to run.
@@ -261,6 +267,13 @@ pub fn compile_with(
         options: options.clone(),
     };
     state.heap.collector().set_heap_limit(options.heap_limit);
+    state
+        .heap
+        .collector()
+        .set_heap_limit_note(options.heap_limit_note.clone());
+    if let Some(policy) = options.gc_policy.clone() {
+        state.heap.collector().set_policy(policy);
+    }
     let (entry_params, entry_ret) = state.signature_types(entry_fn)?;
     if !entry_params.is_empty() {
         return Err(fail("an entry point with parameters".to_owned()));
