@@ -249,8 +249,8 @@ pub struct RelocationReport {
     pub pause: std::time::Duration,
     /// Objects moved out of sparse blocks.
     pub moved: usize,
-    /// Objects that could not move because a stack, a root or a pin
-    /// referred to them.
+    /// Objects the stacks referred to (which could not move); rooted and
+    /// pinned objects are not counted.
     pub pinned: usize,
     /// Bytes the heap held from the system after the collection.
     pub committed: usize,
@@ -1047,22 +1047,20 @@ where
         // addresses in its own buffers and queues, which evacuation would not
         // update. With Cascade enabled, nothing moves.
         let compaction = self.compaction.load(Ordering::Relaxed) && self.cascade.get().is_none();
-        // Objects that must not move: rooted (and so pinned) ones, and those
-        // a stack refers to.
-        let mut pinned: FxHashSet<usize> = FxHashSet::default();
-        if compaction {
-            for object in &stack {
-                pinned.insert(object.as_ptr() as usize);
-            }
-        }
+        // Objects that must not move: rooted (and so pinned) ones, whose
+        // headers say so, and those a stack refers to, kept here (sorted)
+        // so that relocation can look them up without building a set.
+        let mut stack_objects: Vec<usize> = Vec::new();
 
         // Objects the scanned stack may refer to are roots too
         if let Some(words) = stack_words {
-            for object in inner.objects_referenced_by(words) {
+            let referenced = inner.objects_referenced_by(words);
+            if compaction {
+                // Sorted and without duplicates already.
+                stack_objects = referenced.iter().map(|o| o.as_ptr() as usize).collect();
+            }
+            for object in referenced {
                 let header = object.as_ptr();
-                if compaction {
-                    pinned.insert(header as usize);
-                }
                 unsafe {
                     if (*header).color == COLOR_WHITE {
                         (*header).color = COLOR_BLACK;
@@ -1113,7 +1111,7 @@ where
         let mut moved = 0;
         if compaction {
             // Safety: the world is stopped and the heap was just swept.
-            let forwarded = unsafe { inner.evacuate(&pinned, EVACUATE_LIVE_PERCENT) };
+            let forwarded = unsafe { inner.evacuate(&stack_objects, EVACUATE_LIVE_PERCENT) };
             moved = forwarded.len();
             if moved > 0 {
                 inner.for_each_object(|object| unsafe {
@@ -1131,7 +1129,7 @@ where
         *self.last_relocation.lock() = RelocationReport {
             pause: start.elapsed(),
             moved,
-            pinned: pinned.len(),
+            pinned: stack_objects.len(),
             committed,
         };
 
