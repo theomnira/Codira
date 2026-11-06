@@ -412,6 +412,9 @@ mod tests {
     #[test]
     fn objects_are_zeroed_aligned_and_counted() {
         let gc = MarkSweep::<NoopObserver<_>>::default();
+        // The check stops the world, which would disturb the safepoint
+        // tests of this binary; `tests/gc_regions.rs` tests it on its own.
+        gc.set_region_checks(false);
         let mut region = gc.region_open();
         let mut seen = Vec::new();
         for i in 0..10_000usize {
@@ -440,6 +443,9 @@ mod tests {
     #[test]
     fn a_closed_chunk_is_reused_zeroed_by_the_next_region() {
         let gc = MarkSweep::<NoopObserver<_>>::default();
+        // The check stops the world, which would disturb the safepoint
+        // tests of this binary; `tests/gc_regions.rs` tests it on its own.
+        gc.set_region_checks(false);
         for round in 0..3 {
             let mut region = gc.region_open();
             for _ in 0..20 {
