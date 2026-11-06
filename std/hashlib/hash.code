@@ -1,28 +1,104 @@
 // std/hashlib/hash.code
 // Core hashing infrastructure for Codira.
-// Provides the Hashable trait, a default hash function, and hash combiners.
+// Provides the Hashable trait, FNV-1a and hash combiners, and SipHash: the
+// keyed hash `std.collections.map` uses by default.
 //
-// NOT CRYPTOGRAPHIC. FNV-1a and the combiners here are for hash tables and
-// fingerprints of trusted data: collisions are easy to construct, so never
-// use them for integrity, signatures, passwords or keys, or for a table an
-// adversary fills. `std.crypto.hash` has SHA-256, SHA-512 and BLAKE3.
+// Two kinds of hash live here, and they promise different things.
+//
+// KEYED: SipHash-1-3 (and SipHash-2-4) under a 128-bit secret key,
+// `HashKey`. `Hashable.hash_keyed(key)` is what `Map`, `Set` and `Counter`
+// hash with by default, each map under a key of its own drawn from the
+// runtime's entropy service (`HashKey.random()`). Whoever does not know the
+// key cannot compute which keys collide, so cannot make a table slow on
+// purpose ("hash flooding"); see "Why SipHash-1-3" below. Still NOT a
+// cryptographic hash for integrity, signatures or passwords: the output is
+// 64 bits and the function is a PRF only under a secret key. For those,
+// `std.crypto.hash` has SHA-256, SHA-512 and BLAKE3.
+//
+// UNKEYED: FNV-1a, `mix64` and the combiners, and `Hashable.hash_value()`.
+// Fast, fixed and NOT DoS-RESISTANT: collisions are easy to construct, so
+// use them for tables and fingerprints of trusted data only. A `Map` hashes
+// with them only when asked to (`Map.unkeyed()`).
+//
+// Why SipHash-1-3. SipHash (Aumasson and Bernstein, "SipHash: a fast
+// short-input PRF", INDOCRYPT 2012) was designed for exactly this job: a
+// keyed function, fast on short inputs, whose outputs an attacker who sees
+// only how a table behaves cannot predict. SipHash-2-4 is the variant its
+// authors claim to be a PRF; SipHash-1-3 has one compression and three
+// finalization rounds instead of two and four, and is the default table
+// hash of Rust's `HashMap` and of Python (since 3.11, for `str` and
+// `bytes`). The fewer rounds trade part of the security margin of the
+// variant with the PRF claim for about twice the speed, which those
+// projects judged right for hash tables, where an attacker learns at most
+// timing and iteration order, never a hash output. `siphash24` is here for
+// a caller who wants the variant with the claim.
+// The faster alternatives were rejected for want of a security argument:
+// aHash, wyhash and the like have no published analysis of collisions
+// under a secret key, and seeded non-cryptographic hashes of the same kind
+// (MurmurHash2, MurmurHash3, CityHash64) were shown by SipHash's authors
+// to have multicollisions that work for every seed.
+//
+// Bytes are read in little-endian order, as SipHash defines them, on the
+// little-endian targets Codira supports (x86-64, AArch64): a word is
+// loaded as stored. The results agree with the reference implementation
+// (checked against Rust's in crates/codira/tests/std_imports.rs).
 //
 // Byte sequences are the language's arrays (`[u8]`, `[u64]`).
-// `hash_string` is in `std.hashlib.string_hash`: it takes a `String`, which
-// does not check yet.
+// `hash_string` is in `std.hashlib.string_hash`.
+
+import root.sys.terminate.{panic};
 
 extern "codira-intrinsic" {
     func __intrinsic_bitcast_f64_u64(value: f64) -> u64;
+    func stack_alloc(size: usize, align: usize) -> usize;
+    func memcpy(dst: usize, src: usize, len: usize);
+    func load_u64(addr: usize) -> u64;
+    func string_data(s: String) -> usize;
+}
+
+extern "C" {
+    // A fresh 128-bit key, different on every call, from the runtime's
+    // entropy service (`native_random`); false if the system has no
+    // entropy to give.
+    @nopanic
+    func codira_random_hash_key(out_addr: usize) -> bool;
 }
 
 // ---------------------------------------------------------------------------
 // Hashable trait
-// Any type that can be hashed must implement this trait.
+// Any type that can be a key of a `Map` (or an element of a `Set`)
+// implements it, with `Eq` (std.cmp.cmp).
 // ---------------------------------------------------------------------------
 public trait Hashable {
-    // Returns the hash value for this instance.
+    // Returns the unkeyed hash value for this instance: fast, NOT
+    // DoS-resistant. Values that are `eq` must hash the same.
     func hash_value(self) -> u64;
+
+    // The hash under the secret `key`. The default is SipHash-1-3 of
+    // `hash_value()` as one word, which is only as collision-resistant as
+    // `hash_value` is injective: two values with the same `hash_value`
+    // collide under every key. Every integer type, `bool`, the floats, `str`
+    // and `String` override it to hash themselves (their bytes) with
+    // SipHash-1-3. A type of your own whose `hash_value` combines several
+    // fields should override it too, writing the fields to a `SipHasher13`:
+    //
+    //     func hash_keyed(self, key: HashKey) -> u64 {
+    //         SipHasher13.new(key).write_u64(self.id).write_string(self.name).finish()
+    //     }
+    func hash_keyed(self, key: HashKey) -> u64 {
+        sip13_word(key.k0, key.k1, self.hash_value())
+    }
+
+    // Whether comparing two values with `eq` costs less than hashing one:
+    // true for the integer and float types and `bool`, false otherwise. A
+    // `Map` of at most 7 entries finds such keys by comparing them all,
+    // without hashing (see std.collections.map). Override it only for a
+    // type whose `eq` is a few instructions.
+    func compares_cheaply(self) -> bool {
+        false
+    }
 }
+
 
 // ---------------------------------------------------------------------------
 // hash
@@ -122,6 +198,11 @@ public func hash_i64(value: i64) -> u64 {
 // Hashes an unsigned 64-bit integer.
 // ---------------------------------------------------------------------------
 public func hash_u64(value: u64) -> u64 {
+    return fnv_word(value);
+}
+
+// FNV-1a 64 of the 8 bytes of `value`, little-endian.
+func fnv_word(value: u64) -> u64 {
     let mut h: u64 = 0xCBF29CE484222325;
     let prime: u64 = 0x00000100000001B3;
     let mut i: u32 = 0;
@@ -141,15 +222,7 @@ public func hash_u64(value: u64) -> u64 {
 // and every NaN as the one quiet NaN 0x7FF8000000000000.
 // ---------------------------------------------------------------------------
 public func hash_f64(value: f64) -> u64 {
-    // Normalize negative zero to positive zero.
-    var bits: u64 = __intrinsic_bitcast_f64_u64(value);
-    if value == 0.0 {
-        bits = 0;
-    }
-    if value != value {
-        bits = 9221120237041090560;
-    }
-    return hash_u64(bits);
+    return fnv_word(float_bits(value));
 }
 
 // ---------------------------------------------------------------------------
@@ -167,10 +240,19 @@ public func hash_bool(value: bool) -> u64 {
 // mix64
 // Scrambles all 64 bits of `value` into every bit of the result (the
 // finalizer of MurmurHash3): a bijection, five operations. What the
-// integer `Hashable` implementations below use, so that keys differing in
-// a few bits, or only in their high bits, spread over a table.
+// integer `hash_value` implementations below use, so that keys differing in
+// a few bits, or only in their high bits, spread over a table. Unkeyed:
+// NOT DoS-resistant.
 // ---------------------------------------------------------------------------
 public func mix64(value: u64) -> u64 {
+    mix(value)
+}
+
+// `mix64`, private so that the `Hashable` implementations below, which are
+// compiled into the module that uses them, get their own inlinable copy
+// rather than a call into this library.
+@inline
+func mix(value: u64) -> u64 {
     var x: u64 = value;
     x = x ^ (x >> 33);
     x = x * 0xFF51AFD7ED558CCD;
@@ -179,11 +261,315 @@ public func mix64(value: u64) -> u64 {
     return x ^ (x >> 33);
 }
 
+// FNV-1a 64 of the `len` bytes at `data`.
+func fnv1a(data: usize, len: usize) -> u64 {
+    var h: u64 = 0xCBF29CE484222325;
+    var i: usize = 0;
+    while i < len {
+        h = (h ^ (load_u8(data + i) as u64)) * 0x00000100000001B3;
+        i = i + 1;
+    }
+    return h;
+}
+
 // ---------------------------------------------------------------------------
-// Hashable for the primitive types: integers through `mix64`, floats as
-// `hash_f64` normalizes them (so equal values hash the same), `bool` as 0
-// or 1, `str` with FNV-1a over its bytes. NOT DoS-resistant: the hashes are
-// fixed and unseeded, so anyone who chooses the keys can make them collide.
+// HashKey: a 128-bit SipHash key.
+// ---------------------------------------------------------------------------
+public struct HashKey {
+    k0: u64,
+    k1: u64,
+}
+
+extend HashKey {
+    // The key `(k0, k1)`. A fixed key gives the same hashes (and the same
+    // `Map` iteration order) on every run, which tests want; a table filled
+    // by an adversary needs a key the adversary cannot learn: `random()`.
+    public func new(k0: u64, k1: u64) -> HashKey {
+        HashKey { k0: k0, k1: k1 }
+    }
+
+    // A fresh secret key from the runtime's entropy service: a different
+    // one on every call (and in every process), derived from 128 bits the
+    // operating system's random generator gave the process (see
+    // `codira_runtime::native_random`). Panics if the system has no
+    // entropy to give, as Rust's `RandomState::new` does.
+    public func random() -> HashKey {
+        let out = stack_alloc(16, 8);
+        if !codira_random_hash_key(out) {
+            panic("std.hashlib.hash: the system's random generator gave no key");
+        }
+        HashKey { k0: load_u64(out), k1: load_u64(out + 8) }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SipHash
+// ---------------------------------------------------------------------------
+
+// The four state words of SipHash.
+struct Sip {
+    v0: u64,
+    v1: u64,
+    v2: u64,
+    v3: u64,
+}
+
+// The state for `key` before any message.
+@inline
+func sip_init(k0: u64, k1: u64) -> Sip {
+    Sip {
+        v0: k0 ^ 0x736F6D6570736575,
+        v1: k1 ^ 0x646F72616E646F6D,
+        v2: k0 ^ 0x6C7967656E657261,
+        v3: k1 ^ 0x7465646279746573,
+    }
+}
+
+// One SipRound.
+@inline
+func sip_round(s: Sip) -> Sip {
+    var v0 = s.v0;
+    var v1 = s.v1;
+    var v2 = s.v2;
+    var v3 = s.v3;
+    v0 = v0 + v1;
+    v1 = (v1 << 13) | (v1 >> 51);
+    v1 = v1 ^ v0;
+    v0 = (v0 << 32) | (v0 >> 32);
+    v2 = v2 + v3;
+    v3 = (v3 << 16) | (v3 >> 48);
+    v3 = v3 ^ v2;
+    v0 = v0 + v3;
+    v3 = (v3 << 21) | (v3 >> 43);
+    v3 = v3 ^ v0;
+    v2 = v2 + v1;
+    v1 = (v1 << 17) | (v1 >> 47);
+    v1 = v1 ^ v2;
+    v2 = (v2 << 32) | (v2 >> 32);
+    Sip { v0: v0, v1: v1, v2: v2, v3: v3 }
+}
+
+// `s` after absorbing the 8-byte block `m` with `c` rounds.
+@inline
+func sip_block(s: Sip, m: u64, c: u32) -> Sip {
+    var t = Sip { v0: s.v0, v1: s.v1, v2: s.v2, v3: s.v3 ^ m };
+    t = sip_round(t);
+    if c > 1 {
+        var i: u32 = 1;
+        while i < c {
+            t = sip_round(t);
+            i = i + 1;
+        }
+    }
+    Sip { v0: t.v0 ^ m, v1: t.v1, v2: t.v2, v3: t.v3 }
+}
+
+// The hash, after the last block, with `d` finalization rounds.
+@inline
+func sip_finish(s: Sip, d: u32) -> u64 {
+    var t = Sip { v0: s.v0, v1: s.v1, v2: s.v2 ^ 0xFF, v3: s.v3 };
+    var i: u32 = 0;
+    while i < d {
+        t = sip_round(t);
+        i = i + 1;
+    }
+    t.v0 ^ t.v1 ^ t.v2 ^ t.v3
+}
+
+// SipHash-1-3 of the 8 bytes of `m` (little-endian) under `(k0, k1)`:
+// one block, then the length block. What integer keys hash with:
+// straight-line code, no loop and no memory access.
+@inline
+func sip13_word(k0: u64, k1: u64, m: u64) -> u64 {
+    let s = sip_block(sip_init(k0, k1), m, 1);
+    sip_finish(sip_block(s, 0x0800000000000000, 1), 3)
+}
+
+// SipHash-c-d of the `len` bytes at `data` under `(k0, k1)`.
+func sip_bytes(k0: u64, k1: u64, data: usize, len: usize, c: u32, d: u32) -> u64 {
+    var s = sip_init(k0, k1);
+    // A word read from an arbitrary address: copied to an aligned slot,
+    // which LLVM turns into one unaligned load.
+    let word = stack_alloc(8, 8);
+    var i: usize = 0;
+    while i + 8 <= len {
+        memcpy(word, data + i, 8);
+        s = sip_block(s, load_u64(word), c);
+        i = i + 8;
+    }
+    var last: u64 = (len as u64) << 56;
+    var shift: u64 = 0;
+    while i < len {
+        last = last | ((load_u8(data + i) as u64) << shift);
+        shift = shift + 8;
+        i = i + 1;
+    }
+    sip_finish(sip_block(s, last, c), d)
+}
+
+// SipHash-1-3 of the bytes of `data` under `key`.
+public func siphash13(key: HashKey, data: [u8]) -> u64 {
+    var s = sip_init(key.k0, key.k1);
+    let len = data.len();
+    var i: usize = 0;
+    while i + 8 <= len {
+        var m: u64 = 0;
+        var j: usize = 0;
+        while j < 8 {
+            m = m | ((data[i + j] as u64) << ((j * 8) as u64));
+            j = j + 1;
+        }
+        s = sip_block(s, m, 1);
+        i = i + 8;
+    }
+    var last: u64 = (len as u64) << 56;
+    var shift: u64 = 0;
+    while i < len {
+        last = last | ((data[i] as u64) << shift);
+        shift = shift + 8;
+        i = i + 1;
+    }
+    sip_finish(sip_block(s, last, 1), 3)
+}
+
+// SipHash-1-3 of the bytes of `text` under `key`: the same as
+// `siphash13(key, text.bytes())`, and what `str` and `String` keys hash
+// with.
+public func siphash13_str(key: HashKey, text: str) -> u64 {
+    sip_bytes(key.k0, key.k1, str_data(text), str_len(text), 1, 3)
+}
+
+// SipHash-1-3 of the 8 bytes of `value`, little-endian, under `key`: what
+// integer keys hash with (`siphash13` of the value's 8 bytes).
+public func siphash13_u64(key: HashKey, value: u64) -> u64 {
+    sip13_word(key.k0, key.k1, value)
+}
+
+// SipHash-2-4, the variant with the PRF claim, of the bytes of `text`.
+public func siphash24_str(key: HashKey, text: str) -> u64 {
+    sip_bytes(key.k0, key.k1, str_data(text), str_len(text), 2, 4)
+}
+
+// SipHash-2-4 of the 8 bytes of `value`, little-endian.
+public func siphash24_u64(key: HashKey, value: u64) -> u64 {
+    let s = sip_block(sip_init(key.k0, key.k1), value, 2);
+    sip_finish(sip_block(s, 0x0800000000000000, 2), 4)
+}
+
+// ---------------------------------------------------------------------------
+// SipHasher13: a keyed hash of several values, for `hash_keyed` of a type
+// of your own. A value type: each `write_*` returns the hasher with the
+// value written, so calls chain:
+//
+//     SipHasher13.new(key).write_u64(self.x).write_str(self.name).finish()
+//
+// It is SipHash-1-3 over an encoding of what was written, word by word: an
+// integer as one 8-byte word; a string as its bytes in words (the last one
+// padded with zeros) followed by one word holding its length. The encoding
+// is injective -- no two different sequences of writes give the same words
+// -- so `("ab", "c")` and `("a", "bc")` do not collide on purpose, and the
+// result is as hard to collide as SipHash-1-3 itself.
+// ---------------------------------------------------------------------------
+public struct SipHasher13 {
+    state: Sip,
+    words: u64,
+}
+
+extend SipHasher13 {
+    // A hasher under `key` with nothing written.
+    public func new(key: HashKey) -> SipHasher13 {
+        SipHasher13 { state: sip_init(key.k0, key.k1), words: 0 }
+    }
+
+    // Writes `value` as one word.
+    public func write_u64(self, value: u64) -> SipHasher13 {
+        SipHasher13 { state: sip_block(self.state, value, 1), words: self.words + 1 }
+    }
+
+    // Writes `value` as one word, its two's-complement bits.
+    public func write_i64(self, value: i64) -> SipHasher13 {
+        self.write_u64(value as u64)
+    }
+
+    // Writes the bytes of `text` and its length.
+    public func write_str(self, text: str) -> SipHasher13 {
+        self.write_raw(str_data(text), str_len(text))
+    }
+
+    // Writes the bytes of `text` and its length.
+    public func write_string(self, text: String) -> SipHasher13 {
+        if text.len() == 0 {
+            return self.write_u64(0);
+        }
+        self.write_raw(string_data(text), text.len())
+    }
+
+    // Writes the bytes of `data` and its length.
+    public func write_bytes(self, data: [u8]) -> SipHasher13 {
+        var s = self.state;
+        var words = self.words;
+        let len = data.len();
+        var i: usize = 0;
+        while i < len {
+            var m: u64 = 0;
+            var j: usize = 0;
+            while j < 8 && i + j < len {
+                m = m | ((data[i + j] as u64) << ((j * 8) as u64));
+                j = j + 1;
+            }
+            s = sip_block(s, m, 1);
+            words = words + 1;
+            i = i + 8;
+        }
+        SipHasher13 { state: sip_block(s, len as u64, 1), words: words + 1 }
+    }
+
+    // The bytes at `data` in words, then the length.
+    func write_raw(self, data: usize, len: usize) -> SipHasher13 {
+        var s = self.state;
+        var words = self.words;
+        let word = stack_alloc(8, 8);
+        var i: usize = 0;
+        while i + 8 <= len {
+            memcpy(word, data + i, 8);
+            s = sip_block(s, load_u64(word), 1);
+            words = words + 1;
+            i = i + 8;
+        }
+        if i < len {
+            var m: u64 = 0;
+            var shift: u64 = 0;
+            while i < len {
+                m = m | ((load_u8(data + i) as u64) << shift);
+                shift = shift + 8;
+                i = i + 1;
+            }
+            s = sip_block(s, m, 1);
+            words = words + 1;
+        }
+        SipHasher13 { state: sip_block(s, len as u64, 1), words: words + 1 }
+    }
+
+    // The hash of everything written: SipHash-1-3's last block (the byte
+    // length, 8 per word, in its top byte) and finalization.
+    public func finish(self) -> u64 {
+        sip_finish(sip_block(self.state, (self.words * 8) << 56, 1), 3)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Hashable for the primitive types.
+//
+// `hash_value` (unkeyed, NOT DoS-resistant): integers through `mix64`,
+// floats as `hash_f64` normalizes them (so equal values hash the same),
+// `bool` as 0 or 1 through `mix64`, `str` and `String` with FNV-1a over
+// their bytes.
+//
+// `hash_keyed` (SipHash-1-3): an integer as its 8 bytes (sign-extended to
+// 64 bits for a signed type, zero-extended for an unsigned one), a float as
+// the 8 bytes of its normalized bits, `bool` as 0 or 1, `str` and `String`
+// as their bytes. So `siphash13_u64(key, x as u64)` and
+// `siphash13_str(key, s)` give the same values.
 // ---------------------------------------------------------------------------
 extern "codira-intrinsic" {
     func str_data(s: str) -> usize;
@@ -191,32 +577,106 @@ extern "codira-intrinsic" {
     func load_u8(addr: usize) -> u8;
 }
 
-extend i8: Hashable { func hash_value(self) -> u64 { mix64(self as i64 as u64) } }
-extend i16: Hashable { func hash_value(self) -> u64 { mix64(self as i64 as u64) } }
-extend i32: Hashable { func hash_value(self) -> u64 { mix64(self as i64 as u64) } }
-extend i64: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
-extend isize: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
-extend u8: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
-extend u16: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
-extend u32: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
-extend u64: Hashable { func hash_value(self) -> u64 { mix64(self) } }
-extend usize: Hashable { func hash_value(self) -> u64 { mix64(self as u64) } }
-extend bool: Hashable { func hash_value(self) -> u64 { if self { mix64(1) } else { mix64(0) } } }
-extend f64: Hashable { func hash_value(self) -> u64 { hash_f64(self) } }
-extend f32: Hashable { func hash_value(self) -> u64 { hash_f64(self as f64) } }
+// The bits a float hashes as: negative zero as zero, every NaN as the one
+// quiet NaN.
+@inline
+func float_bits(value: f64) -> u64 {
+    if value == 0.0 {
+        return 0;
+    }
+    if value != value {
+        return 9221120237041090560;
+    }
+    __intrinsic_bitcast_f64_u64(value)
+}
+
+extend i8: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as i64 as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as i64 as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend i16: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as i64 as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as i64 as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend i32: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as i64 as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as i64 as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend i64: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend isize: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend u8: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend u16: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend u32: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend u64: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend usize: Hashable {
+    @inline func hash_value(self) -> u64 { mix(self as u64) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, self as u64) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend bool: Hashable {
+    @inline func hash_value(self) -> u64 { if self { mix(1) } else { mix(0) } }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, if self { 1 } else { 0 }) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend f64: Hashable {
+    @inline func hash_value(self) -> u64 { fnv_word(float_bits(self)) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, float_bits(self)) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
+extend f32: Hashable {
+    @inline func hash_value(self) -> u64 { fnv_word(float_bits(self as f64)) }
+    @inline func hash_keyed(self, key: HashKey) -> u64 { sip13_word(key.k0, key.k1, float_bits(self as f64)) }
+    @inline func compares_cheaply(self) -> bool { true }
+}
 extend str: Hashable {
-    func hash_value(self) -> u64 {
-        let data = str_data(self);
-        let len = str_len(self);
-        var h: u64 = 0xCBF29CE484222325;
-        var i: usize = 0;
-        while i < len {
-            h = (h ^ (load_u8(data + i) as u64)) * 0x00000100000001B3;
-            i = i + 1;
-        }
-        return h;
+    func hash_value(self) -> u64 { fnv1a(str_data(self), str_len(self)) }
+    func hash_keyed(self, key: HashKey) -> u64 {
+        sip_bytes(key.k0, key.k1, str_data(self), str_len(self), 1, 3)
     }
 }
-// The built-in `String`'s own FNV-1a hash, so a `str` and a `String` with
-// the same bytes hash alike.
-extend String: Hashable { func hash_value(self) -> u64 { self.hash() } }
+// The built-in `String`, hashed as its bytes: a `str` and a `String` with
+// the same bytes hash alike. `hash_value` is the `String`'s own `hash()`
+// (FNV-1a), computed here without a call.
+extend String: Hashable {
+    func hash_value(self) -> u64 {
+        let len = self.len();
+        if len == 0 {
+            return 0xCBF29CE484222325;
+        }
+        fnv1a(string_data(self), len)
+    }
+    func hash_keyed(self, key: HashKey) -> u64 {
+        let len = self.len();
+        if len == 0 {
+            return sip_bytes(key.k0, key.k1, 0, 0, 1, 3);
+        }
+        sip_bytes(key.k0, key.k1, string_data(self), len, 1, 3)
+    }
+}
