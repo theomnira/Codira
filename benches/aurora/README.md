@@ -54,6 +54,8 @@ The workloads:
 | `graph` | allocation-heavy binary trees, cyclic graphs, a doubly linked list | 3 |
 | `channels` | producers and consumers over bounded channels | 3 |
 | `server` | request handling with high churn, per-request latency; long runs under GC heap caps of 1024 down to 48 MiB | 8 |
+| `regions` | the same function on the GC heap and with `@region`: a list built per call, scratch arrays (C++: `std::pmr` arenas) | 4 |
+| `groups` | `group { .. }`: 64 tasks of real work, and 100k tiny tasks (Codira only) | 2 |
 
 and, for every workload, compile time and binary size.
 

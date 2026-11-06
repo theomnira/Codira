@@ -238,3 +238,24 @@ kernels = [
   { name = "long_run_heap_64", entry = "long_run", arg = "long_run", heap_limit_mb = 64 },
   { name = "long_run_heap_48", entry = "long_run", arg = "long_run", heap_limit_mb = 48, expected_failure = { codira = "the runtime ends the program out of memory: about 51 MB are live after a full collection, and a collection cannot make room under the cap" } },
 ]
+
+# The same Codira function on the GC heap and with `@region`; C++'s region
+# is std::pmr::monotonic_buffer_resource; Rust's standard library has none.
+[[workload]]
+name = "regions"
+title = "`@region` functions: an arena per call, against the GC heap"
+heap_limit_mb = 256
+kernels = [
+  { name = "list_heap", ci = true },
+  { name = "list_region", ci = true, note = "Rust: `Box`, the same program as `list_heap` (no arena in its standard library)." },
+  { name = "scratch_arrays_heap" },
+  { name = "scratch_arrays_region", note = "Rust: `Vec`, the same program as `scratch_arrays_heap`." },
+]
+
+[[workload]]
+name = "groups"
+title = "Task groups: tasks that return values"
+kernels = [
+  { name = "fib_64", ci = true, note = "Rust and C++: a thread per task (`std::thread::scope`, `std::async`), what their standard libraries offer." },
+  { name = "tiny_100k", rust = "no standard-library task pool: a thread per task is not a comparable baseline", cpp = "no standard-library task pool: a thread per task is not a comparable baseline" },
+]
