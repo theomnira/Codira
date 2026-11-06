@@ -425,7 +425,9 @@ where
 
     /// Moves the out-of-line elements of the array `from` to the empty
     /// array `to` without copying them, leaving `from` empty (see
-    /// `HeapInner::take_array_payload`). Returns `false`, changing nothing,
+    /// `HeapInner::take_array_payload`; a buffer with much room to spare is
+    /// shrunk, keeping room for `room` more elements). Returns `false`,
+    /// changing nothing,
     /// when `from` keeps its elements inline (a small array that never
     /// grew), which the caller then copies. Not a safepoint: nothing is
     /// allocated.
@@ -436,9 +438,9 @@ where
     /// which holds no references; `to` must be freshly allocated with
     /// length and capacity 0; no other thread may access either during the
     /// call.
-    pub unsafe fn try_take_array_payload(&self, from: GcPtr, to: GcPtr) -> bool {
+    pub unsafe fn try_take_array_payload(&self, from: GcPtr, to: GcPtr, room: usize) -> bool {
         let (from, to) = (header_of(from), header_of(to));
-        self.heap.inner.write().take_array_payload(from, to)
+        self.heap.inner.write().take_array_payload(from, to, room)
     }
 
     /// Allocates an object with a payload of `layout`, collecting first if

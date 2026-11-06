@@ -279,8 +279,8 @@ runtime_functions! {
     pub fn string_from_utf8(array: *const ffi::c_void, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> u8 = "codira.string_from_utf8";
 
     /// `string_take_utf8(bytes)`: as `string_from_utf8`, but the string
-    /// takes the array's bytes over (without a copy once the array has
-    /// grown) and the array is left empty.
+    /// takes the array's buffer over once the array has grown (the bytes
+    /// moved up in place for the owner word) and the array is left empty.
     pub fn string_take_utf8(array: *const ffi::c_void, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> u8 = "codira.string_take_utf8";
 
     /// `buf/start/len` with an integer (as two halves, its signedness and

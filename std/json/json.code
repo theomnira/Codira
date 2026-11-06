@@ -58,7 +58,7 @@
 // `Float`; a NaN or an infinity, which JSON cannot express, is written as
 // `null`. For every value without one, `parse(to_string(v))` equals `v`.
 // The text is built in one byte array (`push_str`, `push_int`,
-// `push_json_float`) and handed to the `String` without a copy
+// `push_json_float`), whose buffer then becomes the `String`'s
 // (`string_take_utf8`).
 //
 // Streaming. `JsonWriter` writes one document token by token, into a buffer
@@ -1265,8 +1265,8 @@ public func to_pretty_bytes_into(value: Json, indent: usize, dest: [u8]) -> usiz
 // `push`, strings and the runs between their escapes with `push_str` (one
 // copy each), numbers with `push_int` and `push_json_float`, which format
 // straight into the array's spare capacity. `finish` checks the bytes are
-// UTF-8 and hands them to the `String` without a copy
-// (`string_take_utf8`).
+// UTF-8 and hands the buffer to the `String` (`string_take_utf8`: no
+// second buffer, the bytes moved up in place for the owner word).
 class Writer {
     buf: [u8],
     indent: usize,

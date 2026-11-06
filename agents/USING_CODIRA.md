@@ -302,7 +302,7 @@ for (i, x) in xs.enumerate() { }                  // index and element
   the float by the runtime -- with no `String` in between. Other element
   types get a compile error (`` `push_str` needs an array of `u8` (a byte
   buffer) ``), as does a 128-bit `push_int`. `string_take_utf8(b)` (see
-  "Strings") turns the bytes into a `String` without copying them.
+  "Strings") turns the bytes into a `String` without a second buffer.
   Tests: `crates/codira/tests/byte_buffers.rs`.
 - Not supported by `codira run --jit` (Cranelift): a program using arrays
   says so and runs on LLVM.
@@ -1029,13 +1029,16 @@ Construction and conversion:
 - `string_from_utf8(bytes: [u8]) -> String?`: a copy of the bytes if they
   are valid UTF-8, else `nil`.
 - `string_take_utf8(bytes: [u8]) -> String?`: the bytes as a `String`
-  without copying them, if they are valid UTF-8 (Rust's
+  without a second buffer, if they are valid UTF-8 (Rust's
   `String::from_utf8(vec)`); `bytes` is left empty, and so is every alias
   of it, so no program can write those bytes again -- which is what makes
   them a string's. Once the array has grown its elements live in a buffer
-  of their own, which the string's buffer takes over (the collector
-  re-owns it: `MarkSweep::try_take_array_payload`); a small array that
-  never grew is copied, and emptied the same way. Not UTF-8: `nil`, and
+  of their own, which becomes the string's (the collector re-owns it:
+  `MarkSweep::try_take_array_payload`); the bytes then move up 8 bytes
+  within it, one `memmove`, to make room for the owner word every string
+  buffer starts with (see "String Fabric"), and a buffer with more than an
+  eighth of its room unused is shrunk to fit. A small array that never
+  grew is copied, and emptied the same way. Not UTF-8: `nil`, and
   `bytes` is unchanged. A printer builds its text in a `[u8]` with the
   byte-buffer methods (see "Growable arrays") and takes it at the end.
 - Interpolation: `f"x = {x}, p.y = {p.y}, {self.name}"` is a `String`. A
@@ -1478,8 +1481,9 @@ How it is built: the text goes into one growable `[u8]` -- punctuation
 with `push`, each string copied whole between its escapes (found 16 bytes
 at a time by `find_json_escape`) with `push_str`, numbers formatted
 straight into the array's spare capacity by `push_int` and
-`push_json_float` -- and the bytes become the `String` without a copy
-(`string_take_utf8`). The printer before this one filled a 64 KiB chunk
+`push_json_float` -- and the buffer becomes the `String`'s
+(`string_take_utf8`: no second buffer, one in-place move for the owner
+word). The printer before this one filled a 64 KiB chunk
 byte by byte and copied every chunk three more times on its way into the
 result (a slice, `string_from_utf8`, a doubling append); taking that path
 out alone took twitter's print from 63 to 40 ms and deep's pretty print
@@ -1518,7 +1522,7 @@ let text = w.finish()?                   // Result[String, JsonWriteError]
   the call's position and the bytes of valid text before it -- and every
   later call does nothing (`error()` reads it). Calls return nothing, so
   an encoder is a plain sequence of calls; `finish` reports the error.
-- Sinks: `finish()` hands the bytes to a `String` without a copy;
+- Sinks: `finish()` hands the buffer to a `String` (`string_take_utf8`);
   `finish_into(b)` appends them to a `[u8]`; `JsonWriter.to_file(fd)` (and
   `pretty_to_file`) sends them to a file opened with std.fs.fs every
   64 KiB, and `finish_file()` writes the rest and returns the document's

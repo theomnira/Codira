@@ -927,8 +927,8 @@ impl HeapInner {
     /// Both arrays keep their handles: `to` now owns the buffer (it is
     /// freed with `to`, or when `to` grows), and every handle to `from` sees
     /// an empty array, which may grow again as any array does. A buffer with
-    /// more than an eighth of its room unused is shrunk to its length on the
-    /// way (the heap's committed and live byte counts go down by the
+    /// more than an eighth of its room unused beyond `room` more elements is
+    /// shrunk to its length plus `room` on the way (the heap's committed and live byte counts go down by the
     /// difference); otherwise the accounting does not change: the buffer is
     /// still committed, and the payload sizes of the two objects are
     /// exchanged.
@@ -944,6 +944,7 @@ impl HeapInner {
         &mut self,
         from: NonNull<ObjectHeader>,
         to: NonNull<ObjectHeader>,
+        room: usize,
     ) -> bool {
         let (from_hdr, to_hdr) = (from.as_ptr(), to.as_ptr());
         if from_hdr == to_hdr || (*to_hdr).flags & FLAG_OUT_OF_LINE != 0 {
@@ -963,15 +964,16 @@ impl HeapInner {
             let header = buffer.0.as_ptr().cast::<ArrayHeader>();
             let (length, capacity) = ((*header).length, (*header).capacity);
             let (old_layout, old_size) = (buffer.1, (*from_hdr).payload_size());
-            if capacity - length > capacity / 8 {
-                if let Some(used) = array_payload_layout(element, length) {
+            let keep = length.saturating_add(room);
+            if capacity > keep && capacity - keep > capacity / 8 {
+                if let Some(used) = array_payload_layout(element, keep) {
                     let size = used.size().max(1);
                     let shrunk = std::alloc::realloc(buffer.0.as_ptr(), old_layout, size);
                     if let (Some(shrunk), Ok(layout)) = (
                         NonNull::new(shrunk),
                         Layout::from_size_align(size, old_layout.align()),
                     ) {
-                        (*shrunk.as_ptr().cast::<ArrayHeader>()).capacity = length;
+                        (*shrunk.as_ptr().cast::<ArrayHeader>()).capacity = keep;
                         self.committed = self.committed - old_layout.size() + layout.size();
                         self.global_bytes -= old_size as isize - used.size() as isize;
                         buffer = (shrunk, layout);

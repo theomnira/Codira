@@ -93,8 +93,9 @@ pub enum StringOp {
     FromUtf8,
     /// `string_take_utf8(bytes)`: the bytes as a `String` if they are valid
     /// UTF-8 (and `bytes` is left empty), otherwise `nil` (and `bytes` is
-    /// unchanged). The string takes over the array's buffer without copying
-    /// it once the array has grown; a small array is copied. Rust's
+    /// unchanged). Once the array has grown, the string takes over its
+    /// buffer (the bytes moved up in place for the owner word); a small
+    /// array is copied. Rust's
     /// `String::from_utf8(vec)`. A free function.
     TakeUtf8,
 }
