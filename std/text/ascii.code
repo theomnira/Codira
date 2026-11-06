@@ -16,6 +16,7 @@
 // exclusive), so nothing is copied.
 // =============================================================================
 
+import root.error.error.{Error};
 import root.result.result.{Result};
 
 // Why a word is not an integer.
@@ -26,6 +27,18 @@ public enum ParseError {
     InvalidDigit(usize)
     // The number does not fit the type.
     Overflow
+}
+
+// So that `?` passes it on as an `AnyError` (see std/error/error.code).
+extend ParseError: Error {
+    // "no digits", "invalid digit at byte <index>" or "number too large".
+    func message(self) -> String {
+        match self {
+            ParseError.Empty -> "no digits".to_string(),
+            ParseError.InvalidDigit(index) -> f"invalid digit at byte {index}",
+            ParseError.Overflow -> "number too large".to_string(),
+        }
+    }
 }
 
 // Whether `b` is ASCII whitespace: space, tab, line feed, vertical tab, form

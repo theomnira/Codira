@@ -1,7 +1,7 @@
 # Standard library status
 
 What each module of `std/` does today, what shows it, and what stands in
-its way. One row per module that exists (94 files, the prelude included)
+its way. One row per module that exists (95 files, the prelude included)
 and one per module that is planned. This page says what the standard
 library *is*; [ARCHITECTURE.md](ARCHITECTURE.md) says what it should
 become and [ROADMAP.md](ROADMAP.md) in what order.
@@ -10,13 +10,13 @@ become and [ROADMAP.md](ROADMAP.md) in what order.
 
 | status | modules | meaning |
 |---|---:|---|
-| importable | 34 | A program's `import std.<module>.*` checks, builds and loads. |
+| importable | 35 | A program's `import std.<module>.*` checks, builds and loads. |
 | checks-but-not-importable | 4 | Clean when `std/` is checked as one package with its prelude, but a program importing it fails: it imports a module with errors, or uses a prelude name. |
 | fails | 56 | The module's own file has diagnostics. |
-| planned | 52 | No file yet; part of the target layout. |
+| planned | 51 | No file yet; part of the target layout. |
 | unsupported | 7 | Not planned, with the reason given in its row. |
 
-Of the 34 importable modules, 32 are run end to end by a program against
+Of the 35 importable modules, 33 are run end to end by a program against
 independently computed values; `std.memory.page` and
 `std.builtin.type_aliases` are imported but not run.
 
@@ -89,8 +89,9 @@ path is given.
 | `std.complex.complex_string` | importable | `complex_to_string` (`std_string_modules_work`) | — | — | L+CI |
 | `std.crypto.hash` | importable | SHA-256, SHA-512, BLAKE3 over raw memory (RustCrypto `sha2`, `blake3` in the runtime) against NIST and BLAKE3 vectors (`a_program_computes_sha256_through_std_crypto_hash`; `crates/codira/tests/fs_and_hash.rs`: `a_codira_program_computes_the_known_answer_digests`) | — | Cryptographic. Not constant time in the length. `@noalloc @nopanic @noblock` are trusted assertions about the runtime. | L+CI |
 | `std.db.db` | importable | snapshot-isolation transactions, commit, conflict, reopen (`db_and_ai.rs`: `the_std_wrappers_compile_and_work`, `a_codira_program_commits_reopens_and_reads_back`, `a_codira_program_observes_a_write_write_conflict`) | — | Experimental. Snapshot isolation, not serializable (write skew). One process per directory, no lock file. Whole data set in memory. | L+CI |
+| `std.error.error` | importable | the `Error` trait (`message`, `source`, `into_any`), `AnyError` (a root cause, contexts, the original error's type name; `to_string` writes `outer: inner: root`), `context`/`with_context` on `Result[T, E: Error]`, and `?` converting any `E: Error` to `AnyError` through its `@error_conversion`; `FileError` and `ParseError` implement `Error` (`crates/codira/tests/error_context.rs`: `a_three_level_context_chain_through_question_mark_and_read_file`, `question_mark_converts_every_error_type_and_passes_any_error_on`, `main_returning_an_err_prints_the_chain_and_exits_with_status_1`) | — | An `AnyError` keeps the original error's message and type name, not the error itself (no trait objects): it cannot be downcast. Adding a context copies the context array. | L+CI |
 | `std.format.format` | importable | `format(template, [args])` with `{}` and `{0}`, `format_int`/`format_uint` in a base, `hex`/`bin`/`oct`, `pad_left`/`pad_right`/`center` (`std_string_modules_work`) | — | A template is read at run time: an unmatched placeholder is kept as written, not an error (`f".."` is checked at compile time). | L+CI |
-| `std.fs.file` | importable | `read_file(path) -> Result[[u8], FileError]` (`NotFound`, `PermissionDenied`, `IsADirectory`, `Other(code)`), errors passed on with `?` (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`) | — | Reads the whole file into memory; no size limit. The file is closed on every path. No writing: use `std.fs.fs`. | L+CI |
+| `std.fs.file` | importable | `read_file(path) -> Result[[u8], FileError]` (`NotFound`, `PermissionDenied`, `IsADirectory`, `Other(code)`), errors passed on with `?`; `FileError` implements `std.error.error`'s `Error` (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`; `error_context.rs`) | — | Reads the whole file into memory; no size limit. The file is closed on every path. No writing: use `std.fs.fs`. | L+CI |
 | `std.fs.fs` | importable | open, read, write, seek, size, fsync, close, remove, rename, directory sync (`a_program_writes_and_reads_a_file_through_std_fs`; `fs_and_hash.rs`: `a_codira_program_writes_reads_renames_and_removes_a_file`) | — | Raw addresses: the runtime checks length and non-null only. Errors are negative codes, not `Result`. Durability claimed on Linux only; `fs_sync_dir` unsupported on Windows. Handles are never closed automatically. | L+CI |
 | `std.hashlib.hash` | importable | FNV-1a 64 over bytes, integers, floats, bools; combiners; `Hashable` for every integer and float type and `bool` (the MurmurHash3 finalizer) and `str` (FNV-1a) (`std_hashlib_hash_is_fnv1a`) | — | **Not cryptographic, not DoS-resistant** (unkeyed). `combine_hash` mixes weakly. | L+CI |
 | `std.hashlib.string_hash` | importable | `hash_string`, `hash_string_bytes`: FNV-1a 64, compared with Rust's (`std_string_modules_work`) | — | **Not cryptographic, not DoS-resistant.** | L+CI |
@@ -103,7 +104,7 @@ path is given.
 | `std.result.result` | importable | `Result[T, E]` with `is_ok`, `is_err`, `ok`, `err`, `unwrap_or`, `unwrap_or_else`, `map`, `map_err`, `and_then`, `or`, `expect`, `unwrap`, `from_optional`; `?` on it (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`; `crates/codira/tests/generic_enums.rs`) | — | `unwrap`, `expect` and `expect_err` panic. Cranelift `--jit` refuses `?`. A postcondition about a returned `Result` comes back Unknown from the verifier. | L+CI |
 | `std.sys.arg` | importable | `args`, `argv`, `program_name`, `has_flag`, `get_option`, `positional_arg`, `env_get`, `env_has` as `String`/`String?` (`std_string_modules_work`) | — | Under `codira run` the arguments are the `codira` command line's, not the program's. | L+CI |
 | `std.sys.terminate` | importable | `panic` writes `panic: <message>` and aborts; `assert`, `write_stderr` (`std_sys_terminate_panics_with_its_message`) | — | `debug_assert` follows the runtime's build, not the program's. | L+CI |
-| `std.text.ascii` | importable | `is_space`, `is_digit`, `next_word`, `parse_i64` with a `ParseError` naming the offending byte's index (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`) | — | ASCII only. `parse_i64` reports overflow as an error, not a wrap. | L+CI |
+| `std.text.ascii` | importable | `is_space`, `is_digit`, `next_word`, `parse_i64` with a `ParseError` naming the offending byte's index, which implements `std.error.error`'s `Error` (`std_result_fs_file_and_text_ascii_read_and_parse_a_file`; `error_context.rs`) | — | ASCII only. `parse_i64` reports overflow as an error, not a wrap. | L+CI |
 | `std.time.time` | importable | `Duration` arithmetic, monotonic `Instant`, sleep, wall clock (`std_time_measures_and_sleeps`) | — | Duration arithmetic wraps on overflow (except `duration_sub`, which saturates). Wall clock is an `f64` of seconds. | L+CI |
 
 ## Checks but not importable
@@ -131,7 +132,7 @@ path is given.
 | `std.atomic.atomic` | fails | — | module-level `let` (`RELAXED`); *needs: module-level `let` (its orderings), `String`, and in-place parameters (`mut`), none of which the compiler has: it rejects the first and the last* | No atomic intrinsics are declared to the compiler yet. | — |
 | `std.builtin.bool` | fails | — | undefined type `String` | Duplicates the primitive `bool`. | — |
 | `std.builtin.dtype` | fails | — | 231 diagnostics (`!` on a method call; a Mojo-style `DType`) | — | — |
-| `std.builtin.error` | fails | — | undefined type `String` | `eq` uses `&` for `&&` (see Defects). | — |
+| `std.builtin.error` | fails | — | undefined type `String` | Superseded by `std.error.error`. `eq` uses `&` for `&&` (see Defects). | — |
 | `std.builtin.int` | fails | — | undefined `__panic` (a prelude name not imported) | Duplicates the primitive integers. | — |
 | `std.builtin.range` | fails | — | mismatched types: `&` where `&&` is meant (see Defects) | — | — |
 | `std.builtin.simd` | fails | — | undefined `__simd_storage[T, N]` (const generics, SIMD storage) | — | — |
@@ -200,10 +201,9 @@ is the API layer of the architecture, not a schedule; the milestone is in
 | `std.string` | planned | fundamental: owned UTF-8 `String` (replaces `std.collections.string`, `std.builtin.string_literal`) | moving the built-in `String`'s extras into `std.string` | Allocates; byte indices | — |
 | `std.collections` | planned | fundamental: `Array` (growable), `Map`, `Set`, `Deque`, `BinaryHeap`, `BitSet`, ordered map (replaces today's `std.collections.*`) | `BitSet`, ordered map, a keyed hasher; `Map`, `Set`, `Deque`, `BinaryHeap` exist under `std.collections.*` on growable arrays | Keyed default hasher (DoS-resistant) | — |
 | `std.hash` | planned | fundamental: `Hash`/`Hasher` traits, FNV-1a, a keyed default hasher (replaces `std.hashlib.*`) | generic traits, in-place parameters | Default hasher keyed per process | — |
-| `std.fmt` | planned | fundamental: `Display`/`Debug` traits, number formatting and parsing (replaces `std.format.*`) | `String`, generic traits, derive | — | — |
+| `std.fmt` | planned | fundamental: `Display`/`Debug` traits, number formatting and parsing (replaces `std.format.*`) | generic traits; format specs (`f"{x:>8.3}"`) and a debug form of every type (`f"{x:?}"`) are built into the compiler | — | — |
 | `std.alloc` | planned | fundamental: `Region`, pages, aligned allocation, allocator interface (replaces `std.memory.region`, `std.memory.page`, `std.memory.alloc`) | — | Raw memory | — |
 | `std.random` | planned | fundamental: one `Rng` API (replaces `std.random.rng`, `std.random.random`), seeded or from OS entropy | runtime entropy service | Default generator not cryptographic; `std.crypto.random` is | — |
-| `std.error` | planned | fundamental: the `Error` trait, an any-error box with context (replaces `std.builtin.error`) | generic enums, trait objects | — | — |
 | `std.io` | planned | application: `Reader`/`Writer`, buffered I/O, stdin/stdout/stderr | `Result`, growable arrays, trait objects or generic traits; runtime stdin/stdout services | — | — |
 | `std.fs` | planned | application: `File`, directories, metadata, `read_to_end`/`write_all` with `Result` (replaces `std.fs.fs`, `std.os.os`, file parts of `std.pathlib.path`) | `Result`, `String`; runtime directory services | Typed handles; `Result` errors | — |
 | `std.path` | planned | application: one `Path` type and pure path functions, per-platform separators (replaces `std.os.path`, `std.pathlib.path`) | `String` | — | — |

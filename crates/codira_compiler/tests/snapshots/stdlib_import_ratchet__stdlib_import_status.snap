@@ -3,7 +3,7 @@ source: crates/codira_compiler/tests/stdlib_import_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-34 of 94 std modules are importable from a program
+35 of 95 std modules are importable from a program
 
 importable:
   std.ai.runtime
@@ -24,6 +24,7 @@ importable:
   std.complex.complex_string
   std.crypto.hash
   std.db.db
+  std.error.error
   std.format.format
   std.fs.file
   std.fs.fs

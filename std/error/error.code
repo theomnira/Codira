@@ -1,0 +1,168 @@
+// =============================================================================
+// std/error/error.code — Errors with context: the `Error` trait and `AnyError`
+// =============================================================================
+//
+// A function that can fail for many reasons, none of which its caller will
+// tell apart, returns `Result[T, AnyError]`. `?` passes on an error of any
+// type that implements `Error`, and `context` says what was being done when
+// it happened:
+//
+//     import std.error.error.{AnyError, Error}
+//     import std.fs.file.{read_file}
+//
+//     func load(path: str) -> Result[[u8], AnyError] {
+//         read_file(path).context(f"reading {path}")
+//     }
+//
+//     func setup() -> Result[i64, AnyError] {
+//         let bytes = load("app.toml").context("loading the configuration")?
+//         Result.Ok(bytes.len() as i64)
+//     }
+//
+// An `Err` from `setup` prints as `loading the configuration: reading
+// app.toml: file not found` -- the outermost context first, the root cause
+// last.
+//
+// `AnyError` is a plain value: the root cause's message, the contexts added
+// on the way out, and the name of the type of the error it was made from.
+// It keeps no error value of its own (there are no trait objects), so the
+// original error cannot be recovered from it, only described: match on a
+// concrete error type (`FileError`) before converting when the cause decides
+// what to do.
+//
+// How `?` converts: `AnyError.from_error` is marked `@error_conversion`, so
+// `?` in a function returning `Result[_, AnyError]` passes an `Err(e)` of
+// any type `E: Error` on as `AnyError.from_error(e)`, decided at compile
+// time per error type (see "Error handling" in USING_CODIRA.md).
+// =============================================================================
+
+import root.result.result.{Result};
+
+// An error type: what an error of it says went wrong.
+public trait Error {
+    // What went wrong, as a phrase with no trailing period: "file not
+    // found", "invalid digit at byte 3".
+    func message(self) -> String;
+
+    // The message of the error that caused this one, when it wraps another;
+    // `AnyError` puts it last, as the root cause.
+    func source(self) -> String? {
+        nil
+    }
+
+    // This error as an `AnyError`: its message (after its source, if it has
+    // one) and its type's name. `AnyError` itself is returned as it is.
+    func into_any(self) -> AnyError {
+        AnyError.wrap(self.message(), self.source(), self.type_name())
+    }
+}
+
+// Any error, described: a root cause and what was being done when it
+// happened.
+public struct AnyError {
+    // The root cause's message.
+    cause: String,
+    // What was being done, innermost first: each `context` adds one.
+    contexts: [String],
+    // The name of the type of the error this was made from, if any.
+    kind: String?,
+}
+
+extend AnyError {
+    // An error with `message` as its root cause.
+    public func new(message: String) -> AnyError {
+        AnyError { cause: message, contexts: [], kind: nil }
+    }
+
+    // The error described by `message`, caused by `source` if there is one,
+    // made from an error of the type named `type_name`.
+    public func wrap(message: String, source: String?, type_name: str) -> AnyError {
+        if let cause = source {
+            AnyError { cause: cause, contexts: [message], kind: type_name.to_string() }
+        } else {
+            AnyError { cause: message, contexts: [], kind: type_name.to_string() }
+        }
+    }
+
+    // `error` as an `AnyError`. `?` calls this to pass an `Err(error)` of any
+    // `Error` type on from a function that returns `Result[_, AnyError]`.
+    @error_conversion
+    public func from_error[E: Error](error: E) -> AnyError {
+        error.into_any()
+    }
+
+    // This error with `what` -- what was being done -- as its outermost
+    // context.
+    public func context(self, what: String) -> AnyError {
+        let more = self.contexts.copy()
+        more.push(what)
+        AnyError { cause: self.cause, contexts: more, kind: self.kind }
+    }
+
+    // The root cause's message.
+    public func root_cause(self) -> String {
+        self.cause
+    }
+
+    // The messages from the outermost context to the root cause.
+    public func chain(self) -> [String] {
+        var out: [String] = []
+        var i = self.contexts.len()
+        while i > 0 {
+            i -= 1
+            out.push(self.contexts[i])
+        }
+        out.push(self.cause)
+        out
+    }
+
+    // The name of the type of the error this was made from (`FileError`),
+    // or `nil` for one made from a message.
+    public func error_type(self) -> String? {
+        self.kind
+    }
+
+    // The chain, outermost first, separated by `: `:
+    // `reading app.toml: file not found`.
+    public func to_string(self) -> String {
+        var out = "".to_string()
+        var i = self.contexts.len()
+        while i > 0 {
+            i -= 1
+            out += self.contexts[i]
+            out += ": "
+        }
+        out += self.cause
+        out
+    }
+}
+
+extend AnyError: Error {
+    func message(self) -> String {
+        self.to_string()
+    }
+
+    func into_any(self) -> AnyError {
+        self
+    }
+}
+
+extend Result[T, E: Error] {
+    // An `Err` as an `AnyError` with `what` as its outermost context; an
+    // `Ok` as it is.
+    public func context(self, what: String) -> Result[T, AnyError] {
+        match self {
+            Result.Ok(value) -> Result.Ok(value),
+            Result.Err(error) -> Result.Err(error.into_any().context(what)),
+        }
+    }
+
+    // `context`, with the context made by `what` only when there is an
+    // error: `r.with_context(func() -> String { f"parsing line {n}" })`.
+    public func with_context(self, what: func() -> String) -> Result[T, AnyError] {
+        match self {
+            Result.Ok(value) -> Result.Ok(value),
+            Result.Err(error) -> Result.Err(error.into_any().context(what())),
+        }
+    }
+}

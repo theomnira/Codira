@@ -12,10 +12,15 @@
 //         Result.Ok(read_file(path)?)     // a FileError leaves as Problem.Io
 //     }
 //
+// `FileError` implements `std.error.error`'s `Error`, so in a function
+// returning `Result[_, AnyError]`, `read_file(path)?` passes it on too, and
+// `read_file(path).context(f"reading {path}")` says which file.
+//
 // Use std/fs/fs.code directly for writing, seeking, durability and the raw
 // FS_ERR_* codes.
 // =============================================================================
 
+import root.error.error.{Error};
 import root.fs.fs.{fs_open, fs_read, fs_size, fs_close, FS_READ, FS_ERR_NOT_FOUND,
                    FS_ERR_PERMISSION_DENIED, FS_ERR_IS_A_DIRECTORY};
 import root.result.result.{Result};
@@ -32,6 +37,19 @@ public enum FileError {
     IsADirectory
     // Any other FS_ERR_* code (see std/fs/fs.code).
     Other(i64)
+}
+
+extend FileError: Error {
+    // "file not found", "permission denied", "is a directory", or "I/O
+    // error <code>".
+    func message(self) -> String {
+        match self {
+            FileError.NotFound -> "file not found".to_string(),
+            FileError.PermissionDenied -> "permission denied".to_string(),
+            FileError.IsADirectory -> "is a directory".to_string(),
+            FileError.Other(code) -> f"I/O error {code}",
+        }
+    }
 }
 
 // The `FileError` for a negative FS_ERR_* code.
