@@ -251,6 +251,8 @@ def environment(args, perf, perf_status):
         },
         "perf": perf or ("not used (--no-perf)" if args.no_perf else "unavailable"),
         "perf_events": perf_status,
+        "codira_env": {k: v for k, v in sorted(os.environ.items())
+                       if k.startswith("CODIRA_") and k != "CODIRA_STD_PATH"},
         "runs": args.runs,
         "suite": args.suite,
         "seed": args.seed,
@@ -576,7 +578,8 @@ def summarize(kernels, results, rng):
                         "gc_peak_heap_bytes", "gc_live_after_last_bytes", "gc_bytes_allocated",
                         "gc_objects_allocated", "gc_collections", "gc_collections_paced",
                         "gc_collections_at_limit", "gc_collection_time_ns", "gc_time_to_safepoint_ns",
-                        "gc_pause_count", "gc_pause_p50_ns", "gc_pause_p99_ns", "gc_pause_max_ns"):
+                        "gc_pause_count", "gc_pause_p50_ns", "gc_pause_p99_ns", "gc_pause_max_ns",
+                        "gc_last_moved", "gc_last_unmovable"):
                 vals = [float(x["values"][key]) for x in s if key in x["values"]]
                 if vals:
                     res["median_" + key] = median(vals)
@@ -725,6 +728,9 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests, floor=N
     L.append(f"- toolchains: {env['codira_version']} (`{' '.join(env['flags']['codira'][:3])}`), "
              f"{env['rustc']} (`{' '.join(RUST_FLAGS)}`), "
              f"{(env['cxx_version'] or ['?'])[0]} (`{' '.join(CXX_FLAGS)}`)")
+    if env.get("codira_env"):
+        L.append("- Codira runtime settings from the environment: " +
+                 ", ".join(f"`{k}={v}`" for k, v in env["codira_env"].items()))
     L.append(f"- runs: {env['runs']} processes per kernel and variant, interleaved in a shuffled "
              f"order each round (seed {env['seed']}), after one warm-up round")
     supported = [e for e, s in env["perf_events"].items() if s == "ok"]
