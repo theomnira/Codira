@@ -249,7 +249,7 @@ def environment(args, perf, perf_status):
             "rust_cargo": "cargo build --release (profile in the baseline's Cargo.toml)",
             "cxx": CXX_FLAGS,
         },
-        "perf": perf or "unavailable",
+        "perf": perf or ("not used (--no-perf)" if args.no_perf else "unavailable"),
         "perf_events": perf_status,
         "runs": args.runs,
         "suite": args.suite,
@@ -536,7 +536,8 @@ def run_suite(args, kernels, binaries, host, perf, rng):
                 continue  # warm-up round: page cache, binaries, data files
             res["samples"].append({"round": rnd, "values": values, "rusage": ru, "perf": counters})
         el = time.monotonic() - t0
-        log(f"round {rnd + 1}/{args.runs} done ({done}/{total} processes, {el:.0f} s)")
+        label = "warm-up round" if rnd < 0 else f"round {rnd + 1}/{args.runs}"
+        log(f"{label} done ({done}/{total} processes, {el:.0f} s)")
     return results
 
 
@@ -667,8 +668,8 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests):
              f"order each round (seed {env['seed']}), after one warm-up round")
     supported = [e for e, s in env["perf_events"].items() if s == "ok"]
     missing = [f"{e} ({s})" for e, s in env["perf_events"].items() if s != "ok"]
-    if env["perf"] == "unavailable":
-        L.append("- `perf`: unavailable, no counters recorded")
+    if not os.path.isabs(str(env["perf"])):
+        L.append(f"- `perf`: {env['perf']}, no counters recorded")
     else:
         L.append(f"- `perf stat` counters recorded: {', '.join(supported) or 'none'}; "
                  f"not available: {', '.join(missing) or 'none'}")

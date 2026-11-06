@@ -127,3 +127,14 @@ kernels = [
   { name = "pretty_canada", check_differs = { cpp = "RapidJSON prints 320 of the 600,000 floats one or two digits longer than the shortest round-trip text (Grisu2), 357 bytes in all; the values read back the same" } },
   { name = "pretty_deep" },
 ]
+
+# A heap cap well above the live set, so that the collector runs often.
+[[workload]]
+name = "graph"
+title = "Object graphs: allocation-heavy trees, cyclic graphs"
+heap_limit_mb = 256
+kernels = [
+  { name = "binary_trees", ci = true },
+  { name = "cyclic_graph", ci = true },
+  { name = "linked_list" },
+]
