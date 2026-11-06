@@ -394,7 +394,7 @@ fn heap_results_survive_collections() {
             let collector = s.spawn(|| {
                 let mut collections = 0usize;
                 while !stop.load(Ordering::SeqCst) {
-                    gc.collect();
+                    gc.collect_blocking().unwrap();
                     collections += 1;
                     std::thread::sleep(Duration::from_micros(200));
                 }
