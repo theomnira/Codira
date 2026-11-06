@@ -40,3 +40,18 @@ fn a_field_access_cut_off_at_the_end_of_the_input() {
 fn a_brace_where_a_match_arm_should_start() {
     rejected("{match s{{");
 }
+
+/// Diagnostics about an expression or type the compiler made itself
+/// (error recovery, desugaring, the type of `self`) unwrapped its missing
+/// syntax. They are now reported on the function, never dropped.
+#[test]
+fn diagnostics_without_syntax_are_reported_on_the_function() {
+    // The operand of `-` is missing: "cannot apply" on a missing operand.
+    rejected("func u{-");
+    // `self` outside an `extend` block: its type has no syntax.
+    rejected("func n(self");
+    let diagnostics = rejected("func n(self) {}");
+    assert!(diagnostics.contains("undefined type"), "{diagnostics}");
+    // An `if let` cut short inside an `if` condition.
+    rejected("func s{if if let t");
+}
