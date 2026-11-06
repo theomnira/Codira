@@ -134,6 +134,9 @@ pub struct RuntimeOptions {
     /// When the collector runs besides at the heap limit. See
     /// [`RuntimeBuilder::gc_policy`].
     pub gc_policy: GcPolicy,
+    /// Whether collections relocate objects out of sparse blocks
+    /// (experimental). See [`RuntimeBuilder::compaction`].
+    pub compaction: bool,
     /// The fuel budget of fuel-instrumented code, or `None` for no limit. See
     /// [`RuntimeBuilder::fuel`].
     pub fuel: Option<u64>,
@@ -328,6 +331,7 @@ impl RuntimeBuilder {
                 heap_limit: None,
                 heap_limit_note: None,
                 gc_policy: GcPolicy::default(),
+                compaction: false,
                 fuel: None,
             },
         }
@@ -388,6 +392,16 @@ impl RuntimeBuilder {
     /// limit and on request.
     pub fn gc_growth(mut self, percent: Option<u32>) -> Self {
         self.options.gc_policy.growth_percent = percent;
+        self
+    }
+
+    /// Turns on relocation (experimental, also `CODIRA_GC_COMPACT=1`): a
+    /// collection moves the live objects out of size-class blocks that are
+    /// at most a quarter full and releases the blocks. Objects a stack, a
+    /// root or a pin refers to never move. See
+    /// `codira_memory::gc::MarkSweep::set_compaction`.
+    pub fn compaction(mut self, on: bool) -> Self {
+        self.options.compaction = on;
         self
     }
 
@@ -590,6 +604,9 @@ impl Runtime {
         runtime.gc.set_heap_limit_note(options.heap_limit_note);
         runtime.gc.set_policy(options.gc_policy);
         ensure_emergency_reserve();
+        if options.compaction {
+            runtime.gc.set_compaction(true);
+        }
         if gc::frames::stress() {
             // Stress mode: polls of compiled code collect too.
             let collector = Arc::downgrade(&runtime.gc);

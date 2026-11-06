@@ -21,6 +21,7 @@ use std::{marker::PhantomData, ptr::NonNull};
 pub use heap::AllocError;
 pub use mark_sweep::{CollectRefused, MarkSweep};
 pub use policy::GcPolicy;
+pub use mark_sweep::RelocationReport;
 pub use ptr::{GcPtr, HasIndirectionPtr, RawGcPtr};
 pub use root_ptr::GcRootPtr;
 pub use snapshot::{RestoredHeap, SnapshotError};
