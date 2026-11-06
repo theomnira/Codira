@@ -476,10 +476,15 @@ from mold, and what is still only a goal.
 ## Strings: measured against Rust
 
 `String` (see "Strings" in `agents/USING_CODIRA.md`) against Rust's
-`String` on the same algorithms. The programs are in `benches/strings/`:
-`src/mod.code` (Codira) and `strings.rs` (Rust), each printing one line per
-benchmark with the elapsed nanoseconds and a check value; the check values
-of the two programs are equal for every benchmark.
+`String` on the same algorithms. The programs are now the `strings`
+workload of the AURORA benchmark suite, `benches/aurora/strings/`:
+`src/mod.code` (Codira), `strings.rs` (Rust) and `strings.cpp` (C++), one
+kernel per process, each printing its elapsed nanoseconds and a check
+value; the check values are equal for every kernel. The table below was
+measured with the earlier programs (the names are now `append_short`,
+`append_numbers`, `split_lines`, `lines_lazy`, `split_lazy_count`,
+`find_10mb`, `parse_i64`); `benches/aurora/RESULTS.md` has current numbers
+with confidence intervals.
 
 | benchmark | before String Fabric | Codira | Rust | Codira / Rust |
 |---|---:|---:|---:|---:|
@@ -495,7 +500,7 @@ Medians of 11 alternating runs, on one machine: Intel Xeon @ 2.10 GHz (4
 vCPUs, AVX2 and AVX-512), 16 GB, Linux 6.18; Rust 1.97.1. The machine was
 shared with other builds (load average 4 to 5), so single runs vary by up
 to 30%. Codira: the program built with `codira build -O 3` and run by
-`benches/strings/host` (the runtime in release mode, so its string
+a host (now `benches/aurora/host`; the runtime in release mode, so its string
 functions are optimized as in a release `codira`); Rust: `rustc -C
 opt-level=3 strings.rs`. Both for the default x86-64 target. (Rust's lazy
 split uses a `char` pattern, `split(',')`, its fastest.)
@@ -523,8 +528,6 @@ What the numbers say:
 To run them:
 
 ```bash
-codira build -O 3 --manifest-path benches/strings/codira.toml
-cargo build --release --manifest-path benches/strings/host/Cargo.toml
-benches/strings/host/target/release/string_bench_host benches/strings/target/mod.codiralib
-rustc -C opt-level=3 -o /tmp/strings benches/strings/strings.rs && /tmp/strings
+cargo build --release -p codira
+python3 scripts/bench.py --only strings.
 ```

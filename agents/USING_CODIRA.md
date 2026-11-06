@@ -392,10 +392,14 @@ seen.union(other); seen.intersection(other); seen.difference(other)
 
 **Measured** (x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores; Codira at `-O 2`
 with a release build of the compiler and runtime, Rust 1.97 at `-C
-opt-level=3`; median of 5 alternating runs, milliseconds). The programs are
-`examples/collections_bench/src/mod.code` and
-`examples/collections_bench/collections_rust.rs`; both print the same
-checksums.
+opt-level=3`; median of 5 alternating runs, milliseconds). The programs
+were `examples/collections_bench`; they are now kernels of the AURORA
+benchmark suite, `benches/aurora/collections` and `benches/aurora/hashmap`
+(every map operation at 1K, 100K and 1M keys under both hashers; Codira,
+Rust and C++, all printing the same checksums): `python3 scripts/bench.py
+--only collections. --only hashmap.` reruns them, and
+`benches/aurora/RESULTS.md` has the current numbers with confidence
+intervals.
 
 | work | Codira | Rust |
 |---|---:|---:|
@@ -537,7 +541,8 @@ differences under 10% are noise.
   field is within noise (29.6 vs 29.3 ms), and a loop storing into another
   array is 6% slower (22.4 vs 21.2 ms) because the length is reloaded after
   each store; with `CODIRA_ARRAY_TBAA=1` that loop is unchanged (17.0 vs
-  17.3 ms). Program: `examples/collections_loop_cost/src/mod.code`.
+  17.3 ms). Program: the `store_field` and `copy_plus_one` kernels of
+`benches/aurora/loops/src/mod.code`.
 
 ### Hashing: `std.hashlib.hash`
 
@@ -747,8 +752,9 @@ x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores (shared: load average about 2
 during the runs); Codira at `-O 2` with a release build of the compiler and
 runtime, Rust 1.97 at `-C opt-level=3`; median of 5 alternating runs,
 milliseconds, 10M elements. The programs are
-`examples/pipelines_bench/src/mod.code` and
-`examples/pipelines_bench/pipelines_rust.rs`; both print the same checksums.
+now kernels of `benches/aurora/collections` (Codira, Rust and C++; all
+print the same checksums); see `benches/aurora/RESULTS.md` for the current
+numbers.
 
 | work | Codira | Rust |
 |---|---:|---:|
@@ -1358,14 +1364,15 @@ heap, which this backend does not reach)`).
 #### Performance
 
 Measured against Rust's `String` and `format!` on the same algorithms
-(`benches/strings/`: `src/mod.code` and `strings.rs`;
-`examples/format_bench/`: `src/mod.code` and `format_rust.rs`; each pair
-prints the same check values). Medians of 11 alternating runs of each
+(the programs are now the `strings` and `format` workloads of the AURORA
+suite, `benches/aurora/strings/` and `benches/aurora/format/`, with C++
+baselines; all print the same check values, and `benches/aurora/RESULTS.md`
+has current numbers with intervals). Medians of 11 alternating runs of each
 program (format specs: 5 runs, each the median of 7 rounds of 1M
 formats), on an Intel Xeon @ 2.10 GHz VM (4 vCPUs, Linux 6.18) shared with
 other builds (load average 4 to 5 during the runs, so single runs vary by
 up to 30%); Codira built with `codira build -O 3` and run by
-`benches/strings/host` (the runtime in release mode), Rust 1.97.1 with
+a host with the runtime in release mode (now `benches/aurora/host`), Rust 1.97.1 with
 `rustc -C opt-level=3`.
 
 | benchmark | before | Codira | Rust | Codira / Rust |
@@ -1548,20 +1555,23 @@ that both texts are byte for byte the ones `serde_json` prints.
 machine: an x86-64 VM, Intel Xeon @ 2.10 GHz, 4 vCPUs shared with other
 builds (load average 3 to 4 during the runs), 16 GB, Linux 6.18, Rust
 1.97.1. Codira: `codira build -O 3` with a release build of the
-compiler, run by `examples/json_bench/host` (the runtime in release mode
-and a 1 GiB heap limit, so that the collector runs). Rust: `cargo build
+compiler, run by a host with the runtime in release mode and a 1 GiB heap
+limit, so that the collector runs (now `benches/aurora/host`). Rust: `cargo build
 --release` with `serde_json`'s `preserve_order` (insertion order, as
 here) and `float_roundtrip` (correctly rounded floats, as here). Each
 program parses, prints and pretty-prints each input 11 times and reports
 the median; the table is the median of 5 alternating runs of both, in
 milliseconds. Both print the same check values (node count, string bytes,
 sums of the integers and of the floats' bits, output lengths). The inputs
-are written by `examples/json_bench/gen_inputs.py` (seeded): `twitter`, an
+are written by `benches/aurora/json/gen_inputs.py` (seeded): `twitter`, an
 array of 20,000 records of a social network's API (16.9 MB); `canada`,
 GeoJSON polygons of 300,000 17-digit coordinate pairs (11.8 MB); `deep`,
 4,000 trees of objects and arrays 100 deep (7.0 MB; its pretty text is
-149 MB of mostly indentation). `python3 examples/json_bench/bench.py
---codira <codira> --work <dir>` does all of it.
+149 MB of mostly indentation). The programs are now the `json` workload of
+the AURORA suite (`benches/aurora/json/`, with a RapidJSON baseline; each
+kernel repeats its phase 5 times in a process of its own): `python3
+scripts/bench.py --only json.` reruns them, and `benches/aurora/RESULTS.md`
+has the current numbers.
 
 | input | phase | Codira | Rust | Codira / Rust |
 |---|---|---:|---:|---:|
@@ -2186,11 +2196,13 @@ it does not keep it.
   array), and `?` through a conversion is a call of it, so a function with
   a converting `?` is not `@noalloc`; a wrapping or same-type `?` still
   costs nothing.
-- **What it costs**, measured (`examples/error_bench/`: a `parse_i64` that
+- **What it costs**, measured (the programs were `examples/error_bench`;
+  they are now the `result` workload of the AURORA suite,
+  `benches/aurora/result/`, with Rust and C++ baselines: a `parse_i64` that
   succeeds or fails, passed on by `?` from a function, 1M calls; and
   `examples/results`' loop -- `next_word`, `parse_i64` and `?` per word --
   over 1M words in memory; the median of 7 runs in each process and the
-  median of 5 processes, nanoseconds per call or word). `error_rust.rs` is
+  median of 5 processes, nanoseconds per call or word). `result.rs` is
   the same work in Rust (the same algorithms, `From` for the wrapping, an
   `AnyError` of the same shape built the same way), printing the same check
   values. x86-64 VM, Intel Xeon @ 2.10 GHz, release builds of the compiler
@@ -4476,7 +4488,9 @@ signature.
 
 Limits: times are wall-clock, on a machine that is not quiesced by the
 runner (no CPU pinning, no frequency control), so compare baselines taken on
-the same machine. The call overhead depends on how the `codira` binary
+the same machine. For comparisons with Rust and C++, memory, latency
+percentiles and a CI regression gate, see the AURORA suite
+(`benches/aurora/README.md`, run by `scripts/bench.py`). The call overhead depends on how the `codira` binary
 itself was built (a debug build of the compiler is slower). Allocation and
 memory use are not measured.
 
