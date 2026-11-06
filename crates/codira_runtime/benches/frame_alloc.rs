@@ -7,10 +7,8 @@
 //!   small temporary objects in a loop, a builder, and a temporary array,
 //!   each built with frame allocation off and on, and the same work written
 //!   in Rust (with the objects on the stack, and boxed on the heap).
-//! - Allocation counts are exact, not estimated: without a heap limit the
-//!   collector never runs, so the heap's live payload bytes after one call
-//!   are the bytes that call allocated, and each workload allocates objects
-//!   of one known payload size.
+//! - Allocation counts are exact, not estimated: `Runtime::stats()` counts
+//!   every object allocated.
 //!
 //! Run with `cargo bench -p codira_runtime --bench frame_alloc`. Samples
 //! alternate between the builds; the report gives the median per loop
@@ -24,7 +22,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use codira_memory::gc::GcRuntime;
 use codira_test::CompileAndRunTestDriver;
 
 const WORKLOADS: &str = r#"
@@ -73,13 +70,11 @@ const WORKLOADS: &str = r#"
     }
 "#;
 
-/// Payload bytes of one object of each workload's allocation (two `i64`
-/// fields; three; a four-element `[i64]`: length, capacity, elements).
-fn object_bytes(workload: &str) -> (usize, usize) {
+/// Objects each iteration of a workload allocates without frame allocation.
+fn objects_per_iteration(workload: &str) -> usize {
     match workload {
-        "temps" => (16, 2),
-        "builder" => (24, 1),
-        "temp_array" => (16 + 4 * 8, 1),
+        "temps" => 2,
+        "builder" | "temp_array" => 1,
         _ => unreachable!(),
     }
 }
@@ -216,18 +211,16 @@ fn main() {
         "rust box"
     );
     for workload in ["temps", "builder", "temp_array"] {
-        // Exact allocation counts: one call each, nothing collected.
+        // Exact allocation counts, from the runtime's statistics.
         let counts: Vec<usize> = [&heap, &frame]
             .iter()
             .map(|driver| {
-                let before = driver.runtime.gc().stats().allocated_memory;
+                let before = driver.runtime.stats().objects_allocated;
                 let _: i64 = driver.runtime.invoke(workload, (n,)).unwrap();
-                let after = driver.runtime.gc().stats().allocated_memory;
-                let (size, _) = object_bytes(workload);
-                (after - before) / size
+                (driver.runtime.stats().objects_allocated - before) as usize
             })
             .collect();
-        let (_, per_iteration) = object_bytes(workload);
+        let per_iteration = objects_per_iteration(workload);
         assert_eq!(
             counts[0],
             n as usize * per_iteration,
@@ -258,8 +251,8 @@ fn main() {
             }
             // The unlimited heap grows with every call; start the next
             // sample from an empty one.
-            heap.runtime.gc_collect();
-            frame.runtime.gc_collect();
+            let _ = heap.runtime.collect_blocking();
+            let _ = frame.runtime.collect_blocking();
         }
         let medians: Vec<f64> = times.iter_mut().map(|t| median(t, n)).collect();
         println!(

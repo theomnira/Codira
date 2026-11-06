@@ -3179,9 +3179,8 @@ in `crates/codira_hir/src/escape.rs`; its results are the salsa queries
 
 Measured (`cargo bench -p codira_runtime --bench frame_alloc`; Intel Xeon
 @ 2.10 GHz, 4 cores, Linux x86-64; medians of 21 samples of 2,000,000
-iterations, the same checksum from every build; allocation counts exact:
-nothing is collected without a heap limit, so the heap's payload bytes after
-a call are what it allocated):
+iterations, the same checksum from every build; allocation counts exact,
+from `Runtime::stats().objects_allocated`):
 
 | workload | heap allocs | frame allocs | heap ns/it | heap + GC (16 MiB) | frame ns/it | Rust stack | Rust `Box` |
 |---|---|---|---|---|---|---|---|
