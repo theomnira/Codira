@@ -19,12 +19,15 @@
 //!   bounded by construction, so live bytes must plateau): the largest
 //!   value in the second half of the run must stay within 1.5 times (plus
 //!   64 KiB) the largest in the first half.
-//! - Committed bytes: within the heap limit when one is set; otherwise the
-//!   same plateau rule as live bytes, with 1 MiB of slack.
+//! - Committed bytes: within the heap limit when one is set; otherwise
+//!   (the service then collects every 20 batches) the same plateau rule as
+//!   live bytes, with 1 MiB of slack.
 //! - Throughput (requests per second): the last window must reach half the
 //!   median of the early windows. This catches gross slowdowns (a heap that
 //!   fragments into a crawl, collections that get slower as the run goes
-//!   on), not a few percent.
+//!   on), not a few percent. It is enforced only when `CODIRA_SOAK_SECS` is
+//!   set (the gate runner runs the test alone); in a plain `cargo test`,
+//!   among other tests, it is printed.
 //!
 //! # Run length
 //!
@@ -34,8 +37,9 @@
 //!
 //! # What it cannot catch
 //!
-//! Collections here are the heap limit's and one at the end of each window
-//! (the runtime does not yet collect on its own without a limit). Growth
+//! Collections here are the heap limit's, or the service's own every 20
+//! batches, and one at the end of each window (the runtime does not yet
+//! collect on its own without a limit). Growth
 //! slower than the plateau rule's slack within the run time, leaks outside
 //! the GC heap, and latency spikes (only window averages are measured) go
 //! unnoticed.
@@ -130,6 +134,10 @@ const SERVICE: &str = r#"
 
 const BATCH: i64 = 500;
 const WINDOWS: usize = 8;
+/// Without a heap limit the service collects every this many batches (a
+/// request count, so what it commits does not depend on how fast the
+/// machine is), and at the end of each window.
+const COLLECT_EVERY: i64 = 20;
 
 struct Window {
     requests: i64,
@@ -176,6 +184,9 @@ fn soak(heap_limit: Option<usize>) {
             assert_eq!(total, served, "the server lost count");
             requests += BATCH;
             seed += 1;
+            if heap_limit.is_none() && seed % COLLECT_EVERY == 0 {
+                gc.collect();
+            }
         }
         let seconds = start.elapsed().as_secs_f64();
         gc.collect();
@@ -227,6 +238,12 @@ fn soak(heap_limit: Option<usize>) {
             );
         }
     }
+    // Throughput depends on what else the machine runs, so it is only
+    // enforced when the gate runner sets the duration (and runs the test
+    // alone); otherwise it is reported.
+    if std::env::var_os("CODIRA_SOAK_SECS").is_none() {
+        return finish(gc, server);
+    }
     // Window 0 warms up; compare the last window with windows 1 to 3.
     let mut early: Vec<f64> = windows[1..4]
         .iter()
@@ -241,6 +258,14 @@ fn soak(heap_limit: Option<usize>) {
         early[1]
     );
 
+    finish(gc, server);
+}
+
+/// Drops the server: everything it held must be freed.
+fn finish(
+    gc: &codira_memory::gc::MarkSweep<codira_memory::gc::NoopObserver<codira_memory::gc::Event>>,
+    server: RootedStruct,
+) {
     drop(server);
     gc.collect();
     assert_eq!(gc.stats().allocated_memory, 0, "the server's state leaked");

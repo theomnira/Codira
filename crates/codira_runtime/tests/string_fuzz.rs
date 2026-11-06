@@ -13,8 +13,8 @@
 //!   integer `to_string`. The heap is capped small, so collections run in
 //!   the middle of the operations.
 //!
-//! `CODIRA_FUZZ_SECS` (default 3) and `CODIRA_FUZZ_SEED` (default: from the
-//! clock, printed) set the run.
+//! `CODIRA_FUZZ_SECS` (a duration) and `CODIRA_FUZZ_SEED` set the run;
+//! without them, 30,000 operations from a fixed seed.
 //!
 //! What it cannot catch: operations whose arguments the generator never
 //! produces (slices at non-boundaries and empty `split` separators panic by
@@ -364,25 +364,23 @@ fn check_one(runtime: &Runtime, rng: &mut Rng) {
 fn string_operations_agree_with_rust() {
     let driver = CompileAndRunTestDriver::new(OPS, |builder| builder.heap_limit(32 * 64 * 1024))
         .expect("Failed to build test driver");
+    // A fixed seed and count by default, so a plain `cargo test` is the same
+    // run everywhere; the gate runner sets both variables.
     let seed = std::env::var("CODIRA_FUZZ_SEED")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64
-                | 1
-        });
-    let secs: f64 = std::env::var("CODIRA_FUZZ_SECS")
+        .unwrap_or(0x5717_F022);
+    let deadline = std::env::var("CODIRA_FUZZ_SECS")
         .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(3.0);
-    let deadline = Instant::now() + Duration::from_secs_f64(secs);
+        .and_then(|v| v.parse::<f64>().ok())
+        .map(|secs| Instant::now() + Duration::from_secs_f64(secs));
     let mut rng = Rng(seed);
     let mut cases = 0u64;
     eprintln!("string fuzz: seed {seed}");
-    while cases < 100 || Instant::now() < deadline {
+    while match deadline {
+        Some(deadline) => cases < 100 || Instant::now() < deadline,
+        None => cases < 30_000,
+    } {
         check_one(&driver.runtime, &mut rng);
         cases += 1;
     }

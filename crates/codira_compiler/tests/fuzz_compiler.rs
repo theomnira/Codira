@@ -22,9 +22,11 @@
 //!
 //! # Run length
 //!
-//! `CODIRA_FUZZ_SECS` (default 4) and `CODIRA_FUZZ_SEED` (default: from the
-//! clock, printed). Regression cases for every crash found are compiled by
-//! `fuzz_regressions` on every run.
+//! `CODIRA_FUZZ_SECS` runs for that many seconds and `CODIRA_FUZZ_SEED`
+//! sets the seed (printed). Without them a plain `cargo test` runs 250
+//! cases from a fixed seed, the same on every machine. The reduced crashes
+//! found so far are regression tests in `codira_hir`'s `fuzz_regressions`
+//! (and next to the fix where it is elsewhere).
 //!
 //! # What it cannot catch
 //!
@@ -556,26 +558,43 @@ fn install_quiet_panic_hook() {
     }));
 }
 
-fn budget() -> Duration {
-    Duration::from_secs_f64(
-        std::env::var("CODIRA_FUZZ_SECS")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(4.0),
-    )
+/// How long a run goes on: `CODIRA_FUZZ_SECS` seconds when set (the gate
+/// runner), otherwise a fixed number of cases, so a plain `cargo test` is
+/// the same run on every machine.
+enum Length {
+    Time(Instant),
+    Cases(u64),
 }
 
+impl Length {
+    fn from_env() -> Self {
+        match std::env::var("CODIRA_FUZZ_SECS")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+        {
+            Some(secs) => Length::Time(Instant::now() + Duration::from_secs_f64(secs)),
+            None => Length::Cases(DEFAULT_CASES),
+        }
+    }
+
+    fn goes_on(&self, done: u64) -> bool {
+        match self {
+            Length::Time(deadline) => Instant::now() < *deadline,
+            Length::Cases(cases) => done < *cases,
+        }
+    }
+}
+
+/// The cases a plain `cargo test` runs.
+const DEFAULT_CASES: u64 = 250;
+
+/// `CODIRA_FUZZ_SEED`, or a fixed seed: a plain `cargo test` must not find
+/// a new crash on someone else's change. The gate runner draws fresh ones.
 fn seed() -> u64 {
     std::env::var("CODIRA_FUZZ_SEED")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or_else(|| {
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos() as u64
-                | 1
-        })
+        .unwrap_or(0xC0D1_F022)
 }
 
 /// Saves a crashing program and returns where.
@@ -592,7 +611,7 @@ fn mutated_programs_never_crash_the_compiler() {
     let corpus = corpus();
     let words = words(&corpus);
     let seed = seed();
-    let deadline = Instant::now() + budget();
+    let length = Length::from_env();
     let case = Arc::new(AtomicU64::new(0));
 
     // A watchdog: a single case that takes a minute is a hang.
@@ -615,7 +634,7 @@ fn mutated_programs_never_crash_the_compiler() {
     let mut rng = Rng(seed);
     let mut crashes = Vec::new();
     let (mut compiled, mut rejected) = (0u64, 0u64);
-    while Instant::now() < deadline {
+    while length.goes_on(case.load(Ordering::SeqCst)) {
         let n = case.fetch_add(1, Ordering::SeqCst);
         // Mostly the small seeds, which reach the type checker and code
         // generation more often.

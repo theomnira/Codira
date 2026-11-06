@@ -32,8 +32,8 @@
 //!
 //! Each test runs seeds until `CODIRA_STRESS_SECS` seconds (default 3) have
 //! passed, and reports the seeds and collections it ran.
-//! `CODIRA_STRESS_SEED` sets the first seed (default: from the clock,
-//! printed so a failure can be replayed). The gate runner
+//! `CODIRA_STRESS_SEED` sets the first seed (default 1; every failure names
+//! its seed, so it can be replayed). The gate runner
 //! (`scripts/aurora_gates.py`) runs it for minutes; run it for hours with
 //! `CODIRA_STRESS_SECS=7200`.
 //!
@@ -367,16 +367,12 @@ fn budget() -> Duration {
 }
 
 fn first_seed() -> i64 {
+    // Fixed by default, so a plain `cargo test` starts from the same graph
+    // everywhere; the gate runner sets a fresh one.
     std::env::var("CODIRA_STRESS_SEED")
         .ok()
         .and_then(|value| value.parse().ok())
-        .unwrap_or_else(|| {
-            let nanos = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .subsec_nanos();
-            i64::from(nanos % 1_000_000) + 1
-        })
+        .unwrap_or(1)
 }
 
 fn build(
@@ -433,10 +429,12 @@ fn host_collector<'s>(
 
 /// Runs graphs of random seeds for the time budget, with collections from
 /// inside the program (`point_rate`/65536 of operations) and from a host
-/// thread (pausing up to 63 `host_pause_unit`s between them). Returns the
-/// number of runs.
+/// thread (pausing up to 63 `host_pause_unit`s between them). With
+/// `until_limit`, it also goes on until the heap limit has collected.
+/// Returns the number of runs.
 fn run_graphs(
     driver: &CompileAndRunTestDriver,
+    until_limit: bool,
     point_rate: u64,
     host_pause_unit: Duration,
     tasks: i64,
@@ -458,7 +456,11 @@ fn run_graphs(
         host_collector(s, gc, &done, seed, host_pause_unit, &host_collections);
         let _done = SetOnDrop(&done);
         let mut seed = seed;
-        while runs == 0 || Instant::now() < deadline {
+        // With `until_limit`, past the deadline it goes on (up to 500
+        // graphs) until the limit has collected at least once: on a slow
+        // machine (a sanitizer build) the time alone may not get there.
+        let limit_unreached = || until_limit && gc.emergency_collections() == 0;
+        while runs == 0 || Instant::now() < deadline || (limit_unreached() && runs < 500) {
             POINT_SEED.store(seed as u64, Ordering::Relaxed);
             let got: i64 = if tasks == 0 {
                 driver
@@ -519,7 +521,7 @@ fn shadow_model_matches_itself_across_seeds() {
 fn codira_graphs_survive_random_collections() {
     let _serial = serial();
     let driver = build(|builder| builder);
-    run_graphs(&driver, 64, Duration::from_micros(13), 0, 24, 3_000);
+    run_graphs(&driver, false, 64, Duration::from_micros(13), 0, 24, 3_000);
     assert_no_leak(&driver);
 }
 
@@ -528,7 +530,7 @@ fn codira_graphs_survive_collections_at_a_heap_limit() {
     let _serial = serial();
     let driver = build(|builder| builder.heap_limit(8 * 64 * 1024));
     // Rare host collections, so the limit is what collects most.
-    run_graphs(&driver, 16, Duration::from_micros(400), 0, 24, 3_000);
+    run_graphs(&driver, true, 16, Duration::from_micros(400), 0, 24, 3_000);
     let gc = driver.runtime.gc();
     assert!(
         gc.emergency_collections() > 0,
@@ -542,7 +544,7 @@ fn codira_graphs_survive_collections_at_a_heap_limit() {
 fn graphs_on_worker_threads_survive_random_collections() {
     let _serial = serial();
     let driver = build(|builder| builder.heap_limit(48 * 64 * 1024));
-    run_graphs(&driver, 32, Duration::from_micros(13), 3, 16, 2_000);
+    run_graphs(&driver, false, 32, Duration::from_micros(13), 3, 16, 2_000);
     assert_no_leak(&driver);
 }
 
