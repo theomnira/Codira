@@ -1149,6 +1149,153 @@ mod tests {
         });
     }
 
+    static ORDER: Mutex<Vec<u8>> = parking_lot::const_mutex(Vec::new());
+
+    extern "C" fn record_class(args: *mut u8) {
+        // SAFETY: the test passes a `u8`.
+        let class = unsafe { *args };
+        ORDER.lock().push(class);
+        // Long enough that the workers keep finding all three classes
+        // queued while the first starts are recorded.
+        std::thread::sleep(std::time::Duration::from_micros(50));
+    }
+
+    /// While every class has work queued, starts follow the 4 : 2 : 1
+    /// weighted round robin, and background work is not starved.
+    #[test]
+    fn priority_classes_share_starts_four_two_one() {
+        with_timeout(|| {
+            ORDER.lock().clear();
+            let per_class = 3000usize;
+            let scope = scope_begin();
+            for i in 0..per_class * 3 {
+                let class = (i % 3) as u8;
+                let priority = [Priority::High, Priority::Normal, Priority::Background][class as usize];
+                with_priority(priority, || {
+                    scope_spawn(
+                        scope,
+                        record_class as TaskEntry as usize,
+                        std::ptr::from_ref(&class) as usize,
+                        1,
+                    );
+                });
+            }
+            scope_end(scope);
+            let order = ORDER.lock().clone();
+            assert_eq!(order.len(), per_class * 3);
+            // The first 1400 starts: the high class runs out after 3000, so
+            // all three classes are still queued throughout.
+            let window = &order[..1400];
+            let count = |c: u8| window.iter().filter(|&&x| x == c).count() as f64 / window.len() as f64;
+            let (high, normal, background) = (count(0), count(1), count(2));
+            eprintln!("starts: high {high:.3}, normal {normal:.3}, background {background:.3}");
+            assert!((high - 4.0 / 7.0).abs() < 0.08, "high {high:.3}, normal {normal:.3}, background {background:.3}");
+            assert!((normal - 2.0 / 7.0).abs() < 0.08, "high {high:.3}, normal {normal:.3}, background {background:.3}");
+            assert!(background > 1.0 / 7.0 - 0.06, "background starved: {background:.3}");
+        });
+    }
+
+    static HELPED_SUM: AtomicUsize = AtomicUsize::new(0);
+
+    extern "C" fn add_to_helped_sum(args: *mut u8) {
+        // SAFETY: the test passes a `usize`.
+        let amount = unsafe { *args.cast::<usize>() };
+        HELPED_SUM.fetch_add(amount, Ordering::SeqCst);
+    }
+
+    extern "C" fn nested_scope(args: *mut u8) {
+        // SAFETY: the test passes a `usize`.
+        let width = unsafe { *args.cast::<usize>() };
+        let scope = scope_begin();
+        for amount in 0..width {
+            scope_spawn(
+                scope,
+                add_to_helped_sum as TaskEntry as usize,
+                std::ptr::from_ref(&amount) as usize,
+                std::mem::size_of::<usize>(),
+            );
+        }
+        scope_end(scope);
+    }
+
+    /// A worker that joins runs its own children: helping shows in the
+    /// counters, and the result is the same.
+    #[test]
+    fn joining_workers_run_their_own_children() {
+        with_timeout(|| {
+            let before = stats();
+            let scope = scope_begin();
+            let width = 64usize;
+            for _ in 0..32 {
+                scope_spawn(
+                    scope,
+                    nested_scope as TaskEntry as usize,
+                    std::ptr::from_ref(&width) as usize,
+                    std::mem::size_of::<usize>(),
+                );
+            }
+            scope_end(scope);
+            let after = stats();
+            assert_eq!(HELPED_SUM.load(Ordering::SeqCst), 32 * (width * (width - 1) / 2));
+            assert!(after.helped > before.helped, "{after:?}");
+            assert!(after.spawned - before.spawned >= 32 * 65);
+        });
+    }
+
+    /// The process-level checks: run in a child process (they abort), which
+    /// runs this test binary again with `CODIRA_TASKS_PROBE` set.
+    fn aborts_with(probe: &str, message: &str) {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "tasks::tests::probes", "--nocapture", "--test-threads", "1"])
+            .env("CODIRA_TASKS_PROBE", probe)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!output.status.success(), "the probe `{probe}` did not stop the process");
+        assert!(stderr.contains(message), "{stderr}");
+    }
+
+    /// Runs the probe named by `CODIRA_TASKS_PROBE`; does nothing without it.
+    #[test]
+    fn probes() {
+        match std::env::var("CODIRA_TASKS_PROBE").as_deref() {
+            Ok("spawn_after_end") => {
+                let scope = scope_begin();
+                // SAFETY: the scope is open.
+                let set = Arc::clone(&unsafe { scope_ref(scope) }.set);
+                scope_end(scope);
+                set.add();
+            }
+            Ok("start_after_end") => {
+                let scope = Arc::new(ScopeState {
+                    set: TaskSet::new(),
+                    channels: Mutex::new(Vec::new()),
+                    endpoints: Mutex::new(Vec::new()),
+                });
+                scope.set.join();
+                run(Job {
+                    entry: add_to_helped_sum as TaskEntry as usize,
+                    args: copy_args(0, 0),
+                    owner: Owner::Scope(scope),
+                    index: 0,
+                    priority: Priority::Normal,
+                });
+            }
+            Ok("free_unjoined_group") => group::group_free(group::group_begin(8)),
+            _ => {}
+        }
+    }
+
+    /// No task can be added to, or started in, a set that has been joined,
+    /// and a group cannot be freed before it is joined: each stops the
+    /// process with a message instead of touching freed memory.
+    #[test]
+    fn a_task_cannot_outlive_its_scope() {
+        aborts_with("spawn_after_end", "a task was spawned into a scope that has ended");
+        aborts_with("start_after_end", "a task outlived its scope");
+        aborts_with("free_unjoined_group", "a group was freed before its tasks were joined");
+    }
+
     /// More sleeping selects than workers: the pool compensates for them as
     /// for any blocked task, so all of them are eventually served.
     #[test]
