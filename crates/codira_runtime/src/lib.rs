@@ -610,11 +610,14 @@ impl Runtime {
         if gc::frames::stress() {
             // Stress mode: polls of compiled code collect too.
             let collector = Arc::downgrade(&runtime.gc);
-            gc::frames::set_stress_collector(Some(Arc::new(move || {
-                if let Some(collector) = collector.upgrade() {
-                    collector.stress_collect();
-                }
-            })));
+            gc::frames::add_stress_collector(Arc::new(move |collect| {
+                collector.upgrade().is_some_and(|collector| {
+                    if collect {
+                        collector.stress_collect();
+                    }
+                    true
+                })
+            }));
         }
 
         runtime.add_assembly(&options.library_path)?;

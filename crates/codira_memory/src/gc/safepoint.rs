@@ -378,11 +378,8 @@ pub(crate) fn poll_from_code() {
         }
     }
     let _clear = Clear(record, previous);
-    if frames::stress_due() {
-        if let Some(collect) = frames::stress_collector() {
-            collect();
-            return;
-        }
+    if frames::stress_due() && frames::stress_collect_all() {
+        return;
     }
     if STOP.load(Ordering::Relaxed) {
         park();

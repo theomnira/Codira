@@ -233,6 +233,9 @@ fn fragment_driver(compaction: bool, limit: Option<usize>) -> CompileAndRunTestD
         }
     })
     .expect("Failed to build test driver");
+    // Explicitly, so `CODIRA_GC_COMPACT=1` does not turn the baseline into a
+    // relocating run.
+    driver.runtime.gc().set_compaction(compaction);
     GC.store(
         driver.runtime.gc() as *const GarbageCollector as *mut GarbageCollector,
         Ordering::SeqCst,

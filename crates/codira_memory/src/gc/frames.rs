@@ -203,19 +203,43 @@ pub(crate) fn stress_due() -> bool {
     })
 }
 
-type StressCollector = std::sync::Arc<dyn Fn() + Send + Sync>;
+type StressCollector = std::sync::Arc<dyn Fn(bool) -> bool + Send + Sync>;
 
-static STRESS_COLLECTOR: parking_lot::Mutex<Option<StressCollector>> =
-    parking_lot::const_mutex(None);
+static STRESS_COLLECTORS: parking_lot::Mutex<Vec<StressCollector>> =
+    parking_lot::const_mutex(Vec::new());
 
-/// Sets what a poll calls to collect in stress mode (the runtime's
-/// collector).
-pub fn set_stress_collector(collect: Option<StressCollector>) {
-    *STRESS_COLLECTOR.lock() = collect;
+/// Adds what a poll calls to collect in stress mode: a runtime's collector.
+/// Called with `true` it collects; either way it returns `false` once its
+/// collector is gone, and is then dropped. Polls collect every registered heap (a poll does not know
+/// whose code it is in).
+pub fn add_stress_collector(collect: StressCollector) {
+    STRESS_COLLECTORS.lock().push(collect);
 }
 
-pub(crate) fn stress_collector() -> Option<StressCollector> {
-    STRESS_COLLECTOR.lock().clone()
+/// Collects every registered heap; returns whether there was any.
+pub(crate) fn stress_collect_all() -> bool {
+    let collectors: Vec<StressCollector> = STRESS_COLLECTORS.lock().clone();
+    let mut any = false;
+    let mut gone = false;
+    for collect in &collectors {
+        if collect(true) {
+            any = true;
+        } else {
+            gone = true;
+        }
+    }
+    if gone {
+        // Drop the collectors whose heaps are gone.
+        let mut list = STRESS_COLLECTORS.lock();
+        let mut live = Vec::with_capacity(list.len());
+        for collect in list.drain(..) {
+            if collect(false) {
+                live.push(collect);
+            }
+        }
+        *list = live;
+    }
+    any
 }
 
 /// Sets stress mode: collect at every `period`-th safepoint of a thread
