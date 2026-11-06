@@ -22,7 +22,9 @@
 //!     runtime could not load: it was given a structural type id that no
 //!     module exports, instead of the runtime's own `()`.
 //!   - an `if` chain whose last `else if` leaves on both branches, which
-//!     crashed the code generator.
+//!     crashed the code generator;
+//!   - non-generic methods of another module's types (value structs,
+//!     classes, enums), which could not be called from outside it.
 
 use std::{
     path::Path,
@@ -450,5 +452,101 @@ public func main() {
         let (code, stdout, stderr) = run(&[("mod.code", program)], &["-O", level]);
         assert_eq!(code, Some(0), "-O {level}: {stderr}");
         assert_eq!(stdout, "10 0 -1\naaa bcc none\n", "-O {level}");
+    }
+}
+
+// ---- methods called from another module ------------------------------------
+
+/// The module a program calls methods of: a value struct, a class and an
+/// enum with methods, three of them called `len`, and a method and a free
+/// function both called `same`.
+const SHAPES: &str = r#"
+public struct Point {
+    public x: i64,
+    public y: i64,
+}
+
+extend Point {
+    public func len(self) -> i64 { self.x * self.x + self.y * self.y }
+    public func shifted(self, by: i64) -> Point { Point { x: self.x + by, y: self.y + by } }
+    public func label(self) -> String {
+        let x = self.x
+        let y = self.y
+        f"({x}, {y})"
+    }
+    public func same(self, other: Point) -> bool { self.x == other.x && self.y == other.y }
+}
+
+public class Bag {
+    items: [i64],
+}
+
+extend Bag {
+    public func new() -> Bag { Bag { items: [] } }
+    public func add(self, item: i64) { self.items.push(item) }
+    public func len(self) -> usize { self.items.len() }
+    public func total(self) -> i64 { self.items.fold(0, func(a, x) { a + x }) }
+}
+
+public enum Shape {
+    Dot
+    Line(i64)
+    Named(String)
+}
+
+extend Shape {
+    public func len(self) -> i64 {
+        match self {
+            Shape.Dot -> 0,
+            Shape.Line(n) -> n,
+            Shape.Named(s) -> s.len() as i64,
+        }
+    }
+    public func name(self) -> String {
+        match self {
+            Shape.Named(s) -> s,
+            _ -> "anonymous".to_string(),
+        }
+    }
+}
+
+public func same(a: i64, b: i64) -> bool { a == b }
+"#;
+
+/// Non-generic methods of another module's types are called through the
+/// dispatch table like its functions. They used to get no slot in it (the
+/// build panicked with "unknown function"); a method with a value-struct
+/// receiver was called with its receiver missing, and had no wrapper to
+/// unbox it; and methods sharing a name with each other or with a free
+/// function of their module were linked to one of them.
+#[test]
+fn methods_sharing_a_name_across_types_of_another_module_are_called() {
+    let program = r#"
+import shapes.{Point, Bag, Shape, same}
+
+public func main() {
+    let p = Point { x: 3, y: 4 }
+    println(p.len(), " ", p.shifted(1).len(), " ", p.label(), " ", p.same(p.shifted(0)))
+    let b = Bag.new()
+    b.add(5)
+    b.add(7)
+    println(b.len(), " ", b.total())
+    let s = Shape.Named("circle".to_string())
+    let line = Shape.Line(9)
+    let dot = Shape.Dot
+    println(s.len(), " ", line.len(), " ", dot.len(), " ", s.name(), " ", dot.name())
+    println(same(2, 2), " ", same(2, 3))
+}
+"#;
+    for level in ["0", "2"] {
+        let (code, stdout, stderr) = run(
+            &[("mod.code", program), ("shapes.code", SHAPES)],
+            &["-O", level],
+        );
+        assert_eq!(code, Some(0), "-O {level}: {stderr}");
+        assert_eq!(
+            stdout, "25 41 (3, 4) true\n2 12\n6 9 0 circle anonymous\ntrue false\n",
+            "-O {level}"
+        );
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use codira_hir::{
     mono::{self, Instance},
@@ -28,8 +28,13 @@ use crate::{
 pub struct FileIr<'ink> {
     /// The LLVM module that contains the IR
     pub llvm_module: Module<'ink>,
-    /// The `codira_hir::Function`s that constitute the file's API.
-    pub function_definitions: HashSet<codira_hir::Function>,
+    /// The `codira_hir::Function`s that constitute the file's API, each
+    /// with the LLVM name of its entry point: its `_wrapper` when it has
+    /// one, otherwise the function itself. The name is not always the
+    /// function's own: LLVM renames the second of two functions of one
+    /// module with the same name (`Json.len` and `JsonObject.len` become
+    /// `len` and `len.3`).
+    pub function_definitions: HashMap<codira_hir::Function, String>,
     /// The types defined in this file
     pub type_definitions: HashSet<codira_hir::Ty>,
 }
@@ -307,12 +312,19 @@ pub(crate) fn gen_file_ir<'ink>(
 
     // Filter private methods. Only the group's own non-generic functions
     // can be exported: an instance or a copy belongs to this module alone.
-    let function_definitions: HashSet<codira_hir::Function> = group_ir
+    let function_definitions: HashMap<codira_hir::Function, String> = group_ir
         .units
         .iter()
         .filter(|unit| !unit.instance.is_generic() && !unit.local_copy)
-        .map(|unit| unit.instance.function())
-        .filter(|&f| module_group.should_export_fn(code_gen.db, f))
+        .filter(|unit| module_group.should_export_fn(code_gen.db, unit.instance.function()))
+        .map(|unit| {
+            let f = unit.instance.function();
+            let entry = wrapper_functions
+                .get(&f)
+                .or_else(|| functions.get(&unit.instance))
+                .expect("every unit has a function");
+            (f, entry.get_name().to_string_lossy().into_owned())
+        })
         .collect();
 
     FileIr {

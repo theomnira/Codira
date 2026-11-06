@@ -366,6 +366,37 @@ impl Function {
         .collect()
     }
 
+    /// The name the runtime links this function by: its [`full_name`]
+    /// (`foo::bar`), with the type of the `extend` block between the
+    /// module path and the name for a method (`foo::Point::length`).
+    ///
+    /// A module's dispatch table finds another module's function by this
+    /// name, and two methods of one module with the same name (`Json::len`
+    /// and `JsonObject::len`), or a method and a free function
+    /// (`Json::equals` and `equals`), would otherwise be the same name, and
+    /// the runtime could not tell which one a call means.
+    ///
+    /// [`full_name`]: Function::full_name
+    pub fn link_name(self, db: &dyn HirDatabase) -> String {
+        use crate::{ids::ItemContainerId, HirDisplay};
+        match self.id.lookup(db).container {
+            ItemContainerId::ImplId(impl_id) => {
+                let self_ty = db.type_for_impl_self(impl_id);
+                itertools::Itertools::intersperse(
+                    self.module(db)
+                        .path_to_root(db)
+                        .into_iter()
+                        .filter_map(|module| module.name(db))
+                        .chain(once(self_ty.display(db).to_string()))
+                        .chain(once(self.name(db).to_string())),
+                    String::from("::"),
+                )
+                .collect()
+            }
+            _ => self.full_name(db),
+        }
+    }
+
     pub fn file_id(self, db: &dyn HirDatabase) -> FileId {
         self.id.lookup(db).id.file_id
     }

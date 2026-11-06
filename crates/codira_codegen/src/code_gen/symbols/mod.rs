@@ -4,7 +4,11 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-use std::{collections::HashSet, convert::TryFrom, ffi::CString};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+    ffi::CString,
+};
 
 use codira_abi as abi;
 use codira_hir::{mono, HirDatabase, TyKind};
@@ -35,7 +39,7 @@ fn gen_prototype_from_function<'ink>(
     hir_types: &HirTypeCache<'_, 'ink>,
     ir_type_builder: &TypeIdBuilder<'ink, '_, '_, '_>,
 ) -> ir::FunctionPrototype<'ink> {
-    let name = function.full_name(db);
+    let name = function.link_name(db);
 
     // Internalize the name of the function prototype
     let name_str = CString::new(name.clone())
@@ -457,27 +461,26 @@ fn gen_struct_info<'ink>(
 
 /// Construct a global that holds a reference to all functions. e.g.:
 /// `CodiraFunctionDefinition[] definitions = { ... }`
-fn get_function_definition_array<'ink, 'a>(
+fn get_function_definition_array<'ink>(
     db: &dyn HirDatabase,
     context: &IrValueContext<'ink, '_, '_>,
-    functions: impl Iterator<Item = &'a codira_hir::Function>,
+    functions: &HashMap<codira_hir::Function, String>,
     hir_types: &HirTypeCache<'_, 'ink>,
     ir_type_builder: &TypeIdBuilder<'ink, '_, '_, '_>,
 ) -> Global<'ink, [ir::FunctionDefinition<'ink>]> {
     let module = context.module;
     functions
-        .sorted_by_cached_key(|f| f.full_name(db))
-        .map(|f| {
-            let name = f.name(db).to_string();
-
-            // Get the function from the cloned module and modify the linkage of the
-            // function.
+        .iter()
+        .sorted_by_cached_key(|(f, _)| f.link_name(db))
+        .map(|(f, entry)| {
+            // The entry point the file module made for the function: its
+            // wrapper when it has one (required for struct types), otherwise
+            // the function itself. Looked up by the name it was given, not
+            // by the function's name: two methods of one module may share
+            // that (`len` of two types), and LLVM renames the second.
             let value = module
-                // If a wrapper function exists, use that (required for struct types)
-                .get_function(&format!("{name}_wrapper"))
-                // Otherwise, use the normal function
-                .or_else(|| module.get_function(&name))
-                .unwrap();
+                .get_function(entry)
+                .expect("the file module defines every exported function");
 
             // Codira functions are private in the assembly: the runtime reaches
             // them through this table's function *pointers*, never by symbol
@@ -612,7 +615,7 @@ pub(super) fn gen_reflection_ir<'db, 'ink>(
     db: &'db dyn HirDatabase,
     context: &IrValueContext<'ink, '_, '_>,
     module_name: &str,
-    function_definitions: &HashSet<codira_hir::Function>,
+    function_definitions: &HashMap<codira_hir::Function, String>,
     type_definitions: &HashSet<codira_hir::Ty>,
     synthetic_types: &[SyntheticStruct<'ink>],
     dispatch_table: &DispatchTable<'ink>,
@@ -627,7 +630,7 @@ pub(super) fn gen_reflection_ir<'db, 'ink>(
     let functions = get_function_definition_array(
         db,
         context,
-        function_definitions.iter(),
+        function_definitions,
         hir_types,
         &ir_type_builder,
     );

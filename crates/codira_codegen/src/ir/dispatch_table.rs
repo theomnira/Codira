@@ -325,7 +325,7 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
         // If this expression is a call, store it in the dispatch table. A
         // builtin call has no callee definition: its runtime functions are
         // intrinsics, collected by `ir::intrinsics`.
-        if infer.builtin_call(expr_id).is_some() {
+        if infer.builtin_call(expr_id).is_some() || infer.is_field_call(expr_id) {
         } else if let Expr::Call { callee, .. } = expr {
             match infer[*callee].as_callable_def() {
                 Some(codira_hir::CallableDef::Function(def)) => {
@@ -483,7 +483,7 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
             let name = if function.is_extern(self.db) {
                 function.name(self.db).to_string()
             } else {
-                function.full_name(self.db)
+                function.link_name(self.db)
             };
             let hir_type = function.ty(self.db);
             let sig = hir_type.callable_sig(self.db).unwrap();
