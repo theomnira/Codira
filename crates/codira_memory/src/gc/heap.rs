@@ -279,6 +279,10 @@ struct Block {
     class: u8,
     cell_size: usize,
     cell_count: usize,
+    /// Live cells after the last sweep (all of them until the first one).
+    live: usize,
+    /// A thread cache held a run in the block at the last sweep.
+    leased: bool,
 }
 
 impl Block {
@@ -391,6 +395,14 @@ pub(crate) struct ThreadCounters {
     /// Objects allocated.
     objects: AtomicUsize,
 }
+
+/// Relocation runs only when it can give back at least this many bytes ...
+const MIN_EVACUATION_BYTES: usize = 4 * BLOCK_SIZE;
+/// ... and at least this fraction (1/n) of the committed heap ...
+const EVACUATION_FRACTION: usize = 4;
+/// ... or this smaller one when the heap is within a quarter of its limit,
+/// where giving memory back decides whether allocations succeed.
+const NEAR_LIMIT_EVACUATION_FRACTION: usize = 16;
 
 /// The maximum number of empty blocks a heap keeps cached.
 const MAX_CACHED_EMPTY_BLOCKS: usize = 16;
@@ -639,6 +651,8 @@ impl HeapInner {
             class,
             cell_size,
             cell_count: BLOCK_SIZE / cell_size,
+            live: BLOCK_SIZE / cell_size,
+            leased: true,
         };
         let run = Run {
             start: base.as_ptr() as usize,
@@ -1075,7 +1089,7 @@ impl HeapInner {
 
         let mut retained_blocks = Vec::with_capacity(self.blocks.len());
         let mut block_runs = Vec::new();
-        for block in std::mem::take(&mut self.blocks) {
+        for mut block in std::mem::take(&mut self.blocks) {
             let leases = leases_by_block
                 .get(&(block.base.as_ptr() as usize))
                 .map_or(&[][..], Vec::as_slice);
@@ -1115,6 +1129,8 @@ impl HeapInner {
                 block_runs.push(Run { start, end });
             }
 
+            block.live = live_cells;
+            block.leased = !leases.is_empty();
             if live_cells == 0 && leases.is_empty() {
                 self.release_block(block);
             } else {
@@ -1167,61 +1183,100 @@ impl HeapInner {
     /// reference to a moved object.
     ///
     /// A block is a candidate when at most `max_live_percent` percent of
-    /// its cells are live, none of them is in `pinned`, and no thread cache
-    /// holds a run in it. Candidates are evacuated sparsest first, and only
-    /// while the free cells of the class's other blocks can take their
-    /// objects, so evacuation never needs memory the heap does not already
-    /// hold.
+    /// its cells are live, none of them is pinned (rooted, or in the sorted
+    /// `stack_objects`), and no thread cache holds a run in it. Candidates
+    /// are taken from the live counts the sweep recorded, sparsest first,
+    /// and only while the free cells of the class's other blocks can take
+    /// their objects, so evacuation never needs memory the heap does not
+    /// already hold. Only the cells of a candidate are read. Nothing moves
+    /// unless the candidates give back at least `MIN_EVACUATION_BYTES` and
+    /// a quarter of the committed heap (a sixteenth within a quarter of the
+    /// heap limit), so a collection with nothing worth evacuating costs
+    /// about what it costs without relocation.
     ///
     /// # Safety
     ///
     /// The world must be stopped, and the heap must have just been swept.
     pub(crate) unsafe fn evacuate(
         &mut self,
-        pinned: &FxHashSet<usize>,
+        stack_objects: &[usize],
         max_live_percent: usize,
     ) -> FxHashMap<usize, usize> {
         let mut forwarded = FxHashMap::default();
-        let leased = |block: &Block| {
-            let (lo, hi) = (block.base.as_ptr() as usize, block.end());
-            self.leases.keys().any(|&start| start >= lo && start < hi)
-        };
 
-        // Per block: (index, live cells, free cells, has a pinned cell).
-        let mut census: Vec<(usize, usize, usize, bool)> = Vec::new();
+        // Candidates from the counts the sweep just recorded: nothing here
+        // walks the cells of a block that is not a candidate.
         let mut capacity = [0usize; NUM_CLASSES];
+        let mut sparse: Vec<usize> = Vec::new();
         for (index, block) in self.blocks.iter().enumerate() {
-            if leased(block) {
+            if block.leased {
                 continue;
             }
-            let (mut live, mut has_pinned) = (0usize, false);
-            let mut cell = block.base.as_ptr() as usize;
-            while cell < block.end() {
-                let header = cell as *const ObjectHeader;
-                if (*header).state.load(Ordering::Acquire) == STATE_ALLOCATED {
-                    live += 1;
-                    has_pinned |= pinned.contains(&cell);
-                }
-                cell += block.cell_size;
+            capacity[block.class as usize] += block.cell_count - block.live;
+            if block.live > 0 && block.live * 100 <= block.cell_count * max_live_percent {
+                sparse.push(index);
             }
-            let free = block.cell_count - live;
-            capacity[block.class as usize] += free;
-            census.push((index, live, free, has_pinned));
         }
-        census.sort_unstable_by_key(|&(_, live, _, _)| live);
+        sparse.sort_unstable_by_key(|&index| self.blocks[index].live);
+        // Worth it only when it gives back a noticeable part of the heap;
+        // check that from the counts alone (an upper bound: pinned objects
+        // can only take blocks away) before reading any cell.
+        let near_limit = self
+            .limit
+            .is_some_and(|limit| self.committed.saturating_mul(4) >= limit.saturating_mul(3));
+        let fraction = if near_limit {
+            NEAR_LIMIT_EVACUATION_FRACTION
+        } else {
+            EVACUATION_FRACTION
+        };
+        let threshold = MIN_EVACUATION_BYTES.max(self.committed / fraction);
+        {
+            let mut room = capacity;
+            let mut upper = 0usize;
+            for &index in &sparse {
+                let block = &self.blocks[index];
+                let class = block.class as usize;
+                let take = block.cell_count;
+                if take <= room[class] {
+                    room[class] -= take;
+                    upper += BLOCK_SIZE;
+                }
+            }
+            if upper < threshold {
+                return forwarded;
+            }
+        }
         let mut candidates: Vec<usize> = Vec::new();
-        for &(index, live, free, has_pinned) in &census {
+        for index in sparse {
             let block = &self.blocks[index];
-            if has_pinned || live == 0 || live * 100 > block.cell_count * max_live_percent {
-                continue;
-            }
             let class = block.class as usize;
+            let free = block.cell_count - block.live;
             // Its own free cells are no destination once it is evacuated.
-            if live + free > capacity[class] {
+            if block.live + free > capacity[class] {
                 continue;
             }
-            capacity[class] -= live + free;
+            // Only now its cells: a pinned object keeps the block.
+            let has_pinned = {
+                let mut cell = block.base.as_ptr() as usize;
+                let mut found = false;
+                while cell < block.end() && !found {
+                    let header = &*(cell as *const ObjectHeader);
+                    found = header.state.load(Ordering::Acquire) == STATE_ALLOCATED
+                        && (header.roots.load(Ordering::Acquire) > 0
+                            || stack_objects.binary_search(&cell).is_ok());
+                    cell += block.cell_size;
+                }
+                found
+            };
+            if has_pinned {
+                continue;
+            }
+            capacity[class] -= block.live + free;
             candidates.push(index);
+        }
+        // The same check with the pinned blocks left out.
+        if candidates.len() * BLOCK_SIZE < threshold {
+            return forwarded;
         }
         if candidates.is_empty() {
             return forwarded;
