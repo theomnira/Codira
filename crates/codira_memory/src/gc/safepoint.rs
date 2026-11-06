@@ -222,9 +222,28 @@ fn registered_or_new() -> Option<Arc<Record>> {
 
 /// Sets the poll word compiled code checks: a stop is requested, or stress
 /// mode is on.
+///
+/// Callers race (`set_stop` with the registry locked, `frames::set_stress`
+/// without it, and the lazy read of `CODIRA_GC_STRESS` from inside this
+/// function), so a store computed from flags another caller has changed
+/// since could land last. Each caller therefore re-reads both flags after
+/// its store and stores again until what it stored matches them. Whichever
+/// store is last overall was followed by a read of both flags made after
+/// every change to them (a change is always followed by its own refresh,
+/// whose store would otherwise come later), so the poll word ends equal to
+/// `STOP || stress`. No lock is taken, so this cannot deadlock with the
+/// registry lock `set_stop` holds.
 pub(crate) fn refresh_poll_word() {
-    let on = STOP.load(Ordering::SeqCst) || frames::stress();
-    frames::POLL_WORD.store(u8::from(on), Ordering::SeqCst);
+    let wanted = || u8::from(STOP.load(Ordering::SeqCst) || frames::stress());
+    let mut on = wanted();
+    loop {
+        frames::POLL_WORD.store(on, Ordering::SeqCst);
+        let now = wanted();
+        if now == on {
+            return;
+        }
+        on = now;
+    }
 }
 
 /// Sets or clears the stop flag, and the poll word with it.
@@ -873,6 +892,45 @@ mod tests {
         tx.send(()).unwrap();
         worker.join().unwrap();
         assert!(exclusive(|| ()).is_some());
+    }
+
+    /// `set_stress` (no lock) racing `set_stop` (registry locked) once left
+    /// the poll word 0 while a stop was requested. After any race the poll
+    /// word must equal `STOP || stress`.
+    #[test]
+    fn the_poll_word_follows_the_stop_and_stress_flags_under_races() {
+        let _serial = SERIAL.lock();
+        let previous = frames::stress_period_for_tests();
+        for round in 0..2000 {
+            let barrier = Arc::new(Barrier::new(2));
+            let toggler = {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for k in 0..4 {
+                        frames::set_stress(usize::from((round + k) % 2 == 0));
+                    }
+                    frames::set_stress(0);
+                })
+            };
+            barrier.wait();
+            {
+                let _registry = REGISTRY.lock();
+                set_stop(true);
+            }
+            toggler.join().unwrap();
+            assert_eq!(
+                frames::POLL_WORD.load(Ordering::SeqCst),
+                1,
+                "round {round}: the poll word is clear while a stop is requested"
+            );
+            {
+                let _registry = REGISTRY.lock();
+                set_stop(false);
+            }
+            assert_eq!(frames::POLL_WORD.load(Ordering::SeqCst), 0, "round {round}");
+        }
+        frames::set_stress(previous);
     }
 
     #[test]

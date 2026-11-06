@@ -334,25 +334,13 @@ the code.
   more than 512 MiB, with the program, and stops at 4 GiB instead of being
   killed.
 
-- **The compiled poll word can be cleared during a stop (found reading
-  the merge, not by a gate).** `frames::set_stress` calls
-  `refresh_poll_word` without the registry lock, while `set_stop` calls it
-  with the lock held. A `set_stress(0)` that reads the stop flag just
-  before a collector sets it, and stores the poll word just after the
-  collector's own refresh, leaves the poll word 0 while a stop is
-  requested: compiled code in a loop that neither allocates nor calls then
-  never parks, and the collector waits for it. It is a liveness issue and
-  only through the test-only stress hook. Taking the registry lock in
-  `set_stress` is not enough on its own: the lazy read of
-  `CODIRA_GC_STRESS` calls `set_stress` from inside `refresh_poll_word`,
-  which `set_stop` runs with the lock held.
-
 ## Bugs the gates found and fixed
 
 Each fix is its own commit with a regression test.
 
 | found by | bug | regression test |
 |---|---|---|
+| reading the merge | the poll word compiled code checks could be left 0 during a stop: `frames::set_stress` refreshed it without the registry lock, racing `set_stop`'s refresh, so compiled code in a loop that neither allocates nor calls never parked. `refresh_poll_word` now re-reads both flags after its store and stores again until they agree (no lock, so no deadlock with the lazy read of `CODIRA_GC_STRESS`) | `safepoint_loom::model::poll_word` (the single store is found by the model), `safepoint::tests::the_poll_word_follows_the_stop_and_stress_flags_under_races` |
 | fuzz-compiler | `5e` (exponent without digits) panicked lowering the literal | `fuzz_regressions::an_exponent_without_digits_is_an_invalid_literal` |
 | fuzz-compiler | `.` at the end of input lexed as an empty tuple index; `e.` panicked | lexer test `a_dot_at_the_end_of_the_input_is_not_an_index` |
 | fuzz-compiler | a `{` where a match arm starts looped until the parser's step limit (fixed on main independently; the fuzzer's inputs are regression tests) | parser test `a_brace_where_a_match_arm_should_start_is_an_error` |

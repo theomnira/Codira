@@ -52,6 +52,8 @@ const MODELLED: &[&str] = &[
     "fn set_stop(on: bool) {\n    STOP.store(on, Ordering::SeqCst);",
     "set_stop(true);\n        let requested_at = std::time::Instant::now();\n        while registry\n            .records\n            .iter()\n            .any(|record| record.running.load(Ordering::SeqCst))",
     "set_stop(false);",
+    // refresh_poll_word: store, then re-read both flags until they agree.
+    "frames::POLL_WORD.store(on, Ordering::SeqCst);\n        let now = wanted();\n        if now == on {\n            return;\n        }",
 ];
 
 #[test]
@@ -238,5 +240,98 @@ mod model {
     #[should_panic]
     fn a_handshake_without_store_load_order_is_caught() {
         run_with(1, false, true);
+    }
+
+    /// The poll word compiled code checks: `set_stress` (no lock) and
+    /// `set_stop` (registry locked) both recompute it from the two flags.
+    /// It must end equal to `stop || stress`, however their refreshes
+    /// interleave.
+    mod poll_word {
+        use loom::{
+            sync::{
+                atomic::{fence, AtomicBool, AtomicU8, Ordering},
+                Arc,
+            },
+            thread,
+        };
+
+        struct Flags {
+            stop: AtomicBool,
+            stress: AtomicBool,
+            word: AtomicU8,
+        }
+
+        impl Flags {
+            fn wanted(&self) -> u8 {
+                // The SeqCst store before this load (see the module docs).
+                fence(Ordering::SeqCst);
+                u8::from(self.stop.load(Ordering::SeqCst) || self.stress.load(Ordering::SeqCst))
+            }
+
+            /// `refresh_poll_word` as it is.
+            fn refresh(&self) {
+                let mut on = self.wanted();
+                loop {
+                    self.word.store(on, Ordering::SeqCst);
+                    let now = self.wanted();
+                    if now == on {
+                        return;
+                    }
+                    on = now;
+                }
+            }
+
+            /// `refresh_poll_word` before the fix: one store.
+            fn refresh_once(&self) {
+                let on = self.wanted();
+                self.word.store(on, Ordering::SeqCst);
+            }
+        }
+
+        fn race(fixed: bool) {
+            loom::model(move || {
+                let flags = Arc::new(Flags {
+                    stop: AtomicBool::new(false),
+                    stress: AtomicBool::new(true),
+                    word: AtomicU8::new(1),
+                });
+                let refresh = move |flags: &Flags| {
+                    if fixed {
+                        flags.refresh();
+                    } else {
+                        flags.refresh_once();
+                    }
+                };
+                // `set_stress(0)`.
+                let stresser = {
+                    let flags = flags.clone();
+                    thread::spawn(move || {
+                        flags.stress.store(false, Ordering::SeqCst);
+                        refresh(&flags);
+                    })
+                };
+                // `set_stop(true)`.
+                flags.stop.store(true, Ordering::SeqCst);
+                refresh(&flags);
+                stresser.join().unwrap();
+                assert_eq!(
+                    flags.word.load(Ordering::SeqCst),
+                    1,
+                    "the poll word is clear while a stop is requested"
+                );
+            });
+        }
+
+        #[test]
+        fn the_poll_word_stays_set_while_a_stop_is_requested() {
+            race(true);
+        }
+
+        /// The model finds the race the single store had.
+        #[test]
+        #[should_panic]
+        fn a_single_store_can_clear_the_poll_word_during_a_stop() {
+            race(false);
+        }
     }
 }

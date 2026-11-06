@@ -184,6 +184,12 @@ fn stress_period() -> usize {
     }
 }
 
+/// The stress period, for tests that change it and put it back.
+#[cfg(test)]
+pub(crate) fn stress_period_for_tests() -> usize {
+    stress_period()
+}
+
 /// Returns true if stress mode wants this safepoint of the current thread
 /// to collect.
 pub(crate) fn stress_due() -> bool {
