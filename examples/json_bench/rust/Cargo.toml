@@ -25,9 +25,13 @@ preserve_order = ["serde_json/preserve_order"]
 # without it `serde_json` parses some 17-digit floats an ulp off (on
 # `canada.json`, 126 of 600,000), a little faster.
 float_roundtrip = ["serde_json/float_roundtrip"]
+# `simd-json` parsing into its `OwnedValue` as one more comparison.
+simd = ["dep:simd-json"]
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
 serde_json = "=1.0.133"
+simd-json = { version = "0.14", optional = true }
 
 [profile.release]
 opt-level = 3
