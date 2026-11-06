@@ -98,6 +98,10 @@ pub enum LinkFunctionsError {
 /// Codira modules.
 pub struct Assembly {
     library_path: PathBuf,
+    /// Keeps the library's poll byte written; dropped before `library`
+    /// (fields drop in declaration order), so the byte is never written
+    /// after the library is unloaded.
+    _poll_byte: Option<codira_memory::gc::frames::PollByte>,
     library: TempLibrary,
     info: abi::AssemblyInfo<'static>,
     allocator: Arc<GarbageCollector>,
@@ -141,7 +145,9 @@ impl Assembly {
         library.set_allocator_handle(allocator_ptr);
         let fuel_instrumented = library.set_fuel_counter(fuel_counter);
         let hooks = codira_memory::gc::frames::hooks();
-        library.set_gc_hooks(hooks.chain_fn, hooks.poll_word, hooks.poll_fn);
+        let poll_byte = library.set_gc_hooks(hooks.chain_fn, hooks.poll_word, hooks.poll_fn);
+        // Safety: the byte is the library's, and lives as long as it.
+        let poll_byte = codira_memory::gc::frames::register_poll_byte(poll_byte);
 
         // A `--sanitize=memtag` library runs only with tag checking on: its
         // MTE instructions do not exist on other CPUs, and running it with
@@ -154,6 +160,7 @@ impl Assembly {
         let assembly = Assembly {
             info: library.get_info(),
             library_path: library_path.to_path_buf(),
+            _poll_byte: poll_byte,
             library: library.into_inner(),
             allocator: gc,
             fuel_instrumented,

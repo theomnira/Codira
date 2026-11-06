@@ -80,6 +80,54 @@ pub(crate) fn set_chain_head(head: *const FrameRecord) {
 /// poll: a stop is requested, or stress mode is on.
 pub(crate) static POLL_WORD: AtomicU8 = AtomicU8::new(0);
 
+/// The poll bytes of the loaded libraries (addresses): each library polls
+/// its own byte, one load of a module-local global, and the runtime keeps
+/// every byte equal to [`POLL_WORD`].
+static POLL_BYTES: parking_lot::Mutex<Vec<usize>> = parking_lot::const_mutex(Vec::new());
+
+/// Stores `value` into [`POLL_WORD`] and every registered poll byte.
+pub(crate) fn store_poll_word(value: u8) {
+    POLL_WORD.store(value, Ordering::SeqCst);
+    for &byte in POLL_BYTES.lock().iter() {
+        // Safety: a registered byte belongs to a loaded library; it is
+        // unregistered (under this lock) before the library is unloaded.
+        unsafe { (*(byte as *const AtomicU8)).store(value, Ordering::SeqCst) };
+    }
+}
+
+/// Keeps a library's poll byte (what its `set_gc_hooks` returned) equal to
+/// the poll word until dropped. Drop it before the library is unloaded.
+/// It also registers the library's code for preemption (`gc::preempt`).
+#[must_use = "the poll byte stops being written when the guard is dropped"]
+pub struct PollByte(usize, #[allow(dead_code)] super::preempt::CodeRanges);
+
+/// Registers `byte`, a library's poll byte; `None` for a null address (a
+/// library without polls).
+///
+/// # Safety
+///
+/// `byte` must be the address of a byte that stays valid, and is written
+/// by nothing else, until the returned guard is dropped.
+pub unsafe fn register_poll_byte(byte: *mut u8) -> Option<PollByte> {
+    if byte.is_null() {
+        return None;
+    }
+    let code = super::preempt::register_library_of(byte as usize);
+    POLL_BYTES.lock().push(byte as usize);
+    // Bring it up to date (a stop may be in progress).
+    super::safepoint::refresh_poll_word();
+    Some(PollByte(byte as usize, code))
+}
+
+impl Drop for PollByte {
+    fn drop(&mut self) {
+        let mut bytes = POLL_BYTES.lock();
+        if let Some(index) = bytes.iter().position(|&byte| byte == self.0) {
+            bytes.swap_remove(index);
+        }
+    }
+}
+
 /// What a loaded library is given through its `set_gc_hooks` export.
 #[derive(Clone, Copy, Debug)]
 pub struct GcHooks {
@@ -101,7 +149,7 @@ pub fn hooks() -> GcHooks {
     }
 }
 
-/// The poll compiled code calls from loop back-edges and function entries
+/// The poll compiled code calls from loop back-edges
 /// when the poll word is set. The whole thread is then scanned
 /// conservatively: spill words need not be up to date at a poll.
 pub extern "C" fn codira_gc_poll() {

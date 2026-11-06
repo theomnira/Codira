@@ -60,7 +60,9 @@ pub const SET_FUEL_COUNTER_FN_NAME: &str = "set_fuel_counter";
 /// Defines the name for the `set_gc_hooks` function. Libraries built with
 /// frame records and safepoint polls export it; it receives the address of
 /// the function that returns the calling thread's frame-record chain head,
-/// the address of the poll word, and the address of the poll function.
+/// the address of the poll word (unused), and the address of the poll
+/// function, and returns the address of the library's own poll byte, which
+/// the runtime keeps equal to the poll word while the library is loaded.
 pub const SET_GC_HOOKS_FN_NAME: &str = "set_gc_hooks";
 /// The name under which the runtime provides the function instrumented code
 /// calls when the fuel counter drops below zero.

@@ -149,8 +149,10 @@ impl CodiraLibrary {
     }
 
     /// Calls the library's `set_gc_hooks` with the collector's hooks: the
-    /// chain-head function, the poll word and the poll function. Returns
-    /// `false` (and does nothing) if the library has no frame records.
+    /// chain-head function, the poll word (unused by current libraries) and
+    /// the poll function. Returns the address of the library's own poll
+    /// byte, which the runtime must keep equal to its poll word, or null if
+    /// the library has no frame records and polls.
     ///
     /// # Safety
     ///
@@ -161,18 +163,15 @@ impl CodiraLibrary {
         chain_fn: *const c_void,
         poll_word: *const c_void,
         poll_fn: *const c_void,
-    ) -> bool {
+    ) -> *mut u8 {
         match self
             .0
             .library()
-            .get::<extern "C" fn(*const c_void, *const c_void, *const c_void)>(
+            .get::<extern "C" fn(*const c_void, *const c_void, *const c_void) -> *mut u8>(
                 abi::SET_GC_HOOKS_FN_NAME.as_bytes(),
             ) {
-            Ok(set_gc_hooks_fn) => {
-                set_gc_hooks_fn(chain_fn, poll_word, poll_fn);
-                true
-            }
-            Err(_) => false,
+            Ok(set_gc_hooks_fn) => set_gc_hooks_fn(chain_fn, poll_word, poll_fn),
+            Err(_) => std::ptr::null_mut(),
         }
     }
 
