@@ -653,6 +653,44 @@ fn random_values_print_like_serde_json_and_round_trip() {
     }
 }
 
+/// Documents larger than the printer's 64 KiB chunk, with strings longer
+/// than its 1 KiB limit for copying byte by byte (which it appends in runs
+/// between escapes), are printed like `serde_json` too: no character is
+/// split where a chunk ends.
+#[test]
+fn large_documents_and_long_strings_print_like_serde_json() {
+    let mut rng = Rng(0x10_6e57_2a11);
+    let values: Vec<Value> = (0..2)
+        .map(|_| {
+            let items = (0..45)
+                .map(|_| {
+                    let n = rng.below(2500);
+                    let s: String = (0..n).map(|_| rng.char()).collect();
+                    if rng.chance(30) {
+                        let mut map = serde_json::Map::new();
+                        map.insert(s, rng.value(3));
+                        Value::Object(map)
+                    } else {
+                        Value::String(s)
+                    }
+                })
+                .collect();
+            Value::Array(items)
+        })
+        .collect();
+    let cases: Vec<Case> = values
+        .iter()
+        .map(|v| Case::new(serde_json::to_string(v).unwrap()))
+        .collect();
+    let outcomes = run_cases(&cases);
+    for (value, outcome) in values.iter().zip(&outcomes) {
+        let (compact, pretty) = ok(outcome);
+        assert!(compact.len() > 65536);
+        assert_eq!(compact, serde_json::to_string(value).unwrap());
+        assert_eq!(pretty, serde_json::to_string_pretty(value).unwrap());
+    }
+}
+
 /// A random change to a valid text.
 fn mutate(rng: &mut Rng, text: &str) -> String {
     const PIECES: &[&str] = &[

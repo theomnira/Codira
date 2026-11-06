@@ -1197,7 +1197,7 @@ extend Parser {
 
 // The compact text of `value`: no white space between tokens.
 public func to_string(value: Json) -> String {
-    let w = Writer { buf: array_filled(0u8, 256), len: 0, indent: 0, pretty: false }
+    let w = new_writer(0, false)
     w.value(value, 0)
     w.finish()
 }
@@ -1212,71 +1212,134 @@ public func to_pretty_string(value: Json) -> String {
 // As `to_pretty_string`, indented by `indent` spaces per level (0 puts
 // every element on a line of its own, unindented).
 public func to_pretty_string_with(value: Json, indent: usize) -> String {
-    let w = Writer { buf: array_filled(0u8, 256), len: 0, indent: indent, pretty: true }
+    let w = new_writer(indent, true)
     w.value(value, 0)
     w.finish()
 }
 
-// The text is written into `buf[..len]`, a byte array that doubles when
-// full, and becomes a `String` once at the end: one bounds-checked store
-// per byte, where appending to a `String` is a runtime call per piece.
+// The bytes of a chunk: what the writer fills before it moves them to the
+// text, small enough to stay in the cache.
+func CHUNK() -> usize { 65536 }
+
+// A string longer than this is copied into the text in runs between its
+// escapes, rather than byte by byte through the chunk.
+func LONG_STRING() -> usize { 1024 }
+
+// The text is written byte by byte into `chunk[..len]` (one bounds-checked
+// store per byte), and the full chunk is appended to `out` (a copy in
+// Rust): a `String` append per token would be a runtime call per piece,
+// and one growing byte array would be copied whole on every doubling and
+// once more at the end. A chunk is only cut between characters: every
+// write but a long string's is reserved whole first, and those are
+// appended in runs that end at ASCII escapes.
 class Writer {
-    buf: [u8],
+    out: String,
+    chunk: [u8],
     len: usize,
     indent: usize,
     pretty: bool,
+}
+
+func new_writer(indent: usize, pretty: bool) -> Writer {
+    Writer { out: "".to_string(), chunk: array_filled(0u8, CHUNK()), len: 0, indent: indent, pretty: pretty }
 }
 
 func hex_digit(d: u8) -> u8 {
     if d < 10 { 48 + d } else { 87 + d }
 }
 
+// The escape of a byte that must be escaped (`"`, `\`, U+0000..U+001F).
+func escape_of(b: u8) -> str {
+    match b {
+        34 -> "\\\"",
+        92 -> "\\\\",
+        8 -> "\\b",
+        12 -> "\\f",
+        10 -> "\\n",
+        13 -> "\\r",
+        9 -> "\\t",
+        0 -> "\\u0000",
+        1 -> "\\u0001",
+        2 -> "\\u0002",
+        3 -> "\\u0003",
+        4 -> "\\u0004",
+        5 -> "\\u0005",
+        6 -> "\\u0006",
+        7 -> "\\u0007",
+        11 -> "\\u000b",
+        14 -> "\\u000e",
+        15 -> "\\u000f",
+        16 -> "\\u0010",
+        17 -> "\\u0011",
+        18 -> "\\u0012",
+        19 -> "\\u0013",
+        20 -> "\\u0014",
+        21 -> "\\u0015",
+        22 -> "\\u0016",
+        23 -> "\\u0017",
+        24 -> "\\u0018",
+        25 -> "\\u0019",
+        26 -> "\\u001a",
+        27 -> "\\u001b",
+        28 -> "\\u001c",
+        29 -> "\\u001d",
+        30 -> "\\u001e",
+        _ -> "\\u001f",
+    }
+}
+
 extend Writer {
-    // Room for `more` bytes past `len`.
-    func reserve(self, more: usize) {
-        let need = self.len + more
-        let have = self.buf.len()
-        if need <= have {
+    // Moves the chunk's bytes to the text.
+    func flush(self) {
+        if self.len == 0 {
             return
         }
-        var size = have * 2
-        while size < need {
-            size = size * 2
+        if let piece = string_from_utf8(self.chunk[0..self.len]) {
+            self.out += piece
         }
-        self.buf.append(array_filled(0u8, size - have))
+        // Not reached otherwise: a chunk holds whole characters only.
+        self.len = 0
+    }
+
+    // Room for `more` bytes (at most `CHUNK()`) in the chunk.
+    func reserve(self, more: usize) {
+        if self.len + more > CHUNK() {
+            self.flush()
+        }
     }
 
     // The text written, as a `String`.
     func finish(self) -> String {
-        if let text = string_from_utf8(self.buf[0..self.len]) {
-            return text
-        }
-        // Not reached: only valid UTF-8 is ever written (whole strings, and
-        // ASCII around them).
-        "".to_string()
+        self.flush()
+        self.out
     }
 
     func byte(self, b: u8) {
         self.reserve(1)
-        self.buf[self.len] = b
+        self.chunk[self.len] = b
         self.len += 1
     }
 
     // A line break and the indentation of `level`.
     func newline(self, level: usize) {
-        let width = level * self.indent
-        self.reserve(width + 1)
-        let buf = self.buf
-        var at = self.len
-        buf[at] = 10
-        at += 1
-        var k: usize = 0
-        while k < width {
-            buf[at] = 32
-            at += 1
-            k += 1
+        self.byte(10)
+        var left = level * self.indent
+        while left > 0 {
+            if self.len == CHUNK() {
+                self.flush()
+            }
+            let chunk = self.chunk
+            var at = self.len
+            let room = CHUNK() - at
+            let count = if left < room { left } else { room }
+            let end = at + count
+            while at < end {
+                chunk[at] = 32
+                at += 1
+            }
+            self.len = end
+            left -= count
         }
-        self.len = at
     }
 
     func value(self, value: Json, level: usize) {
@@ -1296,28 +1359,28 @@ extend Writer {
     // Four bytes, and a fifth unless it is 0.
     func word(self, b1: u8, b2: u8, b3: u8, b4: u8, b5: u8) {
         self.reserve(5)
-        let buf = self.buf
+        let chunk = self.chunk
         let at = self.len
-        buf[at] = b1
-        buf[at + 1] = b2
-        buf[at + 2] = b3
-        buf[at + 3] = b4
+        chunk[at] = b1
+        chunk[at + 1] = b2
+        chunk[at + 2] = b3
+        chunk[at + 3] = b4
         if b5 == 0 {
             self.len = at + 4
         } else {
-            buf[at + 4] = b5
+            chunk[at + 4] = b5
             self.len = at + 5
         }
     }
 
     func int(self, n: i64) {
         self.reserve(20)
-        let buf = self.buf
+        let chunk = self.chunk
         var at = self.len
         // The magnitude as a `u64`, which holds that of `i64`'s minimum.
         var m: u64 = n as u64
         if n < 0 {
-            buf[at] = 45
+            chunk[at] = 45
             at += 1
             m = 0 - m
         }
@@ -1330,7 +1393,7 @@ extend Writer {
         var k = digits
         while k > 0 {
             k -= 1
-            buf[at + k] = (48 + m % 10) as u8
+            chunk[at + k] = (48 + m % 10) as u8
             m = m / 10
         }
         self.len = at + digits
@@ -1340,11 +1403,11 @@ extend Writer {
         self.reserve(32)
         let tmp = stack_alloc(32, 8)
         let count = codira_json_format_f64(x, tmp)
-        let buf = self.buf
+        let chunk = self.chunk
         let at = self.len
         var k: usize = 0
         while k < count {
-            buf[at + k] = load_u8(tmp + k)
+            chunk[at + k] = load_u8(tmp + k)
             k += 1
         }
         self.len = at + count
@@ -1352,54 +1415,81 @@ extend Writer {
 
     func string(self, s: String) {
         let n = s.len()
-        self.reserve(n + 2)
-        let buf = self.buf
+        if n > LONG_STRING() {
+            self.long_string(s)
+            return
+        }
+        // An escape takes up to 6 bytes where the byte took 1.
+        self.reserve(6 * n + 2)
+        let chunk = self.chunk
         var at = self.len
-        buf[at] = 34
+        chunk[at] = 34
         at += 1
         var i: usize = 0
         while i < n {
             let b = s.byte_at(i)
             if b >= 32 && b != 34 && b != 92 {
-                buf[at] = b
+                chunk[at] = b
                 at += 1
             } else {
-                // An escape takes up to 6 bytes where the byte took 1.
-                self.len = at
-                self.reserve(6 + (n - i) + 1)
-                at = self.len
-                buf[at] = 92
+                chunk[at] = 92
                 if b == 34 || b == 92 {
-                    buf[at + 1] = b
+                    chunk[at + 1] = b
                     at += 2
                 } else if b == 10 {
-                    buf[at + 1] = 110
+                    chunk[at + 1] = 110
                     at += 2
                 } else if b == 13 {
-                    buf[at + 1] = 114
+                    chunk[at + 1] = 114
                     at += 2
                 } else if b == 9 {
-                    buf[at + 1] = 116
+                    chunk[at + 1] = 116
                     at += 2
                 } else if b == 8 {
-                    buf[at + 1] = 98
+                    chunk[at + 1] = 98
                     at += 2
                 } else if b == 12 {
-                    buf[at + 1] = 102
+                    chunk[at + 1] = 102
                     at += 2
                 } else {
-                    buf[at + 1] = 117
-                    buf[at + 2] = 48
-                    buf[at + 3] = 48
-                    buf[at + 4] = hex_digit(b >> 4)
-                    buf[at + 5] = hex_digit(b & 15)
+                    chunk[at + 1] = 117
+                    chunk[at + 2] = 48
+                    chunk[at + 3] = 48
+                    chunk[at + 4] = hex_digit(b >> 4)
+                    chunk[at + 5] = hex_digit(b & 15)
                     at += 6
                 }
             }
             i += 1
         }
-        buf[at] = 34
+        chunk[at] = 34
         self.len = at + 1
+    }
+
+    // A long string: appended to the text in runs between its escapes.
+    func long_string(self, s: String) {
+        self.byte(34)
+        self.flush()
+        let n = s.len()
+        var run: usize = 0
+        var i: usize = 0
+        while i < n {
+            let b = s.byte_at(i)
+            if b < 32 || b == 34 || b == 92 {
+                if run < i {
+                    self.out += s.slice(run, i)
+                }
+                self.out += escape_of(b)
+                run = i + 1
+            }
+            i += 1
+        }
+        if run == 0 {
+            self.out += s
+        } else if run < n {
+            self.out += s.slice(run, n)
+        }
+        self.byte(34)
     }
 
     func array(self, items: [Json], level: usize) {
