@@ -3439,6 +3439,27 @@ counts regions, region objects and bytes, and the chunks registered now.
 It is experimental, tested on x86-64 Linux only, and `@noalloc` and
 `@realtime` count region allocations as allocations.
 
+Measured (`cargo bench -p codira_runtime --bench regions`; Intel Xeon @
+2.10 GHz, 4 cores, Linux x86-64; medians of 21 samples of 20,000 calls with
+n = 64, the same checksum from every build; object counts exact, from
+`Runtime::stats()` and `Runtime::region_stats()`; release runtime, so no
+check at close):
+
+| workload (per call) | heap objects | with `@region`: heap / region objects | heap ns | `--frame-alloc` ns | `@region` ns | Rust ns |
+|---|---|---|---|---|---|---|
+| build a 64-cell list in a loop, then sum it | 1,290,000 | 0 / 1,290,000 | 2736 | 2639 | 1225 | 2029 (`Box`) |
+| one `array_filled` of 64 elements | 20,000 | 0 / 20,000 | 90.3 | 89.0 | 142.6 | 33.6 (`Vec`) |
+| `array_filled` and its `map` | 40,000 | 0 / 40,000 | 208.2 | 209.1 | 190.3 | 48.3 (`Vec`) |
+
+A region pays for itself when it holds many objects: the list is 2.2 times
+faster than on the heap (frame allocation cannot take its cells, which
+outlive their iterations), and faster than Rust's `Box`. A region of one
+small array is slower than the heap: opening and closing it (three runtime
+calls, registering the chunk with the collector, zeroing what was used)
+costs more than the one allocation it replaces. The 1,320,000 regions of the
+run used two chunks from the system in all; the rest came from the
+thread's cache of closed chunks.
+
 ### Tests, counterexamples and semantic search
 
 ```bash
