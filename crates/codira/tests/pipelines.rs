@@ -556,6 +556,10 @@ struct Pipeline {
     source: Source,
     stages: Vec<Stage>,
     terminal: Terminal,
+    /// Whether the closures leave the log alone: then the pipeline only
+    /// computes, which the code generator compiles differently (its arrays
+    /// are read without checking their current length).
+    quiet: bool,
 }
 
 fn random_pipeline(rng: &mut Rng) -> Pipeline {
@@ -629,6 +633,7 @@ fn random_pipeline(rng: &mut Rng) -> Pipeline {
         source,
         stages,
         terminal,
+        quiet: rng.below(3) == 0,
     }
 }
 
@@ -659,7 +664,11 @@ fn codira_pipeline(n: usize, p: &Pipeline) -> String {
     };
     for (index, stage) in p.stages.iter().enumerate() {
         let tag = tag(index);
-        let log = format!("log.xs.push({tag} + x); ");
+        let log = if p.quiet {
+            String::new()
+        } else {
+            format!("log.xs.push({tag} + x); ")
+        };
         let step = match *stage {
             Stage::Map(k, c) => format!(".map(func(x) {{ {log}x * ({k}) + ({c}) }})"),
             Stage::Filter(m, r) => format!(".filter(func(x) {{ {log}x % {m} == ({r}) }})"),
@@ -676,14 +685,19 @@ fn codira_pipeline(n: usize, p: &Pipeline) -> String {
             }
             Stage::ChainArray => format!(".chain(ys{n})"),
             Stage::ChainRange(lo, hi) => format!(".chain(({lo})..({hi}))"),
-            Stage::ChainMapped(c) => {
-                format!(".chain(ys{n}.iter().map(func(y) {{ log.xs.push({tag} + y); y + ({c}) }}))")
-            }
+            Stage::ChainMapped(c) => format!(
+                ".chain(ys{n}.iter().map(func(y) {{ {}y + ({c}) }}))",
+                log.replace("+ x)", "+ y)")
+            ),
             Stage::Rev => ".rev()".to_string(),
         };
         chain.push_str(&step);
     }
-    let log = format!("log.xs.push({} + x); ", tag(9));
+    let log = if p.quiet {
+        String::new()
+    } else {
+        format!("log.xs.push({} + x); ", tag(9))
+    };
     match p.terminal {
         Terminal::Sum => writeln!(code, "    println({chain}.sum())").unwrap(),
         Terminal::Count => writeln!(code, "    println({chain}.count())").unwrap(),
@@ -753,6 +767,7 @@ impl<'a> Iter<'a> {
 /// for it.
 fn rust_pipeline(p: &Pipeline) -> String {
     let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let quiet = p.quiet;
     let mut it = match p.source {
         Source::Array => Iter::Both(Box::new(p.xs.clone().into_iter())),
         Source::Range(lo, hi, _) => Iter::Both(Box::new(lo..hi)),
@@ -763,19 +778,27 @@ fn rust_pipeline(p: &Pipeline) -> String {
         let log = Rc::clone(&log);
         it = match (*stage, it) {
             (Stage::Map(k, c), Iter::Both(it)) => Iter::Both(Box::new(it.map(move |x| {
-                log.borrow_mut().push(tag + x);
+                if !quiet {
+                    log.borrow_mut().push(tag + x);
+                }
                 x.wrapping_mul(k).wrapping_add(c)
             }))),
             (Stage::Map(k, c), it) => Iter::Forward(Box::new(it.forward().map(move |x| {
-                log.borrow_mut().push(tag + x);
+                if !quiet {
+                    log.borrow_mut().push(tag + x);
+                }
                 x.wrapping_mul(k).wrapping_add(c)
             }))),
             (Stage::Filter(m, r), Iter::Both(it)) => Iter::Both(Box::new(it.filter(move |&x| {
-                log.borrow_mut().push(tag + x);
+                if !quiet {
+                    log.borrow_mut().push(tag + x);
+                }
                 x % m == r
             }))),
             (Stage::Filter(m, r), it) => Iter::Forward(Box::new(it.forward().filter(move |&x| {
-                log.borrow_mut().push(tag + x);
+                if !quiet {
+                    log.borrow_mut().push(tag + x);
+                }
                 x % m == r
             }))),
             (Stage::Rev, Iter::Both(it)) => Iter::Both(Box::new(it.rev())),
@@ -784,13 +807,17 @@ fn rust_pipeline(p: &Pipeline) -> String {
             (Stage::Skip(k), it) => Iter::Forward(Box::new(it.forward().skip(k))),
             (Stage::TakeWhile(t), it) => {
                 Iter::Forward(Box::new(it.forward().take_while(move |&x| {
-                    log.borrow_mut().push(tag + x);
+                    if !quiet {
+                        log.borrow_mut().push(tag + x);
+                    }
                     x < t
                 })))
             }
             (Stage::SkipWhile(t), it) => {
                 Iter::Forward(Box::new(it.forward().skip_while(move |&x| {
-                    log.borrow_mut().push(tag + x);
+                    if !quiet {
+                        log.borrow_mut().push(tag + x);
+                    }
                     x < t
                 })))
             }
@@ -811,7 +838,9 @@ fn rust_pipeline(p: &Pipeline) -> String {
             (Stage::ChainRange(lo, hi), it) => Iter::Forward(Box::new(it.forward().chain(lo..hi))),
             (Stage::ChainMapped(c), it) => Iter::Forward(Box::new(it.forward().chain(
                 p.ys.clone().into_iter().map(move |y| {
-                    log.borrow_mut().push(tag + y);
+                    if !quiet {
+                        log.borrow_mut().push(tag + y);
+                    }
                     y.wrapping_add(c)
                 }),
             ))),
@@ -819,7 +848,11 @@ fn rust_pipeline(p: &Pipeline) -> String {
     }
     let mut it = it.forward();
     let terminal_tag = tag(9);
-    let note = |x: i64| log.borrow_mut().push(terminal_tag + x);
+    let note = |x: i64| {
+        if !quiet {
+            log.borrow_mut().push(terminal_tag + x);
+        }
+    };
     let optional = |v: Option<String>| v.unwrap_or_else(|| "nil".to_string());
     let mut out = match p.terminal {
         Terminal::Sum => it.fold(0i64, i64::wrapping_add).to_string(),
@@ -892,7 +925,7 @@ fn rust_pipeline(p: &Pipeline) -> String {
 /// pipelines written with Rust's iterators.
 #[test]
 fn random_pipelines_match_rust_iterators() {
-    let (mut logged, mut stages, mut early) = (0, 0, 0);
+    let (mut logged, mut stages, mut early, mut quiet) = (0, 0, 0, 0);
     for seed in [1u64, 2, 3, 0xdead_beef, 42, 7, 1234, 99] {
         let mut rng = Rng(seed);
         let mut code = String::from(
@@ -931,6 +964,7 @@ fn random_pipelines_match_rust_iterators() {
             .map(|line| line.split_whitespace().count())
             .sum::<usize>();
         stages += pipelines.iter().map(|p| p.stages.len()).sum::<usize>();
+        quiet += pipelines.iter().filter(|p| p.quiet).count();
         early += pipelines
             .iter()
             .filter(|p| {
@@ -945,9 +979,10 @@ fn random_pipelines_match_rust_iterators() {
             .count();
     }
     // The generator is not degenerate: the 240 pipelines have stages, stop
-    // early, and their closures ran.
+    // early, their closures ran, and some only compute.
     assert!(
-        stages > 400 && early > 80 && logged > 2000,
-        "{stages} stages, {early} pipelines that stop early, {logged} closure calls"
+        stages > 400 && early > 80 && logged > 1500 && quiet > 50,
+        "{stages} stages, {early} pipelines that stop early, {logged} closure calls, \
+         {quiet} that only compute"
     );
 }
