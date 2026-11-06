@@ -1940,7 +1940,9 @@ func READ_DONE() -> u8 { 8 }
 public class JsonReader {
     p: Parser,
     state: u8,
-    failure: JsonError?,
+    // `failure` holds the first error once `failed` is set.
+    failed: bool,
+    failure: JsonError,
     // The open arrays and objects (`FRAME_*`), innermost last, and per
     // frame: the next element's index (arrays) or the current key
     // (objects), for `path()`.
@@ -1950,11 +1952,14 @@ public class JsonReader {
     // The keys of the open objects, as the tree parser keeps them.
     key_lo: [usize],
     key_tables: [[u32]?],
-    // An event read ahead by `peek`, and its start.
-    peeked: JsonEvent?,
+    // An event read ahead by `peek` (when `has_peeked`), and its start.
+    has_peeked: bool,
+    peeked: JsonEvent,
     peeked_at: usize,
     // Where the last event returned starts.
     start: usize,
+    // The key of a frame before its first member (one string for all).
+    blank: String,
 }
 
 extend JsonReader {
@@ -1988,15 +1993,18 @@ extend JsonReader {
                 member_top: 0,
             },
             state: READ_VALUE(),
-            failure: nil,
+            failed: false,
+            failure: JsonError { kind: JsonErrorKind.UnexpectedEnd, offset: 0, line: 1, column: 1 },
             frames: frames,
             indices: indices,
             keys: keys,
             key_lo: key_lo,
             key_tables: key_tables,
-            peeked: nil,
+            has_peeked: false,
+            peeked: JsonEvent.End,
             peeked_at: 0,
             start: 0,
+            blank: "".to_string(),
         }
     }
 
@@ -2027,62 +2035,44 @@ extend JsonReader {
 
     // The next event, or the first error.
     public func next_event(self) -> Result[JsonEvent, JsonError] {
-        if let e = self.peeked {
-            self.peeked = nil
+        if self.has_peeked {
+            self.has_peeked = false
             self.start = self.peeked_at
-            self.note(e)
-            return Result.Ok(e)
+            return Result.Ok(self.peeked)
         }
-        if let f = self.failure {
-            return Result.Err(f)
+        if self.failed {
+            return Result.Err(self.failure)
         }
-        match self.step() {
-            Result.Ok(e) -> {
-                self.note(e)
-                Result.Ok(e)
-            },
-            Result.Err(f) -> {
-                self.failure = f
-                Result.Err(f)
-            },
-        }
+        self.step()
     }
 
     // The next event without consuming it: the following `next_event`
     // returns it.
     public func peek(self) -> Result[JsonEvent, JsonError] {
-        if let e = self.peeked {
-            return Result.Ok(e)
+        if self.has_peeked {
+            return Result.Ok(self.peeked)
         }
-        if let f = self.failure {
-            return Result.Err(f)
+        if self.failed {
+            return Result.Err(self.failure)
         }
         let before = self.start
         match self.step() {
             Result.Ok(e) -> {
+                self.has_peeked = true
                 self.peeked = e
                 self.peeked_at = self.start
                 self.start = before
                 Result.Ok(e)
             },
-            Result.Err(f) -> {
-                self.failure = f
-                Result.Err(f)
-            },
+            Result.Err(f) -> Result.Err(f),
         }
     }
 
-    // Keeps the path up to date after `e` is handed out.
-    func note(self, e: JsonEvent) {
-        match e {
-            JsonEvent.Key(k) -> {
-                let depth = self.frames.len()
-                if depth > 0 {
-                    self.keys[depth - 1] = k
-                }
-            },
-            _ -> {},
-        }
+    // Records the first error and returns it.
+    func fail(self, e: JsonError) -> Result[JsonEvent, JsonError] {
+        self.failed = true
+        self.failure = e
+        Result.Err(e)
     }
 
     // Reads one event: the state machine over the tree parser's code.
@@ -2099,7 +2089,7 @@ extend JsonReader {
             if state == READ_AFTER_DOCUMENT() {
                 p.skip_space()
                 if p.pos < n {
-                    return Result.Err(p.error(JsonErrorKind.TrailingCharacters, p.pos))
+                    return self.fail(p.error(JsonErrorKind.TrailingCharacters, p.pos))
                 }
                 self.state = READ_DONE()
                 continue
@@ -2117,21 +2107,21 @@ extend JsonReader {
             if state == READ_AFTER_ELEMENT() {
                 p.skip_space()
                 if p.pos >= n {
-                    return Result.Err(p.error(JsonErrorKind.UnexpectedEnd, p.pos))
+                    return self.fail(p.error(JsonErrorKind.UnexpectedEnd, p.pos))
                 }
                 let b = text.byte_at(p.pos)
                 if b == 44 {
                     p.pos += 1
                     p.skip_space()
                     if p.pos < n && text.byte_at(p.pos) == 93 {
-                        return Result.Err(p.error(JsonErrorKind.TrailingComma, p.pos))
+                        return self.fail(p.error(JsonErrorKind.TrailingComma, p.pos))
                     }
                     return self.value()
                 }
                 if b == 93 {
                     return Result.Ok(self.close(FRAME_ARRAY()))
                 }
-                return Result.Err(p.error(JsonErrorKind.ExpectedCommaOrBracket, p.pos))
+                return self.fail(p.error(JsonErrorKind.ExpectedCommaOrBracket, p.pos))
             }
             if state == READ_FIRST_KEY() {
                 p.skip_space()
@@ -2146,10 +2136,10 @@ extend JsonReader {
             if state == READ_COLON() {
                 p.skip_space()
                 if p.pos >= n {
-                    return Result.Err(p.error(JsonErrorKind.UnexpectedEnd, p.pos))
+                    return self.fail(p.error(JsonErrorKind.UnexpectedEnd, p.pos))
                 }
                 if text.byte_at(p.pos) != 58 {
-                    return Result.Err(p.error(JsonErrorKind.ExpectedColon, p.pos))
+                    return self.fail(p.error(JsonErrorKind.ExpectedColon, p.pos))
                 }
                 p.pos += 1
                 return self.value()
@@ -2157,21 +2147,21 @@ extend JsonReader {
             // READ_AFTER_MEMBER
             p.skip_space()
             if p.pos >= n {
-                return Result.Err(p.error(JsonErrorKind.UnexpectedEnd, p.pos))
+                return self.fail(p.error(JsonErrorKind.UnexpectedEnd, p.pos))
             }
             let b = text.byte_at(p.pos)
             if b == 44 {
                 p.pos += 1
                 p.skip_space()
                 if p.pos < n && text.byte_at(p.pos) == 125 {
-                    return Result.Err(p.error(JsonErrorKind.TrailingComma, p.pos))
+                    return self.fail(p.error(JsonErrorKind.TrailingComma, p.pos))
                 }
                 return self.key()
             }
             if b == 125 {
                 return Result.Ok(self.close(FRAME_OBJECT()))
             }
-            return Result.Err(p.error(JsonErrorKind.ExpectedCommaOrBrace, p.pos))
+            return self.fail(p.error(JsonErrorKind.ExpectedCommaOrBrace, p.pos))
         }
     }
 
@@ -2201,20 +2191,29 @@ extend JsonReader {
         let at = p.pos
         self.start = at
         if at >= text.len() {
-            return Result.Err(p.error(JsonErrorKind.UnexpectedEnd, at))
+            return self.fail(p.error(JsonErrorKind.UnexpectedEnd, at))
         }
         let b = text.byte_at(at)
         if b == 34 {
-            let s = p.string()?
-            self.value_done()
-            return Result.Ok(JsonEvent.Str(s))
+            return match p.string() {
+                Result.Ok(s) -> {
+                    self.value_done()
+                    Result.Ok(JsonEvent.Str(s))
+                },
+                Result.Err(e) -> self.fail(e),
+            }
         }
         if b == 123 || b == 91 {
-            p.enter()?
+            // `Parser.enter`.
+            if p.depth >= p.max_depth {
+                return self.fail(p.error(JsonErrorKind.DepthLimit, at))
+            }
+            p.depth += 1
+            p.pos += 1
             let kind = if b == 123 { FRAME_OBJECT() } else { FRAME_ARRAY() }
             self.frames.push(kind)
             self.indices.push(0)
-            self.keys.push("".to_string())
+            self.keys.push(self.blank)
             if b == 123 {
                 self.key_lo.push(p.member_top)
                 self.key_tables.push(nil)
@@ -2225,34 +2224,44 @@ extend JsonReader {
             return Result.Ok(JsonEvent.BeginArray)
         }
         if b == 45 || is_digit(b) {
-            let number = p.number()?
-            self.value_done()
-            return match number {
-                Json.Int(v) -> Result.Ok(JsonEvent.Int(v)),
-                Json.Float(x) -> Result.Ok(JsonEvent.Float(x)),
-                // Not reached: `number` makes only numbers.
-                _ -> Result.Ok(JsonEvent.Null),
+            return match p.number() {
+                Result.Ok(number) -> {
+                    self.value_done()
+                    match number {
+                        Json.Int(v) -> Result.Ok(JsonEvent.Int(v)),
+                        Json.Float(x) -> Result.Ok(JsonEvent.Float(x)),
+                        // Not reached: `number` makes only numbers.
+                        _ -> Result.Ok(JsonEvent.Null),
+                    }
+                },
+                Result.Err(e) -> self.fail(e),
             }
         }
         if b == 116 {
-            p.literal(114, 117, 101, 0)?
+            if let e = p.literal(114, 117, 101, 0).err() {
+                return self.fail(e)
+            }
             self.value_done()
             return Result.Ok(JsonEvent.Bool(true))
         }
         if b == 102 {
-            p.literal(97, 108, 115, 101)?
+            if let e = p.literal(97, 108, 115, 101).err() {
+                return self.fail(e)
+            }
             self.value_done()
             return Result.Ok(JsonEvent.Bool(false))
         }
         if b == 110 {
-            p.literal(117, 108, 108, 0)?
+            if let e = p.literal(117, 108, 108, 0).err() {
+                return self.fail(e)
+            }
             self.value_done()
             return Result.Ok(JsonEvent.Null)
         }
         if (b >= 65 && b <= 90) || (b >= 97 && b <= 122) {
-            return Result.Err(p.error(JsonErrorKind.InvalidLiteral, at))
+            return self.fail(p.error(JsonErrorKind.InvalidLiteral, at))
         }
-        Result.Err(p.error(JsonErrorKind.ExpectedValue, at))
+        self.fail(p.error(JsonErrorKind.ExpectedValue, at))
     }
 
     // An object member's key at the current position (white space skipped
@@ -2261,14 +2270,17 @@ extend JsonReader {
         let p = self.p
         let text = p.text
         if p.pos >= text.len() {
-            return Result.Err(p.error(JsonErrorKind.UnexpectedEnd, p.pos))
+            return self.fail(p.error(JsonErrorKind.UnexpectedEnd, p.pos))
         }
         let key_at = p.pos
         self.start = key_at
         if text.byte_at(key_at) != 34 {
-            return Result.Err(p.error(JsonErrorKind.ExpectedKey, key_at))
+            return self.fail(p.error(JsonErrorKind.ExpectedKey, key_at))
         }
-        let key = p.string()?
+        let key = match p.string() {
+            Result.Ok(k) -> k,
+            Result.Err(e) -> return self.fail(e),
+        }
         let hash = key.hash()
         let depth = self.frames.len()
         let lo = self.key_lo[self.key_lo.len() - 1]
@@ -2277,7 +2289,7 @@ extend JsonReader {
         let existing = find_member(p.members, lo, top, table, key, hash)
         if existing < top - lo {
             if !p.keep_last {
-                return Result.Err(p.error(JsonErrorKind.DuplicateKey, key_at))
+                return self.fail(p.error(JsonErrorKind.DuplicateKey, key_at))
             }
         } else {
             let member = Member { key: key, hash: hash, value: Json.Null }
@@ -2291,6 +2303,7 @@ extend JsonReader {
         }
         if depth > 0 {
             self.indices[depth - 1] += 1
+            self.keys[depth - 1] = key
         }
         self.state = READ_COLON()
         Result.Ok(JsonEvent.Key(key))
