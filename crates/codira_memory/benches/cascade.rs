@@ -25,7 +25,7 @@ use std::{
 use codira_memory::{
     gc::{
         cascade::{CascadeConfig, Mutator},
-        Event, GcPtr, GcRuntime, HasIndirectionPtr, MarkSweep, NoopObserver,
+        Event, GcPolicy, GcPtr, GcRuntime, HasIndirectionPtr, MarkSweep, NoopObserver,
     },
     HasStaticType, StructTypeBuilder, Type,
 };
@@ -63,9 +63,16 @@ fn types() -> Types {
     Types { node, offset }
 }
 
+/// A heap with Cascade on and pacing off: every reclamation measured here
+/// is Cascade's (a paced collection would reclaim the garbage first).
 fn cascade_runtime() -> Arc<Gc> {
+    cascade_runtime_with(CascadeConfig::default())
+}
+
+fn cascade_runtime_with(config: CascadeConfig) -> Arc<Gc> {
     let gc = Arc::new(Gc::default());
-    gc.enable_cascade(CascadeConfig::default());
+    gc.set_policy(GcPolicy::default().without_pacing());
+    gc.enable_cascade(config);
     gc
 }
 
@@ -356,8 +363,7 @@ fn cycles(config: &Config) {
         for _ in 0..config.samples {
             // Throughput of the pass itself: every candidate fits the queue
             // (the default cap would leave the excess to tracing).
-            let gc = Arc::new(Gc::default());
-            gc.enable_cascade(CascadeConfig {
+            let gc = cascade_runtime_with(CascadeConfig {
                 max_candidates: usize::MAX,
                 ..CascadeConfig::default()
             });
@@ -391,8 +397,7 @@ fn cycles(config: &Config) {
         // Unpublished: the owner's synchronous pass.
         let mut rates = Vec::new();
         for _ in 0..config.samples {
-            let gc = Arc::new(Gc::default());
-            gc.enable_cascade(CascadeConfig {
+            let gc = cascade_runtime_with(CascadeConfig {
                 local_cycle_budget: usize::MAX,
                 ..CascadeConfig::default()
             });

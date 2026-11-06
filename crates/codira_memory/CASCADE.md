@@ -627,5 +627,115 @@ points.
 
 ## 11. Measurements
 
-See the final section of this document, filled in from
-`cargo bench -p codira_memory --bench cascade`.
+**Machine and method.** One cloud VM: Intel Xeon @ 2.10 GHz, 4 vCPUs,
+15 GB of RAM, Linux 6.18, stable Rust 1.97.1, release profile. The VM is
+shared, so the noise is real. Every number below is the median of 11
+samples (31 for the header comparison), with the minimum in parentheses.
+They come from `cargo bench -p codira_memory --bench cascade` and
+`--bench gc`, run on the branch after its rebase onto main. Heaps in the
+Cascade benchmark have pacing turned off; otherwise paced collections
+would reclaim the garbage before Cascade does.
+
+### Header change (Cascade off)
+
+The ownership word replaces the upper half of `inline_capacity`.
+`--bench gc` was run alternately on origin/main and on this branch, two
+rounds each. Medians are in ns per object, collection in ms:
+
+| workload | main, round 1 | main, round 2 | branch, round 1 | branch, round 2 |
+|---|---|---|---|---|
+| alloc 200,000 x 8 B, fresh heap | 23.64 | 24.65 | 23.75 | 23.81 |
+| alloc 200,000 x 8 B, after a collection | 23.64 | 22.63 | 22.81 | 22.95 |
+| collect 100,000 live + 100,000 dead | 2.09 | 2.10 | 2.14 | 2.13 |
+
+There is no difference beyond run-to-run noise. The collection is 1 to 2
+percent slower on the branch in both rounds, which is within that noise
+but stated here anyway. These rounds were run before the rebase, on the
+previous main.
+
+### Cost per assignment (one increment plus one decrement), ns
+
+| what | median (min) |
+|---|---|
+| plain field store, no barrier | 0.65 (0.63) |
+| atomic swap of a field (the published barrier's store) | 8.65 (7.91) |
+| naive atomic RC, 1 thread | 15.61 (15.15) |
+| naive atomic RC, 4 threads on one object | 62.48 (57.59) |
+| side-table RC (`Mutex<FxHashMap>`), 1 thread | 25.70 (24.82) |
+| **Cascade, unpublished** (owner counts with plain stores) | **10.61 (10.39)** |
+| **Cascade, published, mutator side** (swap + two log pushes) | **28.05 (26.54)** |
+| Cascade collector, per applied inc or dec | 4.17 (3.69) |
+| Cascade, published, 4 threads + collector thread (wall) | 11.46 (9.53) |
+| `hold` + `drop_local` (API stand-in for stack slots; compiled code pays nothing) | 5.92 (5.57) |
+| `alloc` + `release_unique` | 72.77 (60.61) |
+| `MarkSweep` alloc, tracing every 64K objects | 30.55 (28.08) |
+
+**Reading these honestly:**
+
+- **Unpublished counting wins** against single-thread atomic RC: 10.6 ns
+  against 15.6 ns. Most of the 10.6 ns is the barrier's checks, not the
+  count.
+- **The published mutator path loses** against single-thread atomic RC:
+  28 ns against 15.6 ns. Most of the difference is the field *swap*, which
+  is needed only because the Rust API allows racing stores (Section 9).
+  The collector then spends about 4 ns more per applied change.
+- **Under contention Cascade wins clearly.** With 4 threads, Cascade's wall
+  time is 11.5 ns per assignment, against 62 ns for naive atomic RC on one
+  shared object. These are different workloads, though: here each thread
+  stores into its own published object, and the counts are applied by a
+  separate collector thread.
+- **The side table loses** to the in-header word: 26 ns against a few ns of
+  plain loads and stores.
+- **`release_unique` is not yet cheap.** An allocation plus a release costs
+  73 ns, against 31 ns for an allocation that is left to tracing. The
+  release takes the heap's write lock once per object. Freeing into the
+  thread's own allocation run, without the lock, is future work.
+
+### Cycle reclamation throughput (M objects per second)
+
+200,000 garbage objects, in rings of the given size, from the drop to
+complete reclamation:
+
+| rings of | published, concurrent pass | steps (budget 65,536) | unpublished, owner's pass | one tracing collection |
+|---|---|---|---|---|
+| 2 | 2.09 (1.82) | 52 | 2.93 (2.64) | 120 (111) |
+| 16 | 1.84 (1.54) | 37 | 4.12 (3.49) | 121 (94) |
+| 128 | 3.05 (2.56) | 26 | 4.57 (3.08) | 149 (58) |
+
+**Tracing is 30 to 60 times faster at reclaiming pure garbage.** It marks
+nothing here (no live objects) and sweeps by blocks. Trial deletion pays
+for hash-map trial counts, and for validating each set one boundary later.
+Cascade's case for cycles is therefore not throughput. It is that the work
+is incremental and bounded per step (the next table), and that it needs no
+stop-the-world over the whole heap. Comparing against a tracing collection
+over a large *live* heap was not measured.
+
+### Step latency (3 mutator threads, collector on the remaining core)
+
+The mutators produce published garbage rings and published stores without
+pause. Times are those the step held the heap lock; the wait for the lock
+is reported separately:
+
+| budget | steps | median | p99 | p99.9 | max | lock wait, max |
+|---|---|---|---|---|---|---|
+| 256 | 46,001 | 16.1 us | 63.7 us | 129 us | 3.73 ms | 3.22 ms |
+| 1,024 | 11,839 | 58.7 us | 165 us | 308 us | 4.05 ms | 1.90 ms |
+| 4,096 | 3,377 | 260 us | 579 us | 885 us | 1.27 ms | 1.57 ms |
+| 16,384 | 2,448 | 241 us | 725 us | 1.26 ms | 2.84 ms | 1.30 ms |
+
+At 16,384 the median work per step is 7,302 units: the queues ran dry
+before the budget did.
+
+**These are measured bounds on one machine, not guarantees:**
+
+- The p99.9 scales with the budget, at about 0.3 to 0.5 us per unit at
+  small budgets.
+- The maxima, a few ms, are outliers of a few steps in tens of thousands.
+  The two causes measured are rehashing the candidate queue, which the cap
+  bounds (Section 6), and preemption of the collector thread on the shared
+  VM.
+- Before the cap, a single step reached 43 ms of CPU time while it rehashed
+  1.8 million queued candidates. That is why the cap exists.
+- Thread CPU time can exceed the lock-held time. It includes the wait for
+  the lock and the pressure-triggered tracing collections, neither of which
+  is counted as the step's own work.
