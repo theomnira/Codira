@@ -116,7 +116,7 @@ unsafe fn group_ref<'a>(group: usize) -> &'a GroupState {
     unsafe { &*(group as *const GroupState) }
 }
 
-extern "C" fn group_begin(result_size: usize) -> usize {
+pub(super) extern "C" fn group_begin(result_size: usize) -> usize {
     Arc::into_raw(Arc::new(GroupState {
         set: TaskSet::new(),
         result_size,
@@ -188,7 +188,7 @@ extern "C" fn group_result(group: usize, index: usize, out: usize) {
     });
 }
 
-extern "C" fn group_free(group: usize) {
+pub(super) extern "C" fn group_free(group: usize) {
     // SAFETY: the compiler frees each group once, after `group_end`.
     let group = unsafe { Arc::from_raw(group as *const GroupState) };
     if !group.set.ended.load(Ordering::Acquire) {
