@@ -124,3 +124,29 @@ fn frame_alloc_prints_the_same_output() {
     assert_eq!(plain, framed);
     assert_eq!(plain, "328750 Point { x: 50, y: 2 } 10 3\n");
 }
+
+#[test]
+fn an_escape_from_a_region_function_fails_the_build() {
+    let dir = package();
+    std::fs::write(
+        dir.path().join("src/mod.code"),
+        r#"class Point { x: i64, y: i64 }
+
+@region
+public func make(n: i64) -> Point {
+    let p = Point { x: n, y: n }
+    p
+}
+"#,
+    )
+    .unwrap();
+    let (ok, _, stderr) = codira(&dir, &["build"]);
+    assert!(!ok, "the build succeeded");
+    assert!(
+        stderr.contains(
+            "`make` is `@region`, but this class `Point` may outlive the region: it is returned \
+             from `make`"
+        ),
+        "{stderr}"
+    );
+}
