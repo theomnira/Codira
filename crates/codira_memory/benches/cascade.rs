@@ -111,6 +111,13 @@ fn retain_release(config: &Config) {
             }
         });
         report("plain field store (no barrier)", "ns", &mut v);
+        let mut v = per_op(config.samples, n, || {
+            for i in 0..n {
+                let p = if i & 1 == 0 { value } else { std::ptr::null_mut() };
+                black_box(slot.swap(black_box(p), Ordering::AcqRel));
+            }
+        });
+        report("atomic swap of the field (published barrier's store)", "ns", &mut v);
     }
 
     // Naive atomic reference counting: an atomic RMW per retain and release.

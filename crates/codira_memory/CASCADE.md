@@ -395,14 +395,23 @@ is in fact reachable at the cut. Then either:
 
 - Every step does at most `budget` units of work. A unit is an applied
   count change, a reclaimed object or a traversed edge.
-- A trial-deletion batch that would exceed the step's remaining budget, or
-  `CascadeConfig::max_cycle_pass` objects, is abandoned. Its roots lose
-  `BUFFERED` and are counted in `CascadeStats::abandoned_passes`.
+- Each pass is seeded with a batch of candidates. The batch halves whenever
+  a pass overflows its budget and doubles again when one fits (up to 4096).
+  The overflowing pass's roots go back on the queue. Only a single candidate
+  whose graph exceeds `CascadeConfig::max_cycle_pass` work units is
+  abandoned. It loses `BUFFERED`, is counted in
+  `CascadeStats::abandoned_passes`, and is left to tracing.
+- The candidate queue is a hash set, and growing it rehashes every entry.
+  `CascadeConfig::max_candidates` (65,536 by default) caps it, so that
+  rehashing never costs a step more than a bounded amount. A candidate that
+  does not fit is counted in `CascadeStats::candidate_overflows`. It puts
+  the following steps under pressure, which ends in a tracing collection.
 - The bytes of retiring and candidate objects are reported as
   `deferred_bytes` (`Cascade::stats`, and `MarkSweep::cascade_deferred_bytes`
   for heap accounting).
-- When `deferred_bytes` exceeds `CascadeConfig::pressure_bytes`, or the heap
-  is within 1/8 of its limit, the step budget is multiplied by
+- When `deferred_bytes` exceeds `CascadeConfig::pressure_bytes`, the heap
+  is within 1/8 of its limit, or a candidate overflowed since the last
+  tracing collection, the step budget is multiplied by
   `pressure_multiplier`. If the pressure persists for
   `pressure_steps_before_trace` steps, Cascade runs the tracing collector,
   so deferred garbage is never deferred forever.
@@ -422,7 +431,10 @@ the budget runs out:
 3. reclaim up to the remaining budget from the retire list;
 4. run one trial-deletion batch on the remaining budget.
 
-A boundary in progress keeps the epoch from advancing, so the increments
+Starting a boundary moves whole logs and shares each root snapshot
+between its increments and its later decrements. It never copies entries,
+so its cost is proportional to the number of packets, not to the number of
+logged operations. A boundary in progress keeps the epoch from advancing, so the increments
 and decrements of one boundary are never interleaved with another's, even
 across steps. A step completes at most two boundaries, because an idle
 boundary costs no work units. Children that a cycle reclamation releases
@@ -496,6 +508,12 @@ the escape and uniqueness analysis:
    heap object, array elements included. The barrier loads the old value,
    stores the new one, and logs inc and dec. It is cheap when both objects
    are unpublished (plain load and store) and two buffer pushes otherwise.
+   The Rust API swaps the field of a *published* object atomically. Two
+   threads may race on it there, and each overwritten reference must be
+   released exactly once. This swap is most of the measured cost of a
+   published store (Section 11). Compiled code could use a plain load and
+   store instead, if the language rules out unsynchronised races on
+   reference fields (Section 10).
    The barrier must cover runtime-internal stores too: array `push` and
    `grow`, `Map` and `String` internals, hot-reload migration.
 3. **No local counting.** Locals are found by stack scanning, so the
