@@ -71,7 +71,10 @@
 //!
 //! Calls into another module are unknown code: a hot reload replaces one
 //! module's code without recompiling its callers, so a callee's summary is
-//! only trusted inside the module it is compiled with.
+//! only trusted inside the module it is compiled with -- or when the callee
+//! and every function it names are `@inline` or generic, which are compiled
+//! into each calling library and change only when it is rebuilt
+//! ([`compiled_into_caller`]).
 //!
 //! # Why a frame object is safe for the collector, hot reload, heap
 //! # snapshots and debug printing
@@ -709,6 +712,49 @@ fn analyze(db: &dyn HirDatabase, func: Function, oracle: &mut Oracle<'_>) -> Fun
             names,
         },
     }
+}
+
+/// Whether a call to `callee` from another module runs code compiled into
+/// the caller's own library, so that the caller is rebuilt whenever that
+/// code changes and `callee`'s summary describes what the caller runs: the
+/// callee is `@inline` or generic (both are copied into every library that
+/// calls them), and so is every function it names. A callee that calls an
+/// ordinary function of its own module is not: that call goes through the
+/// dispatch table, and a hot reload of the callee's module can change it
+/// without rebuilding the caller.
+fn compiled_into_caller(db: &dyn HirDatabase, callee: Function) -> bool {
+    let mut seen = FxHashSet::default();
+    let mut work = vec![callee];
+    while let Some(f) = work.pop() {
+        if !seen.insert(f) || f.is_intrinsic(db) {
+            continue;
+        }
+        if f.is_extern(db) || !(f.is_inline(db) || f.is_generic(db)) {
+            return false;
+        }
+        // Every function the body names: a superset of the calls the
+        // analysis follows, read without asking for any summary (so no
+        // query can cycle back here).
+        let body = f.body(db);
+        let infer = f.infer(db);
+        for (expr, e) in body.exprs() {
+            if let Some(m) = infer.method_resolution(expr) {
+                work.push(Function::from(m));
+            }
+            if let Some(next) = infer.iterator_next(expr) {
+                work.push(next);
+            }
+            if let Expr::Call { callee, .. } = e {
+                if let Some(CallableDef::Function(g)) = infer[*callee].as_callable_def() {
+                    work.push(g);
+                }
+            }
+            if let Some(g) = infer.function_value(expr) {
+                work.push(g);
+            }
+        }
+    }
+    true
 }
 
 /// The number of parameters of `func`, `self` included.
@@ -1551,6 +1597,7 @@ impl Analysis<'_, '_> {
     fn call(&mut self, _expr: ExprId, callee: Function, args: Vec<Objs>) -> Objs {
         let summary = if callee.module(self.db) != self.func.module(self.db)
             && !callee.is_intrinsic(self.db)
+            && !compiled_into_caller(self.db, callee)
         {
             // A hot reload can replace the callee's module without
             // recompiling this one.

@@ -3149,7 +3149,8 @@ through a function value, a trait method on a generic type, an array method
 that grows the array (`push`, `insert`, `reserve`, `append`), a builtin it
 does not model (`print`, string operations) and **any function of another
 module** (a hot reload can replace that module's code without recompiling
-the caller). A call to a function of the same module uses that function's
+the caller), unless it and every function it calls are `@inline` or
+generic: those are compiled into the calling library. A call to a function of the same module uses that function's
 summary: whether it keeps, returns, or only reads each argument, computed
 through everything it calls, recursion included.
 

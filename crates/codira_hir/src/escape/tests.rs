@@ -570,3 +570,33 @@ fn reference_arguments_of_intrinsics_escape() {
     );
     assert_eq!(placement_of(&source, "f"), Placement::Frame);
 }
+
+#[test]
+fn inline_functions_of_another_module_use_their_summary() {
+    let db = MockDatabase::with_files(
+        r#"
+    //- /mod.code
+    import geometry.{ Point, norm, norm_via_helper }
+    func direct() -> i64 { let p = Point { x: 1 }; norm(p) }
+    func via_helper() -> i64 { let p = Point { x: 1 }; norm_via_helper(p) }
+    //- /geometry.code
+    public class Point { x: i64 }
+    @inline
+    public func norm(p: Point) -> i64 { p.x * p.x }
+    func helper(p: Point) -> i64 { p.x }
+    @inline
+    public func norm_via_helper(p: Point) -> i64 { helper(p) }
+    "#,
+    );
+    // `norm` is compiled into the caller's library: its summary holds.
+    let direct = db.escape_analysis(function(&db, "direct"));
+    assert_eq!(direct.allocations[0].placement, Placement::Frame);
+    // `norm_via_helper` calls `helper` through the dispatch table, which a
+    // reload of `geometry` can change without rebuilding the caller.
+    let via = db.escape_analysis(function(&db, "via_helper"));
+    assert!(
+        matches!(&via.allocations[0].placement, Placement::Heap(Reason::Unknown { .. })),
+        "{:?}",
+        via.allocations
+    );
+}
