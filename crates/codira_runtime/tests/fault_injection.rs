@@ -279,3 +279,27 @@ fn every_allocation_on_worker_threads_fails_cleanly() {
     let points = fail_every_allocation(TASKS, 30);
     assert!(points >= 90, "only {points} allocation points");
 }
+
+/// The host API's fallible allocations return the injected failure, and
+/// the heap works again afterwards. (`GcRuntime::alloc`,
+/// `Runtime::construct_array` and `StringRef::new` panic or exit on a failed
+/// allocation by design; see TESTING.md.)
+#[test]
+fn host_allocations_return_the_injected_failure() {
+    let driver = codira_test::CompileAndRunTestDriver::new(
+        "public func len(s: String) -> usize { s.len() }",
+        |builder| builder,
+    )
+    .expect("Failed to build test driver");
+    let runtime = &driver.runtime;
+    let gc = runtime.gc();
+    // An empty string allocates nothing; a long one does.
+    let text = "x".repeat(100);
+    gc.fail_nth_allocation(Some(1));
+    let err = codira_runtime::StringRef::try_new(runtime, &text).unwrap_err();
+    assert_eq!(err, codira_memory::gc::AllocError::Injected);
+    assert_eq!(gc.injected_failures(), 1);
+    let s = codira_runtime::StringRef::try_new(runtime, &text).unwrap();
+    let len: usize = runtime.invoke("len", (s,)).unwrap();
+    assert_eq!(len, 100);
+}
