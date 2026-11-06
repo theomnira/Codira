@@ -86,3 +86,22 @@ kernels = [
   { name = "matmul_200" },
   { name = "collatz_1m" },
 ]
+
+# The same hash function in all three (Codira's), then Rust's default
+# seeded SipHash on its own rows: Codira's `Map` has no seeded hasher and
+# the C++ standard library has none.
+[[workload]]
+name = "hashmap"
+title = "Hash maps: the same hash function, and the default secure hasher"
+kernels = [
+  { name = "insert_i64", ci = true },
+  { name = "lookup_i64", ci = true },
+  { name = "insert_string" },
+  { name = "lookup_string", ci = true },
+  { name = "churn_i64", ci = true },
+  { name = "insert_i64_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
+  { name = "lookup_i64_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
+  { name = "insert_string_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
+  { name = "lookup_string_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
+  { name = "churn_i64_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
+]

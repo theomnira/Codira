@@ -1,0 +1,130 @@
+// AURORA: hash maps. Inserting and looking up 1M random `i64` keys and
+// 200k `String` keys in `Map`, and a churn of inserts, removals and lookups
+// on a table of constant size. `hashmap.rs` runs the same work on
+// `HashMap` twice: with Codira's hash functions (the MurmurHash3 finalizer
+// for integers, FNV-1a for strings), and with its default, seeded SipHash
+// (the `*_secure` kernels, which have no Codira variant: `Map` has no
+// seeded hasher). `hashmap.cpp` runs it on `std::unordered_map` with
+// Codira's hash functions.
+
+import std.collections.map.{Map}
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+class Rng { s: u64 }
+
+func next(r: Rng) -> u64 {
+    var x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+func int_keys() -> [i64] {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let keys: [i64] = []
+    for _ in 0..1000000 { keys.push((next(r) >> 1) as i64) }
+    keys
+}
+
+func string_keys() -> [String] {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let keys: [String] = []
+    for _ in 0..200000 {
+        let n = next(r) % 100000000
+        keys.push(f"user:{n}")
+    }
+    keys
+}
+
+func build_ints(keys: [i64]) -> Map[i64, i64] {
+    let m: Map[i64, i64] = Map.new()
+    for k in keys { m.insert(k, k ^ 5); }
+    m
+}
+
+func build_strings(keys: [String]) -> Map[String, i64] {
+    let m: Map[String, i64] = Map.new()
+    var i: i64 = 0
+    for k in keys { m.insert(k, i); i += 1 }
+    m
+}
+
+public func insert_i64() {
+    let keys = int_keys()
+    let start = now()
+    let m = build_ints(keys)
+    report(start, m.len() as u64)
+}
+
+public func lookup_i64() {
+    let keys = int_keys()
+    let m = build_ints(keys)
+    let start = now()
+    var found: u64 = 0
+    for k in keys {
+        if let v = m.get(k) { found += (v & 1) as u64 + 1 }
+    }
+    report(start, found)
+}
+
+public func insert_string() {
+    let keys = string_keys()
+    let start = now()
+    let m = build_strings(keys)
+    report(start, m.len() as u64)
+}
+
+public func lookup_string() {
+    let keys = string_keys()
+    let m = build_strings(keys)
+    let start = now()
+    var found: u64 = 0
+    var round = 0
+    while round < 5 {
+        for k in keys {
+            if let v = m.get(k) { found += (v & 7) as u64 + 1 }
+        }
+        round += 1
+    }
+    report(start, found)
+}
+
+// 2M steps over a table of 65,536 live keys: each step inserts a new key,
+// removes the oldest and looks one up.
+public func churn_i64() {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let ring = array_filled(0i64, 65536)
+    let m: Map[i64, i64] = Map.new()
+    var i: usize = 0
+    while i < 65536 {
+        let k = (next(r) >> 1) as i64
+        ring[i] = k
+        m.insert(k, k);
+        i += 1
+    }
+    let start = now()
+    var found: u64 = 0
+    var step: usize = 0
+    while step < 2000000 {
+        let slot = step & 65535
+        m.remove(ring[slot]);
+        let k = (next(r) >> 1) as i64
+        ring[slot] = k
+        m.insert(k, k);
+        if let v = m.get(ring[(step * 7) & 65535]) { found += (v & 1) as u64 + 1 }
+        step += 1
+    }
+    report(start, found * 1000000 + m.len() as u64)
+}
