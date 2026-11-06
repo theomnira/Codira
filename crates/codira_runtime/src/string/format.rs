@@ -63,7 +63,9 @@ impl Out for String {
 /// and on the heap beyond (a long padded string, a float with a precision
 /// of hundreds of digits).
 pub(super) struct Small {
-    stack: [u8; 128],
+    /// The first `len` bytes are written (and are whole UTF-8 text); the
+    /// rest is not initialised, so making one costs nothing.
+    stack: [std::mem::MaybeUninit<u8>; 128],
     len: usize,
     heap: Option<String>,
 }
@@ -71,7 +73,7 @@ pub(super) struct Small {
 impl Small {
     pub(super) fn new() -> Self {
         Small {
-            stack: [0; 128],
+            stack: [std::mem::MaybeUninit::uninit(); 128],
             len: 0,
             heap: None,
         }
@@ -80,13 +82,14 @@ impl Small {
     pub(super) fn as_bytes(&self) -> &[u8] {
         match &self.heap {
             Some(heap) => heap.as_bytes(),
-            None => &self.stack[..self.len],
+            // Safety: the first `len` bytes were written.
+            None => unsafe { std::slice::from_raw_parts(self.stack.as_ptr().cast(), self.len) },
         }
     }
 
     fn as_str(&self) -> &str {
-        // Only whole `str`s are ever written.
-        std::str::from_utf8(self.as_bytes()).expect("formatted text is UTF-8")
+        // Safety: only whole `str`s are ever written.
+        unsafe { std::str::from_utf8_unchecked(self.as_bytes()) }
     }
 }
 
@@ -102,11 +105,18 @@ impl Out for Small {
         if let Some(heap) = &mut self.heap {
             heap.push_str(text);
         } else if self.len + text.len() <= self.stack.len() {
-            self.stack[self.len..self.len + text.len()].copy_from_slice(text.as_bytes());
+            // Safety: within the stack buffer.
+            unsafe {
+                std::ptr::copy_nonoverlapping(
+                    text.as_ptr(),
+                    self.stack.as_mut_ptr().add(self.len).cast(),
+                    text.len(),
+                );
+            }
             self.len += text.len();
         } else {
             let mut heap = String::with_capacity(2 * (self.len + text.len()));
-            heap.push_str(std::str::from_utf8(&self.stack[..self.len]).expect("UTF-8"));
+            heap.push_str(self.as_str());
             heap.push_str(text);
             self.heap = Some(heap);
         }

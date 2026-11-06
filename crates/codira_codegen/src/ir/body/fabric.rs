@@ -37,7 +37,7 @@
 //! # Numbers
 //!
 //! `s += n.to_string()` for an integer of at most 64 bits checks for room
-//! for the longest text such an integer has (20 bytes) and writes the
+//! for the longest text an integer of its type has (20 bytes for 64 bits) and writes the
 //! digits in place with `codira.fmt.dec`, a function generated into the
 //! module (two digits per step from a table, the digit count from the
 //! number's bit length); `s += x.to_string()` for a float, a 128-bit
@@ -62,8 +62,8 @@
 //! it, as before.
 
 use codira_hir::{
-    ArithOp, BinaryOp, BuiltinFn, Expr, ExprId, FormatCount, FormatKind, FormatSpec, IntBitness,
-    StringOp, StructKind, Ty, TyKind,
+    ArithOp, BinaryOp, BuiltinFn, Expr, ExprId, FormatAlign, FormatCount, FormatKind, FormatSpec,
+    IntBitness, StringOp, StructKind, Ty, TyKind,
 };
 use inkwell::{
     module::Linkage,
@@ -81,10 +81,6 @@ use crate::intrinsics;
 /// the elements (whose first word is a string buffer's owner).
 const CAPACITY_OFFSET: u64 = 8;
 const ELEMENTS_OFFSET: u64 = 16;
-
-/// The longest decimal text of an integer of at most 64 bits, sign
-/// included (`-9223372036854775808` and `18446744073709551615`).
-const MAX_INT_TEXT: u64 = 20;
 
 /// The most a plan allocates up front for one piece whose size has no
 /// useful bound (a float with a huge precision); it grows past it.
@@ -109,6 +105,37 @@ pub(super) struct FormatPiece<'ink> {
     spec: FormatSpec,
     width: IntValue<'ink>,
     precision: IntValue<'ink>,
+}
+
+/// How a decimal integer hole is padded, when the plan writes it inline: a
+/// constant width, an ASCII fill and an alignment, or zeros after the sign.
+#[derive(Clone, Copy)]
+pub(super) struct Padding {
+    width: u64,
+    fill: u8,
+    align: FormatAlign,
+    zero: bool,
+}
+
+/// The padding of an integer spec the plan writes inline: decimal (`{n:08}`,
+/// `{n:>6}`, `{n:*^9}`), with a constant width of at most 64 and an ASCII
+/// fill, for an integer of at most 64 bits. Anything else (`+`, `#`, a
+/// radix, the exponent form, a width from a variable) goes to the
+/// runtime's `string_append_format_int`.
+fn inline_padding(spec: &FormatSpec, bits: u32) -> Option<Padding> {
+    let FormatCount::Literal(width) = spec.width else {
+        return None;
+    };
+    let decimal = matches!(spec.kind, FormatKind::Display | FormatKind::Debug);
+    if !decimal || spec.plus || spec.alternate || bits > 64 || width > 64 || !spec.fill.is_ascii() {
+        return None;
+    }
+    Some(Padding {
+        width,
+        fill: spec.fill as u8,
+        align: spec.align.unwrap_or(FormatAlign::Right),
+        zero: spec.zero,
+    })
 }
 
 /// The size of an integer type in bits (`usize` and `isize` are 64 bits
@@ -475,7 +502,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 .build_int_z_extend_or_bit_cast(value, self.context.i64_type(), "wide")
         }
         .expect("failed to widen an integer");
-        let room = usize_ty.const_int(MAX_INT_TEXT, false);
+        // The most digits (and sign) a value of its type has: what the plan
+        // set aside for it.
+        let bound = int_text_bound(value.get_type().get_bit_width(), signed);
+        let room = usize_ty.const_int(bound, false);
         self.gen_fast_append(
             current,
             room,
@@ -494,6 +524,158 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     .basic()
                     .expect("the digit writer returns a count")
                     .into_int_value()
+            },
+            slow,
+        )
+    }
+
+    /// `current` with the integer `value` appended in decimal, padded as
+    /// `padding` says, by Rust's rules: `0` puts zeros between the sign and
+    /// the digits whatever the alignment; otherwise the fill goes before
+    /// (right, the default for numbers), after (left) or around (centre,
+    /// the odd one after) the sign and digits. Written inline, into the
+    /// destination: the digits with `codira.fmt.dec` into a stack slot, then
+    /// the fill, the sign and the digits.
+    fn append_padded_int(
+        &mut self,
+        current: BasicValueEnum<'ink>,
+        value: IntValue<'ink>,
+        signed: bool,
+        padding: Padding,
+    ) -> BasicValueEnum<'ink> {
+        let usize_ty = self.hir_types.get_usize_type();
+        let i8_ty = self.context.i8_type();
+        let i64_ty = self.context.i64_type();
+        let ok = "failed to build a padded integer";
+        let wide = if signed {
+            self.builder
+                .build_int_s_extend_or_bit_cast(value, i64_ty, "wide")
+        } else {
+            self.builder
+                .build_int_z_extend_or_bit_cast(value, i64_ty, "wide")
+        }
+        .expect(ok);
+        let digits = self
+            .new_alloca_builder()
+            .build_array_alloca(i8_ty, i64_ty.const_int(24, false), "digits")
+            .expect(ok);
+        let bound = int_text_bound(value.get_type().get_bit_width(), signed);
+        let room = usize_ty.const_int(padding.width.max(bound), false);
+        let slow = |this: &mut Self,
+                    buf: PointerValue<'ink>,
+                    start: IntValue<'ink>,
+                    len: IntValue<'ink>| {
+            // The same spec through the runtime, which grows the buffer.
+            let (low, high) = this.int_halves(wide, signed);
+            let u32_type = this.context.i32_type();
+            let flags = (match padding.align {
+                FormatAlign::Left => 1,
+                FormatAlign::Center => 2,
+                FormatAlign::Right => 3,
+            }) | (u32::from(padding.zero) << 4)
+                | (1 << 5);
+            this.string_making_call(
+                &intrinsics::string_append_format_int,
+                &[
+                    buf.into(),
+                    start.into(),
+                    len.into(),
+                    low.into(),
+                    high.into(),
+                    this.context
+                        .i8_type()
+                        .const_int(u64::from(signed), false)
+                        .into(),
+                    u32_type.const_int(64, false).into(),
+                    u32_type.const_int(u64::from(padding.fill), false).into(),
+                    u32_type.const_int(u64::from(flags), false).into(),
+                    i64_ty.const_int(padding.width, false).into(),
+                    i64_ty.const_zero().into(),
+                ],
+            )
+        };
+        self.gen_fast_append(
+            current,
+            room,
+            false,
+            |this, destination| {
+                let b = &this.builder;
+                let negative = if signed {
+                    b.build_int_compare(IntPredicate::SLT, wide, i64_ty.const_zero(), "negative")
+                        .expect(ok)
+                } else {
+                    this.context.bool_type().const_zero()
+                };
+                let negated = b.build_int_neg(wide, "negated").expect(ok);
+                let magnitude = b
+                    .build_select(negative, negated, wide, "magnitude")
+                    .expect(ok)
+                    .into_int_value();
+                let function = this.decimal_function();
+                let b = &this.builder;
+                let count = b
+                    .build_call(
+                        function,
+                        &[
+                            digits.into(),
+                            magnitude.into(),
+                            this.context.bool_type().const_zero().into(),
+                        ],
+                        "count",
+                    )
+                    .expect(ok)
+                    .try_as_basic_value()
+                    .basic()
+                    .expect("the digit writer returns a count")
+                    .into_int_value();
+                let sign = b.build_int_z_extend(negative, i64_ty, "sign").expect(ok);
+                let body = b.build_int_add(count, sign, "body").expect(ok);
+                let width = i64_ty.const_int(padding.width, false);
+                let short = b
+                    .build_int_compare(IntPredicate::ULT, body, width, "short")
+                    .expect(ok);
+                let missing = b.build_int_sub(width, body, "missing").expect(ok);
+                let pad = b
+                    .build_select(short, missing, i64_ty.const_zero(), "pad")
+                    .expect(ok)
+                    .into_int_value();
+                let at = |offset: IntValue<'ink>, name: &str| {
+                    // Safety: within the room checked for.
+                    unsafe { b.build_gep(i8_ty, destination, &[offset], name).expect(ok) }
+                };
+                let minus = i8_ty.const_int(u64::from(b'-'), false);
+                if padding.zero {
+                    // `-`, zeros, digits. The `-` is overwritten when there
+                    // is no sign.
+                    b.build_store(destination, minus).expect(ok);
+                    let zeros = at(sign, "zeros");
+                    b.build_memset(zeros, 1, i8_ty.const_int(u64::from(b'0'), false), pad)
+                        .expect(ok);
+                    let start = b.build_int_add(sign, pad, "digits.at").expect(ok);
+                    b.build_memcpy(at(start, "digits.to"), 1, digits, 1, count)
+                        .expect(ok);
+                } else {
+                    let (before, after) = match padding.align {
+                        FormatAlign::Right => (pad, i64_ty.const_zero()),
+                        FormatAlign::Left => (i64_ty.const_zero(), pad),
+                        FormatAlign::Center => {
+                            let half = b
+                                .build_right_shift(pad, i64_ty.const_int(1, false), false, "half")
+                                .expect(ok);
+                            let rest = b.build_int_sub(pad, half, "rest").expect(ok);
+                            (half, rest)
+                        }
+                    };
+                    let fill = i8_ty.const_int(u64::from(padding.fill), false);
+                    b.build_memset(destination, 1, fill, before).expect(ok);
+                    b.build_store(at(before, "sign.at"), minus).expect(ok);
+                    let start = b.build_int_add(before, sign, "digits.at").expect(ok);
+                    b.build_memcpy(at(start, "digits.to"), 1, digits, 1, count)
+                        .expect(ok);
+                    let tail = b.build_int_add(before, body, "tail.at").expect(ok);
+                    b.build_memset(at(tail, "tail"), 1, fill, after).expect(ok);
+                }
+                b.build_int_add(pad, body, "written").expect(ok)
             },
             slow,
         )
@@ -540,7 +722,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     /// `codira.fmt.dec(dst, value, signed) -> len`, generated into this
     /// module on first use: writes the decimal digits of `value` (an `i64`
     /// if `signed`, else a `u64`) at `dst` and returns how many bytes it
-    /// wrote, at most [`MAX_INT_TEXT`]. The digit count comes from the
+    /// wrote, at most 20. The digit count comes from the
     /// number's bit length (`bits * 1233 >> 12` is `floor(bits * log10 2)`,
     /// corrected by one comparison with a power of ten), then two digits are
     /// written per step from a table, from the last one back.
@@ -1011,6 +1193,9 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 let signed = self.is_signed_ty(&hole.ty);
                 if plain {
                     return self.append_int(current, value, signed);
+                }
+                if let Some(padding) = inline_padding(spec, value.get_type().get_bit_width()) {
+                    return self.append_padded_int(current, value, signed, padding);
                 }
                 let bits = value.get_type().get_bit_width();
                 let (low, high) = self.int_halves(value, signed);
