@@ -3,7 +3,7 @@ source: crates/codira_syntax/tests/stdlib_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-94 of 94 std files parse
+95 of 95 std files parse
 
 ok    std/ai/algorithm/functional.code
 ok    std/ai/algorithm/reduction.code
@@ -53,6 +53,7 @@ ok    std/complex/complex.code
 ok    std/complex/complex_string.code
 ok    std/crypto/hash.code
 ok    std/db/db.code
+ok    std/error/error.code
 ok    std/ffi/cstring.code
 ok    std/ffi/unsafe_union.code
 ok    std/format/format.code
