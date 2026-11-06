@@ -919,6 +919,54 @@ impl HeapInner {
         Ok(())
     }
 
+    /// Moves the out-of-line payload of the array `from` to the array `to`,
+    /// without copying it, and leaves `from` empty (length and capacity 0,
+    /// on its inline payload again). Returns `false`, changing nothing,
+    /// when `from`'s payload is inline (in its cell), which cannot move.
+    ///
+    /// Both arrays keep their handles: `to` now owns the buffer (it is
+    /// freed with `to`, or when `to` grows), and every handle to `from` sees
+    /// an empty array, which may grow again as any array does. The heap's
+    /// accounting does not change: the buffer is still committed, and the
+    /// payload sizes of the two objects are exchanged.
+    ///
+    /// # Safety
+    ///
+    /// Both must be allocated array objects of this heap with the same
+    /// element type, that element type must hold no references (the
+    /// collector may have traced one of the two already in this cycle), `to`
+    /// must have an inline payload of length 0, and no other thread may
+    /// access either during the call.
+    pub(crate) unsafe fn take_array_payload(
+        &mut self,
+        from: NonNull<ObjectHeader>,
+        to: NonNull<ObjectHeader>,
+    ) -> bool {
+        let (from_hdr, to_hdr) = (from.as_ptr(), to.as_ptr());
+        if from_hdr == to_hdr || (*to_hdr).flags & FLAG_OUT_OF_LINE != 0 {
+            return false;
+        }
+        let Some(buffer) = self.out_of_line.remove(&(from_hdr as usize)) else {
+            return false;
+        };
+        let empty = (*to_hdr).data;
+        debug_assert_eq!((*empty.cast::<ArrayHeader>()).length, 0);
+        self.out_of_line.insert(to_hdr as usize, buffer);
+        (*to_hdr).data = buffer.0.as_ptr();
+        (*to_hdr).flags |= FLAG_OUT_OF_LINE;
+        // `from` goes back to the inline area of its own cell, which every
+        // array has room for an `ArrayHeader` in.
+        let inline = (*from_hdr).inline_payload_for(self);
+        debug_assert!((*from_hdr).inline_capacity >= std::mem::size_of::<ArrayHeader>());
+        inline.as_ptr().cast::<ArrayHeader>().write(ArrayHeader {
+            length: 0,
+            capacity: 0,
+        });
+        (*from_hdr).data = inline.as_ptr();
+        (*from_hdr).flags &= !FLAG_OUT_OF_LINE;
+        true
+    }
+
     /// Releases the buffers a [`PayloadMigration`] kept alive for reading.
     pub(crate) fn finish_payload_migration(&mut self, migration: PayloadMigration) {
         if let Some((buffer, layout, committed)) = migration.release {

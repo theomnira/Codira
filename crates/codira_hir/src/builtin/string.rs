@@ -70,6 +70,13 @@ pub enum StringOp {
     ParseF64,
     /// `s.hash()`: FNV-1a 64 of the bytes. Not resistant to hash flooding.
     Hash,
+    /// `s.find_json_escape(from)`: the offset of the first byte at or after
+    /// `from` that a JSON string cannot hold as it is -- `"`, `\\` or a
+    /// control character U+0000..U+001F -- or `len()` when there is none
+    /// (`from` is clamped to `0..=len()`). Inline: 16 bytes per step with
+    /// vector compares, then byte by byte. The string-end and escape search
+    /// of a JSON parser and printer.
+    FindJsonEscape,
     /// `x.to_string()` on a `String`, `str`, integer, float or `bool`.
     ToString,
     /// `x.debug_string()` on a value of any type: its debug form, what
@@ -84,6 +91,12 @@ pub enum StringOp {
     /// `string_from_utf8(bytes)`: a copy of `bytes` as a `String` if they are
     /// valid UTF-8, otherwise `nil`. A free function.
     FromUtf8,
+    /// `string_take_utf8(bytes)`: the bytes as a `String` if they are valid
+    /// UTF-8 (and `bytes` is left empty), otherwise `nil` (and `bytes` is
+    /// unchanged). The string takes over the array's buffer without copying
+    /// it once the array has grown; a small array is copied. Rust's
+    /// `String::from_utf8(vec)`. A free function.
+    TakeUtf8,
 }
 
 /// What an argument of a [`StringOp`] accepts.
@@ -148,6 +161,7 @@ impl StringOp {
             "parse_i64" => ParseI64,
             "parse_f64" => ParseF64,
             "hash" => Hash,
+            "find_json_escape" => FindJsonEscape,
             _ => return None,
         })
     }
@@ -180,10 +194,12 @@ impl StringOp {
             ParseI64 => "parse_i64",
             ParseF64 => "parse_f64",
             Hash => "hash",
+            FindJsonEscape => "find_json_escape",
             ToString => "to_string",
             DebugString => "debug_string",
             TypeName => "type_name",
             FromUtf8 => "string_from_utf8",
+            TakeUtf8 => "string_take_utf8",
         }
     }
 
@@ -195,11 +211,11 @@ impl StringOp {
             Len | IsEmpty | CharCount | Chars | Bytes | Lines | Trim | TrimStart | TrimEnd
             | ToUpper | ToLower | ParseI64 | ParseF64 | Hash | ToString | DebugString
             | TypeName => &[],
-            ByteAt | Repeat => &[StringArg::Integer],
+            ByteAt | Repeat | FindJsonEscape => &[StringArg::Integer],
             Find | RFind | Contains | StartsWith | EndsWith | Split => &[StringArg::Text],
             Replace => &[StringArg::Text, StringArg::Text],
             Slice => &[StringArg::Integer, StringArg::Integer],
-            FromUtf8 => &[StringArg::Bytes],
+            FromUtf8 | TakeUtf8 => &[StringArg::Bytes],
         }
     }
 
@@ -208,7 +224,7 @@ impl StringOp {
         use StringOp::*;
         let usize_ty = || TyKind::Int(IntTy::usize()).intern();
         match self {
-            Len | CharCount => usize_ty(),
+            Len | CharCount | FindJsonEscape => usize_ty(),
             IsEmpty | Contains | StartsWith | EndsWith => TyKind::Bool.intern(),
             Chars => TyKind::Array(TyKind::Int(IntTy::u32()).intern()).intern(),
             Bytes => TyKind::Array(TyKind::Int(IntTy::u8()).intern()).intern(),
@@ -221,7 +237,7 @@ impl StringOp {
             ParseF64 => TyKind::Optional(TyKind::Float(FloatTy::f64()).intern()).intern(),
             Hash => TyKind::Int(IntTy::u64()).intern(),
             TypeName => TyKind::Str.intern(),
-            FromUtf8 => TyKind::Optional(TyKind::String.intern()).intern(),
+            FromUtf8 | TakeUtf8 => TyKind::Optional(TyKind::String.intern()).intern(),
         }
     }
 
@@ -233,7 +249,7 @@ impl StringOp {
         use StringOp::*;
         match self {
             Chars | Bytes | Split | Lines | ToUpper | ToLower | Replace | Repeat | FromUtf8
-            | DebugString => true,
+            | TakeUtf8 | DebugString => true,
             ToString => !matches!(receiver, Some(TyKind::String)),
             TypeName => false,
             _ => matches!(receiver, Some(TyKind::Str)),
@@ -271,6 +287,8 @@ mod tests {
         let h: u64 = out.hash()
         let ok: bool = out == t && out != "a" && out < t && "a" <= out && out.is_empty()
         let v: String? = string_from_utf8(bs)
+        let taken: String? = string_take_utf8(bs)
+        let at: usize = out.find_json_escape(0) + out.find_json_escape(b)
         let named = Named { name: out.trim().to_upper(), n: 1 }
         let lit: String = "a,b".split(",")[0] + "x".repeat(2)
         named.name.slice(0, 1).replace("a", t)

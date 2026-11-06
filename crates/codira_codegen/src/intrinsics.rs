@@ -278,6 +278,11 @@ runtime_functions! {
     /// 1 and a new `String` at `out` when the `[u8]` holds valid UTF-8.
     pub fn string_from_utf8(array: *const ffi::c_void, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> u8 = "codira.string_from_utf8";
 
+    /// `string_take_utf8(bytes)`: as `string_from_utf8`, but the string
+    /// takes the array's bytes over (without a copy once the array has
+    /// grown) and the array is left empty.
+    pub fn string_take_utf8(array: *const ffi::c_void, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> u8 = "codira.string_take_utf8";
+
     /// `buf/start/len` with an integer (as two halves, its signedness and
     /// its size in bits) appended as a format spec says, in place when it
     /// can be. The spec is a fill character, `FormatSpec::abi_flags`, a
@@ -312,7 +317,7 @@ runtime_functions! {
 
 /// Every runtime function a `String` operation may need, collected together
 /// like [`print_functions`]: a module that uses strings at all gets them all.
-pub fn string_functions() -> [&'static dyn Intrinsic; 42] {
+pub fn string_functions() -> [&'static dyn Intrinsic; 43] {
     [
         &string_from_bytes,
         &string_append,
@@ -348,6 +353,7 @@ pub fn string_functions() -> [&'static dyn Intrinsic; 42] {
         &string_chars,
         &string_to_bytes,
         &string_from_utf8,
+        &string_take_utf8,
         &string_append_format_int,
         &string_append_format_float,
         &string_append_format_text,
@@ -393,15 +399,26 @@ runtime_functions! {
 
     /// Reverses the `len` elements of `stride` bytes at `data` in place.
     pub fn array_reverse(data: *mut u8, len: usize, stride: usize) -> () = "codira.array_reverse";
+
+    /// `bytes.push_int(n)`: writes the decimal text of `value` (read as an
+    /// `i64` when `signed` is 1, else as a `u64`) to the 20 bytes at `out`
+    /// and returns its length.
+    pub fn bytes_format_int(out: *mut u8, value: u64, signed: u8) -> usize = "codira.bytes_format_int";
+
+    /// `bytes.push_json_float(x)`: writes the JSON text of `value` to the
+    /// 24 bytes at `out` and returns its length.
+    pub fn bytes_format_json_f64(value: f64, out: *mut u8) -> usize = "codira.bytes_format_json_f64";
 }
 
 /// Every runtime function the array methods lower to (`push`, `sort`, ...),
 /// collected together like [`print_functions`].
-pub fn array_functions() -> [&'static dyn Intrinsic; 4] {
+pub fn array_functions() -> [&'static dyn Intrinsic; 6] {
     [
         &array_grow,
         &array_sort,
         &array_binary_search,
         &array_reverse,
+        &bytes_format_int,
+        &bytes_format_json_f64,
     ]
 }

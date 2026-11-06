@@ -1224,6 +1224,46 @@ extern "C" fn string_from_utf8(
     }
 }
 
+/// `string_take_utf8(bytes)`: 1 and a string at `out` holding the bytes of
+/// the array when they are valid UTF-8, else 0 (and the array unchanged).
+/// The bytes are not copied when the array's elements live out of line (it
+/// has grown): the new string's buffer takes them over, and the array is
+/// left empty -- so no program can change them again, which is what makes
+/// them a string's. A small array that never grew is copied, and also left
+/// empty, so the result does not depend on where the bytes lived.
+extern "C" fn string_take_utf8(
+    array: *const c_void,
+    ty: *const c_void,
+    alloc: *mut c_void,
+    out: *mut u8,
+) -> u8 {
+    let array = array.cast::<*mut u8>();
+    // Safety: generated code passes a live `[u8]`, its handles and a slot;
+    // arrays are never shared between threads.
+    unsafe {
+        let len = header(array).length.load(Ordering::Acquire);
+        if std::str::from_utf8(std::slice::from_raw_parts(elements(array), len)).is_err() {
+            return 0;
+        }
+        let alloc = Alloc::new(ty, alloc);
+        // An empty buffer to give the elements to. The allocation is a
+        // safepoint; `array` stays alive across it (it is still used).
+        let buf = alloc.array(0, 0);
+        let from = codira_memory::gc::GcPtr::from(array.cast::<*mut std::ffi::c_void>());
+        let to = codira_memory::gc::GcPtr::from(buf.cast::<*mut std::ffi::c_void>());
+        // Safety of the move: both are `[u8]` arrays (no references), `buf`
+        // is fresh and empty, and neither is shared.
+        if alloc.gc.try_take_array_payload(from, to) {
+            write(out, RawString { buf, start: 0, len });
+            return 1;
+        }
+        let bytes = std::slice::from_raw_parts(elements(array), len);
+        write(out, alloc.string(&[bytes], len));
+        header(array).length.store(0, Ordering::Release);
+        1
+    }
+}
+
 /// A Codira `String` held by the host: returned by [`Runtime::invoke`], read
 /// from a field with `StructRef::get`, or made with [`StringRef::new`] to
 /// pass to Codira code.
@@ -1573,6 +1613,10 @@ pub(crate) fn definitions() -> Vec<FunctionDefinition> {
         IntoFunctionDefinition::into(
             string_from_utf8 as extern "C" fn(H, T, A, O) -> u8,
             "codira.string_from_utf8",
+        ),
+        IntoFunctionDefinition::into(
+            string_take_utf8 as extern "C" fn(H, T, A, O) -> u8,
+            "codira.string_take_utf8",
         ),
     ]
     .into_iter()

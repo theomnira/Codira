@@ -28,7 +28,8 @@ impl InferenceResultBuilder<'_> {
         elem: &Ty,
         args: &[ExprId],
     ) -> Ty {
-        self.builtin_calls.insert(tgt_expr, BuiltinFn::Array(method));
+        self.builtin_calls
+            .insert(tgt_expr, BuiltinFn::Array(method));
         let usize_ty = || TyKind::Int(IntTy::usize()).intern();
         let unit = Ty::unit;
         let optional = |ty: Ty| TyKind::Optional(ty).intern();
@@ -45,7 +46,10 @@ impl InferenceResultBuilder<'_> {
             | ArrayMethod::Map
             | ArrayMethod::Filter
             | ArrayMethod::Any
-            | ArrayMethod::All => 1,
+            | ArrayMethod::All
+            | ArrayMethod::PushStr
+            | ArrayMethod::PushInt
+            | ArrayMethod::PushJsonFloat => 1,
             _ => 0,
         };
         if args.len() != arity {
@@ -125,6 +129,40 @@ impl InferenceResultBuilder<'_> {
                 self.infer_expr_coerce(args[1], &Expectation::has_type(f));
                 self.resolve_ty_as_far_as_possible(acc)
             }
+            ArrayMethod::PushStr => {
+                let ty = self.infer_expr(args[0], &Expectation::none());
+                let ty = self.normalize(&ty);
+                let silent = matches!(
+                    ty.interned(),
+                    TyKind::Unknown | TyKind::Never | TyKind::InferenceVar(InferTy::Type(_))
+                );
+                if !matches!(ty.interned(), TyKind::String | TyKind::Str) && !silent {
+                    self.diagnostics.push(InferenceDiagnostic::ExprError {
+                        id: args[0].into(),
+                        message: format!(
+                            "`push_str` takes a `String` or a `str`, not `{}`",
+                            ty.display(self.db)
+                        ),
+                    });
+                }
+                unit()
+            }
+            ArrayMethod::PushInt => {
+                let ty = self.type_variables.new_integer_var();
+                let ty = self.infer_expr(args[0], &Expectation::has_type(ty));
+                // A bare literal is an `i64` here, not the `i32` an
+                // unconstrained integer defaults to: its text must not wrap.
+                let ty = self.normalize(&ty);
+                if matches!(ty.interned(), TyKind::InferenceVar(InferTy::Int(_))) {
+                    self.unify(&ty, &TyKind::Int(IntTy::i64()).intern());
+                }
+                unit()
+            }
+            ArrayMethod::PushJsonFloat => {
+                let f64_ty = TyKind::Float(crate::FloatTy::f64()).intern();
+                self.infer_expr_coerce(args[0], &Expectation::has_type(f64_ty));
+                unit()
+            }
             ArrayMethod::Enumerate => {
                 let pair = TyKind::Tuple(2, [usize_ty(), elem].into_iter().collect()).intern();
                 array(pair)
@@ -187,9 +225,22 @@ impl InferenceResultBuilder<'_> {
             })
             .collect();
         for (expr, method) in calls {
-            let Expr::MethodCall { receiver, .. } = &self.body[expr] else {
+            let Expr::MethodCall { receiver, args, .. } = &self.body[expr] else {
                 continue;
             };
+            if method == ArrayMethod::PushInt {
+                let wide = args.first().and_then(|arg| expr_types.get(*arg)).is_some_and(
+                    |ty| matches!(ty.interned(), TyKind::Int(int) if int.bitness == crate::primitive_type::IntBitness::X128),
+                );
+                if wide {
+                    self.diagnostics.push(InferenceDiagnostic::ExprError {
+                        id: expr.into(),
+                        message: "`push_int` takes an integer of at most 64 bits; write \
+                                  `bytes.push_str(n.to_string())` for a 128-bit one"
+                            .to_string(),
+                    });
+                }
+            }
             if method == ArrayMethod::Enumerate {
                 if !for_iterables.contains(&expr) {
                     self.diagnostics.push(InferenceDiagnostic::ExprError {
@@ -215,12 +266,15 @@ impl InferenceResultBuilder<'_> {
             }
             let what = requirement_text(requirement);
             let hint = match elem.interned() {
+                _ if requirement == ElementRequirement::Bytes => "",
                 TyKind::TypeParam(..) => {
                     "; inside a generic function the element type is not known yet, so \
                      write the loop out and call a trait method of a bound"
                 }
-                _ => "; for other types, write the loop out (or use `fold`/`any` with a \
-                      closure)",
+                _ => {
+                    "; for other types, write the loop out (or use `fold`/`any` with a \
+                      closure)"
+                }
             };
             self.diagnostics.push(InferenceDiagnostic::ExprError {
                 id: expr.into(),
@@ -237,6 +291,9 @@ impl InferenceResultBuilder<'_> {
 /// Whether elements of type `elem` support what `requirement` asks for.
 pub(super) fn element_meets(requirement: ElementRequirement, elem: &Ty) -> bool {
     match (requirement, elem.interned()) {
+        (ElementRequirement::Bytes, TyKind::Int(int)) => *int == IntTy::u8(),
+        (ElementRequirement::Bytes, TyKind::InferenceVar(InferTy::Int(_))) => true,
+        (ElementRequirement::Bytes, _) => false,
         (_, TyKind::Int(_) | TyKind::Float(_)) => true,
         (_, TyKind::InferenceVar(InferTy::Int(_) | InferTy::Float(_))) => true,
         (ElementRequirement::Number, _) => false,
@@ -257,5 +314,6 @@ pub(super) fn requirement_text(requirement: ElementRequirement) -> &'static str 
         }
         ElementRequirement::Order { str_allowed: false } => "integers, floats or `bool`",
         ElementRequirement::Number => "integers or floats",
+        ElementRequirement::Bytes => "`u8` (a byte buffer)",
     }
 }

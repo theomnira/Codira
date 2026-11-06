@@ -6,6 +6,10 @@
 //!   shrinking it (`push`, `pop`, `insert`, ...), searching and ordering it
 //!   (`contains`, `sort`, ...) and iterating it with a closure (`map`,
 //!   `filter`, `fold`, ...).
+//! - The byte-buffer methods of `[u8]` alone: appending a string's bytes
+//!   (`push_str`) and the text of a number (`push_int`, `push_json_float`)
+//!   straight into the array's spare capacity, with no intermediate
+//!   `String` (what a serializer writes most).
 //!
 //! # Why they are built in
 //!
@@ -80,6 +84,18 @@ pub enum ArrayMethod {
     /// `xs.enumerate()`: only as a `for` loop's iterable, which then binds
     /// `(index, element)` pairs.
     Enumerate,
+    /// `bytes.push_str(s)` on a `[u8]`: appends the UTF-8 bytes of a
+    /// `String` or a `str` (one copy, growing the buffer once).
+    PushStr,
+    /// `bytes.push_int(n)` on a `[u8]`: appends the decimal text of an
+    /// integer of any type up to 64 bits, as `n.to_string()` writes it.
+    PushInt,
+    /// `bytes.push_json_float(x)` on a `[u8]`: appends the JSON text of an
+    /// `f64`, as `std.json` prints it: the shortest decimal that reads back
+    /// as the same value, always with a `.` or an exponent (the `ryu`
+    /// crate's form, which `serde_json` writes), and `null` for a NaN or an
+    /// infinity.
+    PushJsonFloat,
 }
 
 impl ArrayMethod {
@@ -110,6 +126,9 @@ impl ArrayMethod {
         ArrayMethod::Min,
         ArrayMethod::Max,
         ArrayMethod::Enumerate,
+        ArrayMethod::PushStr,
+        ArrayMethod::PushInt,
+        ArrayMethod::PushJsonFloat,
     ];
 
     /// The name a program calls this method by.
@@ -140,6 +159,9 @@ impl ArrayMethod {
             ArrayMethod::Min => "min",
             ArrayMethod::Max => "max",
             ArrayMethod::Enumerate => "enumerate",
+            ArrayMethod::PushStr => "push_str",
+            ArrayMethod::PushInt => "push_int",
+            ArrayMethod::PushJsonFloat => "push_json_float",
         }
     }
 
@@ -160,6 +182,9 @@ impl ArrayMethod {
                 | ArrayMethod::Copy
                 | ArrayMethod::Map
                 | ArrayMethod::Filter
+                | ArrayMethod::PushStr
+                | ArrayMethod::PushInt
+                | ArrayMethod::PushJsonFloat
         )
     }
 
@@ -190,6 +215,9 @@ impl ArrayMethod {
                 Some(ElementRequirement::Order { str_allowed: false })
             }
             ArrayMethod::Sum => Some(ElementRequirement::Number),
+            ArrayMethod::PushStr | ArrayMethod::PushInt | ArrayMethod::PushJsonFloat => {
+                Some(ElementRequirement::Bytes)
+            }
             _ => None,
         }
     }
@@ -204,6 +232,8 @@ pub enum ElementRequirement {
     Order { str_allowed: bool },
     /// Integers and floats.
     Number,
+    /// `u8` only (the byte-buffer methods).
+    Bytes,
 }
 
 /// Whether the closure argument `closure` of an array method is compiled in
@@ -340,13 +370,53 @@ mod tests {
             "{diags}"
         );
         // A slice is a copy, not a place.
+        assert_eq!(count("invalid left hand side of expression"), 1, "{diags}");
+        // And `f` (two arguments) and `g` (a float pushed onto `[i64]`).
+        assert_eq!(diags.lines().count(), 9, "{diags}");
+    }
+
+    #[test]
+    fn byte_buffer_methods_type_check_and_report_misuse() {
+        let ok = diagnostics(
+            r#"
+    func ok(b: [u8], s: String, n: i32, m: u64, x: f64) {
+        b.push_str(s)
+        b.push_str("lit")
+        b.push_int(n)
+        b.push_int(m)
+        b.push_int(3000000000)
+        b.push_json_float(x)
+        b.push_json_float(1.5)
+    }
+    "#,
+        );
+        assert_eq!(ok, "", "{ok}");
+        let diags = diagnostics(
+            r#"
+    func a(xs: [i64]) { xs.push_str("x") }
+    func b(bs: [u8]) { bs.push_str(3) }
+    func c(bs: [u8], w: i128) { bs.push_int(w) }
+    func d(bs: [u8]) { bs.push_int(1.5) }
+    func e(bs: [u8]) { bs.push_json_float("x") }
+    "#,
+        );
+        let count = |needle: &str| diags.matches(needle).count();
         assert_eq!(
-            count("invalid left hand side of expression"),
+            count("`push_str` needs an array of `u8` (a byte buffer), not of `i64`"),
             1,
             "{diags}"
         );
-        // And `f` (two arguments) and `g` (a float pushed onto `[i64]`).
-        assert_eq!(diags.lines().count(), 9, "{diags}");
+        assert_eq!(
+            count("`push_str` takes a `String` or a `str`, not `"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("`push_int` takes an integer of at most 64 bits"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(diags.lines().count(), 5, "{diags}");
     }
 
     #[test]

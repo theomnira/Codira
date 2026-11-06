@@ -2259,7 +2259,7 @@ impl InferenceResultBuilder<'_> {
                 }
                 ty
             }
-            BuiltinFn::String(op @ StringOp::FromUtf8) => {
+            BuiltinFn::String(op @ (StringOp::FromUtf8 | StringOp::TakeUtf8)) => {
                 self.infer_string_free_fn(tgt_expr, op, args)
             }
             BuiltinFn::ArrayLen
