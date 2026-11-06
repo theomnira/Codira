@@ -5,6 +5,7 @@
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
 mod array;
+pub mod cascade;
 mod heap;
 mod mark_sweep;
 mod policy;

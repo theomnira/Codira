@@ -145,8 +145,15 @@ pub(crate) struct ObjectHeader {
     pub flags: u8,
     /// The size class of the cell, or [`LARGE_CLASS`].
     pub class: u8,
-    /// Number of payload bytes available inline after the header.
-    pub inline_capacity: usize,
+    /// Small cells: the number of payload bytes available inline after the
+    /// header. Large objects: the offset of the inline payload area from the
+    /// header (their capacity follows from the allocation layout, see
+    /// [`HeapInner::inline_capacity`]).
+    pub inline_extent: u32,
+    /// The Cascade ownership word (`gc::cascade::word`). Zero -- untracked --
+    /// unless the object is managed by an enabled Cascade engine; the
+    /// tracing collector never reads it.
+    pub ownership: AtomicU32,
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectHeader>() == 32);
@@ -724,7 +731,8 @@ impl HeapInner {
         let header = base.cast::<ObjectHeader>();
         unsafe {
             (*header.as_ptr()).data = base.as_ptr().add(offset);
-            (*header.as_ptr()).inline_capacity = payload.size();
+            (*header.as_ptr()).inline_extent =
+                u32::try_from(offset).expect("payload alignment exceeds 4 GiB");
         }
         Ok(header)
     }
@@ -744,7 +752,7 @@ impl HeapInner {
                 std::ptr::write_bytes(payload_ptr, 0, payload.size());
                 (*header.as_ptr()).data = payload_ptr;
                 (*header.as_ptr()).class = class;
-                (*header.as_ptr()).inline_capacity = class_size(class) - HEADER_SIZE;
+                (*header.as_ptr()).inline_extent = (class_size(class) - HEADER_SIZE) as u32;
             }
             header
         } else {
@@ -781,7 +789,7 @@ impl HeapInner {
         let hdr = header.as_ptr();
         let key = hdr as usize;
         let old_out_of_line = self.out_of_line.remove(&key);
-        let fits_inline = new_layout.size() <= (*hdr).inline_capacity
+        let fits_inline = new_layout.size() <= self.inline_capacity(&*hdr)
             && new_layout.align() <= (*hdr).inline_payload_align();
 
         let (src, release) = match old_out_of_line {
@@ -806,7 +814,7 @@ impl HeapInner {
         };
 
         let dest = if fits_inline {
-            let inline = (*hdr).inline_payload_for(self);
+            let inline = (*hdr).inline_payload();
             std::ptr::write_bytes(inline.as_ptr(), 0, new_layout.size());
             (*hdr).flags &= !FLAG_OUT_OF_LINE;
             inline
@@ -1095,6 +1103,83 @@ impl HeapInner {
         }
     }
 
+    /// Releases objects that the Cascade engine proved dead, outside a
+    /// collection, and makes their cells available to new allocations.
+    ///
+    /// A small cell is pushed as a one-cell free run, unless it lies in the
+    /// used part of a run leased to a thread cache: a sweep never adds
+    /// leased cells to the free runs, and ending the lease would then add the
+    /// cell a second time. Such a cell is left to the lease instead, which
+    /// is marked so that ending it rescans its used part for free cells
+    /// (exactly what it does after a sweep).
+    ///
+    /// Returns the number of payload bytes released.
+    ///
+    /// # Safety
+    ///
+    /// Every header address must be an allocated object of this heap that no
+    /// thread can still legally access, listed once.
+    pub(crate) unsafe fn reclaim_objects(&mut self, headers: &[usize]) -> usize {
+        if headers.is_empty() {
+            return 0;
+        }
+        // Few cells (the common case of a single release): scan the leases;
+        // many: sort them once and search.
+        let sorted: Option<Vec<(usize, usize)>> = (headers.len() > 8).then(|| {
+            let mut leased: Vec<(usize, usize)> = self
+                .leases
+                .iter()
+                .map(|(&start, lease)| (start, lease.end))
+                .collect();
+            leased.sort_unstable();
+            leased
+        });
+        let mut released = 0usize;
+        for &cell in headers {
+            let hdr = cell as *mut ObjectHeader;
+            debug_assert_eq!(
+                (*hdr).state.load(Ordering::Relaxed),
+                STATE_ALLOCATED,
+                "reclaiming a free cell {hdr:p}"
+            );
+            released += (*hdr).payload_size();
+            let class = (*hdr).class;
+            self.free_object(NonNull::new_unchecked(hdr));
+            if class == LARGE_CLASS {
+                continue;
+            }
+            let lease_start = match &sorted {
+                Some(leased) => {
+                    let index = leased.partition_point(|&(start, _)| start <= cell);
+                    index
+                        .checked_sub(1)
+                        .map(|i| leased[i])
+                        .filter(|&(_, end)| cell < end)
+                        .map(|(start, _)| start)
+                }
+                None => self
+                    .leases
+                    .iter()
+                    .find(|(&start, lease)| start <= cell && cell < lease.end)
+                    .map(|(&start, _)| start),
+            };
+            match lease_start {
+                Some(start) => {
+                    if let Some(lease) = self.leases.get_mut(&start) {
+                        // Never equal to a real sweep count.
+                        lease.sweeps = u64::MAX;
+                    }
+                }
+                None => self.free_runs[class as usize].push(Run {
+                    start: cell,
+                    end: cell + class_size(class),
+                }),
+            }
+        }
+        self.global_bytes -= released as isize;
+        released
+    }
+
     fn release_block(&mut self, block: Block) {
         if self.empty_blocks.len() < MAX_CACHED_EMPTY_BLOCKS {
             self.empty_blocks.push(block.base);
@@ -1124,6 +1209,21 @@ impl HeapInner {
         self.types.retain(|address, _| used.contains(address));
     }
 
+    /// Returns the number of payload bytes available in the inline payload
+    /// area of `header` (inside its cell, or inside its large allocation).
+    ///
+    /// # Safety
+    ///
+    /// `header` must be an allocated object of this heap.
+    unsafe fn inline_capacity(&self, header: &ObjectHeader) -> usize {
+        if header.class == LARGE_CLASS {
+            let layout = self.large[&(header as *const ObjectHeader as usize)];
+            layout.size() - header.inline_extent as usize
+        } else {
+            header.inline_extent as usize
+        }
+    }
+
     /// Returns the bytes currently committed by the heap.
     pub(crate) fn committed(&self) -> usize {
         self.committed
@@ -1144,12 +1244,10 @@ impl ObjectHeader {
     }
 
     /// Returns the inline payload area of the object.
-    unsafe fn inline_payload_for(&self, heap: &HeapInner) -> NonNull<u8> {
+    unsafe fn inline_payload(&self) -> NonNull<u8> {
         let header = self as *const Self as *mut u8;
         if self.class == LARGE_CLASS {
-            let layout = heap.large[&(header as usize)];
-            // The payload area is the tail of the allocation.
-            NonNull::new_unchecked(header.add(layout.size() - self.inline_capacity))
+            NonNull::new_unchecked(header.add(self.inline_extent as usize))
         } else {
             NonNull::new_unchecked(header.add(HEADER_SIZE))
         }
@@ -1161,7 +1259,7 @@ impl ObjectHeader {
 /// # Safety
 ///
 /// `header` must point to a cell that no other thread uses, with `data`,
-/// `class` and `inline_capacity` already set.
+/// `class` and `inline_extent` already set.
 #[inline]
 unsafe fn init_header(header: NonNull<ObjectHeader>, ty: &Type, class: u8) {
     let hdr = header.as_ptr();
@@ -1170,6 +1268,7 @@ unsafe fn init_header(header: NonNull<ObjectHeader>, ty: &Type, class: u8) {
     (*hdr).color = COLOR_WHITE;
     (*hdr).flags = 0;
     (*hdr).class = class;
+    (*hdr).ownership.store(0, Ordering::Relaxed);
     (*hdr).state.store(STATE_ALLOCATED, Ordering::Release);
 }
 
@@ -1357,7 +1456,7 @@ impl ThreadHeapCache {
             std::ptr::write_bytes(payload, 0, payload_size);
             let hdr = header.as_ptr();
             (*hdr).data = payload;
-            (*hdr).inline_capacity = cell_size - HEADER_SIZE;
+            (*hdr).inline_extent = (cell_size - HEADER_SIZE) as u32;
             init_header(header, ty, class);
         }
 

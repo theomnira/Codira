@@ -12,7 +12,7 @@ use std::{
     ptr::NonNull,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Weak,
+        Arc, OnceLock, Weak,
     },
     time::{Duration, Instant},
 };
@@ -28,6 +28,7 @@ use crate::{
             array_payload_layout, handle_of, header_of, AllocError, Heap, HeapInner, ObjectHeader,
             PayloadMigration, SweepOutcome, COLOR_BLACK, COLOR_WHITE,
         },
+        cascade::{Cascade, CascadeConfig, CascadeHost, Mutator, StepReport},
         policy::GcPolicy,
         safepoint,
         stats::{CollectionCounts, CollectionReport, GcStats, PauseHistogram, Trigger},
@@ -57,13 +58,26 @@ pub(crate) unsafe fn for_each_reference(
     header: &ObjectHeader,
     mut f: impl FnMut(NonNull<ObjectHeader>),
 ) {
-    let ty = header.type_data();
-    let payload = header.data;
-    let mut visit = |slot: *const u8| {
+    for_each_reference_slot(header, |slot| {
         if let Some(child) = NonNull::new(*slot.cast::<*mut ObjectHeader>()) {
             f(child);
         }
-    };
+    });
+}
+
+/// Calls `visit` with the address of every reference slot (null or not) in
+/// the payload of `header`.
+///
+/// # Safety
+///
+/// `header` must be an allocated object whose payload matches its type.
+#[inline]
+pub(crate) unsafe fn for_each_reference_slot(
+    header: &ObjectHeader,
+    mut visit: impl FnMut(*const u8),
+) {
+    let ty = header.type_data();
+    let payload = header.data;
 
     if let Some(element) = ty.array_element() {
         let length = (*payload.cast::<ArrayHeader>()).length;
@@ -177,6 +191,9 @@ pub(crate) struct Core<O> {
     started: AtomicU64,
     /// What region arenas did. See `gc::region`.
     pub(crate) regions: super::region::RegionCounters,
+    /// The Cascade engine, once a host enabled it (experimental, off by
+    /// default; see `CASCADE.md`).
+    cascade: OnceLock<Arc<Cascade>>,
 }
 
 /// The collector's statistics and the state its fairness rule needs.
@@ -241,6 +258,7 @@ where
                 accounting: Mutex::new(Accounting::default()),
                 started: AtomicU64::new(0),
                 regions: super::region::RegionCounters::new(),
+                cascade: OnceLock::new(),
             }),
             requests: Arc::new(Requests::default()),
             request_thread: Mutex::new(None),
@@ -251,6 +269,42 @@ where
     /// Returns the observer
     pub fn observer(&self) -> &O {
         &self.core.observer
+    }
+
+    /// Enables the experimental Cascade reclamation engine on this heap
+    /// (`crates/codira_memory/CASCADE.md`) and returns it; if it is already
+    /// enabled, returns the existing engine and ignores `config`.
+    ///
+    /// Only objects allocated through a Cascade [`Mutator`] are managed by
+    /// it; every other object, and every object while no mutator runs, is
+    /// reclaimed by tracing exactly as before. Tracing collections become
+    /// slightly more expensive: they treat the mutators' local references
+    /// as roots and resynchronise the reference counts afterwards.
+    pub fn enable_cascade(&self, config: CascadeConfig) -> Arc<Cascade> {
+        self.core
+            .cascade
+            .get_or_init(|| Arc::new(Cascade::new(self.heap.clone(), config)))
+            .clone()
+    }
+
+    /// Returns the Cascade engine, if it was enabled.
+    pub fn cascade(&self) -> Option<&Arc<Cascade>> {
+        self.core.cascade.get()
+    }
+
+    /// Runs one bounded step of Cascade collector work (see
+    /// [`Cascade::step`]); `None` if Cascade is not enabled.
+    pub fn cascade_step(&self, budget: usize) -> Option<StepReport> {
+        let cascade = self.core.cascade.get()?;
+        Some(cascade.step(self, budget))
+    }
+
+    /// The bytes of objects Cascade has found or suspects to be garbage but
+    /// not reclaimed yet (0 if Cascade is not enabled). Not included in
+    /// [`Stats::allocated_memory`], which counts them as live until they
+    /// are reclaimed.
+    pub fn cascade_deferred_bytes(&self) -> usize {
+        self.core.cascade.get().map_or(0, |c| c.deferred_bytes())
     }
 
     /// Returns the bytes the heap currently holds from the system:
@@ -816,6 +870,20 @@ where
             }
         });
 
+        // Objects Cascade mutators hold locally are roots too
+        if let Some(cascade) = self.cascade.get() {
+            // Safety: the world is stopped.
+            unsafe {
+                cascade.trace_roots(|object| {
+                    let header = object.as_ptr();
+                    if (*header).color == COLOR_WHITE {
+                        (*header).color = COLOR_BLACK;
+                        stack.push(object);
+                    }
+                });
+            }
+        }
+
         // Objects the scanned stack may refer to are roots too
         if let Some(words) = stack_words {
             for object in inner.objects_referenced_by(words) {
@@ -848,11 +916,45 @@ where
         }
 
         let swept = inner.sweep(|handle| self.observer.event(Event::Deallocation(handle)));
+        if let Some(cascade) = self.cascade.get() {
+            // Safety: the world is stopped and `inner` is this heap's state.
+            unsafe { cascade.resync(&inner) };
+        }
         drop(inner);
 
         self.observer.event(Event::End);
 
         swept
+    }
+}
+
+impl<O> MarkSweep<O>
+where
+    O: Observer<Event = Event> + 'static,
+{
+    /// Creates a Cascade [`Mutator`] for the current thread; `None` if
+    /// Cascade is not enabled. The thread counts as running Codira code
+    /// while the mutator lives.
+    pub fn cascade_mutator(self: &Arc<Self>) -> Option<Mutator> {
+        let cascade = self.core.cascade.get()?.clone();
+        Some(Mutator::new(cascade, self.clone()))
+    }
+}
+
+impl<O> CascadeHost for MarkSweep<O>
+where
+    O: Observer<Event = Event>,
+{
+    fn cascade_alloc(&self, ty: &Type) -> Result<GcPtr, AllocError> {
+        self.try_alloc(ty)
+    }
+
+    fn cascade_alloc_array(&self, ty: &Type, n: usize) -> Result<GcPtr, AllocError> {
+        self.try_alloc_array(ty, n).map(|array| array.as_raw())
+    }
+
+    fn cascade_collect(&self) -> bool {
+        self.collect_blocking().is_ok()
     }
 }
 
@@ -1415,6 +1517,11 @@ where
 
         // Types no live object uses anymore no longer need to be kept alive
         inner.prune_types();
+        if let Some(cascade) = self.core.cascade.get() {
+            // Migration may have dropped or duplicated reference fields.
+            // Safety: the world is stopped and `inner` is this heap's state.
+            unsafe { cascade.resync(&inner) };
+        }
         drop(inner);
         self.heap.bump_type_epoch();
 
