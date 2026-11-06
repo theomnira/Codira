@@ -3380,10 +3380,64 @@ heap limit, where the collector's pacing still collects; "heap + GC" with a
 `@noalloc` and `@realtime` still count a class construction or an array
 literal as an allocation even where `--frame-alloc` would move it: the
 attributes do not depend on a build flag. Strings are not analysed (their
-buffers stay on the heap). There are no `@region` functions yet: an arena's
-memory is not scanned by the collector the way the stack is, so a GC
-reference stored in a region object would not keep its object alive; the
-design and what it waits for are in `crates/codira_hir/src/escape.rs`.
+buffers stay on the heap).
+
+#### `@region` functions (experimental)
+
+```codira
+class Node { value: i64 }
+class Box { var item: Node }
+
+func node(v: i64) -> Node { Node { value: v } }   // a heap object: it is returned
+
+@region
+public func summarize(n: i64) -> i64 {
+    var last = Box { item: node(0) }        // in the frame (with --frame-alloc)
+    for i in 0..n {
+        let b = Box { item: node(i) }        // kept past its iteration: in the region
+        if i % 3 == 0 { last = b }
+    }
+    let xs = array_filled(2, n as usize)     // length known at run time: in the region
+    let ys = xs.map(func(x) { x * 3 })       // in the region
+    last.item.value + ys[0]
+}                                            // the region is freed here, all at once
+```
+
+`@region` on a function gives it an arena: the objects its own body
+allocates that do not escape but cannot be in its frame -- kept past their
+loop iteration, array literals of more than 16 elements, arrays built by
+`array_filled`, `copy`, `map`, `filter` or slicing, and whatever another
+region object holds -- are bump-allocated there instead of on the GC heap,
+and the whole arena is freed when the function returns (by any `return`,
+`?` or the end of the body). Without `--frame-alloc`, the objects that
+would be in the frame go to the region too. Functions it calls allocate
+as usual; a recursive `@region` function gets a region per call.
+
+The compiler rejects every object of the function that may outlive the
+call, with the reason, exactly as `--explain-alloc` would give it:
+
+```
+error: `make` is `@region`, but this class `Point` may outlive the region: it is returned from `make`
+error: `grow` is `@region`, but this array literal of 1 element may outlive the region: it is grown by `push`, which the runtime does on the heap
+```
+
+So a `@region` function cannot return its objects, store them into a
+parameter or into anything on the heap, capture them in a closure, send
+them to a task, pass them to a function of another module or grow a region
+array with `push`. Closures, allocations inside closure bodies, `handle`
+and `spawn`, and `collect`'s arrays stay on the heap (and what is stored in
+them counts as stored on the heap). `--explain-alloc` reports each object
+as `moved to the function's region (reason)`.
+
+A region object may hold GC references (a `String` field, a heap object):
+every chunk of an open region is registered with the collector as a root
+range and scanned like a stack. In debug builds of the runtime, or with
+`CODIRA_CHECK_REGIONS=1`, closing a region also stops the world and checks
+that no heap object and no other open region refers into it; a violation
+(a compiler bug) ends the process with a message. `Runtime::region_stats()`
+counts regions, region objects and bytes, and the chunks registered now.
+It is experimental, tested on x86-64 Linux only, and `@noalloc` and
+`@realtime` count region allocations as allocations.
 
 ### Tests, counterexamples and semantic search
 

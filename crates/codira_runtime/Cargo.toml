@@ -62,3 +62,7 @@ harness = false
 [[bench]]
 name = "frame_alloc"
 harness = false
+
+[[bench]]
+name = "regions"
+harness = false

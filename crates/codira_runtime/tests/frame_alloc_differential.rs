@@ -96,6 +96,10 @@ struct Scope {
     /// The `var` locals of class `A`, which may be reassigned.
     var_a: Vec<String>,
     next: usize,
+    /// Whether the function is `@region`: only statements that keep every
+    /// object inside the call (no `keep`, `swap`, `stash`, `wrap`, stores
+    /// through a field read, `map` of objects, pipelines).
+    region: bool,
 }
 
 impl Scope {
@@ -131,7 +135,13 @@ fn a_expr(rng: &mut Rng, scope: &Scope) -> String {
 
 fn statement(rng: &mut Rng, scope: &mut Scope, out: &mut String, depth: usize, in_loop: bool) {
     let indent = "    ".repeat(depth + 1);
-    match rng.below(19) {
+    let kind = loop {
+        let kind = rng.below(19);
+        if !scope.region || !matches!(kind, 6 | 7 | 8 | 9 | 16 | 17) {
+            break kind;
+        }
+    };
+    match kind {
         0 | 1 => {
             let value = a_expr(rng, scope);
             let mutable = rng.chance(30) && !in_loop;
@@ -148,7 +158,7 @@ fn statement(rng: &mut Rng, scope: &mut Scope, out: &mut String, depth: usize, i
         }
         2 if !scope.a.is_empty() => {
             let name = scope.fresh("b");
-            let value = if rng.chance(30) {
+            let value = if !scope.region && rng.chance(30) {
                 format!("wrap({}, {})", rng.pick(&scope.a), int(rng, scope))
             } else {
                 format!("B {{ a: {}, k: {} }}", rng.pick(&scope.a), int(rng, scope))
@@ -309,9 +319,14 @@ fn statement(rng: &mut Rng, scope: &mut Scope, out: &mut String, depth: usize, i
     }
 }
 
-fn generate(seed: u64) -> String {
+/// A random program; with `region`, `run` may carry `@region` (see
+/// [`with_region`]) and only uses statements that keep its objects inside.
+fn generate(seed: u64, region: bool) -> String {
     let mut rng = Rng(seed);
-    let mut scope = Scope::default();
+    let mut scope = Scope {
+        region,
+        ..Scope::default()
+    };
     let mut body = String::new();
     for _ in 0..8 + rng.below(16) {
         statement(&mut rng, &mut scope, &mut body, 0, false);
@@ -330,8 +345,14 @@ fn generate(seed: u64) -> String {
         let _ = write!(checksum, " + sum_xs({c}) + {c}.t + read_b({c}.b)");
     }
     format!(
-        "{PRELUDE}\npublic func run() -> i64 {{\n    var total = 0\n{body}    total{checksum}\n}}\n"
+        "{PRELUDE}\nREGION\npublic func run() -> i64 {{\n    var total = 0\n{body}    \
+         total{checksum}\n}}\n"
     )
+}
+
+/// `source` with `run` marked `@region`, or not.
+fn with_region(source: &str, region: bool) -> String {
+    source.replace("REGION", if region { "@region" } else { "" })
 }
 
 /// What one build of a program did.
@@ -399,7 +420,7 @@ fn frame_allocation_does_not_change_results() {
     let mut collected = 0;
     for index in 0..programs {
         let program_seed = seed.wrapping_add(index);
-        let source = generate(program_seed);
+        let source = with_region(&generate(program_seed, false), false);
         if std::env::var_os("CODIRA_FRAME_DIFF_VERBOSE").is_some() {
             eprintln!("seed {program_seed:#x}\n{source}");
         }
@@ -432,5 +453,64 @@ fn frame_allocation_does_not_change_results() {
     eprintln!(
         "{programs} programs: {moved_total} sites moved to the stack, {collected} \
          frame-allocated runs collected"
+    );
+}
+
+/// The same for `@region`: each program, with `run` marked `@region` and
+/// not, with frame allocation off and on, must return the same checksum,
+/// and its region objects must be live during the collections.
+#[test]
+fn region_functions_do_not_change_results() {
+    let seed = std::env::var("CODIRA_FRAME_DIFF_SEED")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_SEED);
+    let programs = std::env::var("CODIRA_FRAME_DIFF_PROGRAMS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_PROGRAMS);
+    let (mut in_region, mut collected) = (0, 0);
+    for index in 0..programs {
+        let program_seed = seed.wrapping_add(index) ^ 0x5EED;
+        let text = generate(program_seed, true);
+        let plain = with_region(&text, false);
+        let region = with_region(&text, true);
+        if std::env::var_os("CODIRA_FRAME_DIFF_VERBOSE").is_some() {
+            eprintln!("seed {program_seed:#x}\n{region}");
+        }
+        let reference = run(&plain, false, false).result;
+        let mut results = vec![("plain", reference)];
+        for frame in [false, true] {
+            let driver = CompileAndRunTestDriver::with_frame_allocation(&region, frame, |b| {
+                b.heap_limit(HEAP_LIMIT)
+            })
+            .expect("Failed to build test driver");
+            let result: i64 = driver.runtime.invoke("run", ()).unwrap();
+            let stats = driver.runtime.region_stats();
+            assert_eq!(stats.opened, stats.closed, "seed {program_seed:#x}");
+            if stats.objects_allocated > 0 && driver.runtime.gc().emergency_collections() > 0 {
+                collected += 1;
+            }
+            in_region += stats.objects_allocated;
+            results.push((if frame { "@region, frame" } else { "@region" }, result));
+        }
+        if index % 3 == 0 {
+            results.push(("@region, -O 0", run(&region, true, true).result));
+        }
+        if results.iter().any(|(_, r)| *r != reference) {
+            panic!("seed {program_seed:#x}: results differ: {results:?}\n{region}");
+        }
+    }
+    assert!(
+        in_region >= programs,
+        "only {in_region} objects were allocated in regions in {programs} programs"
+    );
+    assert!(
+        collected > 0,
+        "no collection ran while region objects were alive"
+    );
+    eprintln!(
+        "{programs} programs: {in_region} objects allocated in regions, {collected} runs \
+         collected with region objects"
     );
 }

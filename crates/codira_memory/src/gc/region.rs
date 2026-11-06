@@ -41,9 +41,41 @@ use crate::gc::{
     Observer,
 };
 
-/// The size of an ordinary chunk. An allocation larger than a chunk gets a
-/// chunk of its own.
+/// The size of a region's first chunk; each further chunk is twice the
+/// previous one, up to [`CHUNK_SIZE`]. A small region (most are) then costs
+/// one small chunk.
+const FIRST_CHUNK: usize = 4 * 1024;
+/// The largest ordinary chunk. An allocation larger than a quarter of it
+/// gets a chunk of its own.
 const CHUNK_SIZE: usize = 64 * 1024;
+/// The alignment of an ordinary chunk; an object aligned more strictly is
+/// aligned inside it.
+const CHUNK_ALIGN: usize = 16;
+/// Closed ordinary chunks each thread keeps for its next regions (zeroed),
+/// and the most bytes it keeps.
+const CACHE_CHUNKS: usize = 16;
+const CACHE_BYTES: usize = 256 * 1024;
+
+thread_local! {
+    /// Zeroed ordinary chunks of closed regions, for this thread's next
+    /// regions: opening and closing a small region then calls the system
+    /// allocator not at all.
+    static CACHE: std::cell::RefCell<ChunkCache> =
+        const { std::cell::RefCell::new(ChunkCache(Vec::new())) };
+}
+
+/// A thread's cached chunks, freed when the thread ends.
+struct ChunkCache(Vec<Chunk>);
+
+impl Drop for ChunkCache {
+    fn drop(&mut self) {
+        for chunk in self.0.drain(..) {
+            // Safety: a cached chunk is allocated with its layout and used by
+            // nothing.
+            unsafe { dealloc(chunk.start.as_ptr(), chunk.layout) };
+        }
+    }
+}
 
 /// The header every region object starts with, as on the heap.
 const HEADER: Layout = Layout::new::<ObjectHeader>();
@@ -57,6 +89,10 @@ struct Chunk {
 /// allocation goes.
 pub struct Region {
     chunks: Vec<Chunk>,
+    /// The index in `chunks` of the ordinary chunk `cursor` is in.
+    current: Option<usize>,
+    /// The size of the next ordinary chunk.
+    next_size: usize,
     /// The next free byte of the last ordinary chunk, and its end.
     cursor: usize,
     end: usize,
@@ -72,7 +108,8 @@ pub struct RegionStats {
     /// included).
     pub objects_allocated: u64,
     pub bytes_allocated: u64,
-    /// Chunks allocated, and the bytes they held.
+    /// Chunks allocated from the system, and their bytes (a chunk reused
+    /// from a closed region is not counted again).
     pub chunks_allocated: u64,
     pub chunk_bytes_allocated: u64,
     /// Root ranges registered now (one per chunk of every open region), and
@@ -118,6 +155,8 @@ where
         self.core.regions.opened.fetch_add(1, Ordering::Relaxed);
         Box::new(Region {
             chunks: Vec::new(),
+            current: None,
+            next_size: FIRST_CHUNK,
             cursor: 0,
             end: 0,
         })
@@ -145,10 +184,17 @@ where
             self.region_chunk(region, layout.size(), layout.align())
                 .as_ptr() as usize
         } else {
-            let chunk = self.region_chunk(region, CHUNK_SIZE, layout.align());
-            region.cursor = chunk.as_ptr() as usize + layout.size();
-            region.end = chunk.as_ptr() as usize + CHUNK_SIZE;
-            chunk.as_ptr() as usize
+            let mut size = region.next_size;
+            while size < layout.size() + layout.align() {
+                size *= 2;
+            }
+            region.next_size = (size * 2).min(CHUNK_SIZE);
+            let chunk = self.region_chunk(region, size, CHUNK_ALIGN).as_ptr() as usize;
+            region.current = Some(region.chunks.len() - 1);
+            let start = align_up(chunk, layout.align()).expect("a chunk is in memory");
+            region.cursor = start + layout.size();
+            region.end = chunk + size;
+            start
         };
         counters.objects.fetch_add(1, Ordering::Relaxed);
         counters
@@ -167,10 +213,27 @@ where
 
     /// A new zeroed chunk of `size` bytes, registered as a root range.
     fn region_chunk(&self, region: &mut Region, size: usize, align: usize) -> NonNull<u8> {
-        let layout = Layout::from_size_align(size, align.max(16)).expect("a region chunk's layout");
-        // Safety: the layout has a non-zero size.
-        let Some(start) = NonNull::new(unsafe { alloc_zeroed(layout) }) else {
-            std::alloc::handle_alloc_error(layout)
+        let layout =
+            Layout::from_size_align(size, align.max(CHUNK_ALIGN)).expect("a region chunk's layout");
+        let cached = CACHE.with(|cache| {
+            let mut cache = cache.borrow_mut();
+            let index = cache.0.iter().position(|c| c.layout == layout)?;
+            Some(cache.0.swap_remove(index).start)
+        });
+        let start = match cached {
+            Some(start) => start,
+            None => {
+                // Safety: the layout has a non-zero size.
+                let Some(start) = NonNull::new(unsafe { alloc_zeroed(layout) }) else {
+                    std::alloc::handle_alloc_error(layout)
+                };
+                let counters = &self.core.regions;
+                counters.chunks.fetch_add(1, Ordering::Relaxed);
+                counters
+                    .chunk_bytes
+                    .fetch_add(size as u64, Ordering::Relaxed);
+                start
+            }
         };
         // Safety: the chunk stays allocated until `region_close`
         // unregisters it.
@@ -180,11 +243,6 @@ where
                 .register(start.as_ptr() as usize, start.as_ptr() as usize + size)
         };
         region.chunks.push(Chunk { start, layout });
-        let counters = &self.core.regions;
-        counters.chunks.fetch_add(1, Ordering::Relaxed);
-        counters
-            .chunk_bytes
-            .fetch_add(size as u64, Ordering::Relaxed);
         start
     }
 
@@ -203,10 +261,37 @@ where
             } else {
                 Ok(())
             };
-        for chunk in &region.chunks {
-            // Safety: allocated by `region_chunk` with this layout, and no
-            // longer registered.
-            unsafe { dealloc(chunk.start.as_ptr(), chunk.layout) };
+        let current = region.current;
+        let cursor = region.cursor;
+        for (index, chunk) in region.chunks.into_iter().enumerate() {
+            let ordinary = chunk.layout.align() == CHUNK_ALIGN && chunk.layout.size() <= CHUNK_SIZE;
+            let kept = ordinary
+                && CACHE.with(|cache| {
+                    let mut cache = cache.borrow_mut();
+                    let bytes: usize = cache.0.iter().map(|c| c.layout.size()).sum();
+                    if cache.0.len() >= CACHE_CHUNKS || bytes + chunk.layout.size() > CACHE_BYTES {
+                        return false;
+                    }
+                    // Zero what was used, so the chunk is zeroed again: the
+                    // current chunk up to the cursor, any other one whole.
+                    let used = if Some(index) == current {
+                        cursor - chunk.start.as_ptr() as usize
+                    } else {
+                        chunk.layout.size()
+                    };
+                    // Safety: the chunk is no longer registered or used.
+                    unsafe { std::ptr::write_bytes(chunk.start.as_ptr(), 0, used) };
+                    cache.0.push(Chunk {
+                        start: chunk.start,
+                        layout: chunk.layout,
+                    });
+                    true
+                });
+            if !kept {
+                // Safety: allocated by `region_chunk` with this layout, and
+                // no longer registered.
+                unsafe { dealloc(chunk.start.as_ptr(), chunk.layout) };
+            }
         }
         self.core.regions.closed.fetch_add(1, Ordering::Relaxed);
         checked
@@ -340,5 +425,27 @@ mod tests {
         let stats = gc.region_stats();
         assert_eq!((stats.opened, stats.closed), (1, 1));
         assert_eq!((stats.live_ranges, stats.live_range_bytes), (0, 0));
+    }
+
+    #[test]
+    fn a_closed_chunk_is_reused_zeroed_by_the_next_region() {
+        let gc = MarkSweep::<NoopObserver<_>>::default();
+        for round in 0..3 {
+            let mut region = gc.region_open();
+            for _ in 0..20 {
+                let handle = gc.region_alloc(&mut region, Layout::from_size_align(16, 8).unwrap());
+                let data = payload(handle);
+                assert_eq!(
+                    unsafe { *data },
+                    0,
+                    "round {round}: a reused chunk was not zeroed"
+                );
+                unsafe { *data = 0xDEAD };
+            }
+            gc.region_close(region).unwrap();
+        }
+        let stats = gc.region_stats();
+        assert_eq!(stats.chunks_allocated, 1, "{stats:?}");
+        assert_eq!(stats.chunk_bytes_allocated, 4096, "{stats:?}");
     }
 }

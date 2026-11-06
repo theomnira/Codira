@@ -2109,3 +2109,48 @@ fn frame_allocation_removes_the_gc_allocation_of_a_local_object() {
         .expect("`escaping` is in the module");
     assert_eq!(gc_allocation_calls(escaping), 1, "{escaping}");
 }
+
+#[test]
+fn a_region_function_allocates_in_its_region_and_closes_it_before_every_return() {
+    let text = r#"
+    class Point { x: i64, y: i64 }
+    @region
+    public func kept(n: i64) -> i64 {
+        var keep = Point { x: 0, y: 0 }
+        for i in 0..n {
+            let p = Point { x: i, y: 2 }
+            keep = p
+            if i == 5 { return keep.x }
+        }
+        let xs = array_filled(1, 8)
+        keep.x + xs[0]
+    }"#;
+    let ir = ir_with_frame_allocation(text, true);
+    let kept = ir
+        .split("define ")
+        .find(|f| f.contains("@kept("))
+        .expect("`kept` is in the module");
+    // No object of `kept` comes from the GC heap.
+    assert_eq!(gc_allocation_calls(kept), 0, "{kept}");
+    // `p` and `xs` come from the region; the first `Point` is in the frame.
+    assert_eq!(
+        kept.matches("call ptr %codira.region_alloc_ptr").count(),
+        2,
+        "{kept}"
+    );
+    assert!(
+        kept.contains("alloca { ptr, ptr, i32, i8, i8, i8, i8, i64 }"),
+        "{kept}"
+    );
+    // One open, and a close before each of the two returns.
+    let returns = kept
+        .lines()
+        .filter(|l| l.trim_start().starts_with("ret "))
+        .count();
+    assert_eq!(returns, 2, "{kept}");
+    let closes = kept
+        .lines()
+        .filter(|l| l.contains("call void %codira.region_close_ptr"))
+        .count();
+    assert_eq!(closes, returns, "{kept}");
+}

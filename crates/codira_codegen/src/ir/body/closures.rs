@@ -237,6 +237,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     /// Generates the code of `target` into this generator's function: a
     /// closure's body, or a thunk calling a named function.
     pub(crate) fn gen_fn_value_target(&mut self, target: &FnValueTarget) {
+        // A target is a function of its own, not the body the escape
+        // analysis placed objects for: its allocations go to the heap (a
+        // closure body's would anyway; an inlined closure's target is never
+        // called), and it has no region.
+        self.escapes = None;
+        self.region_function = false;
         let value = self
             .fn_value
             .get_nth_param(0)
