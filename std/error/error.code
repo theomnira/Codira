@@ -57,6 +57,25 @@ public trait Error {
     }
 }
 
+// A context: a `str` (a literal, copied only when there is an error to
+// add it to) or a `String` (an `f".."`).
+public trait ContextText {
+    // The text, as a `String`.
+    func context_text(self) -> String;
+}
+
+extend str: ContextText {
+    func context_text(self) -> String {
+        self.to_string()
+    }
+}
+
+extend String: ContextText {
+    func context_text(self) -> String {
+        self
+    }
+}
+
 // Any error, described: a root cause and what was being done when it
 // happened.
 public struct AnyError {
@@ -64,8 +83,9 @@ public struct AnyError {
     cause: String,
     // What was being done, innermost first: each `context` adds one.
     contexts: [String],
-    // The name of the type of the error this was made from, if any.
-    kind: String?,
+    // The name of the type of the error this was made from, if any: a
+    // constant, so recording it allocates nothing.
+    kind: str?,
 }
 
 extend AnyError {
@@ -78,9 +98,9 @@ extend AnyError {
     // made from an error of the type named `type_name`.
     public func wrap(message: String, source: String?, type_name: str) -> AnyError {
         if let cause = source {
-            AnyError { cause: cause, contexts: [message], kind: type_name.to_string() }
+            AnyError { cause: cause, contexts: [message], kind: type_name }
         } else {
-            AnyError { cause: message, contexts: [], kind: type_name.to_string() }
+            AnyError { cause: message, contexts: [], kind: type_name }
         }
     }
 
@@ -91,11 +111,20 @@ extend AnyError {
         error.into_any()
     }
 
-    // This error with `what` -- what was being done -- as its outermost
-    // context.
-    public func context(self, what: String) -> AnyError {
+    // This error with `what` -- what was being done, a `str` or a `String`
+    // -- as its outermost context.
+    public func context[C: ContextText](self, what: C) -> AnyError {
+        self.with_text(what.context_text())
+    }
+
+    // This error with the context `text` added; the error it was made from
+    // is not changed (its context array is copied).
+    func with_text(self, text: String) -> AnyError {
+        if self.contexts.is_empty() {
+            return AnyError { cause: self.cause, contexts: [text], kind: self.kind }
+        }
         let more = self.contexts.copy()
-        more.push(what)
+        more.push(text)
         AnyError { cause: self.cause, contexts: more, kind: self.kind }
     }
 
@@ -118,7 +147,7 @@ extend AnyError {
 
     // The name of the type of the error this was made from (`FileError`),
     // or `nil` for one made from a message.
-    public func error_type(self) -> String? {
+    public func error_type(self) -> str? {
         self.kind
     }
 
@@ -148,12 +177,13 @@ extend AnyError: Error {
 }
 
 extend Result[T, E: Error] {
-    // An `Err` as an `AnyError` with `what` as its outermost context; an
-    // `Ok` as it is.
-    public func context(self, what: String) -> Result[T, AnyError] {
+    // An `Err` as an `AnyError` with `what` (a `str` or a `String`) as its
+    // outermost context; an `Ok` as it is. A literal `what` is copied only
+    // for an `Err`.
+    public func context[C: ContextText](self, what: C) -> Result[T, AnyError] {
         match self {
             Result.Ok(value) -> Result.Ok(value),
-            Result.Err(error) -> Result.Err(error.into_any().context(what)),
+            Result.Err(error) -> Result.Err(error.into_any().with_text(what.context_text())),
         }
     }
 
@@ -162,7 +192,7 @@ extend Result[T, E: Error] {
     public func with_context(self, what: func() -> String) -> Result[T, AnyError] {
         match self {
             Result.Ok(value) -> Result.Ok(value),
-            Result.Err(error) -> Result.Err(error.into_any().context(what())),
+            Result.Err(error) -> Result.Err(error.into_any().with_text(what())),
         }
     }
 }
