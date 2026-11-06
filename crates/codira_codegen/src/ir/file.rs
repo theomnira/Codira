@@ -37,6 +37,10 @@ pub struct FileIr<'ink> {
     pub function_definitions: HashMap<codira_hir::Function, String>,
     /// The types defined in this file
     pub type_definitions: HashSet<codira_hir::Ty>,
+    /// The LLVM names of the functions this file defines for Codira code
+    /// that nothing outside the assembly calls by symbol: every function
+    /// and wrapper but an `@export` one. See `AssemblyBuilder::build`.
+    pub local_symbols: Vec<String>,
 }
 
 /// Adds every tuple, optional and `str` type inside `ty` (including `ty`
@@ -99,6 +103,7 @@ pub(crate) fn gen_file_ir<'ink>(
     let mut ordered: Vec<(usize, FunctionValue<'ink>)> = Vec::new();
     let mut type_definitions = HashSet::new();
     let mut wrapper_functions = BTreeMap::new();
+    let mut local_symbols = Vec::new();
     for (index, unit) in group_ir.units.iter().enumerate() {
         let fun = function::gen_prototype(
             code_gen.db,
@@ -109,6 +114,9 @@ pub(crate) fn gen_file_ir<'ink>(
         );
         functions.insert(unit.instance.clone(), fun);
         ordered.push((index, fun));
+        if unit.instance.function().export_abi(code_gen.db).is_none() {
+            local_symbols.push(fun.get_name().to_string_lossy().into_owned());
+        }
 
         // An instance or a copy is internal to this module: it has no
         // host-visible wrapper and is never exported.
@@ -126,6 +134,9 @@ pub(crate) fn gen_file_ir<'ink>(
         if function::needs_host_wrapper(code_gen.db, f) {
             let wrapper_fun =
                 function::gen_public_prototype(code_gen.db, &code_gen.hir_types, f, &llvm_module);
+            if f.export_abi(code_gen.db).is_none() {
+                local_symbols.push(wrapper_fun.get_name().to_string_lossy().into_owned());
+            }
             wrapper_functions.insert(f, wrapper_fun);
         }
     }
@@ -331,6 +342,7 @@ pub(crate) fn gen_file_ir<'ink>(
         llvm_module,
         function_definitions,
         type_definitions,
+        local_symbols,
     }
 }
 

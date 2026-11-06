@@ -164,7 +164,17 @@ fn an_8_bit_ct_select_is_branch_free_at_every_level() {
         Ok(ExitStatus::Success)
     );
     let ir = std::fs::read_to_string(project.path().join("target/mod.ll")).unwrap();
-    let start = ir.find("define i8 @sel_u8").expect("sel_u8 in the IR");
+    // A private function has internal linkage: `define internal i8 @sel_u8`.
+    let start = ir
+        .match_indices("define ")
+        .map(|(start, _)| start)
+        .find(|&start| {
+            ir[start..]
+                .lines()
+                .next()
+                .is_some_and(|l| l.contains(" i8 @sel_u8("))
+        })
+        .expect("sel_u8 in the IR");
     let body = &ir[start..start + ir[start..].find("\n}").unwrap()];
     assert!(
         body.contains("select i1") && body.contains("i32") && body.contains("!unpredictable"),
@@ -437,7 +447,10 @@ fn the_library_entry_point_reports_every_function() {
     let project = tempfile::tempdir().unwrap();
     write_package(project.path(), &format!("{EXAMPLES}{SELECT_U8}{SCALED}"));
     assert_eq!(
-        build(project.path(), &[&["--certify", "-O", "0"], X86_64].concat()),
+        build(
+            project.path(),
+            &[&["--certify", "-O", "0"], X86_64].concat()
+        ),
         Ok(ExitStatus::Success)
     );
     let bytes = std::fs::read(library(project.path(), X86_64)).unwrap();

@@ -24,7 +24,9 @@
 //!   - an `if` chain whose last `else if` leaves on both branches, which
 //!     crashed the code generator;
 //!   - non-generic methods of another module's types (value structs,
-//!     classes, enums), which could not be called from outside it.
+//!     classes, enums), which could not be called from outside it;
+//!   - a private function named like a C library function (`error`),
+//!     which the dynamic linker bound to the C library's.
 
 use std::{
     path::Path,
@@ -548,5 +550,65 @@ public func main() {
             stdout, "25 41 (3, 4) true\n2 12\n6 9 0 circle anonymous\ntrue false\n",
             "-O {level}"
         );
+    }
+}
+
+// ---- private functions are local to their library --------------------------
+
+/// A private function named like a C library function (`error`, `abs`)
+/// is its module's own. It used to keep LLVM's default linkage, so a call
+/// that was not inlined went through the dynamic linker to the C
+/// library's `error(3)`, loaded first, which crashed in `printf`.
+#[test]
+fn a_private_function_named_like_a_c_function_is_not_interposed() {
+    let checks = r"
+public func check(values: [i64]) -> i64 {
+    var total: i64 = 0
+    for v in values {
+        if v < 0 {
+            total += error(v, 1)
+        } else if v > 100 {
+            total += error(v, 2)
+        } else {
+            total += abs(v - 50)
+        }
+    }
+    total
+}
+
+func error(value: i64, kind: i64) -> i64 {
+    var acc = value * kind
+    var i: i64 = 0
+    while i < kind * 3 {
+        acc = acc * 31 + i
+        i += 1
+    }
+    acc % 1000
+}
+
+func abs(x: i64) -> i64 { if x < 0 { -x } else { x } }
+";
+    let program = r"
+import checks.{check}
+
+public func main() {
+    println(check([-3, 7, 250, 50, -1]))
+}
+";
+    let error = |value: i64, kind: i64| {
+        let mut acc = value * kind;
+        for i in 0..kind * 3 {
+            acc = acc * 31 + i;
+        }
+        acc % 1000
+    };
+    let expected = error(-3, 1) + 43 + error(250, 2) + error(-1, 1);
+    for level in ["0", "2"] {
+        let (code, stdout, stderr) = run(
+            &[("mod.code", program), ("checks.code", checks)],
+            &["-O", level],
+        );
+        assert_eq!(code, Some(0), "-O {level}: {stderr}");
+        assert_eq!(stdout, format!("{expected}\n"), "-O {level}");
     }
 }

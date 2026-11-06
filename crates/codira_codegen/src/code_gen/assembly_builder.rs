@@ -4,7 +4,10 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-use inkwell::module::{Linkage, Module};
+use inkwell::{
+    module::{Linkage, Module},
+    GlobalVisibility,
+};
 use rustc_hash::FxHashSet;
 
 use crate::{
@@ -130,6 +133,36 @@ impl<'db, 'ink, 'ctx, 't> AssemblyBuilder<'db, 'ink, 'ctx, 't> {
             &self.assembly_module,
             self.code_gen.hardware_safety,
         );
+
+        // The group's own functions are reached by direct calls and through
+        // the tables `get_info` returns, never by symbol; the exported ones
+        // are private already (`symbols::get_function_definition_array`).
+        // The others were left with LLVM's default linkage, which in a
+        // loaded library is a dynamic symbol that another library can
+        // interpose: a call to a private `func error(..)` of a standard
+        // library module ran the C library's `error(3)`, loaded first, and
+        // crashed in `printf`. Internal linkage binds every call in the
+        // assembly and keeps the symbol (in the object's local symbols).
+        // A build that keeps function symbols (certifying, superoptimizing,
+        // checking constant time) needs every function to stay one, as it
+        // did: there hidden visibility binds the calls instead, and the
+        // optimizer may not drop a function it inlined everywhere.
+        // `@export` functions, the entry points the runtime looks up
+        // (`DLLExport`) and the package's native code are left alone.
+        for name in &file.local_symbols {
+            if let Some(function) = self.assembly_module.get_function(name) {
+                if function.get_linkage() == Linkage::External && function.count_basic_blocks() > 0
+                {
+                    if self.code_gen.keep_function_symbols {
+                        function
+                            .as_global_value()
+                            .set_visibility(GlobalVisibility::Hidden);
+                    } else {
+                        function.set_linkage(Linkage::Internal);
+                    }
+                }
+            }
+        }
 
         // A certified build names every function's machine code by its
         // symbol. Private linkage keeps a function out of the object's
