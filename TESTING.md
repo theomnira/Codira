@@ -256,7 +256,14 @@ the Cranelift heap-parity work lands.
   counting and cycle collection: the graph stress (cycles included) and the
   fault gate are written against the runtime's public behaviour and apply
   unchanged when these land; their own oracles come with them.
-- Memory bounds without a heap limit (see `gc-stress`).
+- Big-endian: the Swiss-table `Map`'s keyed SipHash reads words
+  little-endian, and every Codira target is little-endian (x86-64,
+  AArch64, RISC-V 64, wasm32, NVPTX); a big-endian target would need that
+  checked first.
+- Host code that allocates and then roots an object without a mutator
+  guard while another thread runs Codira code: the runtime documents that
+  the host must take a guard there; the stress tests follow that rule and
+  do not test what happens without it.
 
 ## Known issues found by the gates
 
@@ -305,7 +312,7 @@ Each fix is its own commit with a regression test.
 |---|---|---|
 | fuzz-compiler | `5e` (exponent without digits) panicked lowering the literal | `fuzz_regressions::an_exponent_without_digits_is_an_invalid_literal` |
 | fuzz-compiler | `.` at the end of input lexed as an empty tuple index; `e.` panicked | lexer test `a_dot_at_the_end_of_the_input_is_not_an_index` |
-| fuzz-compiler | a `{` where a match arm starts looped until the parser's step limit | parser test `a_brace_where_a_match_arm_should_start_is_an_error` |
+| fuzz-compiler | a `{` where a match arm starts looped until the parser's step limit (fixed on main independently; the fuzzer's inputs are regression tests) | parser test `a_brace_where_a_match_arm_should_start_is_an_error` |
 | fuzz-compiler | type errors on compiler-made nodes (missing operand, `self` type, desugared `if let`) unwrapped missing syntax | `fuzz_regressions::diagnostics_without_syntax_are_reported_on_the_function` |
 | fuzz-compiler | unary `-` on an unsigned integer was `unimplemented!` in the LLVM backend (it wraps, as documented and as in Cranelift) | `functions::negating_an_unsigned_integer_wraps` |
 | fuzz-compiler | `func g() -> T;` outside an `extern` block was accepted and code generation panicked on the missing body | `fuzz_regressions::a_function_without_a_body_outside_an_extern_block` |
