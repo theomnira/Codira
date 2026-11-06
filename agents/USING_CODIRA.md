@@ -4911,10 +4911,31 @@ Runtime (hosts embedding `codira_runtime`):
   allocation takes the heap lock; the next allocation by Codira code (or by
   the host) collects.
 - Collections stop the world (stack capture for x86-64 and AArch64 on
-  Linux, macOS and Windows; tested on x86-64 Linux only). There are no stack maps, so a collection
-  asks every thread running Codira code to park, scans each parked thread's
-  stack and spilled callee-saved registers conservatively, collects, and
-  resumes them. What is guaranteed:
+  Linux, macOS and Windows; tested on x86-64 Linux only). A collection asks
+  every thread running Codira code to park, finds the roots on each parked
+  thread's stack, collects, and resumes them.
+  - **Precise roots** (default): code compiled through LLVM carries *frame
+    records*: every function that makes a call that may reach a
+    collection keeps, in a record on its stack, the values that may hold
+    references across such calls and the stack slots that may hold one,
+    and links the record into a per-thread chain. The collector reads the
+    records precisely and leaves those functions' frames out of the
+    conservative scan; host frames, foreign frames and code without
+    records (the Cranelift JIT) are still scanned conservatively. An
+    integer in a compiled frame that looks like a pointer no longer keeps
+    an object alive -- except while it sits in a callee-saved register at
+    the safepoint (those registers may hold a host frame's references and
+    are scanned conservatively; measured: 5 of 40 such objects retained,
+    at most one per such register, against 40 of 40 with the conservative
+    scan). Frames are left out of
+    the scan on x86-64 Linux only; elsewhere the records are read and the
+    frames are scanned conservatively as well.
+  - `CODIRA_GC_ROOTS=conservative` (or
+    `codira_memory::gc::frames::set_root_mode(RootMode::Conservative)`)
+    scans every stack word conservatively, records included.
+  - `CODIRA_GC_STRESS=<n>` collects at every n-th safepoint of each thread
+    (`1`: every allocation and every poll) -- for testing.
+  - What is guaranteed:
   - **No live object is freed**, whichever thread collects and whatever
     other threads are doing: `collect_blocking` or `request_collection` from
     any thread, a paced collection or an allocation at the heap limit on any
@@ -4925,10 +4946,16 @@ Runtime (hosts embedding `codira_runtime`):
     `spawn`ed task on the worker pool, and any thread holding
     `codira_runtime::enter_codira()` (C: between `codira_thread_enter` and
     `codira_thread_leave`).
-  - **Where threads park:** every GC allocation is a safepoint. A thread
-    waiting in a channel send or receive, a `select`, a scope join or
-    `codira_time_sleep_ns` is already parked and never holds up a
-    collection.
+  - **Where threads park:** every GC allocation is a safepoint, and so is
+    a *poll*: on the back-edge of every loop whose trip count the optimizer
+    cannot bound when the loop starts, and at the entry of every function
+    that makes calls (a load and a branch). A thread waiting in a channel
+    send or receive, a `select`, a scope join or `codira_time_sleep_ns` is
+    already parked and never holds up a collection, and so is a thread in
+    a call to an `extern` function declared `@noalloc` (`@noalloc extern
+    func read_sensor(fd: i32) -> i64;`): the assertion, which nothing
+    checks, also promises that the function does not call back into Codira
+    code.
   - **Hot reload:** `Runtime::update` relinks with the world stopped, and
     only while no thread is inside Codira code. Otherwise it returns
     `false` and the next `update` retries, without needing a new file
@@ -4936,13 +4963,17 @@ Runtime (hosts embedding `codira_runtime`):
   - **Cost:** an allocation in Codira code checks one flag; entering
     Codira code from the host costs about 14 ns, a channel operation about
     26 ns more; an allocation made by the host outside Codira code costs
-    about 20 ns more than before (x86-64, measured).
+    about 20 ns more than before (x86-64, measured). A function with a
+    frame record pays an indirect call and a few stores on entry and one
+    store on return; see `crates/codira_memory/README.md` for the
+    benchmark comparison with records and polls off.
 - What is not guaranteed:
   - **Latency:** a collection waits for every running thread to reach a
-    safepoint. A loop that neither allocates nor blocks delays it until the
-    loop ends (there are no safepoints at loop back-edges). Calls to the
-    file, database and tensor services are not safepoints; a collection
-    waits for them to return.
+    safepoint. A loop the optimizer can bound (a counted loop, a loop over
+    an array or a range) has no poll, so a collection may wait for it to
+    finish, however many iterations it has. Calls to `extern` functions
+    without `@noalloc`, and to the file, database and tensor services, are
+    not safepoints; a collection waits for them to return.
   - **Raw function pointers:** a Codira function called through a
     `FunctionDefinition`'s `fn_ptr` (or `codira_function_fn_ptr`) without
     the guard is invisible to the collector, and a reload does not wait for
@@ -4960,6 +4991,18 @@ Runtime (hosts embedding `codira_runtime`):
   - **Unsupported targets:** where a thread's stack cannot be captured, a
     collection that would need it is refused (`collect_blocking` returns
     `CollectRefused`, and an allocation at the heap limit fails).
+- **Relocation (experimental, off by default):**
+  `Runtime::builder(lib).compaction(true)` or `CODIRA_GC_COMPACT=1`. After
+  a collection's sweep, the live objects of size-class blocks at most a
+  quarter full move into free cells of other blocks of their class and
+  every heap reference to them is rewritten; the emptied blocks are
+  released. Objects a stack refers to, rooted objects and pinned objects
+  never move (`GarbageCollector::pin`/`unpin`, C: `codira_gc_pin` /
+  `codira_gc_unpin`: a pinned object is rooted and keeps its address and
+  its payload's address, for foreign code). Measured on a fragmentation
+  workload: 11.7 MB held instead of 29.7 MB, and it fits a 16 MiB heap
+  limit the non-moving collector cannot. A host that keeps a `GcPtr` it
+  neither roots nor pins must not turn it on.
 - `Runtime::builder(lib).heap_limit(bytes)` caps the GC heap (without it
   there is no cap; `codira_runtime::heap_policy::default_heap_limit` gives
   the `codira` tool's default, half of the available memory). An allocation

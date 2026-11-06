@@ -241,7 +241,8 @@ fn branch_hints_reach_the_optimizer_as_expect_and_then_branch_weights() {
         let body = function_ir(&ir, name);
         let branch = body
             .lines()
-            .find(|l| l.contains("br i1") && l.contains("!prof"))
+            // (not a safepoint poll's branch, which has weights of its own)
+            .find(|l| l.contains("br i1") && l.contains("!prof") && !l.contains("gc.poll"))
             .unwrap();
         let id = branch
             .rsplit("!prof !")

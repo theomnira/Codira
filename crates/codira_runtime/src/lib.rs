@@ -79,7 +79,7 @@ pub use codira_memory::{
 pub type RuntimeStats = gc::GcStats;
 use codira_project::LOCKFILE_NAME;
 use dispatch_table::DispatchTable;
-use garbage_collector::GarbageCollector;
+pub use garbage_collector::GarbageCollector;
 use log::{debug, error, info};
 use notify::{
     event::{ModifyKind, RenameMode},
@@ -134,6 +134,9 @@ pub struct RuntimeOptions {
     /// When the collector runs besides at the heap limit. See
     /// [`RuntimeBuilder::gc_policy`].
     pub gc_policy: GcPolicy,
+    /// Whether collections relocate objects out of sparse blocks
+    /// (experimental). See [`RuntimeBuilder::compaction`].
+    pub compaction: bool,
     /// The fuel budget of fuel-instrumented code, or `None` for no limit. See
     /// [`RuntimeBuilder::fuel`].
     pub fuel: Option<u64>,
@@ -381,6 +384,7 @@ impl RuntimeBuilder {
                 heap_limit: None,
                 heap_limit_note: None,
                 gc_policy: GcPolicy::default(),
+                compaction: false,
                 fuel: None,
                 fail_nth_allocation: None,
             },
@@ -453,6 +457,16 @@ impl RuntimeBuilder {
     /// error. Overrides [`FAIL_NTH_ALLOCATION_ENV`].
     pub fn fail_nth_allocation(mut self, n: u64) -> Self {
         self.options.fail_nth_allocation = Some(n);
+        self
+    }
+
+    /// Turns on relocation (experimental, also `CODIRA_GC_COMPACT=1`): a
+    /// collection moves the live objects out of size-class blocks that are
+    /// at most a quarter full and releases the blocks. Objects a stack, a
+    /// root or a pin refers to never move. See
+    /// `codira_memory::gc::MarkSweep::set_compaction`.
+    pub fn compaction(mut self, on: bool) -> Self {
+        self.options.compaction = on;
         self
     }
 
@@ -630,6 +644,16 @@ impl Runtime {
             abi::FUEL_EXHAUSTED_FN_NAME,
         ));
 
+        // Foreign transitions around calls to `@noalloc` extern functions
+        options.user_functions.push(IntoFunctionDefinition::into(
+            gc::safepoint::codira_gc_foreign_enter as extern "C" fn(*const u8),
+            "codira.gc.foreign_enter",
+        ));
+        options.user_functions.push(IntoFunctionDefinition::into(
+            gc::safepoint::codira_gc_foreign_leave as extern "C" fn(),
+            "codira.gc.foreign_leave",
+        ));
+
         // `scope`, `spawn` and channels.
         options.user_functions.extend(tasks::functions());
 
@@ -665,6 +689,21 @@ impl Runtime {
         runtime.gc.set_heap_limit_note(options.heap_limit_note);
         runtime.gc.set_policy(options.gc_policy);
         ensure_emergency_reserve();
+        if options.compaction {
+            runtime.gc.set_compaction(true);
+        }
+        if gc::frames::stress() {
+            // Stress mode: polls of compiled code collect too.
+            let collector = Arc::downgrade(&runtime.gc);
+            gc::frames::add_stress_collector(Arc::new(move |collect| {
+                collector.upgrade().is_some_and(|collector| {
+                    if collect {
+                        collector.stress_collect();
+                    }
+                    true
+                })
+            }));
+        }
 
         runtime.add_assembly(&options.library_path)?;
 

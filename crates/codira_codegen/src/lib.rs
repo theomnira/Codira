@@ -30,6 +30,7 @@ mod code_gen;
 mod db;
 mod eidos_fold;
 mod eidos_options;
+pub mod gc_roots;
 pub mod rewrite;
 #[macro_use]
 mod ir;

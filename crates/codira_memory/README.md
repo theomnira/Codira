@@ -9,17 +9,19 @@ API and the runtime metrics. It ends with what the collector does not do.
 
 ## The collector in one paragraph
 
-`MarkSweep` is a non-moving mark-sweep collector over a segregated size-class
-heap (`gc/heap.rs`). Every object is one cell: a 32-byte header followed by
+`MarkSweep` is a mark-sweep collector over a segregated size-class heap
+(`gc/heap.rs`), non-moving unless relocation is turned on. Every object is one cell: a 32-byte header followed by
 its payload. Cells up to 2 KiB come from 64 KiB blocks of one size class;
 each thread bump-allocates from a run of free cells it leased, without
 locking. Larger objects are allocated individually, and an array that grows
 moves its elements to an out-of-line buffer. A collection stops the world
 (`gc/safepoint.rs`): every thread running Codira code parks at its next
-allocation or blocking runtime call, the collector scans each parked
-thread's stack and spilled callee-saved registers conservatively (generated
-code has no stack maps), marks from those words and from the host's roots,
-sweeps, and resumes the threads.
+safepoint (an allocation, a poll, a blocking runtime call or a foreign
+call), the collector reads the frame records of compiled code precisely and
+scans the rest of each parked thread's stack and its spilled callee-saved
+registers conservatively, marks from those words and from the host's roots,
+sweeps, and resumes the threads. Roots, safepoints and relocation are
+described in "Garbage collector: roots, safepoints and relocation" below.
 
 ## Heap policy
 
@@ -345,24 +347,21 @@ rounds of a string workload) took 1.06, 1.08 and 1.03 s alone and 1.04,
   concurrent or generational collection. Pauses grow with the heap: marking
   with the live data, sweeping and the scan for rooted objects with every
   object in the heap.
-- **Safepoints are allocations and blocking runtime calls only.** A loop
-  that neither allocates nor blocks holds up every collection until it
-  ends: there are no polls at loop back-edges, so the time to reach a
-  safepoint has no bound. Calls into the file, database and tensor services
-  are not safepoints either.
-- **It does not move objects.** There is no compaction. A heap fragmented
-  into partly used blocks of different size classes keeps them, and an
-  allocation can fail at the limit although the free cells together would
-  hold it. Empty blocks are given back (up to 16 are kept for reuse).
-- **Stack scanning is conservative.** Generated code has no stack maps, so
-  every word of a parked thread's stack counts as a possible reference. A
-  word that happens to look like a pointer keeps garbage alive. It is also
-  why the collector cannot move objects: moving one means rewriting every
-  reference to it, and a word a conservative scan found may not be a
-  reference at all, so it must not be rewritten. Relocation needs either
-  precise stack maps from the code generator, or pinning every object a
-  stack word points to and moving only the others (as mostly-copying
-  collectors do).
+- **A bounded loop is not a safepoint.** Polls sit on the back-edges of
+  loops whose trip count the optimizer cannot bound on entry; a counted
+  loop, or a loop over an array or a range, has none, so a collection waits
+  for it to finish however many iterations it has. Calls into the file,
+  database and tensor services, and into `extern` functions not declared
+  `@noalloc`, are not safepoints either.
+- **Relocation is experimental and mostly-copying.** It is off unless
+  turned on; when on, it moves objects only out of blocks at most a quarter
+  full, and never an object a stack, a root or a pin refers to.
+- **Parts of the stack are still scanned conservatively.** Host frames,
+  foreign frames, frames of code without records (the Cranelift JIT), of
+  constant-time functions and of functions the record pass could not
+  handle, threads parked at a poll, and the callee-saved registers: a word
+  there that looks like a pointer keeps garbage alive. Frames are left out
+  of the conservative scan on x86-64 Linux only.
 - **The safepoint registry is per process.** A collection in one runtime
   pauses the threads running any runtime's code.
 - **There is no limit on time spent collecting.** A program whose live data
@@ -389,4 +388,134 @@ releases. Without `enable_cascade`, the collector behaves exactly as
 described above. The ownership word Cascade needs takes the upper half of
 the old 64-bit `inline_capacity` field, so the header stays 32 bytes.
 `CASCADE.md` holds the design, the invariants, what is unverified, and the
-measurements.
+measurements. Relocation (below) is switched off while Cascade is
+attached: the engine keeps object addresses in its own buffers and queues,
+which evacuation does not update.
+
+## Garbage collector: roots, safepoints and relocation
+
+The collector (`src/gc/`) is a stop-the-world mark-sweep collector over
+size-class blocks (`gc/heap.rs`). This note covers how it finds the roots
+on thread stacks, where threads stop for it, and the experimental
+relocation of sparse blocks.
+
+### Precise stack roots
+
+Code compiled through LLVM carries *frame records* (`codira_codegen`,
+`src/gc_roots.rs` and `cpp/gc_roots.cpp`). A pass over the linked assembly
+module, before its final optimization, gives every function that makes a
+call that may reach a collection a record on its stack: on entry the
+function links it into the thread's chain (`gc/frames.rs`), on every return
+it unlinks it. Every value that may hold a reference and is live across
+such a call (or is an argument of one: a stack argument lives in the
+caller's outgoing-argument area) is stored into a spill word of the record
+when it is defined,
+and every stack slot that may hold a reference is listed in it. "May hold
+a reference" is decided on the IR: a pointer (or an aggregate with one) is
+a reference unless it provably points at a stack slot, a global or a
+constant; integers count only when `ptrtoint` made them from a reference.
+The record's address escapes into the chain, so the optimizer must keep the
+spill words current at every call that may read memory -- exactly the
+calls that can reach a collection.
+
+At a collection the collector reads the records' slots precisely and
+leaves the machine frames they describe (`[lo, hi - 64)`, x86-64 System V)
+out of the conservative scan of the thread's stack. The 64 bytes at the
+top of each frame stay in the conservative scan: that is where the
+prologue saved the caller's callee-saved registers, which may belong to a
+host frame. Everything else -- host frames, foreign frames, code compiled
+without records (the Cranelift JIT, a library built with
+`CODIRA_GC_FRAMES=0`), and functions the pass could not handle -- is still
+scanned conservatively.
+
+Why this mechanism and not LLVM's statepoints or its shadow stack:
+
+- **Statepoints** (`gc.statepoint`, `RewriteStatepointsForGC`) need every
+  reference in a separate address space all the way through code
+  generation, and the code generator uses one untyped `ptr` for references,
+  payload pointers and raw addresses alike, passes references to the
+  runtime through stack out-slots (which the rewrite does not track), and
+  keeps references inside first-class aggregates (enums, strings). The pass
+  here works on the IR as it is and treats out-slots and aggregates as
+  regions.
+- **LLVM's shadow-stack strategy** keeps its chain in one global (not per
+  thread) and needs `gcroot` annotations emitted for every reference.
+- Both would leave the Cranelift JIT out; the record format is a plain
+  interface any back end can produce (see `codira_codegen::gc_roots`).
+
+The cost is per function, not per loop iteration: one indirect call to get
+the chain head, a handful of stores on entry and one on return, plus one
+store per spilled value at its definition.
+
+Selection: `CODIRA_GC_ROOTS=conservative` (or
+`frames::set_root_mode(RootMode::Conservative)`) scans every stack word
+conservatively again, records included -- a fallback that cannot be wrong
+about compiled frames. Precise is the default.
+
+What precise scanning does *not* do: an integer that sits in a
+callee-saved register at the safepoint still retains the object it points
+into (those registers may hold a host frame's references). The test
+`precise_roots::integers_that_look_like_pointers_do_not_retain_objects`
+holds 40 such integers across a collection: 5 objects are retained (at
+most one per callee-saved register; 6 on an earlier build), against all 40
+with the conservative scan.
+
+### Safepoints
+
+- Every allocation (as before), and every call into the runtime that
+  allocates.
+- **Polls**, inserted after the final optimization so they never block
+  vectorization: on the back-edge of every loop whose trip count scalar
+  evolution cannot bound when the loop is entered, and at the entry of
+  every function that makes a call (which every recursion goes through).
+  A poll is a load of the poll word and a branch to a cold call. A loop
+  the optimizer can bound (counted loops, loops over arrays and ranges,
+  loops that may also exit early) is not polled: a collection may wait for
+  it to finish. A thread parked at a poll is scanned conservatively: the
+  optimizer ran before the poll existed, so the spill words need not be
+  current there.
+- **Blocking regions** (`safepoint::blocking`): channel operations, joins,
+  sleeps. The thread is parked for their duration.
+- **Foreign calls**: a call to an `extern` function declared `@noalloc`
+  (a trusted assertion that it neither allocates nor calls back into
+  Codira code) is bracketed by `codira.gc.foreign_enter` /
+  `foreign_leave`: the thread is parked while the foreign code runs, its
+  stack scanned from the stack pointer at the call, plus the callee-saved
+  registers at the transition. A call to any other `extern` function keeps
+  the thread running, as before.
+
+`CODIRA_GC_STRESS=<n>` collects at every n-th safepoint of a thread (`1`:
+every allocation and every poll).
+
+### Relocation (experimental, off by default)
+
+`MarkSweep::set_compaction(true)`, `RuntimeBuilder::compaction(true)` or
+`CODIRA_GC_COMPACT=1`. After the sweep, the collector moves the live
+objects out of size-class blocks that are at most a quarter full, into the
+free cells of the class's other blocks, sparsest blocks first and only
+while those cells can take them (so it never needs memory the heap does
+not already hold, which is what lets it help at the heap limit), rewrites
+every heap reference to a moved object, and releases the emptied blocks.
+
+It is mostly-copying: an object that any stack refers to (precisely or
+conservatively), a rooted object (`GcRuntime::root`, `GcRootPtr`,
+`RootedStruct`) and a pinned one (`MarkSweep::pin`) never moves, so stack
+slots and host-held handles are never rewritten. The words of
+`root_region` (task-group results waiting to be joined, the chunks of
+`@region` arenas) are scanned conservatively like stack words, so what they
+refer to is pinned the same way. Blocks in which a
+thread's allocation cache holds a run are left alone. Hot-reload migration
+and heap snapshots run in their own stops and see a heap in which every
+reference is current.
+
+Measured with `relocation::fragmentation_*` (400,000 48-byte objects of
+which every 16th is kept, then 60,000 160-byte objects, collecting after
+each phase, pacing off): the heap holds 29.7 MB without relocation and 11.7 MB with it;
+under a 16 MiB heap limit the non-moving collector aborts in the second
+phase and the relocating one finishes.
+
+What keeps it experimental: it has run on x86-64 Linux only; the stacks
+pin (a frame that refers to a sparse block's object keeps the block); and
+host code that keeps a `GcPtr` it neither roots nor pins (in a Rust data
+structure) was never safe across a collection and is now also wrong after
+one.

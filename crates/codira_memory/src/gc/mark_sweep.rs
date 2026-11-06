@@ -11,7 +11,7 @@ use std::{
     collections::HashMap,
     ptr::NonNull,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, OnceLock, Weak,
     },
     time::{Duration, Instant},
@@ -30,7 +30,7 @@ use crate::{
         },
         cascade::{Cascade, CascadeConfig, CascadeHost, Mutator, StepReport},
         policy::GcPolicy,
-        safepoint,
+        frames, safepoint,
         stats::{CollectionCounts, CollectionReport, GcStats, PauseHistogram, Trigger},
         Array as GcArray, Event, GcPtr, GcRuntime, Observer, Stats, TypeTrace,
     },
@@ -59,14 +59,14 @@ pub(crate) unsafe fn for_each_reference(
     mut f: impl FnMut(NonNull<ObjectHeader>),
 ) {
     for_each_reference_slot(header, |slot| {
-        if let Some(child) = NonNull::new(*slot.cast::<*mut ObjectHeader>()) {
+        if let Some(child) = NonNull::new(*slot) {
             f(child);
         }
     });
 }
 
-/// Calls `visit` with the address of every reference slot (null or not) in
-/// the payload of `header`.
+/// Calls `f` with the address of every slot of `header`'s payload that
+/// holds a GC reference (null or not).
 ///
 /// # Safety
 ///
@@ -74,10 +74,11 @@ pub(crate) unsafe fn for_each_reference(
 #[inline]
 pub(crate) unsafe fn for_each_reference_slot(
     header: &ObjectHeader,
-    mut visit: impl FnMut(*const u8),
+    mut f: impl FnMut(*mut *mut ObjectHeader),
 ) {
     let ty = header.type_data();
     let payload = header.data;
+    let mut visit = |slot: *mut u8| f(slot.cast::<*mut ObjectHeader>());
 
     if let Some(element) = ty.array_element() {
         let length = (*payload.cast::<ArrayHeader>()).length;
@@ -200,6 +201,11 @@ pub(crate) struct Core<O> {
     /// The Cascade engine, once a host enabled it (experimental, off by
     /// default; see `CASCADE.md`).
     cascade: OnceLock<Arc<Cascade>>,
+    /// Whether collections evacuate sparse blocks (see
+    /// [`MarkSweep::set_compaction`]).
+    compaction: AtomicBool,
+    /// What the last collection's relocation did.
+    last_relocation: Mutex<RelocationReport>,
 }
 
 /// The collector's statistics and the state its fairness rule needs.
@@ -234,6 +240,25 @@ struct RequestState {
     shutdown: bool,
 }
 
+/// What the relocation of one collection did, for measurements (see
+/// [`MarkSweep::set_compaction`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RelocationReport {
+    /// How long the world was stopped for the collection itself (marking,
+    /// moving, sweeping), excluding the wait for threads to park.
+    pub pause: std::time::Duration,
+    /// Objects moved out of sparse blocks.
+    pub moved: usize,
+    /// Objects that could not move because a stack, a root or a pin
+    /// referred to them.
+    pub pinned: usize,
+    /// Bytes the heap held from the system after the collection.
+    pub committed: usize,
+}
+
+/// Blocks at most this full (in percent of their cells) are evacuated.
+const EVACUATE_LIVE_PERCENT: usize = 25;
+
 impl<O> Default for MarkSweep<O>
 where
     O: Observer<Event = Event> + Default,
@@ -265,6 +290,11 @@ where
                 started: AtomicU64::new(0),
                 regions: super::region::RegionCounters::new(),
                 cascade: OnceLock::new(),
+                compaction: AtomicBool::new(matches!(
+                    std::env::var("CODIRA_GC_COMPACT").as_deref(),
+                    Ok("1")
+                )),
+                last_relocation: Mutex::new(RelocationReport::default()),
             }),
             requests: Arc::new(Requests::default()),
             request_thread: Mutex::new(None),
@@ -531,6 +561,10 @@ where
         };
         if safepoint::is_running() {
             safepoint::poll();
+            if frames::stress_due() {
+                // Stress mode: allocations collect.
+                self.stress_collect();
+            }
             if self.heap.collection_due() {
                 self.core.collect_for_pacing();
             }
@@ -574,6 +608,10 @@ where
         self.check_fault()?;
         if safepoint::is_running() {
             safepoint::poll();
+            if frames::stress_due() {
+                // Stress mode: allocations collect.
+                self.stress_collect();
+            }
             if self.heap.collection_due() {
                 self.core.collect_for_pacing();
             }
@@ -645,6 +683,58 @@ where
             }
             result => result,
         }
+    }
+
+    /// Turns relocation on or off (experimental; off unless
+    /// `CODIRA_GC_COMPACT=1`). With it on, a collection moves the live
+    /// objects out of size-class blocks that are at most a quarter full and
+    /// releases those blocks, rewriting every reference to a moved object
+    /// stored in the heap. An object a stack refers to (precisely or
+    /// conservatively), a rooted object and a pinned object never moves:
+    /// stacks and host-held handles are not rewritten.
+    pub fn set_compaction(&self, on: bool) {
+        self.core.compaction.store(on, Ordering::Relaxed);
+    }
+
+    /// Returns whether collections relocate (see [`MarkSweep::set_compaction`]).
+    pub fn compaction(&self) -> bool {
+        self.core.compaction.load(Ordering::Relaxed)
+    }
+
+    /// Pins `handle` until the matching [`MarkSweep::unpin`]: the object
+    /// stays alive and never moves, so foreign code may keep its address
+    /// (and the address of its payload). Pins nest. A pin is a root: an
+    /// object rooted through [`GcRuntime::root`] is pinned as well.
+    pub fn pin(&self, handle: GcPtr) {
+        GcRuntime::root(self, handle);
+    }
+
+    /// Ends one [`MarkSweep::pin`] of `handle`.
+    pub fn unpin(&self, handle: GcPtr) {
+        GcRuntime::unroot(self, handle);
+    }
+
+    /// Returns what the last collection's relocation did.
+    pub fn last_relocation(&self) -> RelocationReport {
+        *self.core.last_relocation.lock()
+    }
+
+    /// Collects right away, without waiting for the mutator window: what
+    /// stress mode (`frames::set_stress`) does at a safepoint. Counted as an
+    /// explicit collection.
+    #[doc(hidden)]
+    pub fn stress_collect(&self) {
+        let _refused = self
+            .core
+            .collect_stopped_then(Trigger::Explicit, |_| false, || ());
+    }
+
+    /// Returns true if `address` points into an object the heap holds (its
+    /// header, its inline payload, or its out-of-line payload). For tests
+    /// and diagnostics: it takes the heap lock and searches every block.
+    pub fn holds_object_at(&self, address: usize) -> bool {
+        let inner = self.heap.inner.read();
+        !inner.objects_referenced_by(&mut [address]).is_empty()
     }
 
     /// Collects all memory that is no longer referenced by rooted objects
@@ -892,7 +982,9 @@ where
                 return Err(CollectRefused);
             }
             self.started.fetch_add(1, Ordering::SeqCst);
-            let mut words = world.stack_words();
+            let roots = world.stack_roots();
+            let mut words = roots.conservative;
+            words.extend(roots.precise);
             let swept = if words.is_empty() {
                 self.collect_impl(None)
             } else {
@@ -923,6 +1015,7 @@ where
 
     fn collect_impl(&self, stack_words: Option<&mut Vec<usize>>) -> SweepOutcome {
         self.observer.event(Event::Start);
+        let start = std::time::Instant::now();
 
         let mut inner = self.heap.inner.write();
 
@@ -950,6 +1043,35 @@ where
             }
         });
 
+        // Relocation is not combined with Cascade yet: the engine keeps object
+        // addresses in its own buffers and queues, which evacuation would not
+        // update. With Cascade enabled, nothing moves.
+        let compaction = self.compaction.load(Ordering::Relaxed) && self.cascade.get().is_none();
+        // Objects that must not move: rooted (and so pinned) ones, and those
+        // a stack refers to.
+        let mut pinned: FxHashSet<usize> = FxHashSet::default();
+        if compaction {
+            for object in &stack {
+                pinned.insert(object.as_ptr() as usize);
+            }
+        }
+
+        // Objects the scanned stack may refer to are roots too
+        if let Some(words) = stack_words {
+            for object in inner.objects_referenced_by(words) {
+                let header = object.as_ptr();
+                if compaction {
+                    pinned.insert(header as usize);
+                }
+                unsafe {
+                    if (*header).color == COLOR_WHITE {
+                        (*header).color = COLOR_BLACK;
+                        stack.push(object);
+                    }
+                }
+            }
+        }
+
         // Objects Cascade mutators hold locally are roots too
         if let Some(cascade) = self.cascade.get() {
             // Safety: the world is stopped.
@@ -961,19 +1083,6 @@ where
                         stack.push(object);
                     }
                 });
-            }
-        }
-
-        // Objects the scanned stack may refer to are roots too
-        if let Some(words) = stack_words {
-            for object in inner.objects_referenced_by(words) {
-                let header = object.as_ptr();
-                unsafe {
-                    if (*header).color == COLOR_WHITE {
-                        (*header).color = COLOR_BLACK;
-                        stack.push(object);
-                    }
-                }
             }
         }
 
@@ -1000,7 +1109,31 @@ where
             // Safety: the world is stopped and `inner` is this heap's state.
             unsafe { cascade.resync(&inner) };
         }
+
+        let mut moved = 0;
+        if compaction {
+            // Safety: the world is stopped and the heap was just swept.
+            let forwarded = unsafe { inner.evacuate(&pinned, EVACUATE_LIVE_PERCENT) };
+            moved = forwarded.len();
+            if moved > 0 {
+                inner.for_each_object(|object| unsafe {
+                    for_each_reference_slot(object.as_ref(), |slot| {
+                        if let Some(&new) = forwarded.get(&(*slot as usize)) {
+                            *slot = new as *mut ObjectHeader;
+                        }
+                    });
+                });
+            }
+        }
+
+        let committed = inner.committed();
         drop(inner);
+        *self.last_relocation.lock() = RelocationReport {
+            pause: start.elapsed(),
+            moved,
+            pinned: pinned.len(),
+            committed,
+        };
 
         self.observer.event(Event::End);
 

@@ -140,6 +140,8 @@ impl Assembly {
         let allocator_ptr = Arc::into_raw(gc.clone()) as *mut std::ffi::c_void;
         library.set_allocator_handle(allocator_ptr);
         let fuel_instrumented = library.set_fuel_counter(fuel_counter);
+        let hooks = codira_memory::gc::frames::hooks();
+        library.set_gc_hooks(hooks.chain_fn, hooks.poll_word, hooks.poll_fn);
 
         // A `--sanitize=memtag` library runs only with tag checking on: its
         // MTE instructions do not exist on other CPUs, and running it with

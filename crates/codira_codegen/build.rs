@@ -21,6 +21,7 @@ fn llvm_config(binary: &Path, arg: &str) -> String {
 
 fn main() {
     println!("cargo:rerun-if-changed=cpp/target_info.cpp");
+    println!("cargo:rerun-if-changed=cpp/gc_roots.cpp");
 
     // `llvm-sys` (`links = "llvm-22"`) tells its direct dependents where the
     // `llvm-config` it was built against lives, so the shim is compiled
@@ -31,7 +32,10 @@ fn main() {
     let config = Path::new(&config);
 
     let mut build = cc::Build::new();
-    build.cpp(true).file("cpp/target_info.cpp");
+    build
+        .cpp(true)
+        .file("cpp/target_info.cpp")
+        .file("cpp/gc_roots.cpp");
     let msvc = build.get_compiler().is_like_msvc();
     // LLVM's own compile flags: include path, language standard, the
     // defines its headers expect, no exceptions or RTTI. Warning flags are

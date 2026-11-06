@@ -398,6 +398,13 @@ struct Attributes {
     extra_envelopes: Vec<ast::Attribute>,
 }
 
+/// The effects `func`'s own attributes rule out (`@noalloc`, `@noblock`, an
+/// `@envelope`, ..): proven for a function with a body, trusted for an
+/// `extern` declaration.
+pub fn declared_forbidden(db: &dyn HirDatabase, func: Function) -> EffectSet {
+    Attributes::of(db, func).forbidden()
+}
+
 impl Attributes {
     fn of(db: &dyn HirDatabase, func: Function) -> Attributes {
         let mut attrs = Attributes {

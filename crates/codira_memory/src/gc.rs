@@ -6,6 +6,7 @@
 //! - Part of the Codira compiler and runtime toolchain.
 mod array;
 pub mod cascade;
+pub mod frames;
 mod heap;
 mod mark_sweep;
 mod policy;
@@ -23,6 +24,7 @@ use std::{marker::PhantomData, ptr::NonNull};
 pub use heap::AllocError;
 pub use mark_sweep::{CollectRefused, MarkSweep};
 pub use policy::GcPolicy;
+pub use mark_sweep::RelocationReport;
 pub use ptr::{GcPtr, HasIndirectionPtr, RawGcPtr};
 pub use region::{Region, RegionLeak, RegionStats};
 pub use root_ptr::GcRootPtr;

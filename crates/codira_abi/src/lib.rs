@@ -56,6 +56,11 @@ pub const SET_ALLOCATOR_HANDLE_FN_NAME: &str = "set_allocator_handle";
 /// with fuel instrumentation export it; it receives a pointer to the `i64`
 /// counter that every function entry and loop back-edge decrements.
 pub const SET_FUEL_COUNTER_FN_NAME: &str = "set_fuel_counter";
+/// Defines the name for the `set_gc_hooks` function. Libraries built with
+/// frame records and safepoint polls export it; it receives the address of
+/// the function that returns the calling thread's frame-record chain head,
+/// the address of the poll word, and the address of the poll function.
+pub const SET_GC_HOOKS_FN_NAME: &str = "set_gc_hooks";
 /// The name under which the runtime provides the function instrumented code
 /// calls when the fuel counter drops below zero.
 pub const FUEL_EXHAUSTED_FN_NAME: &str = "codira.fuel_exhausted";
