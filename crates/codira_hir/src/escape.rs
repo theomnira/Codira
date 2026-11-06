@@ -1362,6 +1362,16 @@ impl Analysis<'_, '_> {
                 self.eval(*inner);
                 Objs::new()
             }
+            // The value of a `group` is an array the runtime builds from the
+            // results of the tasks spawned in it: what those tasks return is
+            // not visible here (each `spawn` is already opaque), so the array
+            // and what it holds are unknown.
+            Expr::Group { body: inner } => {
+                self.eval(*inner);
+                let mut values = Objs::new();
+                values.insert(Obj::Unknown);
+                values
+            }
             Expr::ChannelSend { channel, value } => {
                 self.eval(*channel);
                 let objs = self.eval(*value);
@@ -1672,7 +1682,11 @@ impl Analysis<'_, '_> {
                 }
                 values
             }
-            BuiltinFn::Fma | BuiltinFn::ArrayLen | BuiltinFn::StrLen | BuiltinFn::Declassify => {
+            BuiltinFn::Fma
+            | BuiltinFn::ArrayLen
+            | BuiltinFn::StrLen
+            | BuiltinFn::Declassify
+            | BuiltinFn::Cancelled => {
                 let mut values = receiver.map(|r| self.eval(r)).unwrap_or_default();
                 for v in self.eval_all(args) {
                     values.extend(v);

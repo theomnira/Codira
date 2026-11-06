@@ -600,3 +600,21 @@ fn inline_functions_of_another_module_use_their_summary() {
         via.allocations
     );
 }
+
+/// A `group`'s value is built by the runtime from its tasks' results, so the
+/// analysis treats it as unknown; `cancelled()` touches no storage. Neither
+/// keeps a local object that only reaches scalars out of the frame. (Inside
+/// the `spawn` itself everything is opaque, so the field is read before it.)
+#[test]
+fn groups_and_cancelled_leave_local_objects_in_the_frame() {
+    let source = with_classes(
+        "func work(n: i64) -> i64 { if cancelled() { 0 } else { n } }
+         func start() -> i64 {
+             let p = Point { x: 1, y: 2 }
+             let x = p.x
+             let rs = group { spawn work(x) }
+             rs[0] + p.y
+         }",
+    );
+    assert_eq!(placement_of(&source, "start"), Placement::Frame);
+}
