@@ -31,6 +31,8 @@ thiserror = { workspace = true }
 # The hash services (`native_hash`): reviewed implementations, never our own.
 sha2 = { workspace = true }
 blake3 = { workspace = true }
+# Shortest round-trip float formatting for `std.json` (`native_json`).
+ryu = { workspace = true }
 # The database services (`native_db`) and tensor services (`native_ai`).
 codira_db = { version = "0.6.0-dev", path = "../codira_db" }
 codira_ai = { version = "0.6.0-dev", path = "../codira_ai" }

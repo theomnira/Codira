@@ -29,6 +29,7 @@ pub mod native_fs;
 mod native_array;
 mod native_handles;
 pub mod native_hash;
+pub mod native_json;
 pub mod native_memory;
 mod native_process;
 pub mod native_time;
@@ -381,6 +382,8 @@ impl Runtime {
         // File services for `std/fs/fs.code`, hashing for `std/crypto/hash.code`
         options.user_functions.extend(native_fs::functions());
         options.user_functions.extend(native_hash::functions());
+        // Float formatting for `std/json/json.code`
+        options.user_functions.extend(native_json::functions());
 
         // Termination for `std/sys/terminate.code`, clocks and sleeping for
         // `std/time/time.code`
