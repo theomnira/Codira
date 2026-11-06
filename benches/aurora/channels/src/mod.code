@@ -1,0 +1,103 @@
+// AURORA: concurrent producers and consumers over bounded channels of
+// integers: one producer to one consumer, four producers to one consumer,
+// and a fan-out to four workers (one channel each, round robin) with a
+// fan-in of their results. `channels.rs` uses `std::sync::mpsc::
+// sync_channel` and threads; `channels.cpp` a mutex and two condition
+// variables around a ring buffer, and threads. The same messages, the same
+// check values (the sum of what arrives). Every channel holds 1024.
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+func produce(sink: Channel[i64], first: i64, count: i64) {
+    var i = first
+    while i < first + count {
+        sink <- i
+        i += 1
+    }
+}
+
+// 2M messages from one task to the spawner.
+public func spsc() {
+    let start = now()
+    let total = scope {
+        let ch = channel(1024)
+        spawn produce(ch, 0, 2000000)
+        var sum: i64 = 0
+        var i = 0
+        while i < 2000000 { sum += <-ch; i += 1 }
+        sum
+    }
+    report(start, total as u64)
+}
+
+// 4 tasks of 500k messages each to the spawner.
+public func mpsc_4() {
+    let start = now()
+    let total = scope {
+        let ch = channel(1024)
+        var p: i64 = 0
+        while p < 4 {
+            spawn produce(ch, p * 500000, 500000)
+            p += 1
+        }
+        var sum: i64 = 0
+        var i = 0
+        while i < 2000000 { sum += <-ch; i += 1 }
+        sum
+    }
+    report(start, total as u64)
+}
+
+func square_each(jobs: Channel[i64], results: Channel[i64], count: i64) {
+    var i: i64 = 0
+    while i < count {
+        let x = <-jobs
+        results <- (x * x) & 0xFFFF
+        i += 1
+    }
+}
+
+// 200k jobs dealt round robin to 4 workers; their results gathered.
+public func fan_out_in() {
+    let start = now()
+    let total = scope {
+        let j0 = channel(1024)
+        let j1 = channel(1024)
+        let j2 = channel(1024)
+        let j3 = channel(1024)
+        let results = channel(1024)
+        spawn square_each(j0, results, 50000)
+        spawn square_each(j1, results, 50000)
+        spawn square_each(j2, results, 50000)
+        spawn square_each(j3, results, 50000)
+        var sum: i64 = 0
+        var sent: i64 = 0
+        var got: i64 = 0
+        // Deal in blocks of 256 per worker and collect in between, so that
+        // neither side waits on a full channel forever.
+        while got < 200000 {
+            var b = 0
+            while b < 256 && sent < 200000 {
+                let w = sent & 3
+                if w == 0 { j0 <- sent } else if w == 1 { j1 <- sent } else if w == 2 { j2 <- sent } else { j3 <- sent }
+                sent += 1
+                b += 1
+            }
+            while got < sent {
+                sum += <-results
+                got += 1
+            }
+        }
+        sum
+    }
+    report(start, total as u64)
+}

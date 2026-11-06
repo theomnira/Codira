@@ -138,3 +138,22 @@ kernels = [
   { name = "cyclic_graph", ci = true },
   { name = "linked_list" },
 ]
+
+[[workload]]
+name = "channels"
+title = "Concurrent producers and consumers (bounded channels)"
+kernels = [
+  { name = "spsc", ci = true, note = "Rust's `sync_channel` (from crossbeam) spins before it sleeps; the C++ queue is the textbook mutex and condition variables, which sleep and wake a thread for most messages. Rust is the strong baseline here." },
+  { name = "mpsc_4", ci = true },
+  { name = "fan_out_in", note = "Bound by the latency of waking a worker: each job meets an empty channel." },
+]
+
+[[workload]]
+name = "server"
+title = "A server-style workload with high churn, and long runs under constrained heaps"
+kernels = [
+  { name = "requests", ci = true },
+  { name = "long_run_heap_1024", entry = "long_run", arg = "long_run", heap_limit_mb = 1024 },
+  { name = "long_run_heap_256", entry = "long_run", arg = "long_run", heap_limit_mb = 256 },
+  { name = "long_run_heap_128", entry = "long_run", arg = "long_run", heap_limit_mb = 128, ci = true },
+]
