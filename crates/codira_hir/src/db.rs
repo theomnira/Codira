@@ -228,6 +228,11 @@ pub trait HirDatabase: DefDatabase {
     #[salsa::invoke(crate::escape::escape_analysis_query)]
     fn escape_analysis(&self, func: Function) -> Arc<crate::escape::FunctionEscapes>;
 
+    /// Where the `String` values of `func`'s body go: which may be kept
+    /// past the call. See `crate::string_escape`.
+    #[salsa::invoke(crate::string_escape::string_flows_query)]
+    fn string_flows(&self, func: Function) -> Arc<crate::string_escape::StringFlows>;
+
     #[salsa::invoke(crate::mir_lower::mir_generator_query)]
     fn mir_generator(&self, func: Function) -> Option<Arc<codira_mir::Generator>>;
 

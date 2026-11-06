@@ -99,6 +99,7 @@ mod mock;
 mod package_defs;
 mod pretty;
 pub mod semantics;
+pub mod string_escape;
 mod source_analyzer;
 #[cfg(test)]
 mod tests;
