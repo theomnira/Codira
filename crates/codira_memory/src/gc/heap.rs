@@ -926,9 +926,12 @@ impl HeapInner {
     ///
     /// Both arrays keep their handles: `to` now owns the buffer (it is
     /// freed with `to`, or when `to` grows), and every handle to `from` sees
-    /// an empty array, which may grow again as any array does. The heap's
-    /// accounting does not change: the buffer is still committed, and the
-    /// payload sizes of the two objects are exchanged.
+    /// an empty array, which may grow again as any array does. A buffer with
+    /// more than an eighth of its room unused is shrunk to its length on the
+    /// way (the heap's committed and live byte counts go down by the
+    /// difference); otherwise the accounting does not change: the buffer is
+    /// still committed, and the payload sizes of the two objects are
+    /// exchanged.
     ///
     /// # Safety
     ///
@@ -946,11 +949,36 @@ impl HeapInner {
         if from_hdr == to_hdr || (*to_hdr).flags & FLAG_OUT_OF_LINE != 0 {
             return false;
         }
-        let Some(buffer) = self.out_of_line.remove(&(from_hdr as usize)) else {
+        let Some(mut buffer) = self.out_of_line.remove(&(from_hdr as usize)) else {
             return false;
         };
         let empty = (*to_hdr).data;
         debug_assert_eq!((*empty.cast::<ArrayHeader>()).length, 0);
+        // A grown array has up to twice the room it uses, which a string
+        // keeps for as long as it lives: more than an eighth to spare, and
+        // the buffer is shrunk to the length (`realloc` down, which moves
+        // no bytes for a large block). If that fails the buffer stays as
+        // it is.
+        if let Some(element) = (*from_hdr).type_data().array_element() {
+            let header = buffer.0.as_ptr().cast::<ArrayHeader>();
+            let (length, capacity) = ((*header).length, (*header).capacity);
+            let (old_layout, old_size) = (buffer.1, (*from_hdr).payload_size());
+            if capacity - length > capacity / 8 {
+                if let Some(used) = array_payload_layout(element, length) {
+                    let size = used.size().max(1);
+                    let shrunk = std::alloc::realloc(buffer.0.as_ptr(), old_layout, size);
+                    if let (Some(shrunk), Ok(layout)) = (
+                        NonNull::new(shrunk),
+                        Layout::from_size_align(size, old_layout.align()),
+                    ) {
+                        (*shrunk.as_ptr().cast::<ArrayHeader>()).capacity = length;
+                        self.committed = self.committed - old_layout.size() + layout.size();
+                        self.global_bytes -= old_size as isize - used.size() as isize;
+                        buffer = (shrunk, layout);
+                    }
+                }
+            }
+        }
         self.out_of_line.insert(to_hdr as usize, buffer);
         (*to_hdr).data = buffer.0.as_ptr();
         (*to_hdr).flags |= FLAG_OUT_OF_LINE;

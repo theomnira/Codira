@@ -260,11 +260,11 @@ public func main() {
 
 #[test]
 fn byte_buffers_survive_collections() {
-    // Many taken strings and grown arrays alive at once, with garbage in
-    // between, under a collector that runs (a small heap limit is not
-    // settable from `codira run`; the allocations still exercise the
-    // out-of-line table that the hand-off rewrites).
-    let stdout = run_ok(
+    // Taken strings and grown arrays alive at once, with garbage in
+    // between, under a 16 MiB heap: the collector runs many times while
+    // buffers are handed from arrays to strings (and shrunk on the way),
+    // and every string keeps its bytes.
+    let dir = package_with(
         r#"
 public func main() {
     let kept: [String] = []
@@ -278,19 +278,49 @@ public func main() {
             i += 1
         }
         let garbage: [u8] = []
-        garbage.reserve(1000)
+        garbage.reserve(100000)
+        garbage.push(1)
         kept.push(string_take_utf8(b)!)
         round += 1
     }
     var total: usize = 0
-    for s in kept { total += s.len() }
-    println(kept.len(), " ", total, " ", kept[299].slice(0, 8))
+    var ok = true
+    var r = 0
+    for s in kept {
+        total += s.len()
+        // Every piece is `<round>,` repeated.
+        let piece = r.to_string() + ","
+        if !s.starts_with(piece) || !s.ends_with(piece) { ok = false }
+        r += 1
+    }
+    println(kept.len(), " ", total, " ", ok, " ", kept[299].slice(0, 8))
 }
 "#,
     );
+    let output = Command::new(env!("CARGO_BIN_EXE_codira"))
+        .args(["run", "-O", "2", "--runtime-stats", "--color", "disable", "--manifest-path"])
+        .arg(dir.path().join("codira.toml"))
+        .env("CODIRA_STD_PATH", std_dir())
+        .env("CODIRA_HEAP_LIMIT", "16MiB")
+        .output()
+        .expect("failed to spawn codira");
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    assert!(output.status.success(), "stdout:\n{stdout}\nstderr:\n{stderr}");
     let mut total = 0;
     for round in 0..300usize {
         total += (100 + round) * (round.to_string().len() + 1);
     }
-    assert_eq!(stdout, format!("300 {total} 299,299,\n"));
+    assert!(
+        stdout.starts_with(&format!("300 {total} true 299,299,\n")),
+        "{stdout}"
+    );
+    let stats = format!("{stdout}{stderr}");
+    let collections: usize = stats
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("collections"))
+        .and_then(|rest| rest.trim().split(':').next())
+        .and_then(|n| n.trim().parse().ok())
+        .unwrap_or_else(|| panic!("no collection count in {stats}"));
+    assert!(collections > 5, "only {collections} collections:\n{stats}");
 }
