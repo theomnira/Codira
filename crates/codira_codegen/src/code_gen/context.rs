@@ -47,6 +47,9 @@ pub struct CodeGenContext<'db, 'ink> {
     pub keep_function_symbols: bool,
     /// The experimental hardware-safety mode (see `crate::hardware_safety`).
     pub hardware_safety: crate::HardwareSafety,
+    /// Whether non-escaping objects go to the stack frame
+    /// ([`crate::CodeGenDatabase::frame_allocation`]).
+    pub frame_allocation: bool,
     /// What generating code under `hardware_safety` refused, as
     /// `file:line:column: reason` lines; a non-empty list fails the build.
     pub safety_refusals: std::rc::Rc<RefCell<Vec<String>>>,
@@ -76,6 +79,10 @@ impl<'db, 'ink> CodeGenContext<'db, 'ink> {
             native: db.native_inputs(),
             fuel: db.fuel_instrumentation(),
             keep_function_symbols: db.keep_function_symbols(),
+            // ARM MTE tags `stack_alloc` slots and checks every access; a
+            // frame object is untagged stack memory, so the two modes are
+            // not combined.
+            frame_allocation: db.frame_allocation() && !hardware_safety.is_enabled(),
             hardware_safety,
             safety_refusals: std::rc::Rc::default(),
             db,

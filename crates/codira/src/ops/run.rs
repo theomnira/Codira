@@ -47,6 +47,11 @@ pub struct Args {
     #[clap(long, conflicts_with = "jit")]
     fuel: Option<u64>,
 
+    /// EXPERIMENTAL: build with frame allocation (see `codira build
+    /// --frame-alloc`). Not available with `--jit`.
+    #[clap(long, conflicts_with = "jit")]
+    frame_alloc: bool,
+
     /// The function to invoke
     #[clap(default_value_t = String::from("main"))]
     entry: String,
@@ -105,8 +110,10 @@ pub fn run(args: Args) -> anyhow::Result<ExitStatus> {
         .with_extension("codiralib");
 
     let fuel = args.fuel;
+    let frame_alloc = args.frame_alloc;
     if !codira_compiler::compile_manifest_with(&manifest_path, config, colors, |driver| {
         driver.set_fuel_instrumentation(fuel.is_some());
+        driver.set_frame_allocation(frame_alloc);
     })? {
         return Ok(ExitStatus::Error);
     }

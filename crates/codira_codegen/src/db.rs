@@ -55,6 +55,13 @@ pub trait CodeGenDatabase: codira_hir::HirDatabase {
     #[salsa::input]
     fn keep_function_symbols(&self) -> bool;
 
+    /// Whether class instances and short array literals that the escape
+    /// analysis proves never outlive their call are placed in the stack
+    /// frame instead of the GC heap (`--frame-alloc`; see
+    /// `codira_hir::escape`). Experimental, off by default.
+    #[salsa::input]
+    fn frame_allocation(&self) -> bool;
+
     /// The experimental hardware-safety mode generated code is built with
     /// (`--sanitize=memtag`; see [`crate::HardwareSafety`]).
     #[salsa::input]

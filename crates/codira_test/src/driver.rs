@@ -208,6 +208,24 @@ impl CompileAndRunTestDriver {
         Ok(Self { driver, runtime })
     }
 
+    /// Like [`CompileAndRunTestDriver::new`], but compiles with frame
+    /// allocation on or off (`codira build --frame-alloc`).
+    pub fn with_frame_allocation(
+        text: &str,
+        enabled: bool,
+        config_fn: impl FnOnce(RuntimeBuilder) -> RuntimeBuilder,
+    ) -> Result<Self, InitError> {
+        let driver = CompileTestDriver::from_file_with(text, |d| d.set_frame_allocation(enabled));
+        let builder = Runtime::builder(driver.lib_path());
+
+        // Safety: We compiled the library ourselves, therefor loading the codiralib is
+        // safe.
+        let build = config_fn(builder);
+        let runtime = unsafe { build.finish() }?;
+
+        Ok(Self { driver, runtime })
+    }
+
     /// Updates the text of the Codira source and ensures that the generated
     /// assembly has been reloaded.
     ///

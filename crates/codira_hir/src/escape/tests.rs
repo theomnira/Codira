@@ -402,7 +402,7 @@ fn elements_of_a_heap_array_are_on_the_heap() {
     assert!(
         out.contains(
             "Point { x: 1, y: 2 }: escapes: stored into an object of array literal of 1 \
-                       elements, which is on the heap"
+                       element, which is on the heap"
         ),
         "{out}"
     );
@@ -468,4 +468,49 @@ fn optional_returned_by_question_mark_escapes() {
         placement_of(&source, "make"),
         Placement::Heap(Reason::Returned { .. })
     ));
+}
+
+#[test]
+fn allocation_report_golden() {
+    let source = with_classes(
+        r#"
+class Node { var value: i64, var next: Node? }
+func make(n: i64) -> Point { Point { x: n, y: n } }
+func sum(n: i64) -> i64 {
+    var total = 0
+    for i in 0..n {
+        let p = Point { x: i, y: 1 }
+        let xs = [p.x, p.y, 3]
+        total += xs[0] + xs[1]
+    }
+    total
+}
+func link(head: Node, n: i64) {
+    let node = Node { value: n, next: nil }
+    head.next = node
+}
+func worker(p: Point) -> i64 { p.x }
+func start() {
+    let p = Point { x: 1, y: 2 }
+    scope { spawn worker(p) }
+}
+func builder(n: i64) -> i64 {
+    let bag = Bag { items: [] }
+    for i in 0..n { bag.items.push(Point { x: i, y: i }) }
+    bag.items.len() as i64
+}
+"#,
+    );
+    let (db, file_id) = MockDatabase::with_single_file(&source);
+    let functions: Vec<_> = Package::all(&db)
+        .iter()
+        .flat_map(|pkg| pkg.modules(&db))
+        .flat_map(|module| module.all_functions(&db))
+        .collect();
+    let entries = super::allocation_report(&db, &functions);
+    let text = super::format_allocation_report(&db, &entries, true, |id| {
+        assert_eq!(id, file_id);
+        "src/mod.code".to_string()
+    });
+    insta::assert_snapshot!(text);
 }

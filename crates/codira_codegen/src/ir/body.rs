@@ -43,6 +43,7 @@ mod closures;
 mod effects;
 mod fabric;
 mod format;
+mod frame;
 mod merge;
 mod pipelines;
 mod propagate;
@@ -74,6 +75,8 @@ pub(crate) struct ExternalGlobals<'ink> {
     pub hardware_safety: crate::HardwareSafety,
     /// Where `safety` records code the mode refuses to build.
     pub safety_refusals: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// Whether non-escaping objects go to the stack frame (see `frame`).
+    pub frame_allocation: bool,
 }
 
 pub(crate) struct BodyIrGenerator<'db, 'ink, 't> {
@@ -117,6 +120,9 @@ pub(crate) struct BodyIrGenerator<'db, 'ink, 't> {
     /// The slot holding the last result of a format plan in the function
     /// being generated, from which the next plan continues (see `fabric`).
     plan_arena: Option<(FunctionValue<'ink>, PointerValue<'ink>)>,
+    /// The escape analysis of `hir_function` when frame allocation is on.
+    /// See `frame`.
+    escapes: Option<Arc<codira_hir::escape::FunctionEscapes>>,
 }
 
 impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
@@ -145,7 +151,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let body_ir = context.append_basic_block(ir_function, "body");
         builder.position_at_end(body_ir);
 
+        let escapes = external_globals
+            .frame_allocation
+            .then(|| db.escape_analysis(hir_function));
+
         BodyIrGenerator {
+            escapes,
             context,
             module,
             db,
@@ -1423,6 +1434,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// type of the struct.
     fn gen_struct_alloc(
         &mut self,
+        expr: ExprId,
         hir_ty: &Ty,
         args: Vec<BasicValueEnum<'ink>>,
     ) -> BasicValueEnum<'ink> {
@@ -1440,10 +1452,10 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         match hir_struct.data(self.db).memory_kind {
             codira_hir::StructMemoryKind::Value => struct_lit.into(),
-            codira_hir::StructMemoryKind::Gc => {
-                // TODO: Root memory in GC
-                self.gen_struct_alloc_on_heap(hir_ty, struct_lit)
+            codira_hir::StructMemoryKind::Gc if self.is_frame_allocation(expr) => {
+                self.gen_struct_alloc_in_frame(expr, hir_ty, struct_lit)
             }
+            codira_hir::StructMemoryKind::Gc => self.gen_struct_alloc_on_heap(hir_ty, struct_lit),
         }
     }
 
@@ -1511,7 +1523,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .map(|field| self.gen_expr(field.expr).expect("expected a field value"))
             .collect();
 
-        self.gen_struct_alloc(&struct_ty, fields)
+        self.gen_struct_alloc(type_expr, &struct_ty, fields)
     }
 
     /// Generates IR for `receiver.method(args...)`.
@@ -1608,7 +1620,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .map(|expr| self.gen_expr(*expr).expect("expected a field value"))
             .collect();
 
-        self.gen_struct_alloc(&struct_ty, args)
+        self.gen_struct_alloc(type_expr, &struct_ty, args)
     }
 
     /// Generates IR for a tuple literal, e.g. `(1.23, 4)`.
@@ -1649,7 +1661,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// Generates IR for a unit struct literal, e.g `Foo`
     fn gen_unit_struct_lit(&mut self, type_expr: ExprId) -> BasicValueEnum<'ink> {
         let struct_ty = self.infer[type_expr].clone();
-        self.gen_struct_alloc(&struct_ty, Vec::new())
+        self.gen_struct_alloc(type_expr, &struct_ty, Vec::new())
     }
 
     /// Generates IR for the specified block expression.
@@ -4346,7 +4358,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .hir_types
             .get_usize_type()
             .const_int(exprs.len() as u64, false);
-        let array = self.alloc_array(expr, length_value);
+        let array = if self.is_frame_allocation(expr) {
+            self.alloc_array_in_frame(expr, exprs.len())
+        } else {
+            self.alloc_array(expr, length_value)
+        };
         let array_elements = array.get_elements(&self.builder);
         let element_basic_ty = array.element_ty();
         for (idx, expr) in exprs.iter().enumerate() {

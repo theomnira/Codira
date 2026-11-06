@@ -200,6 +200,8 @@ pub fn compile_gpu_kernels(
         keep_function_symbols: false,
         // Likewise for the hardware-safety modes: they guard host memory.
         hardware_safety: crate::HardwareSafety::NONE,
+        // A kernel has no GC heap, so nothing to move off it.
+        frame_allocation: false,
         safety_refusals: Rc::default(),
         target_machine: Rc::new(machine),
     };

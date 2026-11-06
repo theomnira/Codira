@@ -2047,3 +2047,65 @@ fn fuel_instrumentation_charges_function_entries_and_loop_back_edges() {
     let plain = ir_with_fuel(false);
     assert!(!plain.contains("fuel"), "{plain}");
 }
+
+/// The IR of `text` with frame allocation on or off, unoptimized.
+fn ir_with_frame_allocation(text: &str, frame: bool) -> String {
+    let mut db = MockDatabase::with_files(text);
+    db.set_optimization_level(OptimizationLevel::None);
+    db.set_frame_allocation(frame);
+    db.set_target(Target::host_target().unwrap());
+
+    let llvm_context = Context::create();
+    let code_gen = CodeGenContext::new(&llvm_context, &db);
+    let module_partition = db.module_partition();
+    module_partition
+        .iter()
+        .map(|(_, module_group)| {
+            let group_ir = gen_file_group_ir(&code_gen, module_group);
+            let file = gen_file_ir(&code_gen, &group_ir, module_group);
+            file.llvm_module.print_to_string().to_string()
+        })
+        .collect::<String>()
+}
+
+/// The number of calls to the runtime's `new` and `new_array` in `ir`:
+/// each is an indirect call whose result is named `ref`.
+fn gc_allocation_calls(ir: &str) -> usize {
+    ir.lines()
+        .filter(|line| line.contains("%ref") && line.contains("= call ptr %"))
+        .count()
+}
+
+#[test]
+fn frame_allocation_removes_the_gc_allocation_of_a_local_object() {
+    let text = r#"
+    class Point { x: i64, y: i64 }
+    public func norm(p: Point) -> i64 { p.x * p.x + p.y * p.y }
+    public func local(a: i64) -> i64 {
+        let p = Point { x: a, y: 2 }
+        let xs = [a, 2, 3]
+        norm(p) + xs[1]
+    }
+    public func escaping(a: i64) -> Point {
+        Point { x: a, y: 2 }
+    }"#;
+    let heap = ir_with_frame_allocation(text, false);
+    let frame = ir_with_frame_allocation(text, true);
+    assert_eq!(gc_allocation_calls(&heap), 3, "{heap}");
+    // Only `escaping`'s object is still allocated by the runtime.
+    assert_eq!(gc_allocation_calls(&frame), 1, "{frame}");
+    let local = frame
+        .split("define ")
+        .find(|f| f.contains("@local("))
+        .expect("`local` is in the module");
+    assert_eq!(gc_allocation_calls(local), 0, "{local}");
+    assert!(
+        local.contains("alloca { ptr, ptr, i32, i8, i8, i8, i8, i64 }"),
+        "{local}"
+    );
+    let escaping = frame
+        .split("define ")
+        .find(|f| f.contains("@escaping("))
+        .expect("`escaping` is in the module");
+    assert_eq!(gc_allocation_calls(escaping), 1, "{escaping}");
+}

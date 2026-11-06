@@ -162,6 +162,8 @@ impl fmt::Display for AllocKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AllocKind::Class { name } => write!(f, "class `{name}`"),
+            AllocKind::ArrayLiteral { len: 0 } => write!(f, "empty array literal"),
+            AllocKind::ArrayLiteral { len: 1 } => write!(f, "array literal of 1 element"),
             AllocKind::ArrayLiteral { len } => write!(f, "array literal of {len} elements"),
             AllocKind::BuiltArray { by } => write!(f, "array built by `{by}`"),
             AllocKind::Closure => write!(f, "closure"),
@@ -1771,4 +1773,99 @@ pub fn inline_array_method(method: ArrayMethod) -> Option<Inline> {
         Copy | Map | Filter | Enumerate => Some(Inline::Builds),
         _ => Some(Inline::Read),
     }
+}
+
+// ---- the allocation report (`codira build --explain-alloc`) -----------------
+
+/// One line of the allocation report.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReportEntry {
+    pub file_id: codira_hir_input::FileId,
+    /// Where the allocating expression starts.
+    pub offset: codira_syntax::TextSize,
+    pub function: String,
+    pub kind: AllocKind,
+    pub placement: Placement,
+}
+
+/// Every allocation of `functions`, in source order.
+pub fn allocation_report(db: &dyn HirDatabase, functions: &[Function]) -> Vec<ReportEntry> {
+    let mut entries = Vec::new();
+    for &func in functions {
+        if func.is_extern(db) {
+            continue;
+        }
+        let analysis = db.escape_analysis(func);
+        for allocation in &analysis.allocations {
+            let Some(site) = &allocation.site else {
+                continue;
+            };
+            entries.push(ReportEntry {
+                file_id: site.file_id,
+                offset: site.value.range().start(),
+                function: func.name(db).to_string(),
+                kind: allocation.kind.clone(),
+                placement: allocation.placement.clone(),
+            });
+        }
+    }
+    entries.sort_by_key(|e| (e.file_id, e.offset));
+    entries
+}
+
+/// The report as text: one line per allocation, `path:line:column: in `f`:
+/// kind: placement`, then a total. `frame_allocation` says whether the
+/// build places objects in frames; without it an object that could be is
+/// reported as such. `path` names a file.
+pub fn format_allocation_report(
+    db: &dyn HirDatabase,
+    entries: &[ReportEntry],
+    frame_allocation: bool,
+    path: impl Fn(codira_hir_input::FileId) -> String,
+) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let (mut frame, mut escapes, mut kept) = (0, 0, 0);
+    for entry in entries {
+        let position = db.line_index(entry.file_id).line_col(entry.offset);
+        let verdict = match &entry.placement {
+            Placement::Frame => {
+                frame += 1;
+                if frame_allocation {
+                    entry.placement.to_string()
+                } else {
+                    "does not escape (moved to the stack with `--frame-alloc`)".to_string()
+                }
+            }
+            Placement::Heap(reason) => {
+                if reason.is_escape() {
+                    escapes += 1;
+                } else {
+                    kept += 1;
+                }
+                entry.placement.to_string()
+            }
+        };
+        let _ = writeln!(
+            out,
+            "{}:{}:{}: in `{}`: {}: {verdict}",
+            path(entry.file_id),
+            position.line + 1,
+            position.col_utf16 + 1,
+            entry.function,
+            entry.kind,
+        );
+    }
+    let _ = writeln!(
+        out,
+        "{} allocation sites: {frame} {}, {escapes} escape, {kept} stay on the heap for another \
+         reason",
+        entries.len(),
+        if frame_allocation {
+            "moved to the stack"
+        } else {
+            "could move to the stack"
+        },
+    );
+    out
 }
