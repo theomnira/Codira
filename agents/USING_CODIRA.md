@@ -176,6 +176,8 @@ for i in 0..10 { }            // 0, 1, ..., 9
 for i in 1..=n { }            // 1, ..., n (stops at the type's max, never wraps)
 for x in xs { }               // each element of the array `xs`
 for (a, b) in pairs { }       // tuple patterns destructure each element
+for x in xs.iter().filter(f)  // a lazy pipeline (see "Lazy pipelines")
+for x in it { }               // an object of a class with `next(self) -> T?`
 while cond { if skip { continue } }
 loop { if done { break } }
 
@@ -185,8 +187,9 @@ xs[i]                         // bounds-checked: an out-of-range index panics
 xs.unchecked_get(i)           // no check, for hot loops with a proven index
 ```
 
-A range (`a..b`, `a..=b`) is only valid as a `for` loop's iterable for now --
-there is no range value type. `continue` is a contextual keyword: it means
+A range (`a..b`, `a..=b`) is only valid as a `for` loop's iterable or as the
+start of a lazy pipeline (`(0..n).map(f).sum()`) for now -- there is no range
+value type. `continue` is a contextual keyword: it means
 "next iteration" only when it stands alone (before `}`, `;` or a line break).
 `&&` and `||` short-circuit.
 
@@ -254,9 +257,11 @@ for (i, x) in xs.enumerate() { }                  // index and element
   Any other function value is evaluated once and called through on every
   element. A closure with `return` is an ordinary function value (`return`
   leaves the closure).
-- **No laziness.** `xs.map(f).filter(g).sum()` builds the mapped and the
-  filtered arrays (one allocation per stage, none per element). Fuse the
-  stages into one `fold` when that matters.
+- **These are eager.** `xs.map(f).filter(g).sum()` builds the mapped and
+  the filtered arrays (one allocation per stage, none per element), and
+  runs `f` on every element before `g` sees any. The lazy form,
+  `xs.iter().map(f).filter(g).sum()`, is one loop with no array in between
+  (see "Lazy pipelines" below).
 - **Changing an array while a loop runs over it** is memory-safe and
   bounded: `for x in xs`, and the closure-taking methods, read the length
   once before the first iteration and stop at the smaller of it and the
@@ -338,9 +343,10 @@ checksums.
   literal compiles to the same vectorized loop as the `for` loop (checked
   on the IR in `closure_literals_are_compiled_in_place`,
   `crates/codira/tests/collections.rs`).
-- The chain is about 5 times slower than Rust's because each stage builds
-  its array (10M and then 10M elements allocated, zeroed and written); fused
-  into one `fold` it is on par. There are no lazy iterators.
+- The eager chain is about 5 times slower than Rust's because each stage
+  builds its array (10M and then 10M elements allocated, zeroed and
+  written); fused into one `fold` it is on par, and so is the lazy
+  pipeline `xs.iter().map(..).filter(..).sum()` (see "Lazy pipelines").
 - `Map` is 1.6 times slower than Rust's `HashMap` with the same hash
   function: every probe goes through the map object and three arrays
   (bounds-checked loads of the state byte, the key and the value) where
@@ -355,6 +361,200 @@ checksums.
   array is 6% slower (22.4 vs 21.2 ms) because the length is reloaded after
   each store; with `CODIRA_ARRAY_TBAA=1` that loop is unchanged (17.0 vs
   17.3 ms). Program: `examples/collections_loop_cost/src/mod.code`.
+
+### Lazy pipelines: `xs.iter().map(f).filter(g).sum()`
+
+```codira
+class Countdown { n: i64 }
+extend Countdown {
+    func next(self) -> i64? {            // an iterator: `nil` when done
+        if self.n == 0 { return nil }
+        self.n -= 1
+        self.n
+    }
+}
+
+let xs: [i64] = [3, 1, 4, 1, 5, 9, 2, 6]
+let ws: [f64] = [0.5, 1.5]
+let total = xs.iter().map(func(x) { x * 2 }).filter(func(x) { x % 3 == 0 }).sum()
+let hits = xs.iter().enumerate().filter(func(p) { p.0 % 2 == 0 }).count()   // usize
+let dot = ws.iter().zip(ws).fold(0.0, func(acc, p) { acc + p.0 * p.1 })
+let head = xs.iter().take_while(func(x) { x < 5 }).collect()               // [i64]
+let squares = (0..10).map(func(i) { i * i }).collect()                     // a range is a source
+let last_big = xs.iter().rev().find(func(x) { x > 4 })                     // i64?
+for (i, x) in xs.iter().skip(2).enumerate() { }
+let down = Countdown { n: 3 }
+for x in down { }                                                          // 2, 1, 0
+let c = Countdown { n: 5 }
+println(c.iter().chain(0..2).sum())                                        // 4+3+2+1+0+0+1
+```
+
+- **Sources.** `xs.iter()` on an array; a range, directly (`(0..n).map(f)`)
+  or as `(0..n).iter()`; `it.iter()` on an *iterator object* -- an object of
+  a class with a method `next(self) -> T?` taking nothing else, which is
+  called until it returns `nil` (`for x in it` loops over one directly).
+  `iter()` on a pipeline changes nothing.
+- **Adapters**, each returning a pipeline: `map(f)`, `filter(f)`,
+  `take(n)`, `skip(n)` (`n: usize`), `take_while(f)`, `skip_while(f)`,
+  `enumerate()` (`(usize, T)` pairs), `zip(ys)` (`(T, U)` pairs, ending with
+  the shorter side; `ys` an array, a range or a bare `ys.iter()`),
+  `chain(ys)` (these elements, then those of an array, a range or any other
+  pipeline of the same element type) and `rev()`.
+- **Terminals**, each running the pipeline: `sum()` (integers, wrapping;
+  floats, added in order from `0.0`), `fold(init, f)`, `count()` (`usize`),
+  `any(f)`, `all(f)`, `find(f)` (`T?`), `position(f)` (`usize?`), `min()`,
+  `max()` (`T?`; integers, floats or `bool`, with the arrays' rules: a
+  float `NaN` is skipped unless it comes first), `collect()` (a new `[T]`),
+  and `for x in pipeline { .. }` (with `break`, `continue` and `return`).
+
+#### The design, and why
+
+A pipeline has the type `Iter[T]`, and that type has no run-time
+representation: the compiler sees the whole chain, from its source to its
+terminal or the `for` loop it feeds, and compiles it into **one loop**. Each
+element is pushed through the stages in order; every closure literal is
+generated in place (no function value, no call -- as for the eager array
+methods), the state of `take`, `skip`, `enumerate` and `zip` is a counter
+in a register, and nothing is allocated except the array `collect`
+returns. This is a guarantee, not an optimization that inlining may or may
+not achieve: it holds at every `-O` level, and `pipelines_compile_to_one_loop`
+(`crates/codira/tests/pipelines.rs`) checks at `-O 2` that the loops of
+`map`/`filter`/`sum`, `enumerate`/`filter`/`count`, a `zip`/`fold` dot
+product, `take_while`, a range, `rev`/`position`, `skip`/`take`/`max` and a
+`for` loop over `chain`/`enumerate` contain no call (other than LLVM
+intrinsics), no allocation and no function value.
+
+The price is that **a pipeline cannot leave the expression that builds
+it**. Storing one in a variable (`let p = xs.iter().map(f)`), returning it,
+passing it to a function, putting it in an array, a tuple or the branches
+of an `if`, or leaving it unused (`xs.iter().map(f);` does nothing) is a
+compile error that says to end it with a terminal or `for`, or to
+`collect()` it. A real iterator object, the alternative, would need either
+a generic `Iterator[T]` trait with trait objects (neither exists: traits are
+not generic yet and there are no trait objects) or one class per adapter,
+and every stage would be a call through a closure value the optimizer may
+or may not inline -- the cost the eager methods were measured to avoid.
+Iterator objects with `next` cover the other direction: a type can be
+*iterated* (and be a source) without the compiler knowing its insides, at
+the cost of a direct call of its `next` per element.
+
+#### Semantics
+
+Exactly Rust's iterator semantics, which the tests use as the oracle
+(`random_pipelines_match_rust_iterators`: random pipelines over random
+arrays and ranges, whose closures log every element they see, must print
+the results *and the logs* that the same pipelines built from Rust's
+iterators print):
+
+- The source, then the arguments of each stage left to right, then the
+  terminal's, are evaluated once, before the first element. A function value
+  passed to a stage is evaluated then; a named function is called directly.
+- Each element passes through all the stages before the next is pulled,
+  so the closures' side effects interleave as in Rust:
+  `xs.iter().map(f).filter(g)` calls `f(x0)`, `g(f(x0))`, `f(x1)`, ...
+- Nothing is pulled after a stage has ended: `take(n)` checks its count
+  before pulling, so the stages before it never see an `n + 1`-th element
+  (and `take(0)` pulls nothing); `take_while` stops at the first rejected
+  element, which it has seen; `zip` pulls its own side first and stops when
+  the other side is exhausted; `any`, `all`, `find`, `position` and `break`
+  stop the whole pipeline. `chain(ys)` starts on `ys` when its first part is
+  exhausted (or ended by a `take` before the `chain`).
+- An array source is read as `for x in xs` reads it: its length once, and
+  the loop also stops at the current length, so a closure that pushes onto
+  the array does not extend the pipeline and one that shortens it ends it
+  there (memory-safe either way). `rev()` reads from the last element down
+  and ends if the array has been shortened below the next index.
+- A range counts like `for i in a..b`; an inclusive range ending at its
+  type's maximum stops instead of wrapping (`(0u8..=255u8).count()` is
+  256), and so does a reversed one starting at the minimum.
+- Closures capture by value as everywhere, but a closure compiled in place
+  reads the variable when each element reaches it. A `for` body therefore
+  may not assign a variable that a stage's closure reads (compile error),
+  so the difference never shows.
+- `sum()` of floats starts from `0.0`, like the arrays' `sum()`; Rust's
+  starts from `-0.0`, so an empty sum (or a sum of `-0.0`s) is `0.0` here
+  and `-0.0` in Rust. Everything else agrees bit for bit.
+- The eager array methods are unchanged: `xs.map(f).filter(g)` still builds
+  both arrays and runs `f` on every element first.
+
+`rev()` needs a source it can walk backwards: an array or a range, with
+only `map` and `filter` (and `rev`) before it -- `xs.iter().filter(f).rev()`,
+`(0..n).map(f).rev()`. After `take`, `skip`, `enumerate`, `zip`, `chain` or
+on an iterator object it is an error (Rust allows some of these through
+`ExactSizeIterator`/`DoubleEndedIterator`; here, `collect()` first). `zip`
+takes an array, a range or a bare `ys.iter()`, read by position; to zip with
+a pipeline that has stages, `collect()` it first.
+
+A value struct with `next` is refused ("`next(self)` would get a copy and
+could never advance"), as are a `next` with other parameters or one not
+returning `T?`. A class can be generic (`class Cycle[T]` with `next(self) ->
+T?`). A class's own `iter` method, if it declares one, is called instead.
+
+#### Effects
+
+A pipeline over an array or a range with closure literals and a terminal
+other than `collect` neither allocates nor panics nor blocks, and is
+bounded by its source: a `@noalloc @nopanic` (or `@realtime`) function may
+use it (`effects_of_pipelines`, `crates/codira_hir/src/builtin/pipeline.rs`).
+A closure adds what its body does. `collect` allocates its array (with the
+exact length when it is known: no `filter`, `take_while`, `skip_while` or
+iterator object in the pipeline; otherwise it grows as `push` does). A
+function value passed to a stage counts as unknown (every effect). A
+pipeline or `for` loop over an iterator object adds what its `next` does,
+and is unbounded for `@realtime`.
+
+#### Measured
+
+x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores (shared: load average about 2
+during the runs); Codira at `-O 2` with a release build of the compiler and
+runtime, Rust 1.97 at `-C opt-level=3`; median of 5 alternating runs,
+milliseconds, 10M elements. The programs are
+`examples/pipelines_bench/src/mod.code` and
+`examples/pipelines_bench/pipelines_rust.rs`; both print the same checksums.
+
+| work | Codira | Rust |
+|---|---:|---:|
+| `xs.iter().map(x * 2).filter(x % 3 == 0).sum()` | 15.0 | 16.2 |
+| the same, eager: `xs.map(..).filter(..).sum()` | 76.6 | -- |
+| the same as one `fold` | 15.1 | -- |
+| `rs.iter().enumerate().filter((i + x) % 5 == 0).count()`, random `rs` | 15.5 | 15.3 |
+| dot product: `fs.iter().zip(gs).fold(0.0, acc + a * b)` | 16.5 | 16.4 |
+| `xs.iter().take_while(x < n - 1000).sum()` | 13.5 | 14.0 |
+| `xs.iter().map(x * 3 + 1).collect()` | 42.6 | 41.2 |
+| `rs.iter().filter(x % 3 == 0).collect()` (a third kept) | 58.1 | 55.9 |
+| `(0..n).filter(i % 3 == 0).map(i ^ (i >> 3)).sum()` | 5.3 | 6.6 |
+| `xs.iter().chain(rs).filter(x % 7 == 1).count()` (20M) | 36.4 | 36.0 |
+
+- The chain that took 78.9 ms eager (76.6 here) is now at Rust's speed,
+  and as fast as the hand-fused `fold`. The other reductions are within
+  noise of Rust (runs vary by 1-2 ms on this machine); the range pipeline is
+  faster, from a different loop LLVM made of it.
+- `collect` is 3-4% slower: both sides are dominated by writing 80 MB (the
+  mapped array) or growing the filtered one, and Codira's array comes zeroed
+  from the GC heap. With the exact length known (`map`), Codira allocates the
+  array once and its loop vectorizes; a filtered `collect` grows by doubling
+  like `push`.
+- A pipeline whose closures only compute (no call, assignment, allocation
+  or string operation) reads its arrays like a Rust slice iterator: length
+  and element buffer once. When a closure could change an array, the loop
+  re-checks the current length per element, as `for x in xs` does (see
+  "What growth cost existing loops" above for that cost).
+
+#### Back ends and what is not done
+
+- `codira run --jit` (Cranelift) does not compile pipelines; it says so
+  ("does not compile a lazy pipeline") and the program runs on LLVM.
+- No `Iter[T]` values: no storing, returning or passing a pipeline, no
+  functions generic over iterators, no `Iterator[T]` trait (traits are not
+  generic yet). A function that wants to hand out a sequence returns an
+  array or an iterator object.
+- Not provided: `flat_map`, `step_by`, `peekable`, `last`, `nth`,
+  `sum`/`min`/`max` with a key or a comparator, `rev` after the adapters
+  above, `zip` with a staged pipeline, `str`/`String` sources (bytes or
+  characters).
+- A `for` loop over a pipeline with `chain` compiles its body once per
+  part of the chain (two copies for one `chain`), like the stages after the
+  `chain`: code size, not time.
 
 ### Arrays: layout, growth and the host
 
@@ -1625,8 +1825,9 @@ What counts, exactly (today's code generator and runtime):
   heap limit or memory runs out): constructing a `class`, an array literal,
   `array_filled`, the array methods that can grow the buffer (`push`,
   `insert`, `reserve`, `append`) or make a new array (`copy`, `map`,
-  `filter`, slicing `xs[lo..hi]`), a closure (except one an array method
-  compiles in place, see "Growable arrays and collections"),
+  `filter`, slicing `xs[lo..hi]`), a pipeline's `collect`, a closure (except
+  one an array method or a pipeline stage compiles in place, see "Growable
+  arrays and collections" and "Lazy pipelines"),
   `print`/`println`, `channel(n)`, `scope`, `spawn`, a channel send, `select`
   (even with `default`), opening a session (`S.open()`), making or
   growing a `String` (see "Strings" for exactly which operations), and a
@@ -1650,7 +1851,10 @@ What counts, exactly (today's code generator and runtime):
   panic: the amount is taken modulo the width.
 - **May not terminate** (`@realtime` only): a `while` or `loop` without a
   `decreases` measure, or whose measure the verifier does not prove, and
-  recursion, direct or mutual. `for` loops are bounded by construction.
+  recursion, direct or mutual, and a loop over an iterator object (`for x in
+  it`, `it.iter()`: nothing bounds how often its `next` returns a value).
+  Other `for` loops, and pipelines over arrays and ranges, are bounded by
+  construction.
 - **Everything at once**: a call to an `extern` function, a `perform` (its
   handler is chosen at run time), and any call the analysis cannot resolve.
   An `extern` declaration may carry the attributes as a *trusted

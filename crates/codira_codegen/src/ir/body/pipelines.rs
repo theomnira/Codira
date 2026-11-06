@@ -41,6 +41,10 @@
 //!
 //! An array is read as `for x in xs` reads it (`arrays`): the length once,
 //! before the first element, and the loop also stops at the current length.
+//! When nothing in the loop can change an array (`is_pure_pipeline`), the
+//! current length is not checked and the element buffer is loaded once, as
+//! a Rust slice iterator reads a slice; stores into the array `collect`
+//! fills then do not force reloads, and such a loop vectorizes.
 //! A range counts like `for i in a..b` (an inclusive range ending at its
 //! type's maximum stops instead of wrapping). An iterator object's `next` is
 //! called directly until it returns `nil`. `rev()` walks an array from its
