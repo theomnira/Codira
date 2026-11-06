@@ -875,9 +875,10 @@ of a table hashed with it can make them all collide.
   value-struct field. Tests: `crates/codira_runtime/tests/strings.rs`
   (collections under a 2 MB heap cap while strings are built, sliced and
   compared; a snapshot; a reload that reorders and adds fields) and
-  `strings_host_gc.rs` (collections from a host thread, paced: a host that
-  collects back to back leaves Codira code about one allocation per
-  collection, because every collection stops the world).
+  `strings_host_gc.rs` (a host thread calls `collect_blocking` back to back,
+  with no pause of its own, while strings are built; the collector's
+  fairness rule keeps the rounds about as fast as without it, see "Memory:
+  heap limit, pacing, `--runtime-stats`").
 - **Host API**: `codira_runtime::StringRef` is a `String` held by the host,
   like `StructRef` and `ArrayRef`: returned by `Runtime::invoke`, read from
   a field with `StructRef::get::<StringRef>("name")` or from a
@@ -1063,9 +1064,10 @@ that both texts are byte for byte the ones `serde_json` prints.
   the result once, at its exact size); both may panic only on running out
   of memory. The printer and `equals` recurse: a value nested more deeply
   than any parse allows, built by a program, can overflow the stack.
-- `codira run` and `codira start` set no heap limit, and without one the
-  collector never runs: a program that parses many large documents should
-  run under a host that sets `RuntimeBuilder::heap_limit`.
+- `codira run` collects as the program allocates (pacing) under a finite
+  heap limit, half of the available memory by default (see "Memory: heap
+  limit, pacing, `--runtime-stats`"). The measurements below predate that:
+  they ran under a host with a 1 GiB limit and no pacing.
 - Values are not sendable between tasks (they hold strings).
 
 **Measured** against Rust's `serde_json::Value` (1.0.133) on the same
@@ -2283,8 +2285,9 @@ through a call, is an error that prints the chain.
 
 What counts, exactly (today's code generator and runtime):
 
-- **Allocates** (and so may also block on the heap's lock and abort when the
-  heap limit or memory runs out): constructing a `class`, an array literal,
+- **Allocates** (and so may also block on the heap's lock, collect, and end
+  the program with exit status 102 when the heap limit or memory runs out):
+  constructing a `class`, an array literal,
   `array_filled`, the array methods that can grow the buffer (`push`,
   `insert`, `reserve`, `append`) or make a new array (`copy`, `map`,
   `filter`, slicing `xs[lo..hi]`), a pipeline's `collect`, a closure (except
@@ -2564,12 +2567,81 @@ codira start target/mod.codiralib main          # run an already-built library
 ```
 
 `codira run` takes the same `--manifest-path`, `-O 0..3` and `--color`
-options as `build`. If the build reports an error, nothing is run. After the
+options as `build`, and `--heap-limit`, `--gc-growth` and `--runtime-stats`
+(see "Memory: heap limit, pacing, `--runtime-stats`"; `start`, `test` and
+`bench` take the first two, `start` the third too). If the build reports an
+error, nothing is run. After the
 entry point returns, `run`/`start` print its value if it is a primitive
 (`bool`, any integer or float type); a `()` entry point prints nothing. A
 `main` returning a `Result[T, E]` returns its `Ok` value (printed the same
 way) or ends the program on an `Err` with `Error: ...` on standard error
 and exit status 1 (see "Errors with context").
+
+### Memory: heap limit, pacing, `--runtime-stats`
+
+```bash
+codira run --heap-limit 512MiB            # cap the GC heap (also 2GiB, 1500MB, 25%, unlimited)
+CODIRA_HEAP_LIMIT=1GiB codira run         # the same from the environment
+codira run --gc-growth 50                 # collect when the heap grows 50% over its live data
+codira run --runtime-stats                # print the collector's statistics at exit
+```
+
+```toml
+# codira.toml
+[runtime]
+heap-limit = "512MiB"   # or "25%", or "unlimited"
+gc-growth = 100         # or "off"
+```
+
+- **Every runtime the tool starts has a finite heap limit**: `run`,
+  `start`, `test` and `bench` (and each test's and benchmark's process), and
+  the launcher of `build --exe`. The limit comes from the first of
+  `--heap-limit`, `CODIRA_HEAP_LIMIT`, `heap-limit` in `[runtime]` (not for
+  `start`, which has no manifest; the launcher reads only the environment),
+  and the default: **half of the memory available to the process**, the
+  smaller of physical memory and the cgroup's memory limit (containers), at
+  least 64 MiB, 4 GiB if neither can be read. Sizes take `B`, `K`/`KiB`,
+  `M`/`MiB`, `G`/`GiB`, `T`/`TiB` (binary), `KB`/`MB`/`GB`/`TB` (decimal),
+  fractions (`1.5GiB`), a percentage of the available memory (`25%`) or
+  `unlimited`; less than `64KiB` is refused. A bad value is an error that
+  names its source, before anything is built. `unlimited` prints `warning:
+  the garbage-collected heap has no limit (...)`. The limit caps the GC
+  heap only (blocks, large objects, grown arrays), not region arenas, pages
+  or `codira_alloc`.
+- **Pacing**: the collector runs when the heap has grown by `gc-growth`
+  percent (default 100) over what the previous collection left live, and
+  not below 4 MiB of objects, like Go's `GOGC`; so a program that allocates
+  far more than the limit in total, with a small live set, runs in a small
+  heap. The limit stays the hard cap: an allocation that would exceed it
+  collects first. `gc-growth` takes the same three sources as the limit;
+  `off` collects only at the limit.
+- **Running out**: when an allocation still does not fit after a full
+  collection, the program ends with exit status **102** (a panic is 101)
+  and, after what it printed:
+
+  ```text
+  fatal: out of memory: cannot allocate `Node` (24 bytes)
+    heap limit: 1048576 bytes (1.00 MiB)
+    committed:  1048576 bytes; the allocation needed 65536 more
+    live:       393216 bytes after a full collection
+    the limit is 1.00 MiB, from --heap-limit
+    raise it with --heap-limit <SIZE>, the CODIRA_HEAP_LIMIT environment variable, or `heap-limit` in the [runtime] table of codira.toml
+  ```
+
+  `codira test` reports such a test as `crashed (exit status: 102): fatal:
+  out of memory: ...`.
+- **`--runtime-stats`** (`run`, `start`) prints, to standard error when the
+  entry point returns: the limit and growth and where each came from, heap
+  bytes now and at the peak, live bytes, bytes and objects allocated and
+  reclaimed, collections by cause (paced, at the heap limit, requested,
+  explicit), time with the world stopped, and pause p50/p99/max. Not printed
+  when the program ends early (a panic, `exit`, running out of memory).
+- The design, the measurements on `examples/gc_churn` and what the
+  collector does not do (it stops the world, does not move objects, scans
+  stacks conservatively) are in `crates/codira_memory/README.md`. Tests:
+  `crates/codira/tests/heap.rs` (the real binary),
+  `crates/codira_runtime/tests/heap_limit.rs`,
+  `crates/codira_memory/tests/gc_policy.rs`.
 
 ### How a library is linked
 
@@ -3665,16 +3737,36 @@ major, minor or patch -- contract changes decided by Z3 implication -- and
 Runtime (hosts embedding `codira_runtime`):
 
 - The GC heap is a segregated size-class allocator with per-thread bump
-  allocation; `Runtime::gc_collect()` collects objects not reachable from
-  host-rooted handles or from a thread running Codira code.
+  allocation; `Runtime::collect_blocking()` collects objects not reachable
+  from host-rooted handles or from a thread running Codira code and returns
+  a `CollectionReport` (objects and bytes reclaimed, the pause, whether it
+  was coalesced); `Runtime::request_collection()` asks for one and returns
+  at once (a thread of the collector's own serves it; `true` if this call
+  queued it, `false` if one was pending).
+- **Fairness:** a collection requested from outside (either call, or
+  `codira_gc_collect`/`codira_gc_request_collection`) first waits, parked,
+  until Codira code has run for the mutator window since the previous
+  collection: 1 ms, or four times the previous pause if longer
+  (`GcPolicy::min_mutator_window`, `pause_multiple`), skipped when no other
+  thread is inside Codira code. A host collecting in a loop therefore stops
+  the world for at most a fifth of the time. A request is satisfied by any
+  collection that starts after it (paced, another thread's), so concurrent
+  requests coalesce into one collection.
+- **Pacing** is on in every runtime, `Runtime::builder` included:
+  `GcPolicy::default()` collects once the heap's objects exceed twice what
+  the previous collection kept, from 4 MiB; `RuntimeBuilder::gc_growth(None)`
+  turns it off, `gc_policy` sets all of it. The check is made where an
+  allocation takes the heap lock; the next allocation by Codira code (or by
+  the host) collects.
 - Collections stop the world (stack capture for x86-64 and AArch64 on
   Linux, macOS and Windows; tested on x86-64 Linux only). There are no stack maps, so a collection
   asks every thread running Codira code to park, scans each parked thread's
   stack and spilled callee-saved registers conservatively, collects, and
   resumes them. What is guaranteed:
   - **No live object is freed**, whichever thread collects and whatever
-    other threads are doing: `gc_collect` from any thread, an allocation at
-    the heap limit on any thread or task, `codira_gc_collect`. The same stop
+    other threads are doing: `collect_blocking` or `request_collection` from
+    any thread, a paced collection or an allocation at the heap limit on any
+    thread or task, `codira_gc_collect`. The same stop
     protects `save_heap`/`restore_heap` and the heap migration of a hot
     reload.
   - **Which threads count:** a host thread inside `Runtime::invoke`, every
@@ -3714,17 +3806,29 @@ Runtime (hosts embedding `codira_runtime`):
     runtime pauses threads running another runtime's code, and a reload
     waits until no runtime's code runs.
   - **Unsupported targets:** where a thread's stack cannot be captured, a
-    collection that would need it is refused (`gc_collect` returns `false`,
-    `GarbageCollector::try_collect` returns `CollectRefused`, and an
-    allocation at the heap limit aborts).
-- `Runtime::builder(lib).heap_limit(bytes)` caps the GC heap. An allocation
+    collection that would need it is refused (`collect_blocking` returns
+    `CollectRefused`, and an allocation at the heap limit fails).
+- `Runtime::builder(lib).heap_limit(bytes)` caps the GC heap (without it
+  there is no cap; `codira_runtime::heap_policy::default_heap_limit` gives
+  the `codira` tool's default, half of the available memory). An allocation
   that would exceed it first collects, with the world stopped as above, and
-  retries before the other threads resume; if memory is still short the
-  process aborts with a message naming the type and limit. It caps the GC
-  heap only, not raw allocations. Tests:
-  `crates/codira_runtime/tests/gc_threads.rs` (tasks allocating and checking
-  patterned objects under a small cap and under collections from a host
-  thread).
+  retries before the other threads resume. If memory is still short, the
+  `try_alloc`/`try_alloc_array`/`try_grow_array` API and
+  `StringRef::try_new` return `AllocError::LimitExceeded { limit,
+  committed, requested, live }`; an allocation by Codira code ends the
+  process with the diagnostic shown in "Memory: heap limit, pacing,
+  `--runtime-stats`" and exit status 102
+  (`codira_runtime::HEAP_EXHAUSTED_EXIT_STATUS`), its last lines from
+  `RuntimeBuilder::heap_limit_note`. A 256 KiB reserve is released first so
+  reporting has memory. It caps the GC heap only, not raw allocations.
+  Tests: `crates/codira_runtime/tests/gc_threads.rs` (tasks allocating and
+  checking patterned objects under a small cap and under collections from a
+  host thread), `heap_limit.rs` (pacing without a cap, forced failures).
+- `Runtime::stats()` returns `RuntimeStats` (heap bytes now and peak, live
+  bytes, bytes and objects allocated and reclaimed, collections by cause,
+  time with the world stopped, time to safepoint, pause p50/p99/max); its
+  `Display` is what `--runtime-stats` prints. Counting is always on: two
+  thread-local counter updates per allocation.
 - The runtime provides raw memory services a program reaches with
   `extern "C"` declarations (wrapped in `std/memory/region.code` and
   `std/memory/page.code`): region arenas with byte quotas and bulk reset
