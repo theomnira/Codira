@@ -90,6 +90,11 @@ pub struct CascadeConfig {
     /// The largest concurrent cycle pass, in work units; a pass that needs
     /// more is abandoned and its garbage left to the tracing collector.
     pub max_cycle_pass: usize,
+    /// The most queued cycle candidates. Growing the queue rehashes it, so
+    /// the cap bounds that cost in a step; a candidate that does not fit is
+    /// counted (`CascadeStats::candidate_overflows`), makes the next steps
+    /// count as under pressure, and is left to the tracing collector.
+    pub max_candidates: usize,
     /// Deferred bytes (retiring and candidate objects) above which a step
     /// counts as under pressure.
     pub pressure_bytes: usize,
@@ -108,6 +113,7 @@ impl Default for CascadeConfig {
             buffer_capacity: 4096,
             local_cycle_budget: 4096,
             max_cycle_pass: 1 << 16,
+            max_candidates: 1 << 16,
             pressure_bytes: 64 << 20,
             pressure_multiplier: 8,
             pressure_steps_before_trace: 4,
@@ -122,6 +128,7 @@ impl std::fmt::Debug for CascadeConfig {
             .field("buffer_capacity", &self.buffer_capacity)
             .field("local_cycle_budget", &self.local_cycle_budget)
             .field("max_cycle_pass", &self.max_cycle_pass)
+            .field("max_candidates", &self.max_candidates)
             .field("pressure_bytes", &self.pressure_bytes)
             .field("pressure_multiplier", &self.pressure_multiplier)
             .field(
@@ -160,6 +167,8 @@ pub struct CascadeStats {
     pub cycle_sets_rejected: u64,
     /// Trial-deletion passes abandoned for exceeding their budget.
     pub abandoned_passes: u64,
+    /// Candidates not queued because the queue was full.
+    pub candidate_overflows: u64,
     /// Zero-count objects found positive again when re-examined.
     pub resurrections: u64,
     /// Zero-count objects left to tracing because the host rooted them.
@@ -371,6 +380,8 @@ struct Collector {
     completed: u64,
     /// The number of candidates that seed one trial-deletion pass.
     batch: usize,
+    /// A candidate did not fit the queue since the last tracing collection.
+    overflowed: bool,
     pressure_steps: usize,
     retiring_bytes: usize,
     candidate_bytes: usize,
@@ -491,6 +502,7 @@ impl Cascade {
                 scratch: Vec::new(),
                 completed: 0,
                 batch: MAX_CYCLE_BATCH,
+                overflowed: false,
                 pressure_steps: 0,
                 retiring_bytes: 0,
                 candidate_bytes: 0,
@@ -583,7 +595,7 @@ impl Cascade {
                 let heap_tight = inner
                     .limit()
                     .is_some_and(|limit| inner.committed().saturating_add(limit / 8) > limit);
-                deferred > self.config.pressure_bytes || heap_tight
+                deferred > self.config.pressure_bytes || heap_tight || collector.overflowed
             };
             let budget = if pressure {
                 budget.saturating_mul(self.config.pressure_multiplier.max(1))
@@ -802,10 +814,20 @@ impl Cascade {
                 self.retire(collector, object, word);
             }
         } else if !word.is(BUFFERED) && !word.is(ZCT) && !word.is_sticky() {
-            unsafe { set_word(object, word.set(BUFFERED)) };
-            collector.candidates.insert(object);
-            collector.candidate_bytes += unsafe { payload_size(object) };
+            self.buffer(collector, object, word);
         }
+    }
+
+    /// Queues `object` as a cycle candidate, unless the queue is full.
+    fn buffer(&self, collector: &mut Collector, object: usize, word: Word) {
+        if collector.candidates.len() >= self.config.max_candidates {
+            collector.stats.candidate_overflows += 1;
+            collector.overflowed = true;
+            return;
+        }
+        unsafe { set_word(object, word.set(BUFFERED)) };
+        collector.candidates.insert(object);
+        collector.candidate_bytes += unsafe { payload_size(object) };
     }
 
     fn retire(&self, collector: &mut Collector, object: usize, word: Word) {
@@ -992,9 +1014,7 @@ impl Cascade {
                     for object in roots {
                         let word = unsafe { word_of(object) };
                         if !word.is(BUFFERED) {
-                            unsafe { set_word(object, word.set(BUFFERED)) };
-                            collector.candidates.insert(object);
-                            collector.candidate_bytes += unsafe { payload_size(object) };
+                            self.buffer(collector, object, word);
                         }
                     }
                 }
@@ -1064,9 +1084,7 @@ impl Cascade {
                     collector.retire.push(member);
                     collector.retiring_bytes += unsafe { payload_size(member) };
                 } else if passed && !word.is(BUFFERED) {
-                    unsafe { set_word(member, word.set(BUFFERED)) };
-                    collector.candidates.insert(member);
-                    collector.candidate_bytes += unsafe { payload_size(member) };
+                    self.buffer(collector, member, word);
                 }
             }
         }
@@ -1145,6 +1163,7 @@ impl Cascade {
         }
         collector.retiring_bytes = 0;
         collector.candidate_bytes = 0;
+        collector.overflowed = false;
         let threads = self.threads.lock();
         for thread in threads.iter() {
             let local = thread.local();

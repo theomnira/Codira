@@ -347,7 +347,13 @@ fn cycles(config: &Config) {
         let mut rates = Vec::new();
         let mut steps_needed = Vec::new();
         for _ in 0..config.samples {
-            let gc = cascade_runtime();
+            // Throughput of the pass itself: every candidate fits the queue
+            // (the default cap would leave the excess to tracing).
+            let gc = Arc::new(Gc::default());
+            gc.enable_cascade(CascadeConfig {
+                max_candidates: usize::MAX,
+                ..CascadeConfig::default()
+            });
             let mut m = gc.cascade_mutator().unwrap();
             build_rings(&mut m, &t, objects, ring, true);
             m.safepoint();
@@ -425,6 +431,21 @@ fn cycles(config: &Config) {
     }
 }
 
+/// CPU time of the current thread, in nanoseconds (0 where unsupported).
+fn thread_cpu_nanos() -> u64 {
+    #[cfg(unix)]
+    unsafe {
+        let mut ts = libc::timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
+        };
+        libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts);
+        ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
+    }
+    #[cfg(not(unix))]
+    0
+}
+
 fn latency(config: &Config) {
     println!(
         "== collector step latency under {LATENCY_MUTATORS} mutator threads (published stores, rings); time holding the heap lock"
@@ -435,6 +456,7 @@ fn latency(config: &Config) {
         let stop = AtomicBool::new(false);
         let mut nanos = Vec::new();
         let mut waits = Vec::new();
+        let mut cpus = Vec::new();
         let mut work = Vec::new();
         std::thread::scope(|scope| {
             let workers: Vec<_> = (0..LATENCY_MUTATORS)
@@ -462,8 +484,11 @@ fn latency(config: &Config) {
                 .collect();
             let end = Instant::now() + config.latency_time;
             while Instant::now() < end {
+                let cpu = thread_cpu_nanos();
                 let report = gc.cascade_step(budget).unwrap();
+                let cpu = thread_cpu_nanos() - cpu;
                 if report.work > 0 {
+                    cpus.push(cpu as f64 / 1000.0);
                     nanos.push(report.nanos as f64 / 1000.0);
                     waits.push(report.wait_nanos as f64 / 1000.0);
                     work.push(report.work as f64);
@@ -482,8 +507,11 @@ fn latency(config: &Config) {
         let (work_median, _) = median_min(&mut work);
         let (wait_median, _) = median_min(&mut waits);
         let wait_max = waits[waits.len() - 1];
+        cpus.sort_by(f64::total_cmp);
+        let cpu_p999 = cpus[((cpus.len() - 1) as f64 * 0.999) as usize];
+        let cpu_max = cpus[cpus.len() - 1];
         println!(
-            "budget {budget:>6}: steps {:>7}  median {:>8.1} us  p99 {:>8.1} us  p99.9 {:>8.1} us  max {:>9.1} us  (median work {work_median}; lock wait median {wait_median:.1} us, max {wait_max:.1} us)",
+            "budget {budget:>6}: steps {:>7}  median {:>8.1} us  p99 {:>8.1} us  p99.9 {:>8.1} us  max {:>9.1} us  (median work {work_median}; lock wait median {wait_median:.1} us, max {wait_max:.1} us; thread CPU time p99.9 {cpu_p999:.1} us, max {cpu_max:.1} us)",
             nanos.len(),
             pick(0.5),
             pick(0.99),
