@@ -21,6 +21,8 @@
 //!   - a `()` field or enum payload (`Result[(), E]`), whose type the
 //!     runtime could not load: it was given a structural type id that no
 //!     module exports, instead of the runtime's own `()`.
+//!   - an `if` chain whose last `else if` leaves on both branches, which
+//!     crashed the code generator.
 
 use std::{
     path::Path,
@@ -393,4 +395,60 @@ public func main() {
     let (code, stdout, stderr) = run(&[("mod.code", program)], &[]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(stdout, "ok 2\nerr 4\na\n");
+}
+
+// ---- `if` chains whose last two branches diverge ---------------------------
+
+/// An `else if` whose own branches both leave (`continue` and `return`)
+/// ends an `if` chain that the enclosing `if` merges after: it used to
+/// leave the code generator in a block it had removed from the function,
+/// and the build panicked ("called `Result::unwrap()` on an `Err` value").
+#[test]
+fn an_if_chain_ending_in_two_diverging_branches_compiles() {
+    let program = r#"
+func step(x: i64) -> i64 {
+    var i = 0
+    var total = 0
+    while i < 10 {
+        if x == 1 {
+            total += 1
+        } else if x == 2 {
+            i += 2
+            continue
+        } else {
+            return -1
+        }
+        i += 1
+    }
+    total
+}
+
+func word(x: i64) -> String {
+    var out = "".to_string()
+    var i = 0
+    while i < 3 {
+        if x == 1 {
+            out += "a"
+        } else if x == 2 {
+            if i == 0 { out += "b" } else { out += "c" }
+            i += 1
+            continue
+        } else {
+            return "none".to_string()
+        }
+        i += 1
+    }
+    out
+}
+
+public func main() {
+    println(step(1), " ", step(2), " ", step(3))
+    println(word(1), " ", word(2), " ", word(3))
+}
+"#;
+    for level in ["0", "2"] {
+        let (code, stdout, stderr) = run(&[("mod.code", program)], &["-O", level]);
+        assert_eq!(code, Some(0), "-O {level}: {stderr}");
+        assert_eq!(stdout, "10 0 -1\naaa bcc none\n", "-O {level}");
+    }
 }

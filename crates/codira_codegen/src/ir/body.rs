@@ -3016,6 +3016,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 merge_block
                     .remove_from_function()
                     .expect("merge block must have a parent");
+                // Leave the builder in a block of the function (the last
+                // one the `else` branch built, which it terminated), as a
+                // `loop` or a `match` that never finishes does. Left in the
+                // removed merge block, an enclosing `if` would try to move
+                // its own merge block after a block that is no longer in
+                // the function (`else if a { continue } else { return }`).
+                self.builder.position_at_end(current_block);
             }
             else_block_ir
         } else {
