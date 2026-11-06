@@ -580,6 +580,15 @@ impl Runtime {
         runtime.gc.set_heap_limit_note(options.heap_limit_note);
         runtime.gc.set_policy(options.gc_policy);
         ensure_emergency_reserve();
+        if gc::frames::stress() {
+            // Stress mode: polls of compiled code collect too.
+            let collector = Arc::downgrade(&runtime.gc);
+            gc::frames::set_stress_collector(Some(Arc::new(move || {
+                if let Some(collector) = collector.upgrade() {
+                    collector.stress_collect();
+                }
+            })));
+        }
 
         runtime.add_assembly(&options.library_path)?;
         Ok(runtime)

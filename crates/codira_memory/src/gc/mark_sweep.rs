@@ -29,7 +29,7 @@ use crate::{
             PayloadMigration, SweepOutcome, COLOR_BLACK, COLOR_WHITE,
         },
         policy::GcPolicy,
-        safepoint,
+        frames, safepoint,
         stats::{CollectionCounts, CollectionReport, GcStats, PauseHistogram, Trigger},
         Array as GcArray, Event, GcPtr, GcRuntime, Observer, Stats, TypeTrace,
     },
@@ -412,6 +412,10 @@ where
         };
         if safepoint::is_running() {
             safepoint::poll();
+            if frames::stress_due() {
+                // Stress mode: allocations collect.
+                self.stress_collect();
+            }
             if self.heap.collection_due() {
                 self.core.collect_for_pacing();
             }
@@ -434,6 +438,10 @@ where
     ) -> Result<NonNull<ObjectHeader>, AllocError> {
         if safepoint::is_running() {
             safepoint::poll();
+            if frames::stress_due() {
+                // Stress mode: allocations collect.
+                self.stress_collect();
+            }
             if self.heap.collection_due() {
                 self.core.collect_for_pacing();
             }
@@ -505,6 +513,16 @@ where
             }
             result => result,
         }
+    }
+
+    /// Collects right away, without waiting for the mutator window: what
+    /// stress mode (`frames::set_stress`) does at a safepoint. Counted as an
+    /// explicit collection.
+    #[doc(hidden)]
+    pub fn stress_collect(&self) {
+        let _refused = self
+            .core
+            .collect_stopped_then(Trigger::Explicit, |_| false, || ());
     }
 
     /// Collects all memory that is no longer referenced by rooted objects
@@ -752,7 +770,9 @@ where
                 return Err(CollectRefused);
             }
             self.started.fetch_add(1, Ordering::SeqCst);
-            let mut words = world.stack_words();
+            let roots = world.stack_roots();
+            let mut words = roots.conservative;
+            words.extend(roots.precise);
             let swept = if words.is_empty() {
                 self.collect_impl(None)
             } else {

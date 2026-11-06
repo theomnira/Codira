@@ -177,12 +177,29 @@ impl<'db, 'ink, 'ctx, 't> AssemblyBuilder<'db, 'ink, 'ctx, 't> {
             }
         }
 
+        // Precise stack roots: frame records before the final optimization,
+        // polls after it (see `crate::gc_roots`).
+        let gc_frames = crate::gc_roots::enabled();
+        if gc_frames {
+            let stats = crate::gc_roots::insert_roots(&self.assembly_module);
+            if std::env::var_os("CODIRA_GC_DEBUG").is_some() {
+                eprintln!("gc roots: {stats:?}");
+            }
+        }
+
         // Optimize the assembly module
         optimize_module(
             &self.assembly_module,
             &self.code_gen.target_machine,
             self.code_gen.optimization_level,
         );
+
+        if gc_frames {
+            let polls = crate::gc_roots::insert_polls(&self.assembly_module);
+            if std::env::var_os("CODIRA_GC_DEBUG").is_some() {
+                eprintln!("gc polls: {polls}");
+            }
+        }
 
         // Debug print the IR
         //println!("{}", assembly_module.print_to_string().to_string());

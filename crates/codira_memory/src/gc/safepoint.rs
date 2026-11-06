@@ -67,7 +67,10 @@ use std::{
 
 use parking_lot::{const_mutex, Condvar, Mutex};
 
-use super::stack_scan;
+use super::{
+    frames::{self, ParkedStack, StackRoots},
+    stack_scan,
+};
 
 /// Set while a collection (or another stop-the-world operation) is
 /// requested or in progress.
@@ -106,6 +109,13 @@ struct Record {
     low: AtomicUsize,
     /// The base (highest address) of the thread's stack, 0 if unknown.
     high: usize,
+    /// The address of the thread's frame-record chain head
+    /// (`frames::codira_gc_chain_slot`).
+    chain: usize,
+    /// The thread parked at a poll of compiled code: its frame records'
+    /// spill words need not be up to date, so its whole stack is scanned
+    /// conservatively. Only the thread itself writes it, while running.
+    at_poll: AtomicBool,
 }
 
 /// [`Record::low`] of a thread parked on a platform whose stacks cannot be
@@ -181,6 +191,8 @@ fn registered_or_new() -> Option<Arc<Record>> {
                     active: AtomicBool::new(false),
                     low: AtomicUsize::new(0),
                     high: stack_scan::stack_base().unwrap_or(0),
+                    chain: frames::chain_slot_address(),
+                    at_poll: AtomicBool::new(false),
                 });
                 REGISTRY.lock().records.push(record.clone());
                 *holder = Some(Holder(record));
@@ -189,6 +201,19 @@ fn registered_or_new() -> Option<Arc<Record>> {
         })
         .ok()
         .flatten()
+}
+
+/// Sets the poll word compiled code checks: a stop is requested, or stress
+/// mode is on.
+pub(crate) fn refresh_poll_word() {
+    let on = STOP.load(Ordering::SeqCst) || frames::stress();
+    frames::POLL_WORD.store(u8::from(on), Ordering::SeqCst);
+}
+
+/// Sets or clears the stop flag, and the poll word with it.
+fn set_stop(on: bool) {
+    STOP.store(on, Ordering::SeqCst);
+    refresh_poll_word();
 }
 
 /// Waits, with the registry locked, until no stop is in progress.
@@ -314,6 +339,39 @@ fn park() {
     blocking(|| {});
 }
 
+/// A poll of compiled code (a loop back-edge or a function entry; see
+/// `frames::codira_gc_poll`): parks if a collection is waiting, collects in
+/// stress mode. The thread's stack is scanned conservatively throughout
+/// while it is parked here.
+#[cold]
+#[inline(never)]
+pub(crate) fn poll_from_code() {
+    if MODE.with(Cell::get) != RUNNING {
+        return;
+    }
+    let Some(record) = record() else {
+        return;
+    };
+    let previous = record.at_poll.swap(true, Ordering::Relaxed);
+    /// Clears the flag even if the collection unwinds.
+    struct Clear<'a>(&'a Record, bool);
+    impl Drop for Clear<'_> {
+        fn drop(&mut self) {
+            self.0.at_poll.store(self.1, Ordering::Relaxed);
+        }
+    }
+    let _clear = Clear(record, previous);
+    if frames::stress_due() {
+        if let Some(collect) = frames::stress_collector() {
+            collect();
+            return;
+        }
+    }
+    if STOP.load(Ordering::Relaxed) {
+        park();
+    }
+}
+
 /// Runs `f` with the current thread parked: a collection may run while `f`
 /// runs, scanning this thread's stack above this call. `f` must not touch
 /// the GC heap or Codira values, which is what makes it the right place for
@@ -376,8 +434,8 @@ pub(crate) struct World {
     pub(crate) requested_at: std::time::Instant,
     /// When every other thread had parked.
     pub(crate) stopped_at: std::time::Instant,
-    /// The stack ranges `[low, high)` of the parked threads.
-    stacks: Vec<(usize, usize)>,
+    /// The parked threads' stacks.
+    stacks: Vec<ParkedStack>,
     /// Some thread holds Codira frames that cannot be scanned.
     unscannable: bool,
     /// Some thread other than the current one has Codira frames.
@@ -412,7 +470,15 @@ impl World {
             match record.low.load(Ordering::Relaxed) {
                 0 => world.unscannable |= active,
                 UNSCANNABLE => world.unscannable = true,
-                low => world.stacks.push((low, record.high)),
+                low => world.stacks.push(ParkedStack {
+                    low,
+                    high: record.high,
+                    // Safety: `chain` is the address of the thread's chain
+                    // head, which lives as long as the thread, and the
+                    // thread is registered (so alive) and parked.
+                    head: unsafe { *(record.chain as *const *const frames::FrameRecord) },
+                    conservative: record.at_poll.load(Ordering::Relaxed),
+                }),
             }
         }
         world
@@ -431,28 +497,31 @@ impl World {
         self.others_in_codira
     }
 
-    /// Returns every pointer-aligned word of every parked thread's frozen
-    /// stack range (callee-saved registers included: they were spilled into
-    /// it). Empty when no thread is parked with Codira frames.
-    pub(crate) fn stack_words(&self) -> Vec<usize> {
-        let word = std::mem::size_of::<usize>();
-        let total: usize = self
-            .stacks
-            .iter()
-            .map(|(low, high)| high.saturating_sub(*low) / word)
-            .sum();
-        let mut words = Vec::with_capacity(total);
-        for &(low, high) in &self.stacks {
-            let mut address = low;
-            while address + word <= high {
-                // Safety: `[low, high)` is the part of a parked thread's
-                // stack that holds its caller frames. The thread is blocked
-                // below it until the stop ends, so the memory is mapped and
-                // nothing writes it.
-                words.push(unsafe { std::ptr::read_volatile(address as *const usize) });
-                address += word;
-            }
+    /// Returns the roots of every parked thread's frozen stack range
+    /// (callee-saved registers included: they were spilled into it): the
+    /// slots of compiled frames' records, read precisely, and every other
+    /// word, read conservatively. Empty when no thread is parked with
+    /// Codira frames.
+    pub(crate) fn stack_roots(&self) -> StackRoots {
+        let mode = frames::root_mode();
+        let mut roots = StackRoots::default();
+        for stack in &self.stacks {
+            // Safety: `[low, high)` is the part of a parked thread's stack
+            // that holds its caller frames, and its frame records are in it.
+            // The thread is blocked below it until the stop ends, so the
+            // memory is mapped and nothing writes it.
+            unsafe { stack.roots(mode, &mut roots) };
         }
+        roots
+    }
+
+    /// Every word the conservative scan of the old protocol saw: both
+    /// kinds of roots.
+    #[cfg(test)]
+    pub(crate) fn stack_words(&self) -> Vec<usize> {
+        let roots = self.stack_roots();
+        let mut words = roots.conservative;
+        words.extend(roots.precise);
         words
     }
 }
@@ -472,7 +541,7 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
             CHANGED.wait(&mut registry);
         }
         registry.stopped = true;
-        STOP.store(true, Ordering::SeqCst);
+        set_stop(true);
         let requested_at = std::time::Instant::now();
         while registry
             .records
@@ -493,7 +562,7 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
                 MODE.with(|mode| mode.set(self.0));
                 let mut registry = REGISTRY.lock();
                 registry.stopped = false;
-                STOP.store(false, Ordering::SeqCst);
+                set_stop(false);
                 CHANGED.notify_all();
             }
         }
@@ -544,6 +613,7 @@ pub struct ThreadCheckpoint {
     mode: u8,
     depth: usize,
     low: usize,
+    chain: *const frames::FrameRecord,
 }
 
 /// Saves the current thread's mutator state; see [`ThreadCheckpoint`].
@@ -552,6 +622,7 @@ pub fn checkpoint() -> ThreadCheckpoint {
         mode: MODE.with(Cell::get),
         depth: DEPTH.with(Cell::get),
         low: record().map_or(0, |record| record.low.load(Ordering::Relaxed)),
+        chain: frames::chain_head(),
     }
 }
 
@@ -573,7 +644,7 @@ pub unsafe fn restore(checkpoint: ThreadCheckpoint) {
         MODE.with(|mode| mode.set(IDLE));
         let mut registry = REGISTRY.lock();
         registry.stopped = false;
-        STOP.store(false, Ordering::SeqCst);
+        set_stop(false);
         CHANGED.notify_all();
     }
     let mode = MODE.with(Cell::get);
@@ -585,6 +656,8 @@ pub unsafe fn restore(checkpoint: ThreadCheckpoint) {
     DEPTH.with(|depth| depth.set(checkpoint.depth));
     record.active.store(checkpoint.depth > 0, Ordering::Relaxed);
     record.low.store(checkpoint.low, Ordering::Relaxed);
+    // The frames whose records were linked since are gone.
+    frames::set_chain_head(checkpoint.chain);
 }
 
 /// Runs `f` with the registry locked, so no stop can begin while it runs;
