@@ -31,7 +31,10 @@
 //!     (`xs[f()] += 1`, `xs[f()] = v`), which evaluated the place's
 //!     operands twice -- once to read the old value, once for the store --
 //!     and crashed the code generator when the instance was a call result
-//!     (`make().n += 1`).
+//!     (`make().n += 1`);
+//!   - a record literal naming its fields in another order than the
+//!     declaration (`P { y: 2.5, x: 1 }`), whose values were stored by
+//!     position, not by name.
 
 use std::{
     path::Path,
@@ -678,5 +681,29 @@ public func main() {
             ),
             "{args:?}: {stderr}"
         );
+    }
+}
+
+// ---- record literals ---------------------------------------------------
+
+/// A record literal stores each value in the field it names, whatever the
+/// order, and evaluates the values in the order written.
+#[test]
+fn a_record_literal_stores_fields_by_name() {
+    let program = r#"
+class Foo { a: i64, b: i64 }
+struct P { x: i64, y: f64, z: bool }
+func p(x: i64) -> i64 { println(x); x }
+public func main() {
+    let f = Foo { b: p(4), a: p(3) }
+    println(f.a, " ", f.b)
+    let q = P { z: true, y: 2.5, x: 7 }
+    println(q.x, " ", q.y, " ", q.z)
+}
+"#;
+    for args in [&[][..], &["-O", "0"], &["--jit"]] {
+        let (code, stdout, stderr) = run(&[("mod.code", program)], args);
+        assert_eq!(code, Some(0), "{args:?}: {stderr}");
+        assert_eq!(stdout, "4\n3\n3 4\n7 2.5 true\n", "{args:?}");
     }
 }

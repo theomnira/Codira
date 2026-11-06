@@ -1506,9 +1506,25 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         fields: &[codira_hir::RecordLitField],
     ) -> BasicValueEnum<'ink> {
         let struct_ty = self.infer[type_expr].clone();
-        let fields: Vec<BasicValueEnum<'ink>> = fields
-            .iter()
-            .map(|field| self.gen_expr(field.expr).expect("expected a field value"))
+        let hir_struct = struct_ty
+            .as_struct()
+            .expect("a record literal builds a struct");
+        // Evaluated in the order written, stored by name: the literal may
+        // name the fields in any order. They used to be stored in the order
+        // written, so `Foo { b: 4, a: 3 }` set `a` to 4.
+        let mut values: Vec<Option<BasicValueEnum<'ink>>> =
+            vec![None; hir_struct.fields(self.db).len()];
+        for field in fields {
+            let value = self.gen_expr(field.expr).expect("expected a field value");
+            let index = hir_struct
+                .field(self.db, &field.name)
+                .expect("inference checked the field exists")
+                .index(self.db) as usize;
+            values[index] = Some(value);
+        }
+        let fields: Vec<BasicValueEnum<'ink>> = values
+            .into_iter()
+            .map(|value| value.expect("inference checked every field is given once"))
             .collect();
 
         self.gen_struct_alloc(&struct_ty, fields)
