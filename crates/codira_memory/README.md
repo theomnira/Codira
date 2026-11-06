@@ -447,6 +447,49 @@ The cost is per function, not per loop iteration: one indirect call to get
 the chain head, a handful of stores on entry and one on return, plus one
 store per spilled value at its definition.
 
+Measured on `examples/collections_bench` and `examples/pipelines_bench`
+(milliseconds, medians of 11 interleaved runs pinned to one core; "off" is
+the same release `codira` building with `CODIRA_GC_FRAMES=0`, which turns
+off both records and polls; Rust is `rustc -C opt-level=3` of the
+benchmarks' Rust programs; every checksum is identical across the three):
+
+| benchmark | off | on | on / off | Rust |
+|---|---:|---:|---:|---:|
+| `push_10m` | 43.90 | 45.19 | 1.03 | 44.56 |
+| `sum_builtin` | 9.97 | 10.45 | 1.05 | -- |
+| `sum_fold_closure` | 9.65 | 10.33 | 1.07 | 10.01 |
+| `sum_for_loop` | 9.68 | 10.36 | 1.07 | 10.53 |
+| `sum_indexed_while` | 9.82 | 10.57 | 1.08 | -- |
+| `map_filter_sum` | 83.82 | 88.01 | 1.05 | 20.28 |
+| `map_filter_sum_fused_fold` | 17.24 | 17.20 | 1.00 | -- |
+| `sort_1m` | 20.53 | 20.07 | 0.98 | -- |
+| `map_int_1m_fast_insert` | 81.16 | 85.75 | 1.06 | 80.69 |
+| `map_int_1m_fast_hit` | 55.20 | 55.55 | 1.01 | 40.16 |
+| `map_str_1m_fast_insert` | 373.68 | 406.67 | 1.09 | 284.76 |
+| `map_str_1m_fast_hit` | 187.85 | 181.80 | 0.97 | 132.25 |
+| `map_filter_sum_lazy` | 17.43 | 17.25 | 0.99 | 17.73 |
+| `map_filter_sum_eager` | 95.41 | 93.79 | 0.98 | -- |
+| `map_filter_sum_fold` | 18.97 | 18.13 | 0.96 | -- |
+| `enumerate_filter_count` | 17.93 | 16.82 | 0.94 | 17.14 |
+| `zip_fold_dot` | 19.21 | 18.37 | 0.96 | 22.55 |
+| `take_while_sum` | 16.81 | 14.78 | 0.88 | 15.08 |
+| `map_collect` | 55.96 | 51.53 | 0.92 | 52.81 |
+| `filter_collect` | 65.30 | 70.19 | 1.07 | 63.65 |
+| `range_filter_map_sum` | 5.16 | 5.58 | 1.08 | 6.62 |
+| `chain_filter_count` | 79.16 | 83.60 | 1.06 | 76.51 |
+
+Intel Xeon @ 2.10 GHz (4 vCPUs), Linux 6.18, Rust 1.97.1, `codira build -O
+2`. The machine is noisy: the same loop code measured from 15 to 24 ms
+across runs, so differences under about 10% are within what repeated runs
+of identical code show. The array sums are 5-8% slower in the full
+benchmark, although their loops compile to the same IR with and without
+records (they are counted loops, so they have no poll); a program that runs
+only `for x in xs { s += x }` over 10M elements measured 9.25 ms against
+9.11 ms (medians of 7 runs of the best of 15). `map_str_1m_fast_insert` is
+the largest loss (9%). Polling every loop back-edge, which an earlier
+version did, cost up to 2x on `range_filter_map_sum` and about 35% on
+several pipelines; polls are now only on loops nothing bounds.
+
 Selection: `CODIRA_GC_ROOTS=conservative` (or
 `frames::set_root_mode(RootMode::Conservative)`) scans every stack word
 conservatively again, records included -- a fallback that cannot be wrong
@@ -504,18 +547,47 @@ slots and host-held handles are never rewritten. The words of
 `root_region` (task-group results waiting to be joined, the chunks of
 `@region` arenas) are scanned conservatively like stack words, so what they
 refer to is pinned the same way. Blocks in which a
-thread's allocation cache holds a run are left alone. Hot-reload migration
+thread's allocation cache holds a run are left alone. The words of root
+regions (task-group results, `@region` arena chunks registered as root
+spans) are read with the conservative roots, so what they refer to is
+pinned too. While Cascade is attached (`MarkSweep::enable_cascade`),
+relocation is off whatever the setting: Cascade's buffers and queues hold
+object addresses that evacuation does not rewrite. Hot-reload migration
 and heap snapshots run in their own stops and see a heap in which every
 reference is current.
 
 Measured with `relocation::fragmentation_*` (400,000 48-byte objects of
 which every 16th is kept, then 60,000 160-byte objects, collecting after
-each phase, pacing off): the heap holds 29.7 MB without relocation and 11.7 MB with it;
-under a 16 MiB heap limit the non-moving collector aborts in the second
-phase and the relocating one finishes.
+each phase, pacing off): the heap holds 19.5 MB after the first phase and
+29.7 MB after the second without relocation, 2.6 MB and 11.7 MB with it;
+under a 16 MiB heap limit the non-moving collector cannot finish the
+second phase (its allocation fails at the limit) and the relocating one
+does. Pause cost (release build, the collection itself without the wait
+for threads to park, medians of 3 runs): the collection that moves 23,363
+objects takes 16.9 ms against 7.9 ms for the same collection without
+relocation; the next one takes 3.4 ms against 10.1 ms, the heap being
+smaller.
 
 What keeps it experimental: it has run on x86-64 Linux only; the stacks
 pin (a frame that refers to a sparse block's object keeps the block); and
 host code that keeps a `GcPtr` it neither roots nor pins (in a Rust data
 structure) was never safe across a collection and is now also wrong after
 one.
+
+### Tests
+
+- `codira_runtime/tests/precise_roots.rs`: integers that look like pointers
+  (precise against conservative), references held only by frames under a
+  collection at every safepoint in both root modes, a collection while a
+  thread is in a `@noalloc` foreign call and while it runs a loop without
+  safepoints.
+- `codira_runtime/tests/relocation.rs`: heap references follow moved
+  objects (without the rewrite the test crashes), rooted and pinned objects
+  keep their addresses, and the fragmentation workload above.
+- Differential and stress runs of the existing suites (`codira`,
+  `codira_runtime`, `codira_memory`, `codira_codegen`) with
+  `CODIRA_GC_ROOTS=conservative`, `CODIRA_GC_COMPACT=1` and
+  `CODIRA_GC_STRESS=7`. Under stress, tests that count collections by
+  cause, measure timing, or wait for a paced or limit collection do not
+  hold by construction (stress collections keep the heap small) and were
+  left out; see the branch's notes for which.
