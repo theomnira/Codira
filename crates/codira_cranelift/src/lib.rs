@@ -34,9 +34,13 @@
 //!   through the runtime), `unchecked_get(..)`, and `for` loops over them;
 //! * `str` and `String` (`strings`): conversion, printing, `+`, `+=`,
 //!   comparisons, `to_string()` and the methods that read a string or make a
-//!   new one without failing.
+//!   new one without failing;
+//! * optionals (`T?`): a `T` where a `T?` is expected, `nil`, postfix `!`
+//!   with the same panic, `==`/`!=`, and optionals in fields, arrays,
+//!   parameters and results. `if let`, `while let`, `match` and `?` are
+//!   not compiled.
 //!
-//! Anything else -- value structs, tuples, enums, optionals, the string
+//! Anything else -- value structs, tuples, enums, pattern matching, the string
 //! methods that can fail or return an optional or an array (`slice`, `find`,
 //! `split`, `parse_*`, ...), closures, pipelines, externs, intrinsics, `@asm`
 //! -- is reported
@@ -427,6 +431,7 @@ impl State<'_> {
             }
             TyKind::Array(element) => self.check(element),
             TyKind::String | TyKind::Str => Ok(()),
+            TyKind::Optional(payload) => self.check(payload),
             _ => self.scalar(ty).map(|_| ()),
         }
     }

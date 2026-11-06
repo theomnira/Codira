@@ -600,6 +600,10 @@ fn generator_covers_the_subset() {
         ".to_upper()",
         ".repeat(",
         ".replace(",
+        "? = nil",
+        " == nil {",
+        "! })",
+        " != nil)",
     ] {
         assert!(
             all.contains(construct),

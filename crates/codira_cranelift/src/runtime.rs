@@ -205,6 +205,29 @@ impl Heap {
                     StructMemoryKind::Gc,
                 )
             }
+            TyKind::Optional(payload) => {
+                let optional = value_layout(db, ty).ok_or("an optional without a layout")?;
+                let payload_offset = optional
+                    .leaves
+                    .get(1)
+                    .map_or(optional.size, |leaf| leaf.offset);
+                let fields = vec![
+                    ("present".to_owned(), bool::type_info().clone(), 0),
+                    (
+                        "payload".to_owned(),
+                        self.field_type(db, payload)?,
+                        u16::try_from(payload_offset).map_err(|e| e.to_string())?,
+                    ),
+                ];
+                let name = ty.guid_string(db).unwrap_or_else(|| "optional".to_owned());
+                Type::new_struct(
+                    name.clone(),
+                    std_layout(&optional)?,
+                    Guid::from_str(&format!("codira.jit {name}")),
+                    fields,
+                    StructMemoryKind::Value,
+                )
+            }
             TyKind::String => {
                 let layout = string_layout(&layout);
                 let usize = usize::type_info().clone();

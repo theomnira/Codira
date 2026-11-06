@@ -196,6 +196,11 @@ pub struct Config {
     /// `replace`, and printing them. No string grows by more than a piece at
     /// a time, so lengths stay small.
     pub strings: bool,
+    /// Generate optionals of scalar types: `nil`, a value where an optional
+    /// is expected, assignment, `==`/`!=` (against `nil`, another optional
+    /// or a value), and postfix `!` guarded by a test for `nil`, so it never
+    /// panics.
+    pub optionals: bool,
 }
 
 impl Default for Config {
@@ -209,6 +214,7 @@ impl Default for Config {
             print_in_constant_functions: true,
             heap: true,
             strings: true,
+            optionals: true,
         }
     }
 }
@@ -318,6 +324,8 @@ enum Shape {
     Cell,
     /// A `String` (assignable when a `var`).
     Text,
+    /// An optional `ty?`, assignable.
+    Opt,
 }
 
 struct Gen<'c> {
@@ -537,8 +545,14 @@ impl Gen<'_> {
         loop {
             let sides = if self.cfg.heap { 27 } else { 20 };
             let sides = if self.cfg.strings { sides + 4 } else { sides };
+            let sides = if self.cfg.optionals { sides + 3 } else { sides };
             match self.rng.below(sides) {
-                27..=30 => {
+                31..=33 if self.cfg.optionals => {
+                    if let Some(stmt) = self.optional_stmt(&ind) {
+                        return stmt;
+                    }
+                }
+                27..=30 if self.cfg.strings => {
                     if let Some(stmt) = self.text_stmt(&ind) {
                         return stmt;
                     }
@@ -892,6 +906,65 @@ impl Gen<'_> {
         }
     }
 
+    /// One statement on an optional, or `None` when there is none to use.
+    fn optional_stmt(&mut self, ind: &str) -> Option<String> {
+        if self.rng.chance(50) {
+            let ty = self.any_ty();
+            let name = self.fresh("o");
+            let init = if self.rng.chance(40) {
+                "nil".to_owned()
+            } else {
+                self.expr(ty, 2)
+            };
+            self.scopes.last_mut().unwrap().push(Var {
+                name: name.clone(),
+                ty,
+                assignable: true,
+                shape: Shape::Opt,
+            });
+            return Some(format!("{ind}var {name}: {}? = {init}\n", ty.name()));
+        }
+        let opts = self.heap_vars(Shape::Opt, None);
+        if opts.is_empty() {
+            return None;
+        }
+        let opt = self.rng.pick(&opts).clone();
+        let value = if self.rng.chance(30) {
+            "nil".to_owned()
+        } else {
+            self.expr(opt.ty, 2)
+        };
+        Some(format!("{ind}{} = {value}\n", opt.name))
+    }
+
+    /// A value read from an optional, of type `ty`.
+    fn optional_leaf(&mut self, ty: Ty) -> Option<String> {
+        if ty == Ty::Bool && self.rng.chance(60) {
+            let opts = self.heap_vars(Shape::Opt, None);
+            if opts.is_empty() {
+                return None;
+            }
+            let opt = self.rng.pick(&opts).clone();
+            let same: Vec<Var> = opts.iter().filter(|o| o.ty == opt.ty).cloned().collect();
+            let other = match self.rng.below(3) {
+                0 => "nil".to_owned(),
+                1 => self.rng.pick(&same).name.clone(),
+                _ => self.expr(opt.ty, 1),
+            };
+            let op = if self.rng.chance(50) { "==" } else { "!=" };
+            return Some(format!("({} {op} {other})", opt.name));
+        }
+        let opts = self.heap_vars(Shape::Opt, Some(ty));
+        if opts.is_empty() {
+            return None;
+        }
+        let name = self.rng.pick(&opts).name.clone();
+        let fallback = self.literal(ty);
+        Some(format!(
+            "(if {name} == nil {{ {fallback} }} else {{ {name}! }})"
+        ))
+    }
+
     /// A value read from the heap, of type `ty`, or `None` when there is
     /// nothing of that type to read.
     fn heap_leaf(&mut self, ty: Ty) -> Option<String> {
@@ -1036,6 +1109,14 @@ impl Gen<'_> {
     }
 
     fn leaf(&mut self, ty: Ty) -> String {
+        if self.cfg.optionals && self.heap_nesting < 2 && self.rng.chance(8) {
+            self.heap_nesting += 1;
+            let read = self.optional_leaf(ty);
+            self.heap_nesting -= 1;
+            if let Some(read) = read {
+                return read;
+            }
+        }
         if self.cfg.strings && self.heap_nesting < 2 && self.rng.chance(8) {
             self.heap_nesting += 1;
             let read = self.text_leaf(ty);

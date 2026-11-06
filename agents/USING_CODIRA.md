@@ -1924,6 +1924,11 @@ while let v = next() { }          // loops while present
 accepted wherever a `T?` is expected. `nil` needs an optional type from
 context (`let x = nil` alone is an error: annotate it).
 
+`codira run --jit` (Cranelift) compiles optionals of the types it compiles:
+`nil`, a `T` where a `T?` is expected, postfix `!` (same panic), `==`/`!=`,
+and optionals in fields, arrays, parameters and results; `if let`,
+`while let`, `match` and `?` run on LLVM, with the note.
+
 `T?` is the standard library's optional; there is no `Option[T]` enum,
 since it would add nothing `T?` lacks (`std.collections.optional`'s older
 `Optional[T]` struct converts with `to_native`/`from_native`). For "a value
@@ -3226,10 +3231,12 @@ covers the scalar core of the language (integers up to 64 bits, floats,
 methods of classes; `print`/`println` of scalars and string literals) and
 the garbage-collected heap: classes (construction, fields, assignment to
 fields), arrays (literals, indexing, assignment through an index, `len`,
-`is_empty`, `push`, `unchecked_get`) and strings (see "Strings"). A program that uses anything else
-(value structs, tuples, enums, optionals, the string methods listed under
-"Strings", closures, pipelines, generic functions, the other array methods)
-runs on the LLVM
+`is_empty`, `push`, `unchecked_get`), strings (see "Strings") and
+optionals (`nil`, wrapping, `!`, `==`/`!=`). A program that uses anything else
+(value structs, tuples, enums, pattern matching (`match`, `if let`,
+`while let`), `?`, the string methods listed under "Strings", closures,
+pipelines, format specs and `{x:?}`, generic functions, the other array
+methods) runs on the LLVM
 backend instead, with a note naming what Cranelift does not compile yet.
 What it compiles means the same as on LLVM: the same object layout, the
 same division and bounds checks and panic messages, shift and cast

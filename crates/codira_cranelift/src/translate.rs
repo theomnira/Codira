@@ -192,7 +192,9 @@ impl<'a, 'db> Translator<'a, 'db> {
     /// The type of the value `id` produces: its inferred type, or `String`
     /// for a `str` used where a `String` is expected (converted).
     pub(crate) fn value_ty(&self, id: ExprId) -> Ty {
-        if self.infer.is_string_conversion(id) {
+        if let Some(optional) = self.infer.optional_wrap(id) {
+            optional.clone()
+        } else if self.infer.is_string_conversion(id) {
             TyKind::String.intern()
         } else {
             self.infer[id].clone()
@@ -276,18 +278,25 @@ impl<'a, 'db> Translator<'a, 'db> {
     }
 
     pub(crate) fn expr(&mut self, id: ExprId) -> Lowered {
-        // A `T` used where a `T?` is expected changes representation, and
-        // this backend has no optional representation to change it into.
-        if self.infer.optional_wrap(id).is_some() {
-            return self.unsupported("an optional (`T?`) value");
-        }
         if self.infer.variant_of_expr(id).is_some() {
             return self.unsupported("an enum variant");
         }
-        let value = self.expr_inner(id)?;
+        let mut value = self.expr_inner(id)?;
         // A `str` used where a `String` is expected becomes a `String` copy.
         if self.infer.is_string_conversion(id) && !value.is_empty() {
-            return self.string_from_str(&value);
+            value = self.string_from_str(&value)?;
+        }
+        // A `T` used where a `T?` is expected becomes a present `T?`: the
+        // flag, then the payload, as the optional's layout has them.
+        if let Some(optional) = self.infer.optional_wrap(id).cloned() {
+            if let TyKind::Optional(payload) = optional.interned() {
+                let payload_len = self.types(payload)?.len();
+                if value.len() != payload_len {
+                    return Ok(Vec::new());
+                }
+                let present = self.builder.ins().iconst(types::I8, 1);
+                value.insert(0, present);
+            }
         }
         Ok(value)
     }
@@ -480,16 +489,70 @@ impl<'a, 'db> Translator<'a, 'db> {
             Expr::Closure { .. } => self.unsupported("a closure"),
             Expr::Tuple(_) => self.unsupported("a tuple"),
             Expr::Match { .. } => self.unsupported("`match`"),
-            Expr::Unwrap { .. } => self.unsupported("postfix `!`"),
+            Expr::Unwrap { expr } => self.unwrap(id, *expr),
             Expr::Propagate { .. } => self.unsupported("`?`"),
             Expr::Format { .. } => self.unsupported("a format spec"),
             _ => self.unsupported("this kind of expression"),
         }
     }
 
+    /// `x!`: the payload, or a panic at `id` when `x` is `nil`, with the
+    /// LLVM backend's message.
+    fn unwrap(&mut self, id: ExprId, inner: ExprId) -> Lowered {
+        let optional = self.operand_vals(inner)?;
+        let Some((&present, payload)) = optional.split_first() else {
+            return self.unsupported("an optional of an unexpected shape");
+        };
+        let absent = self.builder.ins().icmp_imm_u(IntCC::Equal, present, 0);
+        self.panic_if(absent, id, "unwrapped `nil` with postfix `!`")?;
+        Ok(payload.to_vec())
+    }
+
+    /// `a == b` / `a != b` on optionals, as the LLVM backend's
+    /// `gen_optional_eq` computes it: equal when both are `nil`, or both
+    /// are present with equal payloads; against a literal `nil`, whether `a`
+    /// is absent.
+    fn optional_eq(&mut self, lhs: ExprId, rhs: ExprId, payload: &Ty, negated: bool) -> Lowered {
+        let lhs_value = self.operand_vals(lhs)?;
+        let rhs_value = self.operand_vals(rhs)?;
+        let (Some(&lhs_present), Some(&rhs_present)) = (lhs_value.first(), rhs_value.first())
+        else {
+            return self.unsupported("an optional of an unexpected shape");
+        };
+        let equal = if matches!(self.body[rhs], Expr::Literal(Literal::Nil)) {
+            self.builder.ins().icmp_imm_u(IntCC::Equal, lhs_present, 0)
+        } else {
+            let (&[_, a], &[_, b]) = (lhs_value.as_slice(), rhs_value.as_slice()) else {
+                return self.unsupported("`==` on optionals of a non-scalar type");
+            };
+            let payloads_equal = match self.scalar_of(payload)? {
+                Some(ScalarTy::Float { .. }) => self.builder.ins().fcmp(FloatCC::Equal, a, b),
+                Some(_) => self.builder.ins().icmp(IntCC::Equal, a, b),
+                None => return self.unsupported("`==` on optional unit"),
+            };
+            let flags_equal = self
+                .builder
+                .ins()
+                .icmp(IntCC::Equal, lhs_present, rhs_present);
+            let absent = self.builder.ins().icmp_imm_u(IntCC::Equal, lhs_present, 0);
+            let absent_or_equal = self.builder.ins().bor(absent, payloads_equal);
+            self.builder.ins().band(flags_equal, absent_or_equal)
+        };
+        Ok(vec![if negated {
+            self.builder.ins().icmp_imm_u(IntCC::Equal, equal, 0)
+        } else {
+            equal
+        }])
+    }
+
     fn literal(&mut self, id: ExprId, literal: &Literal) -> Lowered {
         if let Literal::String(text) = literal {
             return self.str_literal(text);
+        }
+        // `nil` is the all-zero optional: absent, with a zero payload.
+        if let Literal::Nil = literal {
+            let ty = self.infer[id].clone();
+            return self.zeros(&ty);
         }
         let ty = self.scalar_of(&self.infer[id].clone())?;
         Ok(vec![match (literal, ty) {
@@ -530,6 +593,11 @@ impl<'a, 'db> Translator<'a, 'db> {
             && op != (BinaryOp::Assignment { op: None })
         {
             return self.string_binary(lhs, rhs, op);
+        }
+        if let (TyKind::Optional(payload), BinaryOp::CmpOp(CmpOp::Eq { negated })) =
+            (lhs_ty.interned(), op)
+        {
+            return self.optional_eq(lhs, rhs, &payload.clone(), negated);
         }
         match op {
             BinaryOp::Assignment { op } => {
