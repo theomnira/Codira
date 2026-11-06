@@ -281,6 +281,10 @@ class Kernel:
         self.heap_limit_mb = spec.get("heap_limit_mb", workload.spec.get("heap_limit_mb",
                                       defaults.get("heap_limit_mb", 1024)))
         self.note = spec.get("note", "")
+        # `check_differs = { cpp = "why" }`: that variant prints a different
+        # check value for a known, explained reason; it is reported, not
+        # failed.
+        self.check_differs = spec.get("check_differs", {})
         self.unavailable = {}
         # `codira = "why"` (or `rust`, `cpp`) in a kernel: that variant
         # cannot be written yet, for the reason given.
@@ -377,12 +381,17 @@ class Builder:
         if not os.path.exists(src):
             return None, "no C++ baseline"
         out = os.path.join(self.work, "bin", f"{w.name}_cpp")
-        r, _ = self.run(f"{w.name}/cpp", [self.args.cxx] + CXX_FLAGS + w.spec.get("cxx_args", []) +
+        r, _ = self.run(f"{w.name}/cpp", [cxx_for(self.args, w)] + CXX_FLAGS + w.spec.get("cxx_args", []) +
                         ["-o", out, src])
         if r is None:
             need = w.spec.get("cxx_requires")
             return None, "the C++ baseline does not build" + (f" (it needs {need})" if need else "")
         return out, None
+
+
+def cxx_for(args, w):
+    """The C++ compiler of a workload: `cxx` in its suite entry, else --cxx."""
+    return shutil.which(w.spec["cxx"]) or w.spec["cxx"] if "cxx" in w.spec else args.cxx
 
 
 def compile_times(builder, workloads, runs, rng):
@@ -413,7 +422,7 @@ def compile_times(builder, workloads, runs, rng):
                 env = None
             else:
                 art = os.path.join(tmp, f"{w.name}_cpp")
-                cmd = [builder.args.cxx] + CXX_FLAGS + w.spec.get("cxx_args", []) + \
+                cmd = [cxx_for(builder.args, w)] + CXX_FLAGS + w.spec.get("cxx_args", []) + \
                     ["-o", art, os.path.join(w.dir, f"{w.name}.cpp")]
                 env = None
             t = time.perf_counter()
@@ -564,9 +573,12 @@ def summarize(kernels, results, rng):
             cs = {x["values"].get("check") for x in s}
             res["checks"] = sorted(cs)
             checks[v] = cs
-        allc = set().union(*checks.values()) if checks else set()
+        strict = {v: c for v, c in checks.items() if v not in k.check_differs}
+        allc = set().union(*strict.values()) if strict else set()
         r["check_agrees"] = len(allc) <= 1
         r["check"] = sorted(allc)
+        r["check_differs"] = {v: why for v, why in k.check_differs.items()
+                              if v in checks and checks[v] != allc}
         for other in ("rust", "cpp"):
             a, b = r.get("codira", {}).get("ns"), r.get(other, {}).get("ns")
             if a and b:
@@ -689,11 +701,17 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests):
             rss = " / ".join("–" if "median_rss_kb" not in r.get(v, {}) else
                              f"{r[v]['median_rss_kb'] / 1024:.0f}" for v in VARIANTS)
             check = "same" if r["check_agrees"] else "DIFFERENT: " + ", ".join(r["check"])
+            for v, why in r.get("check_differs", {}).items():
+                check += f" ({v}: differs, expected)"
+                notes.append(f"`{k.name}` {v} check value differs: {why}")
             L.append(f"| {k.name} | {cells[0]} | {cells[1]} | {cells[2]} | "
                      f"{fmt_ratio(r.get('ratio_rust'), r.get('ratio_rust_ci'))} | "
                      f"{fmt_ratio(r.get('ratio_cpp'), r.get('ratio_cpp_ci'))} | {rss} | {check} |")
             if k.note:
                 notes.append(f"`{k.name}`: {k.note}")
+        if "cxx" in w.spec:
+            notes.append(f"C++ compiler for this workload: `{w.spec['cxx']}` "
+                         f"({w.spec.get('cxx_why', 'see suite.toml')})")
         lat = [k for k in ks if any("median_p50_ns" in results[k.id].get(v, {}) for v in VARIANTS)]
         if lat:
             L.append("\nLatency per operation (median over the runs of each percentile, microseconds):\n")

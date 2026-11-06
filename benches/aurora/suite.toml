@@ -5,7 +5,8 @@
 # function of the Codira program and one command-line argument of the
 # baselines; all of them print the same check value.
 #
-# Kernel keys:
+# Kernel keys (besides those below, `check_differs = { cpp = "why" }`
+# declares a variant whose check value differs for a known reason):
 #   name           the function / argument
 #   ci = true      part of the CI subset (`--suite ci`)
 #   heap_limit_mb  the Codira GC heap cap for this kernel (default below)
@@ -104,4 +105,25 @@ kernels = [
   { name = "insert_string_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
   { name = "lookup_string_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
   { name = "churn_i64_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
+]
+
+[[workload]]
+name = "json"
+title = "JSON: parsing, printing, pretty-printing"
+setup = ["gen_inputs.py"]
+rust_cargo = "rust/Cargo.toml"
+rust_bin = "aurora_json_rust"
+cxx_requires = "RapidJSON headers (`rapidjson-dev`)"
+cxx = "g++"
+cxx_why = "RapidJSON 1.1, as packaged, assigns to a const member in `GenericStringRef`, which clang 22 rejects"
+kernels = [
+  { name = "parse_twitter", ci = true },
+  { name = "parse_canada", ci = true },
+  { name = "parse_deep" },
+  { name = "print_twitter", ci = true },
+  { name = "print_canada", ci = true, check_differs = { cpp = "RapidJSON prints 320 of the 600,000 floats one or two digits longer than the shortest round-trip text (Grisu2), 357 bytes in all; the values read back the same" } },
+  { name = "print_deep" },
+  { name = "pretty_twitter" },
+  { name = "pretty_canada", check_differs = { cpp = "RapidJSON prints 320 of the 600,000 floats one or two digits longer than the shortest round-trip text (Grisu2), 357 bytes in all; the values read back the same" } },
+  { name = "pretty_deep" },
 ]

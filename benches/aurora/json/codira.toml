@@ -1,4 +1,4 @@
 [package]
-name = "json_bench"
+name = "aurora_json"
 authors = []
 version = "0.1.0"

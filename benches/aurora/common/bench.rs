@@ -26,6 +26,11 @@ pub fn now() -> Instant {
 pub fn report(start: Instant, check: u64) {
     let ns = start.elapsed().as_nanos();
     println!("@@ ns={ns} check={check}");
+    report_rss();
+}
+
+/// Prints the peak resident set (after a kernel that printed its own line).
+pub fn report_rss() {
     println!("@@ {}", peak_rss());
 }
 

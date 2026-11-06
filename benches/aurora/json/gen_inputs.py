@@ -15,7 +15,7 @@
 #   - deep.json: 4,000 trees of objects and arrays nested 100 deep,
 #     about 10 MB.
 #
-#   python3 examples/json_bench/gen_inputs.py <directory>
+#   python3 benches/aurora/json/gen_inputs.py <directory>  (scripts/bench.py runs it)
 
 import json
 import os

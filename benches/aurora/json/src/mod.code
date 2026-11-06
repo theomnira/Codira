@@ -1,0 +1,123 @@
+// AURORA: JSON. Parsing, printing and pretty-printing three inputs
+// (`gen_inputs.py` writes them: `twitter`, records of a social network's
+// API; `canada`, GeoJSON polygons of 17-digit floats; `deep`, trees nested
+// 100 deep) with `std.json.json`, against `rust/` (`serde_json::Value`
+// with `preserve_order` and `float_roundtrip`, as here) and `json.cpp`
+// (RapidJSON's DOM, full-precision parsing). Each kernel repeats its phase
+// `REPS()` times, so the collector runs inside the timing as it would in a
+// program that handles many documents; the time is for all of them.
+//
+// Run from the directory holding `data/`, as `scripts/bench.py` does. The
+// check value of a parse is the node count, the bytes of strings and keys,
+// the wrapping sum of the integers (`true` counts 1) and the wrapping sum
+// of the floats' bit patterns, folded into one number; that of a print is
+// the length of the text.
+
+import std.json.json.{Json, JsonObject, parse, to_string, to_pretty_string}
+import std.fs.file.{read_file}
+import std.result.result.{Result}
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+extern "codira-intrinsic" {
+    func __intrinsic_bitcast_f64_u64(value: f64) -> u64;
+}
+
+func REPS() -> usize { 5 }
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+class Sums {
+    nodes: u64,
+    strings: u64,
+    ints: u64,
+    floats: u64,
+}
+
+func walk(v: Json, s: Sums) {
+    s.nodes += 1
+    match v {
+        Json.Null -> {},
+        Json.Bool(b) -> {
+            if b { s.ints += 1 }
+        },
+        Json.Int(n) -> { s.ints += n as u64 },
+        Json.Float(x) -> { s.floats += __intrinsic_bitcast_f64_u64(x) },
+        Json.Str(t) -> { s.strings += t.len() as u64 },
+        Json.Arr(items) -> {
+            for item in items { walk(item, s) }
+        },
+        Json.Obj(o) -> {
+            var i: usize = 0
+            while i < o.len() {
+                if let k = o.key_at(i) { s.strings += k.len() as u64 }
+                if let item = o.value_at(i) { walk(item, s) }
+                i += 1
+            }
+        },
+    }
+}
+
+func load(path: str) -> String {
+    match read_file(path) {
+        Result.Ok(bytes) -> {
+            if let text = string_from_utf8(bytes) { text } else { "".to_string() }
+        },
+        Result.Err(_) -> "".to_string(),
+    }
+}
+
+func parsed(text: String) -> Json {
+    match parse(text) {
+        Result.Ok(v) -> v,
+        Result.Err(e) -> {
+            println("parse error: ", e.message())
+            Json.Null
+        },
+    }
+}
+
+func run_parse(path: str) {
+    let text = load(path)
+    let start = now()
+    var value = Json.Null
+    var i: usize = 0
+    while i < REPS() {
+        value = parsed(text)
+        i += 1
+    }
+    let ns = now() - start
+    let s = Sums { nodes: 0, strings: 0, ints: 0, floats: 0 }
+    walk(value, s)
+    let check = s.nodes * 1000003 + s.strings * 10007 + s.ints * 101 + s.floats
+    println("@@ ns=", ns, " check=", check)
+}
+
+func run_print(path: str, pretty: bool) {
+    let value = parsed(load(path))
+    let start = now()
+    var len: usize = 0
+    var i: usize = 0
+    while i < REPS() {
+        len = if pretty { to_pretty_string(value).len() } else { to_string(value).len() }
+        i += 1
+    }
+    report(start, len as u64)
+}
+
+public func parse_twitter() { run_parse("data/twitter.json") }
+public func parse_canada() { run_parse("data/canada.json") }
+public func parse_deep() { run_parse("data/deep.json") }
+public func print_twitter() { run_print("data/twitter.json", false) }
+public func print_canada() { run_print("data/canada.json", false) }
+public func print_deep() { run_print("data/deep.json", false) }
+public func pretty_twitter() { run_print("data/twitter.json", true) }
+public func pretty_canada() { run_print("data/canada.json", true) }
+public func pretty_deep() { run_print("data/deep.json", true) }

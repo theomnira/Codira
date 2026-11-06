@@ -1,7 +1,7 @@
-# The Rust half of the JSON benchmarks: `serde_json::Value`, built on its
-# own, outside the workspace (and its `Cargo.lock`):
+# AURORA: JSON, the Rust baseline: `serde_json::Value`, built on its own,
+# outside the workspace (and its `Cargo.lock`), by `scripts/bench.py`:
 #
-#   cargo build --release --manifest-path examples/json_bench/rust/Cargo.toml
+#   cargo build --release --manifest-path benches/aurora/json/rust/Cargo.toml
 #
 # `preserve_order` (the default here) keeps object members in insertion
 # order in an `IndexMap`, as `std.json.json` does; without it `serde_json`
@@ -9,9 +9,8 @@
 #
 #   cargo build --release --no-default-features --manifest-path ...
 #
-# `bench.py` builds it with `preserve_order,float_roundtrip`.
 [package]
-name = "json_bench_rust"
+name = "aurora_json_rust"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -19,7 +18,7 @@ publish = false
 [workspace]
 
 [features]
-default = ["preserve_order"]
+default = ["preserve_order", "float_roundtrip"]
 preserve_order = ["serde_json/preserve_order"]
 # Correctly rounded float parsing, as Codira's (Rust's `f64::from_str`);
 # without it `serde_json` parses some 17-digit floats an ulp off (on
