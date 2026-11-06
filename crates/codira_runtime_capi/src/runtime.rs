@@ -204,6 +204,7 @@ pub unsafe extern "C" fn codira_runtime_create(
         heap_limit_note: None,
         gc_policy: codira_runtime::GcPolicy::default(),
         fuel: None,
+        fail_nth_allocation: None,
     };
 
     let runtime = match codira_runtime::Runtime::new(runtime_options) {
