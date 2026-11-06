@@ -33,6 +33,7 @@ pub mod native_hash;
 pub mod native_json;
 pub mod native_memory;
 mod native_process;
+pub mod native_random;
 pub mod native_time;
 mod reflection;
 pub mod string;
@@ -522,6 +523,9 @@ impl Runtime {
         // File services for `std/fs/fs.code`, hashing for `std/crypto/hash.code`
         options.user_functions.extend(native_fs::functions());
         options.user_functions.extend(native_hash::functions());
+        // Entropy for `std/random/rng.code` and hash-table keys for
+        // `std/hashlib/hash.code`
+        options.user_functions.extend(native_random::functions());
         // Float formatting for `std/json/json.code`
         options.user_functions.extend(native_json::functions());
 

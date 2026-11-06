@@ -31,6 +31,8 @@ thiserror = { workspace = true }
 # The hash services (`native_hash`): reviewed implementations, never our own.
 sha2 = { workspace = true }
 blake3 = { workspace = true }
+# The entropy service (`native_random`): the operating system's generator.
+getrandom = { workspace = true }
 # Shortest round-trip float formatting for `std.json` (`native_json`).
 ryu = { workspace = true }
 # The byte scan of `lines()` and of `split` on one ASCII byte.

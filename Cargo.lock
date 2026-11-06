@@ -1046,6 +1046,7 @@ dependencies = [
  "codira_memory",
  "codira_project",
  "codira_test",
+ "getrandom 0.2.15",
  "itertools 0.12.1",
  "libc",
  "libloading",
