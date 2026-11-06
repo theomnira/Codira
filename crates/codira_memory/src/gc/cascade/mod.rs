@@ -1147,7 +1147,7 @@ impl Cascade {
         self.deferred_bytes.store(0, Ordering::Relaxed);
     }
 
-    fn register(&self) -> (Arc<ThreadState>, Arc<epoch::Slot>) {
+    fn register(&self) -> (Arc<ThreadState>, sync::Arc<epoch::Slot>) {
         let id = self.next_thread.fetch_add(1, Ordering::Relaxed);
         let state = Arc::new(ThreadState {
             id,
@@ -1165,7 +1165,7 @@ impl Cascade {
         (state, slot)
     }
 
-    fn unregister(&self, state: &Arc<ThreadState>, slot: &Arc<epoch::Slot>) {
+    fn unregister(&self, state: &Arc<ThreadState>, slot: &sync::Arc<epoch::Slot>) {
         self.epochs.unregister(slot);
         self.threads.lock().retain(|t| !Arc::ptr_eq(t, state));
     }

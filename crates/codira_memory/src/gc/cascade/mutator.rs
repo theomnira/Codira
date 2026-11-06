@@ -51,7 +51,7 @@ pub struct Mutator {
     cascade: Arc<Cascade>,
     host: Arc<dyn CascadeHost>,
     state: Arc<ThreadState>,
-    slot: Arc<Slot>,
+    slot: super::sync::Arc<Slot>,
     quiescent_before: bool,
     _guard: MutatorGuard,
 }
