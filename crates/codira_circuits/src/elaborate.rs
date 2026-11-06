@@ -649,12 +649,13 @@ impl Elaborator<'_> {
                  booleans are)",
             )),
             Expr::Scope { .. }
+            | Expr::Group { .. }
             | Expr::Spawn { .. }
             | Expr::ChannelSend { .. }
             | Expr::ChannelReceive { .. } => Err(self.error(
                 frame,
                 id,
-                "`scope`, `spawn` and channels are not supported in circuits",
+                "`scope`, `group`, `spawn` and channels are not supported in circuits",
             )),
             Expr::Perform { .. } | Expr::Handle { .. } | Expr::Resume { .. } => Err(self.error(
                 frame,

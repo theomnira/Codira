@@ -16,15 +16,123 @@
 //! * `select { .. }`: each arm's operation is typed like the operator it is
 //!   written with, a receive arm's binding has the channel's element type, and
 //!   the arms' bodies share one type, which is the `select`'s.
+//! * `group { body }`: the body is typed as a statement; every task spawned
+//!   directly in it must return the same type `R`, and the group is
+//!   [`group_shape`]`(R)`: `Result[[T], E]` when `R` is a `Result[T, E]` (in
+//!   the sense of `?`) whose `Ok` holds the declaration's type parameter,
+//!   `[R]` otherwise. A group that spawns nothing is reported by the
+//!   validator; its type is unknown.
 use super::{error_type, Expectation, InferenceDiagnostic, InferenceResultBuilder};
 use crate::{
-    code_model::Session,
-    expr::{ExprId, SelectArm, SelectOp},
-    ty::{IntTy, Substitution, Ty, TyKind},
-    HirDisplay, Name,
+    code_model::{EnumVariant, Session},
+    expr::{direct_spawns, Expr, ExprId, SelectArm, SelectOp},
+    ty::{result_variants, IntTy, Substitution, Ty, TyKind},
+    HirDatabase, HirDisplay, Name,
 };
 
+/// What a `group` whose tasks return `R` evaluates to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupShape {
+    /// `[R]`: every task's result, in spawn order.
+    Array {
+        /// `[R]`.
+        value: Ty,
+    },
+    /// `Result[[T], E]`, for tasks returning `Result[T, E]`: `Ok` of every
+    /// task's `Ok` payload in spawn order, or the lowest-index `Err`.
+    Result {
+        /// The `Ok` variant of `Result`.
+        ok: EnumVariant,
+        /// The `Err` variant of `Result`.
+        err: EnumVariant,
+        /// `Result[[T], E]`.
+        value: Ty,
+        /// `[T]`.
+        array: Ty,
+    },
+}
+
+impl GroupShape {
+    /// The type of the group expression.
+    pub fn value(&self) -> &Ty {
+        match self {
+            GroupShape::Array { value } | GroupShape::Result { value, .. } => value,
+        }
+    }
+}
+
+/// The value of a group whose tasks return `result` (see the module
+/// documentation).
+pub fn group_shape(db: &dyn HirDatabase, result: &Ty) -> GroupShape {
+    let array_of = |ty: &Ty| TyKind::Array(ty.clone()).intern();
+    if let TyKind::Enum(e, args) = result.interned() {
+        if let Some((ok, err)) = result_variants(db, *e) {
+            // The `Ok` payload as declared: it must be one of the enum's own
+            // type parameters, so that `Result[[T], E]` is an instance of the
+            // same declaration.
+            let declared = ok.field_types(db);
+            if let Some(TyKind::TypeParam(param, _)) = declared.first().map(Ty::interned) {
+                let index = param.index as usize;
+                if index < args.len() {
+                    let array = array_of(&args[index]);
+                    let value_args: Substitution = args
+                        .iter()
+                        .enumerate()
+                        .map(|(i, arg)| if i == index { array.clone() } else { arg.clone() })
+                        .collect();
+                    return GroupShape::Result {
+                        ok,
+                        err,
+                        value: TyKind::Enum(*e, value_args).intern(),
+                        array,
+                    };
+                }
+            }
+        }
+    }
+    GroupShape::Array {
+        value: array_of(result),
+    }
+}
+
 impl InferenceResultBuilder<'_> {
+    /// `group { body }`.
+    pub(super) fn infer_group(&mut self, group: ExprId, body: ExprId) -> Ty {
+        self.infer_expr(body, &Expectation::none());
+        let mut result: Option<Ty> = None;
+        for spawn in direct_spawns(&self.body, group) {
+            let Expr::Spawn { call } = self.body[spawn] else {
+                continue;
+            };
+            let Some(ty) = self.type_of_expr.get(call).cloned() else {
+                continue;
+            };
+            let ty = self.normalize(&ty);
+            if ty.is_unknown() {
+                continue;
+            }
+            match &result {
+                None => result = Some(ty),
+                Some(first) => {
+                    if !self.unify(first, &ty) {
+                        self.diagnostics.push(InferenceDiagnostic::MismatchedTypes {
+                            expected: first.clone(),
+                            found: ty,
+                            id: call,
+                        });
+                    }
+                }
+            }
+        }
+        match result {
+            Some(result) => {
+                let result = self.resolve_ty_as_far_as_possible(result);
+                group_shape(self.db, &result).value().clone()
+            }
+            None => error_type(),
+        }
+    }
+
     pub(super) fn infer_spawn(&mut self, call: ExprId) -> Ty {
         self.infer_expr(call, &Expectation::none());
         Ty::unit()

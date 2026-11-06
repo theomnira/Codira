@@ -206,6 +206,20 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
             }
         } else if let codira_hir::Expr::Array(..) = expr {
             self.collect_type(self.hir_types.type_id(&infer[expr_id]));
+        } else if let codira_hir::Expr::Group { .. } = expr {
+            // A group allocates the array of its tasks' results (inside the
+            // `Result` its value may be).
+            let spawns = codira_hir::direct_spawns(body, expr_id);
+            if let Some(codira_hir::Expr::Spawn { call }) = spawns.first().map(|&s| &body[s]) {
+                match codira_hir::group_shape(self.db, &infer[*call]) {
+                    codira_hir::GroupShape::Array { value } => {
+                        self.collect_type(self.hir_types.type_id(&value));
+                    }
+                    codira_hir::GroupShape::Result { array, .. } => {
+                        self.collect_type(self.hir_types.type_id(&array));
+                    }
+                }
+            }
         } else if let codira_hir::Expr::Index { index, .. } = expr {
             // A slice, `xs[lo..hi]`, is a new array.
             if matches!(body[*index], codira_hir::Expr::Range { .. }) {

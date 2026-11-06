@@ -9,13 +9,13 @@ use super::{
     types, BlockLike, CompletedMarker, Marker, Parser, SyntaxKind, TokenSet, ARG_LIST, ARRAY_EXPR,
     BIN_EXPR, BLOCK_EXPR, BREAK_EXPR, CALL_EXPR, CAST_EXPR, CHANNEL_RECV_EXPR, CHANNEL_SEND_EXPR,
     CHOOSE_EXPR, CLOSURE_EXPR, COMPTIME_EXPR, CONDITION, CONTINUE_EXPR, DECREASES_CLAUSE, EOF,
-    ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER, FOR_EXPR, HANDLER_ARM, HANDLER_ARM_LIST,
-    HANDLE_EXPR, HOLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER, INVARIANT_CLAUSE,
-    LET_STMT, LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, OFFER_EXPR, PARAM,
-    PARAM_LIST, PAREN_EXPR, PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR, PROPAGATE_EXPR,
-    RANGE_EXPR, RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT, RETURN_EXPR, RET_TYPE, SCOPE_EXPR,
-    SELECT_ARM, SELECT_ARM_LIST, SELECT_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR,
-    TUPLE_EXPR, WHILE_EXPR,
+    ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER, FOR_EXPR, GROUP_EXPR, HANDLER_ARM,
+    HANDLER_ARM_LIST, HANDLE_EXPR, HOLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER,
+    INVARIANT_CLAUSE, LET_STMT, LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR,
+    OFFER_EXPR, PARAM, PARAM_LIST, PAREN_EXPR, PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR,
+    PROPAGATE_EXPR, RANGE_EXPR, RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT, RETURN_EXPR, RET_TYPE,
+    SCOPE_EXPR, SELECT_ARM, SELECT_ARM_LIST, SELECT_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR,
+    TRY_EXPR, TUPLE_EXPR, WHILE_EXPR,
 };
 use crate::{parsing::grammar::paths::PATH_FIRST, SyntaxKind::METHOD_CALL_EXPR};
 
@@ -541,6 +541,11 @@ fn atom_expr(p: &mut Parser<'_>, r: Restrictions) -> Option<(CompletedMarker, Bl
         return Some((scope_expr(p), BlockLike::Block));
     }
 
+    // `group { .. }`, under the same condition as `scope`.
+    if !r.forbid_structs && p.at_contextual_kw("group") && p.nth_at(1, T!['{']) {
+        return Some((group_expr(p), BlockLike::Block));
+    }
+
     // `offer ep { .. } or { .. }`: the branch the session's other endpoint
     // chose. Promoted only before a name and `{`.
     if !r.forbid_structs && p.at_contextual_kw("offer") && p.nth(1) == IDENT && p.nth_at(2, T!['{'])
@@ -685,6 +690,17 @@ fn scope_expr(p: &mut Parser<'_>) -> CompletedMarker {
     p.bump_remap(T![scope]);
     block(p);
     m.complete(p, SCOPE_EXPR)
+}
+
+/// `group { .. }`: a task group. Every task `spawn`ed inside the block is
+/// joined before control leaves it, and the group's value is their results
+/// in spawn order (see `codira_hir::expr::tasks`).
+fn group_expr(p: &mut Parser<'_>) -> CompletedMarker {
+    assert!(p.at_contextual_kw("group"));
+    let m = p.start();
+    p.bump_remap(T![group]);
+    block(p);
+    m.complete(p, GROUP_EXPR)
 }
 
 /// `select { arm, .. }`: waits until one of the arms' channel operations can

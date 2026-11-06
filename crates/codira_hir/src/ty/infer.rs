@@ -36,6 +36,7 @@ mod pipelines;
 mod place_expr;
 mod propagate;
 pub use propagate::{error_conversions, main_result, result_variants, MainResult};
+pub use tasks::{group_shape, GroupShape};
 mod strings;
 mod tasks;
 mod type_variable;
@@ -1249,6 +1250,7 @@ impl InferenceResultBuilder<'_> {
             Expr::Handle { body, arms } => self.infer_handle(tgt_expr, *body, arms, expected),
             Expr::Resume { value } => self.infer_resume(tgt_expr, *value),
             Expr::Scope { body } => self.infer_expr_coerce(*body, expected),
+            Expr::Group { body } => self.infer_group(tgt_expr, *body),
             Expr::Spawn { call } => self.infer_spawn(*call),
             Expr::ChannelSend { channel, value } => {
                 self.infer_channel_send(tgt_expr, *channel, *value)
@@ -2140,6 +2142,21 @@ impl InferenceResultBuilder<'_> {
                 ty
             }
             BuiltinFn::Channel => self.infer_channel_new(tgt_expr, args),
+            BuiltinFn::Cancelled => {
+                if !args.is_empty() {
+                    self.diagnostics.push(InferenceDiagnostic::ExprError {
+                        id: tgt_expr.into(),
+                        message: format!(
+                            "`cancelled` takes no arguments, found {}",
+                            args.len()
+                        ),
+                    });
+                }
+                for &arg in args {
+                    self.infer_expr(arg, &Expectation::none());
+                }
+                TyKind::Bool.intern()
+            }
             BuiltinFn::ArrayFilled => {
                 if args.len() != 2 {
                     self.diagnostics.push(InferenceDiagnostic::ExprError {

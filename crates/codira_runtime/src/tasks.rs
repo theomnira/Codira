@@ -530,9 +530,9 @@ extern "C" fn scope_end(scope: usize) {
     // more; they are freed with the last reference to the scope.
 }
 
-/// `cancelled()`: whether the current task has been cancelled.
-extern "C" fn task_cancelled() -> bool {
-    is_cancelled()
+/// `cancelled()`: 1 if the current task has been cancelled, 0 otherwise.
+extern "C" fn task_cancelled() -> usize {
+    usize::from(is_cancelled())
 }
 
 extern "C" fn channel_new(scope: usize, capacity: usize, element_size: usize) -> usize {
@@ -855,7 +855,7 @@ pub(crate) fn functions() -> Vec<FunctionDefinition> {
             "codira.session_receive",
         ),
         IntoFunctionDefinition::into(
-            task_cancelled as extern "C" fn() -> bool,
+            task_cancelled as extern "C" fn() -> usize,
             "codira.task_cancelled",
         ),
     ]

@@ -996,6 +996,9 @@ impl<'ctx> Exec<'_, 'ctx> {
                     (
                         Some(
                             crate::BuiltinFn::ArrayFilled
+                            // Another task may cancel this one at any time:
+                            // an unconstrained `bool`.
+                            | crate::BuiltinFn::Cancelled
                             | crate::BuiltinFn::Fma
                             | crate::BuiltinFn::Select
                             | crate::BuiltinFn::Likely

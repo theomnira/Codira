@@ -601,6 +601,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             Expr::Handle { body: handled, arms } => self.gen_handle(expr, *handled, arms),
             Expr::Resume { value } => self.gen_resume(*value),
             Expr::Scope { body: scoped } => self.gen_scope(*scoped),
+            Expr::Group { body: grouped } => self.gen_group(expr, *grouped),
             Expr::Spawn { call } => self.gen_spawn(*call),
             Expr::ChannelSend { channel, value } => self.gen_channel_send(*channel, *value),
             Expr::ChannelReceive { channel } => self.gen_channel_receive(expr, *channel),
@@ -631,6 +632,23 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     ) -> Option<BasicValueEnum<'ink>> {
         match builtin {
             BuiltinFn::Channel => unreachable!("lowered by `gen_channel_new`"),
+            BuiltinFn::Cancelled => {
+                let cancelled = self
+                    .call_runtime(&intrinsics::task_cancelled, &[])
+                    .expect("`codira.task_cancelled` returns a flag")
+                    .into_int_value();
+                Some(
+                    self.builder
+                        .build_int_compare(
+                            inkwell::IntPredicate::NE,
+                            cancelled,
+                            cancelled.get_type().const_zero(),
+                            "cancelled",
+                        )
+                        .expect("failed to test a flag")
+                        .into(),
+                )
+            }
             BuiltinFn::ArrayLen
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen
@@ -980,6 +998,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             | BuiltinFn::Fma
             | BuiltinFn::ArrayFilled
             | BuiltinFn::Channel
+            | BuiltinFn::Cancelled
             | BuiltinFn::String(_) => {
                 unreachable!("free-function builtins are lowered by `gen_builtin_call`")
             }
@@ -4290,7 +4309,17 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         expr: ExprId,
         length_value: inkwell::values::IntValue<'ink>,
     ) -> RuntimeArrayValue<'ink> {
-        let array_ty = &self.infer[expr];
+        let array_ty = self.infer[expr].clone();
+        self.alloc_array_of(&array_ty, length_value)
+    }
+
+    /// Allocates an array of type `array_ty` with room for `length_value`
+    /// elements; see [`Self::alloc_array`].
+    fn alloc_array_of(
+        &mut self,
+        array_ty: &Ty,
+        length_value: inkwell::values::IntValue<'ink>,
+    ) -> RuntimeArrayValue<'ink> {
         let element_ty = array_ty
             .as_array()
             .expect("the type of an array literal expression must be an Array");
