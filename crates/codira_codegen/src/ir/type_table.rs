@@ -185,7 +185,8 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
                 codira_hir::ArrayMethod::Copy
                 | codira_hir::ArrayMethod::Map
                 | codira_hir::ArrayMethod::Filter,
-            ) = builtin
+            )
+            | codira_hir::BuiltinFn::Pipeline(codira_hir::PipelineOp::Collect) = builtin
             {
                 self.collect_type(self.hir_types.type_id(&infer[expr_id]));
             }

@@ -407,6 +407,7 @@ pub(crate) fn match_ty(pattern: &Ty, ty: &Ty, map: &mut FxHashMap<TypeParamId, T
         (TyKind::Function(xs), TyKind::Function(ys)) => match_all(xs, ys, map),
         (TyKind::Array(x), TyKind::Array(y))
         | (TyKind::Channel(x), TyKind::Channel(y))
+        | (TyKind::Iter(x), TyKind::Iter(y))
         | (TyKind::Optional(x), TyKind::Optional(y)) => match_ty(x, y, map),
         _ => pattern == ty,
     }

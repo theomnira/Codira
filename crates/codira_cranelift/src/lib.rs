@@ -769,7 +769,15 @@ impl<'a, 'db> Translator<'a, 'db> {
             Expr::Cast { expr, .. } => self.cast(id, *expr),
             Expr::Tuple(elements) if elements.is_empty() => Ok(None),
             Expr::Missing => self.unsupported("an expression the front end could not lower"),
+            // A lazy pipeline (`xs.iter().map(f).sum()`) is fused into one
+            // loop by the LLVM backend only, like the arrays it reads.
+            Expr::MethodCall { .. }
+                if matches!(self.infer.builtin_call(id), Some(BuiltinFn::Pipeline(_))) =>
+            {
+                self.unsupported("a lazy pipeline (`iter()`, `map`, `sum`, ...)")
+            }
             Expr::MethodCall { .. } => self.unsupported("a method call"),
+            Expr::For { .. } => self.unsupported("a `for` loop"),
             Expr::Index { .. } => self.unsupported("indexing"),
             Expr::RecordLit { .. } => self.unsupported("a struct literal"),
             Expr::Field { .. } => self.unsupported("a field access"),

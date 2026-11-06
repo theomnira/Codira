@@ -232,8 +232,9 @@ pub fn is_inlined_closure_literal(body: &crate::Body, closure: crate::ExprId) ->
     !has_return(body, *inner)
 }
 
-/// Whether `closure` is the closure argument of an array method that
-/// compiles it in place (see [`is_inlined_closure_literal`]).
+/// Whether `closure` is the closure argument of an array method or a
+/// pipeline operation, which compile it in place (see
+/// [`is_inlined_closure_literal`]).
 pub fn is_inlined_closure_arg(
     body: &crate::Body,
     infer: &crate::InferenceResult,
@@ -245,6 +246,9 @@ pub fn is_inlined_closure_arg(
     body.exprs()
         .any(|(expr, e)| match (e, infer.builtin_call(expr)) {
             (crate::Expr::MethodCall { args, .. }, Some(crate::BuiltinFn::Array(method))) => method
+                .closure_arg()
+                .is_some_and(|index| args.get(index) == Some(&closure)),
+            (crate::Expr::MethodCall { args, .. }, Some(crate::BuiltinFn::Pipeline(op))) => op
                 .closure_arg()
                 .is_some_and(|index| args.get(index) == Some(&closure)),
             _ => false,

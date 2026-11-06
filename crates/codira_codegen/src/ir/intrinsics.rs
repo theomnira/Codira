@@ -93,6 +93,11 @@ fn collect_expr<'ink>(
             collect_array_intrinsics(context, target, intrinsics);
             *needs_alloc = true;
         }
+        // `collect` makes and grows an array.
+        if builtin == codira_hir::BuiltinFn::Pipeline(codira_hir::PipelineOp::Collect) {
+            collect_array_intrinsics(context, target, intrinsics);
+            *needs_alloc = true;
+        }
     } else if let Expr::Call { callee, .. } = expr {
         match infer[*callee].as_callable_def() {
             Some(codira_hir::CallableDef::Struct(_)) => {

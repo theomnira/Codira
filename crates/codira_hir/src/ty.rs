@@ -123,6 +123,12 @@ pub enum TyKind {
     /// An dynamically sized array type
     Array(Ty),
 
+    /// `Iter[T]`: a lazy pipeline yielding `T`s (`xs.iter().map(f)`). It
+    /// has no run-time representation -- code generation compiles the whole
+    /// chain into one loop -- so it never outlives the expression that
+    /// makes it (see `builtin::PipelineOp`).
+    Iter(Ty),
+
     /// `Channel[T]`: a bounded, blocking channel of `T` values between
     /// tasks (see `expr::validator::tasks`). A runtime handle; its lifetime
     /// is the `scope` that created it.
@@ -418,6 +424,7 @@ impl Ty {
             TyKind::Int(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Array(ty) => Some(format!("[{}]", ty.display(db))),
             TyKind::Channel(ty) => Some(format!("core::Channel[{}]", ty.guid_string(db)?)),
+            TyKind::Iter(ty) => Some(format!("core::Iter[{}]", ty.guid_string(db)?)),
             TyKind::Session(session, dual) => Some(format!(
                 "{}session {}::{}",
                 if *dual { "dual " } else { "" },
@@ -514,6 +521,7 @@ impl Ty {
             (TyKind::Tuple(arity1, _), TyKind::Tuple(arity2, _)) => arity1 == arity2,
             (TyKind::Array(_), TyKind::Array(_))
             | (TyKind::Channel(_), TyKind::Channel(_))
+            | (TyKind::Iter(_), TyKind::Iter(_))
             | (TyKind::Optional(_), TyKind::Optional(_))
             | (TyKind::Bool, TyKind::Bool) => true,
             (TyKind::Session(s1, d1), TyKind::Session(s2, d2)) => s1 == s2 && d1 == d2,
@@ -707,6 +715,7 @@ impl HirDisplay for Ty {
             }
             TyKind::Array(elem_ty) => write!(f, "[{}]", elem_ty.display(f.db)),
             TyKind::Channel(elem_ty) => write!(f, "Channel[{}]", elem_ty.display(f.db)),
+            TyKind::Iter(elem_ty) => write!(f, "Iter[{}]", elem_ty.display(f.db)),
             TyKind::Session(session, dual) => {
                 let prefix = if *dual { "dual " } else { "" };
                 write!(f, "{prefix}{}", session.name(f.db))
@@ -751,7 +760,10 @@ impl TypeWalk for Ty {
         match self.interned() {
             // Recurse, not just visit: an element type can itself contain
             // types (`[(T, U)]`), which a resolution pass must reach too.
-            TyKind::Array(elem_ty) | TyKind::Channel(elem_ty) | TyKind::Optional(elem_ty) => {
+            TyKind::Array(elem_ty)
+            | TyKind::Channel(elem_ty)
+            | TyKind::Iter(elem_ty)
+            | TyKind::Optional(elem_ty) => {
                 elem_ty.walk(f);
             }
             _ => {
@@ -765,7 +777,10 @@ impl TypeWalk for Ty {
 
     fn walk_mut(&mut self, f: &mut impl FnMut(&mut Ty)) {
         match self.interned_mut() {
-            TyKind::Array(elem_ty) | TyKind::Channel(elem_ty) | TyKind::Optional(elem_ty) => {
+            TyKind::Array(elem_ty)
+            | TyKind::Channel(elem_ty)
+            | TyKind::Iter(elem_ty)
+            | TyKind::Optional(elem_ty) => {
                 elem_ty.walk_mut(f);
             }
             _ => {

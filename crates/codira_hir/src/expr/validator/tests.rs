@@ -233,8 +233,8 @@ fn test_for_range_and_continue_errors() {
     }
     "#,
     ), @"
-    38..43: a range can only be used as the iterable of a `for` loop for now; there is no range value type yet
-    57..58: cannot iterate over a value of type `i32`: a `for` loop iterates over a range (`a..b`, `a..=b`) or an array
+    38..43: a range can only be used as the iterable of a `for` loop or as the source of a pipeline (`(0..n).map(f).sum()`) for now; there is no range value type yet
+    57..58: cannot iterate over a value of type `i32`: a `for` loop iterates over a range (`a..b`, `a..=b`), an array, a pipeline (`xs.iter().map(f)`) or an object of a class with a method `next(self) -> T?`
     79..80: mismatched type
     76..77: a range's bounds must be integers, found `bool`
     93..94: a `for` loop's pattern must always match: use a name, `_` or a tuple of those

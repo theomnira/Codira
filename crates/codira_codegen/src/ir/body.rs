@@ -42,6 +42,7 @@ mod arrays;
 mod closures;
 mod effects;
 mod merge;
+mod pipelines;
 mod propagate;
 mod safety;
 mod strings;
@@ -538,7 +539,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 pat,
                 iterable,
                 body: loop_body,
-            } => self.gen_for(*pat, *iterable, *loop_body),
+            } => self.gen_for(expr, *pat, *iterable, *loop_body),
             Expr::Continue => self.gen_continue(),
             Expr::Match { expr: scrutinee, arms, .. } => self.gen_match(expr, *scrutinee, arms),
             Expr::Unwrap { expr: inner } => self.gen_unwrap(expr, *inner),
@@ -601,7 +602,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen
             | BuiltinFn::Array(_)
-            | BuiltinFn::String(_) => {
+            | BuiltinFn::String(_)
+            | BuiltinFn::Pipeline(_) => {
                 unreachable!("method builtins are lowered by `gen_builtin_method`")
             }
             BuiltinFn::Print | BuiltinFn::Println => {
@@ -949,6 +951,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 unreachable!("free-function builtins are lowered by `gen_builtin_call`")
             }
             BuiltinFn::Array(_) => unreachable!("array methods are lowered by `gen_array_method`"),
+            BuiltinFn::Pipeline(_) => unreachable!("pipelines are lowered by `pipelines`"),
         }
     }
 
@@ -1508,6 +1511,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             }
             if let BuiltinFn::String(op) = builtin {
                 return self.gen_string_method(op, tgt_expr, receiver, args);
+            }
+            if let BuiltinFn::Pipeline(op) = builtin {
+                // Only a terminal is ever generated as an expression: the
+                // stages before it are part of its loop.
+                return self.gen_pipeline_terminal(tgt_expr, op, receiver, args);
             }
             return self.gen_builtin_method(builtin, receiver, args);
         }
@@ -3792,11 +3800,18 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// Generates IR for `for pat in iterable { body }`.
     fn gen_for(
         &mut self,
+        for_expr: ExprId,
         pat: PatId,
         iterable: ExprId,
         body_expr: ExprId,
     ) -> Option<BasicValueEnum<'ink>> {
         let body = self.body.clone();
+        // Over a lazy pipeline or an iterator object: see `pipelines`.
+        if self.infer.iterator_next(for_expr).is_some()
+            || matches!(self.infer[iterable].interned(), TyKind::Iter(_))
+        {
+            return self.gen_pipeline_for(for_expr, pat, iterable, body_expr);
+        }
         if let Expr::Range {
             start,
             end,

@@ -210,31 +210,10 @@ impl InferenceResultBuilder<'_> {
             if elem.is_unknown() {
                 continue;
             }
-            let ok = match (requirement, elem.interned()) {
-                (_, TyKind::Int(_) | TyKind::Float(_)) => true,
-                (
-                    _,
-                    TyKind::InferenceVar(InferTy::Int(_) | InferTy::Float(_)),
-                ) => true,
-                (ElementRequirement::Number, _) => false,
-                (_, TyKind::Bool) => true,
-                (
-                    ElementRequirement::Equality | ElementRequirement::Order { str_allowed: true },
-                    TyKind::Str,
-                ) => true,
-                _ => false,
-            };
-            if ok {
+            if element_meets(requirement, elem) {
                 continue;
             }
-            let what = match requirement {
-                ElementRequirement::Equality => "integers, floats, `bool` or `str`",
-                ElementRequirement::Order { str_allowed: true } => {
-                    "integers, floats, `bool` or `str`"
-                }
-                ElementRequirement::Order { str_allowed: false } => "integers, floats or `bool`",
-                ElementRequirement::Number => "integers or floats",
-            };
+            let what = requirement_text(requirement);
             let hint = match elem.interned() {
                 TyKind::TypeParam(..) => {
                     "; inside a generic function the element type is not known yet, so \
@@ -252,5 +231,31 @@ impl InferenceResultBuilder<'_> {
                 ),
             });
         }
+    }
+}
+
+/// Whether elements of type `elem` support what `requirement` asks for.
+pub(super) fn element_meets(requirement: ElementRequirement, elem: &Ty) -> bool {
+    match (requirement, elem.interned()) {
+        (_, TyKind::Int(_) | TyKind::Float(_)) => true,
+        (_, TyKind::InferenceVar(InferTy::Int(_) | InferTy::Float(_))) => true,
+        (ElementRequirement::Number, _) => false,
+        (_, TyKind::Bool) => true,
+        (
+            ElementRequirement::Equality | ElementRequirement::Order { str_allowed: true },
+            TyKind::Str,
+        ) => true,
+        _ => false,
+    }
+}
+
+/// The element types `requirement` allows, for a diagnostic.
+pub(super) fn requirement_text(requirement: ElementRequirement) -> &'static str {
+    match requirement {
+        ElementRequirement::Equality | ElementRequirement::Order { str_allowed: true } => {
+            "integers, floats, `bool` or `str`"
+        }
+        ElementRequirement::Order { str_allowed: false } => "integers, floats or `bool`",
+        ElementRequirement::Number => "integers or floats",
     }
 }

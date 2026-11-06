@@ -292,6 +292,7 @@ fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
         TyKind::Optional(inner) => format!("{}?", type_name(db, inner)),
         TyKind::Array(element) => format!("[{}]", type_name(db, element)),
         TyKind::Channel(element) => format!("Channel[{}]", type_name(db, element)),
+        TyKind::Iter(element) => format!("Iter[{}]", type_name(db, element)),
         TyKind::Tuple(_, elements) => {
             let elements: Vec<String> = elements.iter().map(|ty| type_name(db, ty)).collect();
             if elements.len() == 1 {
@@ -307,9 +308,10 @@ fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
 /// How deeply `ty` nests: 1 for a type with no type inside it.
 fn type_depth(ty: &Ty) -> usize {
     let inner = match ty.interned() {
-        TyKind::Array(element) | TyKind::Channel(element) | TyKind::Optional(element) => {
-            type_depth(element)
-        }
+        TyKind::Array(element)
+        | TyKind::Channel(element)
+        | TyKind::Iter(element)
+        | TyKind::Optional(element) => type_depth(element),
         TyKind::Struct(_, args)
         | TyKind::Enum(_, args)
         | TyKind::Tuple(_, args)
@@ -373,27 +375,27 @@ pub fn collect_instances(
         let function = instance.function();
         let infer = instance.infer(db);
         let body = function.body(db);
-        for (expr_id, expr) in body.exprs() {
+        let calls = body.exprs().filter_map(|(expr_id, expr)| {
             if infer.builtin_call(expr_id).is_some() {
-                continue;
+                return None;
             }
             let callee = match expr {
                 // A named function used as a value is reached like a call:
                 // its thunk calls it.
-                Expr::Path(_) => match infer.function_value(expr_id) {
-                    Some(function) => function,
-                    None => continue,
-                },
+                Expr::Path(_) => infer.function_value(expr_id)?,
                 Expr::Call { callee, .. } => match infer[*callee].as_callable_def() {
                     Some(CallableDef::Function(callee)) => callee,
-                    _ => continue,
+                    _ => return None,
                 },
-                Expr::MethodCall { .. } => match infer.method_resolution(expr_id) {
-                    Some(callee) => Function::from(callee),
-                    None => continue,
-                },
-                _ => continue,
+                Expr::MethodCall { .. } => Function::from(infer.method_resolution(expr_id)?),
+                _ => return None,
             };
+            Some((expr_id, callee))
+        });
+        // A `for` loop over an iterator object, and `it.iter()`, call the
+        // object's `next`.
+        let calls: Vec<(ExprId, Function)> = calls.chain(infer.iterator_nexts()).collect();
+        for (expr_id, callee) in calls {
             if callee.is_extern(db) || callee.is_inline_asm(db) {
                 continue;
             }

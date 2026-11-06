@@ -31,6 +31,7 @@ mod array_methods;
 mod closures;
 mod effects;
 mod exhaustive;
+mod pipelines;
 mod place_expr;
 mod propagate;
 pub use propagate::result_variants;
@@ -132,6 +133,13 @@ pub struct InferenceResult {
     /// caller's instance into them (see [`InferenceResult::map_types`])
     /// makes them concrete.
     pub(crate) instantiations: FxHashMap<ExprId, Substitution>,
+
+    /// For each use of an object as an iterator -- `for x in it`, keyed by
+    /// the `for` expression, and `it.iter()`, keyed by that call -- the
+    /// `next(self) -> T?` method each element is pulled with. Its
+    /// instantiation, for a generic class, is in `instantiations` under the
+    /// same expression.
+    pub(crate) iterator_nexts: FxHashMap<ExprId, FunctionId>,
 
     /// Interned Unknown to return references to.
     standard_types: InternedStandardTypes,
@@ -291,6 +299,25 @@ impl InferenceResult {
         self.instantiations.get(&call)
     }
 
+    /// The `next` method an iterator object is pulled with, when `expr` is
+    /// a `for` loop over such an object or `it.iter()` on one (see
+    /// `ty::infer::pipelines`).
+    pub fn iterator_next(&self, expr: ExprId) -> Option<Function> {
+        self.iterator_nexts.get(&expr).map(|&id| Function::from(id))
+    }
+
+    /// Every use of an object as an iterator, with its `next` method, in
+    /// arena order.
+    pub fn iterator_nexts(&self) -> Vec<(ExprId, Function)> {
+        let mut uses: Vec<_> = self
+            .iterator_nexts
+            .iter()
+            .map(|(&e, &f)| (e, Function::from(f)))
+            .collect();
+        uses.sort_by_key(|(e, _)| e.into_raw());
+        uses
+    }
+
     /// This result with `f` applied to every type it records: the type of
     /// every expression and pattern and the arguments of every
     /// instantiation.
@@ -352,6 +379,7 @@ impl InferenceResult {
             fn_values: self.fn_values.clone(),
             indirect_calls: self.indirect_calls.clone(),
             field_calls: self.field_calls.clone(),
+            iterator_nexts: self.iterator_nexts.clone(),
         }
     }
 
@@ -488,6 +516,8 @@ struct InferenceResultBuilder<'a> {
     /// `resolve_all` so that a parameter no argument determined can be
     /// reported by name.
     instantiations: FxHashMap<ExprId, (Function, Substitution)>,
+    /// See [`InferenceResult::iterator_nexts`].
+    iterator_nexts: FxHashMap<ExprId, FunctionId>,
 
     /// The bounds that hold in the body: what its type parameters
     /// implement (see `crate::traits`).
@@ -525,6 +555,7 @@ impl<'a> InferenceResultBuilder<'a> {
             propagations: FxHashMap::default(),
             propagation_wraps: FxHashMap::default(),
             instantiations: FxHashMap::default(),
+            iterator_nexts: FxHashMap::default(),
             bounds: match body.owner() {
                 DefWithBodyId::FunctionId(f) => db.function_bounds(f),
             },
@@ -951,7 +982,7 @@ impl InferenceResultBuilder<'_> {
                 pat,
                 iterable,
                 body,
-            } => self.infer_for_expr(*pat, *iterable, *body),
+            } => self.infer_for_expr(tgt_expr, *pat, *iterable, *body),
             Expr::Match { expr, arms, source } => {
                 self.infer_match(tgt_expr, *expr, arms, *source, expected)
             }
@@ -986,7 +1017,9 @@ impl InferenceResultBuilder<'_> {
                 self.infer_range_bounds(*start, *end);
                 self.diagnostics.push(InferenceDiagnostic::ExprError {
                     id: tgt_expr.into(),
-                    message: "a range can only be used as the iterable of a `for` loop for now; there is no range value type yet"
+                    message: "a range can only be used as the iterable of a `for` loop or as the \
+                              source of a pipeline (`(0..n).map(f).sum()`) for now; there is no \
+                              range value type yet"
                         .to_string(),
                 });
                 error_type()
@@ -1389,6 +1422,15 @@ impl InferenceResultBuilder<'_> {
             self.infer_static_member_call(tgt_expr, receiver, args, method_name, expected)
         {
             return ty;
+        }
+
+        // `(a..b).map(f)`: a range is the source of a pipeline.
+        if let (Expr::Range { start, end, .. }, Some(op)) = (
+            &self.body[receiver],
+            method_name.as_str().and_then(crate::PipelineOp::from_name),
+        ) {
+            let bounds = (*start, *end);
+            return self.infer_range_pipeline_call(tgt_expr, receiver, bounds, op, args);
         }
 
         let receiver_ty = self.infer_expr(receiver, &Expectation::none());
@@ -2183,7 +2225,8 @@ impl InferenceResultBuilder<'_> {
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen
             | BuiltinFn::Array(_)
-            | BuiltinFn::String(_) => {
+            | BuiltinFn::String(_)
+            | BuiltinFn::Pipeline(_) => {
                 unreachable!("method builtins are resolved by `infer_builtin_method`")
             }
         }
@@ -2208,6 +2251,14 @@ impl InferenceResultBuilder<'_> {
                 let method = crate::ArrayMethod::from_name(name).expect("matched above");
                 let elem = elem.clone();
                 return Some(self.infer_array_method(tgt_expr, method, &elem, args));
+            }
+            (TyKind::Iter(elem), name) if crate::PipelineOp::from_name(name).is_some() => {
+                let op = crate::PipelineOp::from_name(name).expect("matched above");
+                let elem = elem.clone();
+                return Some(self.infer_pipeline_method(tgt_expr, op, &elem, args));
+            }
+            (TyKind::Array(_) | TyKind::Struct(..), "iter") => {
+                return self.infer_iter_source(tgt_expr, &receiver_ty, args);
             }
             (TyKind::Array(_), "len") => BuiltinFn::ArrayLen,
             (TyKind::Array(_), "unchecked_get") => BuiltinFn::ArrayUncheckedGet,
@@ -2514,6 +2565,7 @@ impl InferenceResultBuilder<'_> {
         }
         self.check_capture_types(&closures, &pat_types);
         self.check_array_methods(&expr_types);
+        self.check_pipelines(&expr_types, &closures);
         let instantiations = self.resolve_instantiations();
         InferenceResult {
             //            field_resolutions: self.field_resolutions,
@@ -2538,6 +2590,7 @@ impl InferenceResultBuilder<'_> {
             propagations,
             propagation_wraps: self.propagation_wraps,
             instantiations,
+            iterator_nexts: self.iterator_nexts,
         }
     }
 
@@ -3292,27 +3345,40 @@ impl InferenceResultBuilder<'_> {
     /// Infers `for pat in iterable { body }`.
     ///
     /// The iterable is a range, whose element is its bounds' integer type,
-    /// or an array, whose element is the array's. The pattern must be
-    /// irrefutable -- a binding, `_` or a tuple of those -- because there is
-    /// no "skip this element" path for a pattern that fails to match.
-    fn infer_for_expr(&mut self, pat: PatId, iterable: ExprId, body: ExprId) -> Ty {
+    /// an array, whose element is the array's, a lazy pipeline (`Iter[T]`)
+    /// or an iterator object (a class with `next(self) -> T?`; see
+    /// `pipelines`). The pattern must be irrefutable -- a binding, `_` or a
+    /// tuple of those -- because there is no "skip this element" path for a
+    /// pattern that fails to match.
+    fn infer_for_expr(
+        &mut self,
+        tgt_expr: ExprId,
+        pat: PatId,
+        iterable: ExprId,
+        body: ExprId,
+    ) -> Ty {
         let elem_ty = if let Expr::Range { start, end, .. } = self.body[iterable] {
             self.infer_range_bounds(start, end)
         } else {
             let iterable_ty = self.infer_expr(iterable, &Expectation::none());
-            match self.normalize(&iterable_ty).interned() {
-                TyKind::Array(elem) => elem.clone(),
+            let iterable_ty = self.normalize(&iterable_ty);
+            match iterable_ty.interned() {
+                TyKind::Array(elem) | TyKind::Iter(elem) => elem.clone(),
                 TyKind::Unknown => error_type(),
-                _ => {
-                    self.diagnostics.push(InferenceDiagnostic::ExprError {
-                        id: iterable.into(),
-                        message: format!(
-                            "cannot iterate over a value of type `{}`: a `for` loop iterates over a range (`a..b`, `a..=b`) or an array",
-                            iterable_ty.display(self.db)
-                        ),
-                    });
-                    error_type()
-                }
+                _ => match self.infer_iterator_object(tgt_expr, &iterable_ty) {
+                    pipelines::IteratorObject::Yields(elem) => elem,
+                    pipelines::IteratorObject::Refused => error_type(),
+                    pipelines::IteratorObject::No => {
+                        self.diagnostics.push(InferenceDiagnostic::ExprError {
+                            id: iterable.into(),
+                            message: format!(
+                                "cannot iterate over a value of type `{}`: a `for` loop iterates over a range (`a..b`, `a..=b`), an array, a pipeline (`xs.iter().map(f)`) or an object of a class with a method `next(self) -> T?`",
+                                iterable_ty.display(self.db)
+                            ),
+                        });
+                        error_type()
+                    }
+                },
             }
         };
 

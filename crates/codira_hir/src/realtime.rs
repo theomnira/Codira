@@ -612,10 +612,11 @@ impl Collector<'_> {
             // no arm matches, which only a hot reload that removed an enum
             // variant can produce.) A string-literal arm compares bytes in
             // the runtime without allocating or blocking.
-            | Expr::Match { .. }
+            | Expr::Match { .. } => {}
             // Bounded by construction: the iteration count is fixed before
             // the first iteration, and the counter is not the program's.
-            | Expr::For { .. } => {}
+            // Over an iterator object it is not.
+            Expr::For { .. } => self.iterator_object(expr),
             Expr::Path(_) if self.frame.infer.function_value(expr).is_some() => self.source(
                 expr,
                 EffectSet::GC_ALLOC,
@@ -851,7 +852,61 @@ impl Collector<'_> {
             | BuiltinFn::StrLen => {}
             BuiltinFn::Array(method) => self.array_method(expr, method),
             BuiltinFn::String(op) => self.string_op(expr, op),
+            BuiltinFn::Pipeline(op) => self.pipeline_op(expr, op),
         }
+    }
+
+    /// An operation of a lazy pipeline. The fused loop itself neither
+    /// allocates nor panics: only `collect` allocates (the array it
+    /// returns), a closure literal adds what its body does (it is visited
+    /// as part of this function), and a function value passed instead is
+    /// called through. A pipeline over an array or a range is bounded by
+    /// its source; one over an iterator object calls its `next` until it
+    /// returns `nil`, which nothing bounds.
+    fn pipeline_op(&mut self, expr: ExprId, op: crate::PipelineOp) {
+        if op.allocates() {
+            self.source(
+                expr,
+                EffectSet::GC_ALLOC,
+                format!("`{}` allocates the array it returns", op.name()),
+            );
+        }
+        if op == crate::PipelineOp::Iter && self.frame.infer.iterator_next(expr).is_some() {
+            self.iterator_object(expr);
+        }
+        if let (Some(index), Expr::MethodCall { args, .. }) =
+            (op.closure_arg(), &self.frame.body[expr])
+        {
+            if let Some(&arg) = args.get(index) {
+                if !crate::is_inlined_closure_literal(&self.frame.body, arg) {
+                    self.source(
+                        expr,
+                        EffectSet::ALL,
+                        format!(
+                            "`{}` calls a function value, whose code the analysis cannot see \
+                             (a closure literal without `return` is compiled in place instead)",
+                            op.name()
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    /// A loop that pulls elements from an iterator object (`for x in it`,
+    /// `it.iter()`): a call of its `next` per element, until it returns
+    /// `nil`.
+    fn iterator_object(&mut self, expr: ExprId) {
+        let Some(next) = self.frame.infer.iterator_next(expr) else {
+            return;
+        };
+        self.call(expr, next);
+        self.source(
+            expr,
+            EffectSet::of(&[Effect::Unbounded]),
+            "a loop over an iterator object runs until its `next` returns `nil`, which \
+             nothing bounds",
+        );
     }
 
     /// A method of `[T]`: growing the buffer or making a new array

@@ -560,7 +560,8 @@ impl Checker<'_> {
                         | BuiltinFn::ArrayUncheckedGet
                         | BuiltinFn::StrLen
                         | BuiltinFn::Array(_)
-                        | BuiltinFn::String(_),
+                        | BuiltinFn::String(_)
+                        | BuiltinFn::Pipeline(_),
                     ) => {}
                     None => self.check_call(id, args, None),
                 }

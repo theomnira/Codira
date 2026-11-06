@@ -506,6 +506,20 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
     /// type inference result.
     pub fn collect_body(&mut self, body: &Arc<Body>, infer: &InferenceResult) {
         self.collect_expr(body.body_expr(), body, infer);
+        // A loop over an iterator object calls its `next` (see
+        // `body::pipelines`), like a call written out would.
+        for (_, next) in infer.iterator_nexts() {
+            if next.is_generic(self.db) || self.local_copies.contains(&next) {
+                continue;
+            }
+            if self.module_group.should_runtime_link_fn(self.db, next) {
+                let fn_module = next.module(self.db);
+                if !self.module_group.contains(fn_module) {
+                    self.referenced_modules.insert(fn_module);
+                }
+                self.collect_fn_def(next);
+            }
+        }
     }
 
     /// Records the functions of other modules this group emits a copy of,

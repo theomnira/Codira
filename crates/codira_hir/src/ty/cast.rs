@@ -209,6 +209,7 @@ fn classify(ty: &Ty) -> Class {
         | TyKind::Tuple(..)
         | TyKind::Array(_)
         | TyKind::Channel(_)
+        | TyKind::Iter(_)
         | TyKind::Session(..)
         | TyKind::Optional(_)
         | TyKind::Enum(..)

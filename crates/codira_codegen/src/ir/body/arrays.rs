@@ -59,7 +59,7 @@ use crate::{
 };
 
 /// How a closure argument is called on each element.
-enum Callee<'ink> {
+pub(super) enum Callee<'ink> {
     /// A closure literal whose body is generated in place.
     Inline(ExprId),
     /// A named function, called directly.
@@ -616,7 +616,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// Stores an array's length.
-    fn set_array_len(&self, array: RuntimeArrayValue<'ink>, length: IntValue<'ink>) {
+    pub(super) fn set_array_len(&self, array: RuntimeArrayValue<'ink>, length: IntValue<'ink>) {
         let store = self
             .builder
             .build_store(array.get_length_ptr(&self.builder), length)
@@ -626,7 +626,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Loads an array's capacity (the payload header's second word, in the
     /// same alias class as the length).
-    fn array_capacity(&self, array: RuntimeArrayValue<'ink>) -> IntValue<'ink> {
+    pub(super) fn array_capacity(&self, array: RuntimeArrayValue<'ink>) -> IntValue<'ink> {
         let capacity = array.get_capacity(&self.builder);
         array_tbaa::tag_value(capacity, ArrayAccess::Length);
         capacity
@@ -634,7 +634,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// The address of element `index`, from a fresh load of the payload
     /// pointer.
-    fn element_ptr(
+    pub(super) fn element_ptr(
         &self,
         array: RuntimeArrayValue<'ink>,
         index: IntValue<'ink>,
@@ -651,7 +651,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Loads element `index`, which the caller has checked is below the
     /// length.
-    fn load_element(
+    pub(super) fn load_element(
         &self,
         array: RuntimeArrayValue<'ink>,
         index: IntValue<'ink>,
@@ -667,7 +667,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Stores element `index`, which the caller has checked is below the
     /// capacity.
-    fn store_element(
+    pub(super) fn store_element(
         &self,
         array: RuntimeArrayValue<'ink>,
         index: IntValue<'ink>,
@@ -727,7 +727,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Makes sure `array` has room for `needed` elements, growing it through
     /// the runtime on a path the optimizer is told is unlikely.
-    fn ensure_capacity(&mut self, array: RuntimeArrayValue<'ink>, needed: IntValue<'ink>) {
+    pub(super) fn ensure_capacity(
+        &mut self,
+        array: RuntimeArrayValue<'ink>,
+        needed: IntValue<'ink>,
+    ) {
         let capacity = self.array_capacity(array);
         let full = self
             .builder
@@ -1185,7 +1189,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// A `T?` of type `optional_ty`: present with what `value` generates when
     /// `present` holds (generated only on that path), else `nil`.
-    fn gen_optional_if(
+    pub(super) fn gen_optional_if(
         &mut self,
         optional_ty: &Ty,
         present: IntValue<'ink>,
@@ -1225,7 +1229,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// A `T?` of type `optional_ty`: `value` when `present`, else `nil`,
     /// without a branch.
-    fn gen_optional_select(
+    pub(super) fn gen_optional_select(
         &mut self,
         optional_ty: &Ty,
         present: IntValue<'ink>,
@@ -1243,7 +1247,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Decides how the closure argument `arg` will be called, evaluating it
     /// now when it is a function value.
-    fn prepare_callee(&mut self, arg: ExprId) -> Option<Callee<'ink>> {
+    pub(super) fn prepare_callee(&mut self, arg: ExprId) -> Option<Callee<'ink>> {
         let body = self.body.clone();
         if codira_hir::is_inlined_closure_literal(&body, arg) {
             return Some(Callee::Inline(arg));
@@ -1263,7 +1267,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Calls a prepared closure argument (`arg`) with `values`. Returns
     /// `None` when the call does not return.
-    fn call_callee(
+    pub(super) fn call_callee(
         &mut self,
         callee: &Callee<'ink>,
         values: &[BasicValueEnum<'ink>],

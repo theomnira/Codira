@@ -39,8 +39,10 @@ mod array;
 pub use array::{
     is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, ElementRequirement,
 };
+mod pipeline;
 mod string;
 
+pub use pipeline::PipelineOp;
 pub use string::{StringArg, StringOp};
 
 /// A function provided by the compiler rather than declared in source.
@@ -96,6 +98,9 @@ pub enum BuiltinFn {
     /// A method of `String`, `to_string()` on a primitive, or
     /// `string_from_utf8` (see [`StringOp`]).
     String(StringOp),
+    /// An operation of a lazy pipeline (`xs.iter().map(f).sum()`; see
+    /// [`PipelineOp`]).
+    Pipeline(PipelineOp),
 }
 
 impl BuiltinFn {
@@ -131,6 +136,7 @@ impl BuiltinFn {
             BuiltinFn::ArrayUncheckedGet => "unchecked_get",
             BuiltinFn::Array(method) => method.name(),
             BuiltinFn::String(op) => op.name(),
+            BuiltinFn::Pipeline(op) => op.name(),
         }
     }
 
