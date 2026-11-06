@@ -20,8 +20,9 @@
 //!   value in the second half of the run must stay within 1.5 times (plus
 //!   64 KiB) the largest in the first half.
 //! - Committed bytes: within the heap limit when one is set; otherwise
-//!   (the service then collects every 20 batches) the same plateau rule as
-//!   live bytes, with 1 MiB of slack.
+//!   pacing must have collected, the peak must stay under 64 MiB, and
+//!   committed bytes follow the same plateau rule as live bytes, with 1 MiB
+//!   of slack.
 //! - Throughput (requests per second): the last window must reach half the
 //!   median of the early windows. This catches gross slowdowns (a heap that
 //!   fragments into a crawl, collections that get slower as the run goes
@@ -37,9 +38,8 @@
 //!
 //! # What it cannot catch
 //!
-//! Collections here are the heap limit's, or the service's own every 20
-//! batches, and one at the end of each window (the runtime does not yet
-//! collect on its own without a limit). Growth
+//! Collections here are the heap limit's or pacing's, and one at the end of
+//! each window (for the measurement). Growth
 //! slower than the plateau rule's slack within the run time, leaks outside
 //! the GC heap, and latency spikes (only window averages are measured) go
 //! unnoticed.
@@ -134,10 +134,8 @@ const SERVICE: &str = r#"
 
 const BATCH: i64 = 500;
 const WINDOWS: usize = 8;
-/// Without a heap limit the service collects every this many batches (a
-/// request count, so what it commits does not depend on how fast the
-/// machine is), and at the end of each window.
-const COLLECT_EVERY: i64 = 20;
+/// Without a heap limit, pacing must keep the heap under this.
+const PACED_PEAK_BOUND: usize = 64 * 1024 * 1024;
 
 struct Window {
     requests: i64,
@@ -184,9 +182,6 @@ fn soak(heap_limit: Option<usize>) {
             assert_eq!(total, served, "the server lost count");
             requests += BATCH;
             seed += 1;
-            if heap_limit.is_none() && seed % COLLECT_EVERY == 0 {
-                gc.collect_blocking().unwrap();
-            }
         }
         let seconds = start.elapsed().as_secs_f64();
         gc.collect_blocking().unwrap();
@@ -230,6 +225,15 @@ fn soak(heap_limit: Option<usize>) {
             );
         }
         None => {
+            let peak = gc.heap_stats().peak_heap_bytes;
+            assert!(
+                peak <= PACED_PEAK_BOUND,
+                "pacing let the heap reach {peak} bytes"
+            );
+            assert!(
+                gc.heap_stats().collections.paced > 0,
+                "pacing never collected"
+            );
             let first = windows[..half].iter().map(|w| w.committed).max().unwrap();
             let last = windows[half..].iter().map(|w| w.committed).max().unwrap();
             assert!(
@@ -277,6 +281,6 @@ fn a_service_with_a_heap_limit_stays_bounded_and_keeps_its_throughput() {
 }
 
 #[test]
-fn a_service_collected_between_windows_stays_bounded_and_keeps_its_throughput() {
+fn a_paced_service_stays_bounded_and_keeps_its_throughput() {
     soak(None);
 }

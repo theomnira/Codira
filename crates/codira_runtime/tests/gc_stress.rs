@@ -39,8 +39,9 @@
 //!
 //! # What it cannot catch
 //!
-//! Memory is only bounded where a heap limit is set (the limit enforces
-//! it); without one the gate checks for leaks after the run, not the peak.
+//! Memory: with a heap limit the limit enforces the bound; with pacing
+//! alone `pacing_alone_keeps_codira_graphs_bounded` checks the peak against
+//! a fixed bound; every test checks for leaks after the run.
 //! The conservative stack scan may keep garbage alive, which no oracle here
 //! can tell from a leak while the program runs. Bugs that need a particular
 //! interleaving the scheduler never produces in the time given are missed.
@@ -436,7 +437,7 @@ fn run_graphs(
     driver: &CompileAndRunTestDriver,
     until_limit: bool,
     point_rate: u64,
-    host_pause_unit: Duration,
+    host_pause_unit: Option<Duration>,
     tasks: i64,
     slots_n: i64,
     ops: i64,
@@ -453,7 +454,9 @@ fn run_graphs(
     let host_collections = AtomicUsize::new(0);
     let mut runs = 0;
     std::thread::scope(|s| {
-        host_collector(s, gc, &done, seed, host_pause_unit, &host_collections);
+        if let Some(unit) = host_pause_unit {
+            host_collector(s, gc, &done, seed, unit, &host_collections);
+        }
         let _done = SetOnDrop(&done);
         let mut seed = seed;
         // With `until_limit`, past the deadline it goes on (up to 500
@@ -521,7 +524,15 @@ fn shadow_model_matches_itself_across_seeds() {
 fn codira_graphs_survive_random_collections() {
     let _serial = serial();
     let driver = build(|builder| builder);
-    run_graphs(&driver, false, 64, Duration::from_micros(13), 0, 24, 3_000);
+    run_graphs(
+        &driver,
+        false,
+        64,
+        Some(Duration::from_micros(13)),
+        0,
+        24,
+        3_000,
+    );
     assert_no_leak(&driver);
 }
 
@@ -530,7 +541,15 @@ fn codira_graphs_survive_collections_at_a_heap_limit() {
     let _serial = serial();
     let driver = build(|builder| builder.heap_limit(8 * 64 * 1024));
     // Rare host collections, so the limit is what collects most.
-    run_graphs(&driver, true, 16, Duration::from_micros(400), 0, 24, 3_000);
+    run_graphs(
+        &driver,
+        true,
+        16,
+        Some(Duration::from_micros(400)),
+        0,
+        24,
+        3_000,
+    );
     let gc = driver.runtime.gc();
     assert!(
         gc.emergency_collections() > 0,
@@ -540,11 +559,46 @@ fn codira_graphs_survive_collections_at_a_heap_limit() {
     assert_no_leak(&driver);
 }
 
+/// The bound pacing must keep a graph run's heap under: the live graph is
+/// a few hundred KiB, pacing collects from 4 MiB of payload at 100%
+/// growth, and size classes and block granularity add slack.
+const PACED_PEAK_BOUND: usize = 32 * 1024 * 1024;
+
+/// Nothing but pacing collects -- no heap limit, no host thread, no
+/// collections from the program -- and the heap stays bounded while
+/// megabytes of garbage go through it.
+#[test]
+fn pacing_alone_keeps_codira_graphs_bounded() {
+    let _serial = serial();
+    let driver = build(|builder| builder);
+    run_graphs(&driver, false, 0, None, 0, 24, 3_000);
+    let stats = driver.runtime.gc().heap_stats();
+    eprintln!(
+        "gc stress (pacing): peak heap {} bytes, {} bytes allocated, {} paced collections",
+        stats.peak_heap_bytes, stats.bytes_allocated, stats.collections.paced
+    );
+    assert!(stats.collections.paced > 0, "pacing never collected");
+    assert!(
+        stats.peak_heap_bytes <= PACED_PEAK_BOUND,
+        "the heap peaked at {} bytes",
+        stats.peak_heap_bytes
+    );
+    assert_no_leak(&driver);
+}
+
 #[test]
 fn graphs_on_worker_threads_survive_random_collections() {
     let _serial = serial();
     let driver = build(|builder| builder.heap_limit(48 * 64 * 1024));
-    run_graphs(&driver, false, 32, Duration::from_micros(13), 3, 16, 2_000);
+    run_graphs(
+        &driver,
+        false,
+        32,
+        Some(Duration::from_micros(13)),
+        3,
+        16,
+        2_000,
+    );
     assert_no_leak(&driver);
 }
 
