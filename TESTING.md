@@ -64,6 +64,10 @@ export LLVM_SYS_221_PREFIX=/usr/lib/llvm-22 CARGO_INCREMENTAL=0 \
   random intervals, and by a heap limit. Graphs also run on worker threads
   (`spawn`), and through the host API (rooted handles, field reads, calls).
 - After each test, with nothing rooted, a collection must free every byte.
+- `pacing_alone_keeps_codira_graphs_bounded`: no heap limit, no host
+  thread, no collections from the program -- pacing must collect, and the
+  peak heap must stay under 32 MiB (measured: a 5.4 MiB peak over 450 MB
+  allocated in 3 s).
 - Knobs: `CODIRA_STRESS_SECS` per test (default 3), `CODIRA_STRESS_SEED`
   (default 1). Hours: `CODIRA_STRESS_SECS=3600`.
 - Checked once by breaking the collector on purpose (not marking stack
@@ -71,10 +75,9 @@ export LLVM_SYS_221_PREFIX=/usr/lib/llvm-22 CARGO_INCREMENTAL=0 \
 
 Cannot catch: a leak while a program runs (the conservative scan may keep
 garbage alive, and no oracle here tells the two apart), interleavings the
-scheduler never produces in the time given, and memory bounds without a
-heap limit (the runtime does not yet collect on its own without one; the
-heap-policy work changes that, and this gate should then assert a bound on
-committed bytes).
+scheduler never produces in the time given, and a peak between the paced
+bound and what a real program would need (the bound is fixed, not derived
+from the live data).
 
 ### `faults`: every allocation fails once
 
@@ -97,10 +100,10 @@ allocation. Never set the variable in production.
   growth, strings, closures, allocation on worker threads) run in child
   processes with allocation `n` failing, for `n = 1, 2, ...` until a run
   completes (38 to 195 allocation points per program). Each run must end
-  through the runtime's out-of-memory exit -- the message naming the type
-  and the failure, then `abort`, or exit status 102 once the heap-policy
-  work's controlled exit lands -- or complete with the right result. Any
-  other signal, a panic, a wrong result or a hang fails.
+  through the runtime's out-of-memory exit -- the `fatal: out of memory:
+  cannot allocate` diagnostic naming the type and the injected failure,
+  then exit status 102 -- or complete with the right result. Any other
+  status or signal, a panic, a wrong result or a hang fails.
   `CODIRA_FAULT_BOUND` caps `n` (default 3000).
 
 Cannot catch: allocations outside the GC heap (arenas, `codira_alloc`, the
@@ -116,8 +119,9 @@ requests that build, split and compare strings and replace long-lived
 entries, over 8 windows. It checks every object a request touches; that
 live bytes after a collection plateau (the last half of the run within 1.5
 times the first half, plus 64 KiB); committed bytes within the heap limit,
-or on the same plateau without one (the service then collects every 20
-batches); and, when `CODIRA_SOAK_SECS` is set (the runner runs it alone),
+or, without one, pacing collecting, a peak under 64 MiB and committed
+bytes on the same plateau; and, when `CODIRA_SOAK_SECS` is set (the
+runner runs it alone),
 that the last window's throughput is at least half the early median.
 Dropping the server must free everything. Knob: `CODIRA_SOAK_SECS` (total,
 default 4; hours with `CODIRA_SOAK_SECS=7200`).
@@ -179,8 +183,10 @@ TSAN_OPTIONS="suppressions=$PWD/scripts/sanitizers/tsan.supp" RUSTC_BOOTSTRAP=1 
   runtime's GC, fault-injection and soak tests without it (compiled
   libraries and the runtime's caches live for the process).
 - The TSan gate runs `codira_memory`'s tests and the runtime's threaded GC
-  tests (`gc_threads`, `gc_stress`, `strings_host_gc`). Its suppression
-  file holds one documented issue (below) and nothing else.
+  tests (`gc_threads`, `gc_stress` but its heap-limit test, which runs too
+  slowly under TSan to reach the limit, and `strings_host_gc`). Its
+  suppression file holds one documented issue (below) and nothing else;
+  with it, these tests report no race.
 
 Cannot catch: anything in generated Codira code (it is compiled by the
 Codira compiler, not instrumented), the runtime's C sources, and the
@@ -196,8 +202,9 @@ programs that type-check (spans deleted, duplicated and moved; tokens,
 brackets and boundary literals inserted; identifiers and lines swapped;
 truncation) go through the parser and type checker, and through code
 generation when they have no diagnostic. Diagnostics are fine; a panic
-fails, with the program saved under `target/tmp/fuzz/`; a case that hangs
-for a minute aborts the run. `reduce_crash` (ignored; set
+fails, with the program saved under `target/tmp/fuzz/`; so does a case
+that grows the compiler's resident memory by more than 512 MiB, and the run
+stops at 4 GiB; a case that hangs for a minute aborts the run. `reduce_crash` (ignored; set
 `CODIRA_FUZZ_REDUCE=<file>`) shrinks a crashing program while it still
 panics at the same place. Knobs: `CODIRA_FUZZ_SECS`, `CODIRA_FUZZ_SEED`
 (default: 250 cases from a fixed seed). Every crash found has a reduced
@@ -253,7 +260,7 @@ the Cranelift heap-parity work lands.
 
 ## Known issues found by the gates
 
-Each is reproduced by the gate named, and left for the workstream that owns
+Each was found by the gate named and is left for the workstream that owns
 the code.
 
 - **The stack scan reads TLS (`tsan`).** `stack_scan::stack_base` takes a
@@ -271,15 +278,24 @@ the code.
   pointer range only (exclude the TLS block), or stop scanning
   conservatively.
 - **A small heap limit is exhausted by size classes (`fuzz-strings`).**
-  With a 512 KiB limit (8 blocks), string operations of varied sizes made
-  the runtime abort with `GC heap limit of 524288 bytes exceeded (459088
-  bytes committed, 65536 more requested)` although the live data was a few
-  KiB: every size class in use needs a 64 KiB block of its own, and a run
-  leased to a thread keeps its block out of reach of other classes even
-  after a collection. The practical floor is about one block per size
-  class in use per allocating thread. The string gate runs at 2 MiB; the
-  heap-policy work should either make the floor explicit or return leased
-  runs on an emergency collection.
+  With a 512 KiB limit (8 blocks), the string fuzzer ends with exit status
+  102: `cannot allocate [core::String]`, `committed: 459312 bytes; the
+  allocation needed 65536 more`, `live: 3356 bytes after a full
+  collection` (reproduced after the heap-policy work landed). Every size
+  class in use needs a 64 KiB block of its own, and a run leased to a
+  thread keeps its block out of reach of other classes even after a
+  collection, so the practical floor is about one block per size class in
+  use per allocating thread, whatever the live data. The string gate runs
+  at 2 MiB; the heap-policy work should either state the floor (and refuse
+  limits below it) or return leased runs on a collection at the limit.
+- **A compile-time memory blow-up, seen once (`fuzz-compiler`).** One
+  10-minute run (seed 4242, before this branch was rebased onto the
+  heap-policy and string work) was killed by the kernel with the fuzzer's
+  process at 13 GB resident. The same seed for 10 minutes after the rebase
+  (27,874 cases) peaked at about 100 MiB, so the program was not
+  identified. The fuzzer now reports any case that grows the compiler by
+  more than 512 MiB, with the program, and stops at 4 GiB instead of being
+  killed.
 
 ## Bugs the gates found and fixed
 
@@ -295,4 +311,5 @@ Each fix is its own commit with a regression test.
 | fuzz-compiler | `func g() -> T;` outside an `extern` block was accepted and code generation panicked on the missing body | `fuzz_regressions::a_function_without_a_body_outside_an_extern_block` |
 | fuzz-compiler | a tuple index too large for `usize` panicked | `fuzz_regressions::a_tuple_index_too_large_for_usize` |
 | fuzz-compiler | a `{` inside an import list looped until the step limit | parser test `a_brace_inside_an_import_list_is_an_error` |
+| fuzz-compiler | `let x;` (no type, no value) and a channel nothing uses were accepted with unknown types, and code generation panicked on them | `fuzz_regressions::bindings_and_channels_whose_type_nothing_determines` |
 | asan (leaks) | a C API unit test never destroyed the fields it requested | `test_codira_fields_find_by_name` itself |

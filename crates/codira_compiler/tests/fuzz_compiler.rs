@@ -597,6 +597,22 @@ fn seed() -> u64 {
         .unwrap_or(0xC0D1_F022)
 }
 
+/// The resident set of this process in bytes (Linux; 0 elsewhere).
+fn resident_bytes() -> u64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|statm| statm.split_whitespace().nth(1)?.parse::<u64>().ok())
+        .map_or(0, |pages| pages * 4096)
+}
+
+/// A single program that makes the compiler's resident set grow by more
+/// than this is a finding (a compile-time memory blow-up), reported like a
+/// crash.
+const CASE_MEMORY_LIMIT: u64 = 512 * 1024 * 1024;
+
+/// The run stops, reporting, when the process holds more than this.
+const RUN_MEMORY_LIMIT: u64 = 4 * 1024 * 1024 * 1024;
+
 /// Saves a crashing program and returns where.
 fn save_crash(seed: u64, case: u64, text: &str) -> PathBuf {
     let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join("fuzz");
@@ -644,7 +660,25 @@ fn mutated_programs_never_crash_the_compiler() {
             &corpus[rng.below(corpus.len())]
         };
         let program = mutate(&mut rng, base, &words);
-        match compiler.compile(&program, true) {
+        let before = resident_bytes();
+        let outcome = compiler.compile(&program, true);
+        let after = resident_bytes();
+        if after.saturating_sub(before) > CASE_MEMORY_LIMIT {
+            let path = save_crash(seed, n, &program);
+            crashes.push(format!(
+                "case {n}: compiling it grew the compiler by {} MiB\n  program: {}",
+                (after - before) >> 20,
+                path.display()
+            ));
+        }
+        if after > RUN_MEMORY_LIMIT {
+            crashes.push(format!(
+                "case {n}: the compiler holds {} MiB after {n} cases; stopping",
+                after >> 20
+            ));
+            break;
+        }
+        match outcome {
             Ok(Outcome::Compiled) => compiled += 1,
             Ok(Outcome::Rejected) => rejected += 1,
             Err(message) => {
@@ -658,9 +692,10 @@ fn mutated_programs_never_crash_the_compiler() {
     }
     let _ = std::panic::take_hook();
     eprintln!(
-        "fuzz: seed {seed:#x}, {} cases: {compiled} compiled, {rejected} rejected, {} crashed",
+        "fuzz: seed {seed:#x}, {} cases: {compiled} compiled, {rejected} rejected, {} crashed, {} MiB resident",
         case.load(Ordering::SeqCst),
-        crashes.len()
+        crashes.len(),
+        resident_bytes() >> 20
     );
     assert!(
         crashes.is_empty(),

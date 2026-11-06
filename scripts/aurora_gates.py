@@ -115,9 +115,12 @@ def gates(budget, seed):
         ("tsan",
          "ThreadSanitizer (std rebuilt instrumented) over the GC crate and the runtime's threaded GC tests",
          [cargo_test(["-Zbuild-std", "-p", "codira_memory", "--target", HOST, "--test", "tests"], tsan),
+          # Under ThreadSanitizer the heap-limit stress runs too slowly to
+          # reach its limit; it runs in the gc-stress and asan gates.
           cargo_test(["-Zbuild-std", "-p", "codira_runtime", "--target", HOST, "--test", "gc_threads",
                       "--test", "gc_stress", "--test", "strings_host_gc"],
-                     {**tsan, "CODIRA_STRESS_SECS": "5"})]),
+                     {**tsan, "CODIRA_STRESS_SECS": "5"},
+                     ["--skip", "codira_graphs_survive_collections_at_a_heap_limit"])]),
         ("fuzz-compiler",
          "mutated programs through parser, type checker and code generator: diagnostics, never a panic",
          [cargo_test(["-p", "codira_compiler", "--test", "fuzz_compiler"], fuzz),
