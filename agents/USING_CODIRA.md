@@ -1068,6 +1068,61 @@ that both texts are byte for byte the ones `serde_json` prints.
   run under a host that sets `RuntimeBuilder::heap_limit`.
 - Values are not sendable between tasks (they hold strings).
 
+**Measured** against Rust's `serde_json::Value` (1.0.133) on the same
+machine: an x86-64 VM, Intel Xeon @ 2.10 GHz, 4 vCPUs shared with other
+builds (load average 3 to 4 during the runs), 16 GB, Linux 6.18, Rust
+1.97.1. Codira: `codira build -O 3` with a release build of the
+compiler, run by `examples/json_bench/host` (the runtime in release mode
+and a 1 GiB heap limit, so that the collector runs). Rust: `cargo build
+--release` with `serde_json`'s `preserve_order` (insertion order, as
+here) and `float_roundtrip` (correctly rounded floats, as here). Each
+program parses, prints and pretty-prints each input 11 times and reports
+the median; the table is the median of 5 alternating runs of both, in
+milliseconds. Both print the same check values (node count, string bytes,
+sums of the integers and of the floats' bits, output lengths). The inputs
+are written by `examples/json_bench/gen_inputs.py` (seeded): `twitter`, an
+array of 20,000 records of a social network's API (16.9 MB); `canada`,
+GeoJSON polygons of 300,000 17-digit coordinate pairs (11.8 MB); `deep`,
+4,000 trees of objects and arrays 100 deep (7.0 MB; its pretty text is
+149 MB of mostly indentation). `python3 examples/json_bench/bench.py
+--codira <codira> --work <dir>` does all of it.
+
+| input | phase | Codira | Rust | Codira / Rust |
+|---|---|---:|---:|---:|
+| twitter | parse | 81.8 | 118.0 | 0.69x |
+| twitter | print | 56.2 | 51.4 | 1.09x |
+| twitter | pretty | 78.3 | 63.4 | 1.24x |
+| canada | parse | 51.5 | 47.2 | 1.09x |
+| canada | print | 48.8 | 29.3 | 1.67x |
+| canada | pretty | 71.7 | 46.0 | 1.56x |
+| deep | parse | 63.9 | 88.0 | 0.73x |
+| deep | print | 43.5 | 31.2 | 1.40x |
+| deep | pretty | 343.0 | 293.6 | 1.17x |
+
+- **Parsing** is within 10% of Rust or faster: what costs in Codira is
+  allocation, and the parser allocates each array and object once (at its
+  exact size, from its stack) and no string without escapes (views); the
+  `IndexMap` behind `preserve_order` hashes every key with SipHash. With
+  `serde_json`'s defaults (a `BTreeMap`, floats not correctly rounded)
+  Rust parses `twitter` in 71.7 ms and `canada` in 36.5 ms against 86.8
+  and 48.1 for Codira in that run -- and reads 126 of `canada`'s 600,000
+  floats an ulp off, so the check values differ.
+- **Printing is 1.1x to 1.7x slower.** Floats cost most (`canada`): each
+  goes through the dispatch table to the runtime's `ryu` and is copied
+  back byte by byte from a stack slot, where Rust calls `ryu` directly
+  and copies its bytes at once. Every byte is a bounds-checked store into
+  the 64 KiB chunk, and each chunk is copied three times more on its way
+  into the `String` (a slice, `string_from_utf8`, the append). An earlier
+  printer that appended to a `String` per token was 4x to 7x slower; one
+  that grew a single byte array, 1.5x to 2.5x (the doublings and the copy
+  at the end).
+- The times include collections: the heap is capped at 1 GiB and each
+  input is parsed 11 times, so where a collection falls depends on what
+  was allocated before, and Codira's times vary more between sets of runs
+  than Rust's (`twitter` parse: 81.8 and 86.8 ms in two sets). Not
+  measured: memory use (a Codira value is 64 bytes, an object member 96),
+  and pause times.
+
 **Not done:** typed decoding into program types (waits for derive and
 generic traits: a serialization framework comes next); a streaming or
 event parser; reading a number's exact text (an integer beyond `i64` is a

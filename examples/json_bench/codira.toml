@@ -1,0 +1,4 @@
+[package]
+name = "json_bench"
+authors = []
+version = "0.1.0"
