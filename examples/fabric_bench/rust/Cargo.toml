@@ -14,7 +14,7 @@ publish = false
 
 [dependencies]
 rayon = "=1.10.0"
-crossbeam-channel = "=0.5.13"
+crossbeam-channel = "=0.5.17"
 
 [profile.release]
 opt-level = 3

@@ -72,10 +72,13 @@
 //! collection stops it at its next allocation and scans its stack. Every
 //! wait here -- a channel operation, a `select`, a scope join -- runs inside a
 //! blocking region, so a waiting task is already parked and never holds up a
-//! collection (nor can a collection deadlock with it). Channel locks are
-//! taken and released inside those regions, and values received into Codira
-//! stack slots are written after the region ends, so nothing writes a stack
-//! a collector may be scanning.
+//! collection (nor can a collection deadlock with it). A send or receive
+//! first tries a few times without waiting, as a running thread; a channel's
+//! lock is only ever held for a few instructions -- never across a wait, an
+//! allocation or a safepoint -- so a running thread that takes it delays a
+//! collection by no more than that. Values received into Codira stack slots
+//! are written by the running thread, never inside a blocking region, so
+//! nothing writes a stack a collector may be scanning.
 //!
 //! # Sessions
 //!
@@ -598,9 +601,52 @@ unsafe fn channel_ref<'a>(channel: usize) -> &'a Channel {
     unsafe { &*(channel as *const Channel) }
 }
 
+/// Tries `attempt` until it succeeds or a short backoff is used up: spins
+/// of 1, 2, 4, .. 64 iterations, then a few yields (as crossbeam's
+/// `Backoff` does). A partner on another worker usually makes room, or a
+/// value, within that, and waiting instead costs a sleep and a wake-up --
+/// two system calls and microseconds of latency -- on each side. Returns
+/// whether `attempt` succeeded. The caller is a running thread: the
+/// backoff is bounded, so it delays a collection by microseconds at most.
+fn with_backoff(mut attempt: impl FnMut() -> bool) -> bool {
+    const SPIN_STEPS: u32 = 6;
+    const YIELD_STEPS: u32 = 4;
+    for step in 0..=SPIN_STEPS + YIELD_STEPS {
+        if attempt() {
+            return true;
+        }
+        if step <= SPIN_STEPS {
+            for _ in 0..1u32 << step {
+                std::hint::spin_loop();
+            }
+        } else {
+            std::thread::yield_now();
+        }
+    }
+    attempt()
+}
+
 extern "C" fn channel_send(channel: usize, value: usize) {
     // SAFETY: the compiler only names a channel inside the scope that owns it.
     let channel = unsafe { channel_ref(channel) };
+    // Without waiting first: the lock is only ever held for a few
+    // instructions, never across a wait or a safepoint, so a running
+    // thread may take it.
+    let sent = with_backoff(|| {
+        let Some(mut state) = channel.state.try_lock() else {
+            return false;
+        };
+        if state.queue.len() >= channel.capacity {
+            return false;
+        }
+        // SAFETY: `value` is the address of a stack slot of the element
+        // type (only read).
+        unsafe { channel.push(&mut state, value) };
+        true
+    });
+    if sent {
+        return;
+    }
     blocking(|| {
         let mut state = channel.state.lock();
         wait_while(&channel.not_full, &mut state, |state| {
@@ -616,14 +662,29 @@ extern "C" fn channel_receive(channel: usize, out: usize) {
     // SAFETY: the compiler only names a channel inside the scope that owns it.
     let channel = unsafe { channel_ref(channel) };
     let mut element = 0u128;
-    blocking(|| {
-        let mut state = channel.state.lock();
-        wait_while(&channel.not_empty, &mut state, |state| {
-            state.queue.is_empty()
-        });
+    let element_at = std::ptr::from_mut(&mut element) as usize;
+    // As for a send: try without waiting first.
+    let received = with_backoff(|| {
+        let Some(mut state) = channel.state.try_lock() else {
+            return false;
+        };
+        if state.queue.is_empty() {
+            return false;
+        }
         // SAFETY: `element` has room for any element.
-        unsafe { channel.pop(&mut state, std::ptr::from_mut(&mut element) as usize) };
+        unsafe { channel.pop(&mut state, element_at) };
+        true
     });
+    if !received {
+        blocking(|| {
+            let mut state = channel.state.lock();
+            wait_while(&channel.not_empty, &mut state, |state| {
+                state.queue.is_empty()
+            });
+            // SAFETY: `element` has room for any element.
+            unsafe { channel.pop(&mut state, element_at) };
+        });
+    }
     // SAFETY: `out` is the address of a stack slot of the element type.
     unsafe {
         std::ptr::copy_nonoverlapping(

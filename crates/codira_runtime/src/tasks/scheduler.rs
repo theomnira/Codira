@@ -91,6 +91,14 @@
 //! sleeper, or the sleeper sees the task and does not sleep. The sleeper
 //! holds the sleep lock from its check until it waits, and the pusher
 //! notifies under it, so the notification cannot fall between the two.
+//!
+//! A pusher wakes nobody while some worker is *searching* (between its
+//! increment and decrement of `searching`): that worker will find the task,
+//! or, if it gives up, it decrements `searching` before it increments
+//! `sleepers` and reads `queued`, so it sees the task then (the same
+//! `SeqCst` argument). Waking one sleeper per spawned task would cost a
+//! system call per task. Instead the wake-ups chain: a worker that finds a
+//! task while more are queued and no one else is searching wakes one more.
 use std::{
     cell::{Cell, RefCell},
     num::NonZeroUsize,
@@ -198,6 +206,8 @@ pub(super) struct Scheduler {
     active: AtomicUsize,
     /// Workers asleep (or about to be) on `wake`.
     sleepers: AtomicUsize,
+    /// Workers looking for a task (not asleep, not running one).
+    searching: AtomicUsize,
     /// Tasks pushed and not yet taken, from any queue.
     queued: AtomicUsize,
     sleep: Mutex<Sleep>,
@@ -233,6 +243,7 @@ pub(super) fn scheduler() -> &'static Scheduler {
         stealers: RwLock::new(Vec::new()),
         active: AtomicUsize::new(0),
         sleepers: AtomicUsize::new(0),
+        searching: AtomicUsize::new(0),
         queued: AtomicUsize::new(0),
         sleep: Mutex::new(Sleep { threads: 0 }),
         wake: Condvar::new(),
@@ -327,6 +338,11 @@ impl Scheduler {
     /// There is work: wake a sleeping worker, or start one if fewer than
     /// `target` are active.
     fn wake_or_start(&'static self) {
+        // A worker looking for work will find it: waking another costs a
+        // system call per task when tasks are spawned one by one.
+        if self.searching.load(Ordering::SeqCst) > 0 {
+            return;
+        }
         if self.sleepers.load(Ordering::SeqCst) > 0 {
             let _sleep = self.sleep.lock();
             self.wake.notify_one();
@@ -410,7 +426,18 @@ impl Scheduler {
     fn work(&'static self) {
         self.register();
         loop {
-            if let Some(job) = self.find_job().or_else(|| self.spin_for_job()) {
+            self.searching.fetch_add(1, Ordering::SeqCst);
+            let job = self.find_job().or_else(|| self.spin_for_job());
+            self.searching.fetch_sub(1, Ordering::SeqCst);
+            if let Some(job) = job {
+                // The last searcher found work and more is queued: wake
+                // another worker to look (pushes skip the wake-up while
+                // someone searches, so the wake-ups chain from here).
+                if self.queued.load(Ordering::SeqCst) > 0
+                    && self.searching.load(Ordering::SeqCst) == 0
+                {
+                    self.wake_or_start();
+                }
                 self.execute(job);
                 // Back from a wait with the cooperative set full: retire.
                 if self.active.load(Ordering::SeqCst) > self.target {
