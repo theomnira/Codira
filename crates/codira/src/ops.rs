@@ -20,6 +20,7 @@ pub mod doctor;
 pub mod envelope;
 pub mod exe;
 pub mod fmt;
+pub mod heap;
 pub mod import_c;
 pub mod init;
 pub mod language_server;

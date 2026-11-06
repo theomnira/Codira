@@ -15,7 +15,8 @@ use codira_project::Package;
 use crate::{
     ops::{
         build::{display_colors, locate_manifest, optimization_level, UseColor},
-        start::start_library,
+        heap::{HeapArgs, HeapSettings},
+        start::{start_library, StartOptions},
     },
     ExitStatus,
 };
@@ -56,6 +57,15 @@ pub struct Args {
     /// compile yet.
     #[clap(long, conflicts_with = "heal")]
     jit: bool,
+
+    #[clap(flatten)]
+    heap: HeapArgs,
+
+    /// Print the garbage collector's statistics (heap size and peak,
+    /// allocations, collections, pauses) to standard error when the entry
+    /// point returns
+    #[clap(long)]
+    runtime_stats: bool,
 }
 
 /// Builds the package `args` names and invokes its entry point.
@@ -76,13 +86,20 @@ pub fn run(args: Args) -> anyhow::Result<ExitStatus> {
         mode: codira_compiler::BuildMode::default(),
     };
 
+    // Read the heap settings first, so a bad value is reported before the
+    // build.
+    let package = Package::from_file(&manifest_path)?;
+    let heap = HeapSettings::resolve(
+        &args.heap,
+        Some((package.manifest().runtime(), &manifest_path)),
+    )?;
+
     if args.jit {
         if let Some(status) = run_jit(&manifest_path, &config, colors, &args.entry)? {
             return Ok(status);
         }
     }
 
-    let package = Package::from_file(&manifest_path)?;
     let library = codira_compiler::ensure_package_output_dir(&package, &config)?
         .join("mod")
         .with_extension("codiralib");
@@ -94,7 +111,15 @@ pub fn run(args: Args) -> anyhow::Result<ExitStatus> {
         return Ok(ExitStatus::Error);
     }
 
-    start_library(library, args.entry, args.heal, args.fuel)
+    heap.warn_if_unlimited();
+    start_library(StartOptions {
+        library,
+        entry: args.entry,
+        heal: args.heal,
+        fuel: args.fuel,
+        heap,
+        runtime_stats: args.runtime_stats,
+    })
 }
 
 /// Runs the package on the Cranelift backend, or returns `None` if it uses

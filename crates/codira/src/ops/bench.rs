@@ -65,6 +65,7 @@ use crate::{
     ops::{
         build::{display_colors, locate_manifest, UseColor},
         fmt::collect_code_files,
+        heap::{HeapArgs, HeapSettings},
     },
     ExitStatus,
 };
@@ -132,6 +133,9 @@ pub struct Args {
     /// Internal: the benchmark function `--run-one` calls
     #[clap(long, hide = true)]
     entry: Option<String>,
+
+    #[clap(flatten)]
+    heap: HeapArgs,
 }
 
 /// One benchmark's samples: nanoseconds per call.
@@ -164,6 +168,13 @@ pub fn bench(args: Args) -> anyhow::Result<ExitStatus> {
 
     let manifest_path = locate_manifest(args.manifest_path.as_deref())?;
     let package = codira_project::Package::from_file(&manifest_path)?;
+    // Each benchmark resolves the settings again in its process; reading them
+    // here reports a bad value once, before the build, and warns once.
+    let heap = HeapSettings::resolve(
+        &args.heap,
+        Some((package.manifest().runtime(), &manifest_path)),
+    )?;
+    heap.warn_if_unlimited();
     let root = package.root().to_path_buf();
     let baseline_dir = root.join("target").join("bench").join("baselines");
     // Read the baseline first: a missing one is an error before the build.
@@ -258,6 +269,9 @@ pub fn bench(args: Args) -> anyhow::Result<ExitStatus> {
                 .arg(round_samples.to_string())
                 .arg("--rounds")
                 .arg("1")
+                .arg("--manifest-path")
+                .arg(&manifest_path)
+                .args(args.heap.forward())
                 .output()?;
             let stdout = String::from_utf8_lossy(&output.stdout);
             if let Some(error) = stdout.lines().find_map(|l| l.strip_prefix(ERROR_PREFIX)) {
@@ -515,8 +529,15 @@ type Timer<'a> = Box<dyn Fn(u64) -> Result<Duration, String> + 'a>;
 /// The child side: warm up, size the samples, take them, print them.
 fn run_one(library: &Path, entry: &str, args: &Args) -> anyhow::Result<ExitStatus> {
     codira_healing::trap::install();
+    let heap = match &args.manifest_path {
+        Some(path) => {
+            let package = codira_project::Package::from_file(path)?;
+            HeapSettings::resolve(&args.heap, Some((package.manifest().runtime(), path)))?
+        }
+        None => HeapSettings::resolve(&args.heap, None)?,
+    };
     // Safety: the library was just compiled by the parent `codira bench`.
-    let runtime = unsafe { Runtime::builder(library).finish() }?;
+    let runtime = unsafe { heap.apply(Runtime::builder(library)).finish() }?;
     let definition = runtime
         .get_function_definition(entry)
         .ok_or_else(|| anyhow!("benchmark `{entry}` is not in '{}'", library.display()))?;
