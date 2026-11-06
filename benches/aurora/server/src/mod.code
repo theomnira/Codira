@@ -1,0 +1,97 @@
+// AURORA: a server-style workload with high churn. Each request is a line
+// like `GET /users/4711/items/42 HTTP/1.1`: it is split and parsed, its
+// user's session is found in a map (or made, evicting the oldest session
+// when the table is full), the session records the item, and a response
+// with a JSON body is formatted and kept as the session's last response.
+// Every request is timed on its own, so the percentiles show what a stop
+// of the world does to a request that meets it. `server.rs` (`HashMap`,
+// `String`) and `server.cpp` (`std::unordered_map`, `std::string`) do the
+// same per request, with Codira's hash function, and print the same check
+// values.
+//
+// `requests` handles 200k requests over at most 20k live sessions;
+// `long_run` handles 1M over 50k, and the suite runs it under shrinking
+// GC heap caps.
+
+import std.collections.map.{Map}
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+class Rng { s: u64 }
+
+func next(r: Rng) -> u64 {
+    var x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+class Session { uid: i64, hits: i64, items: [i64], last: String }
+
+// The element at `len * q / 1000`, of the sorted latencies.
+func at(lat: [u64], q: usize) -> u64 {
+    var i = lat.len() * q / 1000
+    if i >= lat.len() { i = lat.len() - 1 }
+    lat[i]
+}
+
+func serve(requests: i64, live: usize, users: u64) {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let sessions: Map[i64, Session] = Map.new()
+    let ring = array_filled(-1i64, live)
+    var ring_at: usize = 0
+    let lat = array_filled(0u64, requests as usize)
+    var check: u64 = 0
+    let start = now()
+    var n: i64 = 0
+    while n < requests {
+        let uid = (next(r) % users) as i64
+        let item = (next(r) % 1000) as i64
+        let line = f"GET /users/{uid}/items/{item} HTTP/1.1"
+        let t0 = now()
+
+        let words = line.split(" ")
+        let parts = words[1].split("/")
+        let user = parts[2].parse_i64()!
+        let thing = parts[4].parse_i64()!
+        var session = Session { uid: 0, hits: 0, items: [], last: "".to_string() }
+        if let s = sessions.get(user) {
+            session = s
+        } else {
+            session = Session { uid: user, hits: 0, items: [], last: "".to_string() }
+            let old = ring[ring_at]
+            if old >= 0 { sessions.remove(old); }
+            ring[ring_at] = user
+            ring_at = (ring_at + 1) % live
+            sessions.insert(user, session);
+        }
+        session.hits += 1
+        if session.items.len() >= 16 { session.items = [] }
+        session.items.push(thing)
+        let hits = session.hits
+        let count = session.items.len()
+        let body = f"{{\"user\":{user},\"item\":{thing},\"hits\":{hits},\"recent\":{count}}}"
+        let size = body.len()
+        let response = f"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {size}\r\n\r\n" + body
+        session.last = response
+        check += response.len() as u64
+
+        lat[n as usize] = now() - t0
+        n += 1
+    }
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check * 1000 + sessions.len() as u64)
+    lat.sort()
+    println("@@ p50_ns=", at(lat, 500), " p95_ns=", at(lat, 950), " p99_ns=", at(lat, 990),
+            " p999_ns=", at(lat, 999), " max_ns=", lat[lat.len() - 1])
+}
+
+public func requests() { serve(200000, 20000, 50000) }
+
+public func long_run() { serve(1000000, 50000, 200000) }

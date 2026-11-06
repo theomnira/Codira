@@ -285,6 +285,10 @@ class Kernel:
         # check value for a known, explained reason; it is reported, not
         # failed.
         self.check_differs = spec.get("check_differs", {})
+        # `expected_failure = { codira = "why" }`: that variant is known not
+        # to complete today (a heap cap below what the runtime needs, say).
+        # A failure is reported as expected; a success is reported as news.
+        self.expected_failure = spec.get("expected_failure", {})
         self.unavailable = {}
         # `codira = "why"` (or `rust`, `cpp`) in a kernel: that variant
         # cannot be written yet, for the reason given.
@@ -528,6 +532,10 @@ def run_suite(args, kernels, binaries, host, perf, rng):
                 continue
             values, ru, counters, error = run_one(cmd, env, args.work, perf, args.timeout)
             done += 1
+            if error and v in k.expected_failure:
+                res["expected_failure"] = error
+                res["error"] = error  # stop running it
+                continue
             if error:
                 res["error"] = error
                 log(f"!! {k.id} [{v}]: {error}")
@@ -693,6 +701,10 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests):
                 res = r.get(v, {})
                 if "median_ns" in res:
                     cells.append(fmt_ms(res["median_ns"]) + fmt_ci(res["ci_ns"]))
+                elif "expected_failure" in res:
+                    cells.append("does not complete")
+                    notes.append(f"`{k.name}` {v}: does not complete ({k.expected_failure[v]}): "
+                                 f"{res['expected_failure'].strip()[:300]}")
                 elif "error" in res:
                     cells.append("failed")
                     notes.append(f"`{k.name}` {v}: failed: {res['error'][:200]}")
@@ -923,7 +935,12 @@ def main():
     print(md)
     log(f"results: {out}/results.json, {out}/summary.md")
     bad_checks = [k.id for k in kernels if not results[k.id]["check_agrees"]]
-    errors = [f"{k.id} [{v}]" for k in kernels for v in VARIANTS if "error" in results[k.id].get(v, {})]
+    errors = [f"{k.id} [{v}]" for k in kernels for v in VARIANTS
+              if "error" in results[k.id].get(v, {}) and "expected_failure" not in results[k.id][v]]
+    news = [f"{k.id} [{v}]" for k in kernels for v in k.expected_failure
+            if results[k.id].get(v, {}).get("samples")]
+    if news:
+        log("expected to fail but completed (update suite.toml): " + ", ".join(news))
     if bad_checks:
         log("check values differ: " + ", ".join(bad_checks))
     if errors:

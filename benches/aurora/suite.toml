@@ -12,6 +12,7 @@
 #   heap_limit_mb  the Codira GC heap cap for this kernel (default below)
 #   codira | rust | cpp = "reason"   that variant does not exist, and why
 #   note           shown under the workload's table
+#   expected_failure = { codira = "why" }   known not to complete today
 
 [defaults]
 heap_limit_mb = 1024
@@ -156,4 +157,7 @@ kernels = [
   { name = "long_run_heap_1024", entry = "long_run", arg = "long_run", heap_limit_mb = 1024 },
   { name = "long_run_heap_256", entry = "long_run", arg = "long_run", heap_limit_mb = 256 },
   { name = "long_run_heap_128", entry = "long_run", arg = "long_run", heap_limit_mb = 128, ci = true },
+  { name = "long_run_heap_96", entry = "long_run", arg = "long_run", heap_limit_mb = 96 },
+  { name = "long_run_heap_80", entry = "long_run", arg = "long_run", heap_limit_mb = 80 },
+  { name = "long_run_heap_64", entry = "long_run", arg = "long_run", heap_limit_mb = 64, expected_failure = { codira = "the runtime aborts when a collection cannot make room under the cap" } },
 ]
