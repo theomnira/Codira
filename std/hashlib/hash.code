@@ -217,3 +217,6 @@ extend str: Hashable {
         return h;
     }
 }
+// The built-in `String`'s own FNV-1a hash, so a `str` and a `String` with
+// the same bytes hash alike.
+extend String: Hashable { func hash_value(self) -> u64 { self.hash() } }

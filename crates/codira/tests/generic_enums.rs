@@ -8,7 +8,8 @@
 //!   in fields, arrays and class-linked lists, pass them across modules, use
 //!   `?` on `Result`s and optionals (wrapping errors into the caller's error
 //!   enum), and use `std.result.result`, `std.fs.file` and `std.text.ascii`;
-//!   the `examples/results` package runs; programs that break the rules are
+//!   the `examples/results` package runs; an enum reaching itself through a
+//!   generic class compiles; programs that break the rules are
 //!   rejected with the rule's message.
 
 use std::{path::Path, process::Command};
@@ -522,6 +523,55 @@ public func main() {
         &[],
     );
     assert_eq!(stdout, "4\n");
+}
+
+/// An enum that reaches itself through a generic class -- a JSON value whose
+/// objects are `Map[String, Json]` -- compiles (its type name once recursed
+/// forever) and keeps working when a String-keyed map holds it.
+#[test]
+fn an_enum_reaching_itself_through_a_generic_class_compiles() {
+    let (stdout, _) = run_ok(
+        &[(
+            "mod.code",
+            r#"
+import std.collections.map.{Map}
+
+public class Cell[T] { item: T }
+enum Wrapped { Leaf(i64), Inside(Cell[Wrapped]) }
+
+enum Json { Null, Num(f64), Str(String), Arr([Json]), Obj(Map[String, Json]) }
+
+func count(j: Json) -> i64 {
+    match j {
+        Json.Arr(xs) -> xs.fold(1, func(a, x) { a + count(x) }),
+        Json.Obj(m) -> m.values().fold(1, func(a, x) { a + count(x) }),
+        _ -> 1,
+    }
+}
+
+func depth(w: Wrapped) -> i64 {
+    match w {
+        Wrapped.Leaf(_) -> 0,
+        Wrapped.Inside(c) -> 1 + depth(c.item),
+    }
+}
+
+public func main() {
+    let m: Map[String, Json] = Map.new()
+    m.insert("a".to_string(), Json.Num(1.0));
+    m.insert("b".to_string(), Json.Arr([Json.Null, Json.Null]));
+    m.insert("a".to_string(), Json.Str("again".to_string()));
+    println(m.len(), " ", m.contains_key("b".to_string()))
+    println(count(Json.Arr([Json.Null, Json.Str("x".to_string()), Json.Obj(m)])))
+    let inner: Cell[Wrapped] = Cell { item: Wrapped.Leaf(7) }
+    let outer: Cell[Wrapped] = Cell { item: Wrapped.Inside(inner) }
+    println(depth(Wrapped.Inside(outer)))
+}
+"#,
+        )],
+        &[],
+    );
+    assert_eq!(stdout, "2 true\n8\n2\n");
 }
 
 /// Breaking a rule of `?` or of a bounded `extend` is a compile error that

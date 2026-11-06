@@ -308,7 +308,46 @@ impl Ty {
     /// Returns the type's name as a string, if one exists.
     ///
     /// This name needs to be unique as it is used to generate a type's `Guid`.
+    ///
+    /// An enum's or a value struct's name spells out its layout, and a GC
+    /// struct's spells out its type arguments, so a type that reaches itself
+    /// -- `enum Json { Object(Map[String, Json]) }` -- would be spelled out
+    /// forever. Inside its own expansion such a type is written by name only
+    /// (`enum Json`), which is still unique and leaves every type that does
+    /// not reach itself named exactly as before.
     pub fn guid_string(&self, db: &dyn HirDatabase) -> Option<String> {
+        thread_local! {
+            static EXPANDING: std::cell::RefCell<Vec<Ty>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        struct Pop;
+        impl Drop for Pop {
+            fn drop(&mut self) {
+                EXPANDING.with(|stack| stack.borrow_mut().pop());
+            }
+        }
+        let spelled_out = match self.interned() {
+            TyKind::Enum(..) => true,
+            TyKind::Struct(s, _) => s.data(db).memory_kind != StructMemoryKind::Gc,
+            _ => false,
+        };
+        if !spelled_out {
+            return self.guid_string_expanded(db);
+        }
+        if EXPANDING.with(|stack| stack.borrow().contains(self)) {
+            return Some(match self.interned() {
+                TyKind::Enum(e, args) => format!("enum {}", crate::mono::enum_name(db, *e, args)),
+                TyKind::Struct(s, _) => format!("struct {}", s.name(db)),
+                _ => unreachable!("only enums and value structs are spelled out"),
+            });
+        }
+        EXPANDING.with(|stack| stack.borrow_mut().push(self.clone()));
+        let _pop = Pop;
+        self.guid_string_expanded(db)
+    }
+
+    /// [`Ty::guid_string`] without the guard against a type that reaches
+    /// itself.
+    fn guid_string_expanded(&self, db: &dyn HirDatabase) -> Option<String> {
         match self.interned() {
             TyKind::Struct(s, args) => {
                 let s = *s;

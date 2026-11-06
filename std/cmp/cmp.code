@@ -45,6 +45,7 @@ extend f32: Eq { func eq(self, other: f32) -> bool { self == other } }
 extend f64: Eq { func eq(self, other: f64) -> bool { self == other } }
 extend bool: Eq { func eq(self, other: bool) -> bool { self == other } }
 extend str: Eq { func eq(self, other: str) -> bool { str_equal(self, other) } }
+extend String: Eq { func eq(self, other: String) -> bool { self == other } }
 
 extend i8: Ord { func lt(self, other: i8) -> bool { self < other } }
 extend i16: Ord { func lt(self, other: i16) -> bool { self < other } }
@@ -60,6 +61,7 @@ extend f32: Ord { func lt(self, other: f32) -> bool { self < other } }
 extend f64: Ord { func lt(self, other: f64) -> bool { self < other } }
 extend bool: Ord { func lt(self, other: bool) -> bool { !self && other } }
 extend str: Ord { func lt(self, other: str) -> bool { str_compare(self, other) < 0 } }
+extend String: Ord { func lt(self, other: String) -> bool { self < other } }
 
 // Whether `a` and `b` hold the same bytes.
 public func str_equal(a: str, b: str) -> bool {
