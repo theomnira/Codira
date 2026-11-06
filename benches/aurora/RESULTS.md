@@ -13,8 +13,8 @@ pauses, latency percentiles, counters, compile time and binary size.
 The first full run of the suite (`python3 scripts/bench.py`, see
 `README.md` for the method), on commit `48bf5bed4e` (main at
 `f8b145c6a1` and this suite). Later work measures against these numbers.
-`baseline/ci.json` holds the samples of its CI kernels for the regression
-gate.
+The regression gate's baseline has since moved to a later commit, on the
+same machine (see below).
 
 **Since then.** The tables of the full run below are main at `f8b145c6a1`.
 Later commits of main were measured against the stored baseline:
@@ -25,8 +25,8 @@ Later commits of main were measured against the stored baseline:
 - `261f4b94da` (a kept format result's buffer sized to its text, `@region`
   functions): no kernel regressed. **The heap floor fell from 64 to 56
   MiB** (52 MiB fails), with 41.1 MiB live at that cap instead of 48.7.
-  `baseline/ci.json` is now that run's samples (9 rounds, 42 kernels, with
-  the heap floor).
+  `baseline/ci.json` was then that run's samples (9 rounds, 42 kernels,
+  with the heap floor).
 
 - `80babddeed` (every workstream merged: relocation, precise stack roots,
   Cascade, task groups, regions; the full suite, 11 rounds, against the
@@ -43,6 +43,26 @@ Later commits of main were measured against the stored baseline:
   before. `json.pretty_deep` completed all 11 runs (its live bytes after
   the last collection fell from 604 to 501 MiB), and JSON printing got
   faster: `print_canada` from 2.25x to 1.36x Rust's time.
+
+- `2a5b6bc118` (the frame-record fix: no record where a function has
+  nothing to describe, a one-load poll, signal preemption instead of call
+  polls; the full suite, 11 rounds, against the baseline): **the gate
+  passes**. `loops.fib_32` is 0.83x Rust's time (6.39 ms [6.26, 6.89]
+  against 7.69), better than the baseline's 0.99x (change -16%, 95%
+  interval -33% to -4.5%), and `groups.fib_64` 0.41x (-16%). No kernel
+  regressed. The heap floor is 56 MiB. The same three kernels drifted up
+  again without surviving the correction, as on `80babddeed`:
+  `graph.binary_trees` +12%, `graph.cyclic_graph` +9%,
+  `server.long_run_heap_128` +14%; twice in a row, that suggests a small
+  real cost in collections since `261f4b94da` that one run cannot
+  establish.
+
+**The gate's baseline** (`baseline/ci.json`) is now that run on
+`2a5b6bc118`: 42 CI kernels, 11 rounds, the heap floor, measured on this
+suite's VM: **Intel(R) Xeon(R) Processor @ 2.10GHz, 4 logical CPUs,
+x86_64** (Linux 6.18, 16 GB, shared). It gates only runs on that machine
+class: elsewhere the gate reports no comparable baseline (see
+`README.md`).
 
 **`loops.store_field`, bisected** from `ea5aea347e` to main's tip
 (`f7edd949f4`) and `313030150d`: each commit's own compiler built the same
