@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use codira_hir::{
     mono::{self, Instance},
-    HasVisibility, HirDatabase, HirDisplay, InferenceResult, ModuleDef, Ty, TyKind, TypeWalk,
+    HirDatabase, HirDisplay, InferenceResult, ModuleDef, Ty, TyKind, TypeWalk,
 };
 use inkwell::{module::Module, types::PointerType, values::UnnamedAddress, AddressSpace};
 use rustc_hash::FxHashSet;
@@ -205,14 +205,21 @@ pub(crate) fn gen_file_group_ir<'ink>(
             &f.body(code_gen.db),
             &unit.infer,
         );
+        intrinsics::collect_main_result(
+            code_gen.context,
+            code_gen.target_machine.get_target_data(),
+            code_gen.db,
+            &mut intrinsics_map,
+            &mut needs_alloc,
+            f,
+        );
 
         // Only the group's own non-generic functions get a host-visible
         // wrapper; an instance or a copy is never exported.
         if unit.instance.is_generic() || unit.local_copy {
             continue;
         }
-        let fn_sig = f.ty(code_gen.db).callable_sig(code_gen.db).unwrap();
-        if f.visibility(code_gen.db).is_externally_visible() && !fn_sig.marshallable(code_gen.db) {
+        if crate::ir::function::needs_host_wrapper(code_gen.db, f) {
             intrinsics::collect_wrapper_body(
                 code_gen.context,
                 code_gen.target_machine.get_target_data(),
@@ -266,6 +273,12 @@ pub(crate) fn gen_file_group_ir<'ink>(
         // Find all functions that must be present in the dispatch table
         let body = unit.instance.function().body(code_gen.db);
         dispatch_table_builder.collect_body(&body, &unit.infer);
+        // `main`'s `Err` is written with its type's `to_string`.
+        if let Some(to_string) = codira_hir::main_result(code_gen.db, unit.instance.function())
+            .and_then(|report| report.to_string)
+        {
+            dispatch_table_builder.collect_callee(to_string);
+        }
     }
 
     dispatch_table_builder.collect_fn_values(fn_values);

@@ -479,6 +479,19 @@ extern "C" fn debug_leave() {
     });
 }
 
+/// Ends the program after `main` returned an `Err`: writes `Error: ` and
+/// `text` (the error, as the compiler wrote it) and a line break to standard
+/// error, and exits with status 1. Standard output is flushed first, so what
+/// the program printed before is not lost.
+extern "C" fn exit_with_error(data: *const u8, len: usize) {
+    use std::io::Write as _;
+    // Safety: generated code passes valid UTF-8.
+    let message = unsafe { text(bytes_at(data, len)) };
+    let _ = std::io::stdout().flush();
+    let _ = writeln!(std::io::stderr(), "Error: {message}");
+    std::process::exit(1);
+}
+
 /// The functions above, for the dispatch table (see `string::definitions`).
 pub(super) fn definitions() -> Vec<crate::FunctionDefinition> {
     use crate::IntoFunctionDefinition;
@@ -510,6 +523,10 @@ pub(super) fn definitions() -> Vec<crate::FunctionDefinition> {
         ),
         IntoFunctionDefinition::into(debug_enter as extern "C" fn(H) -> u8, "codira.debug_enter"),
         IntoFunctionDefinition::into(debug_leave as extern "C" fn(), "codira.debug_leave"),
+        IntoFunctionDefinition::into(
+            exit_with_error as extern "C" fn(P, usize),
+            "codira.exit_with_error",
+        ),
     ]
 }
 

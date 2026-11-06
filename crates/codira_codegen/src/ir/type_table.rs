@@ -261,6 +261,16 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
         if !instance.is_generic() {
             self.maybe_collect_fn_signature(hir_fn);
         }
+        // Reporting `main`'s `Err` makes strings, and may call the error's
+        // `to_string` through the dispatch table.
+        if let Some(report) = codira_hir::main_result(self.db, hir_fn) {
+            // Only the buffer: `[String]` would need `String`'s layout,
+            // which a `main` that mentions no `String` does not export.
+            self.collect_type(self.hir_types.type_id(&crate::ir::strings::byte_array()));
+            if let Some(to_string) = report.to_string {
+                self.maybe_collect_fn_signature(to_string);
+            }
+        }
 
         // Collect used types from body
         let body = hir_fn.body(self.db);

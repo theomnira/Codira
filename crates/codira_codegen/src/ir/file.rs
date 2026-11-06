@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, HashSet};
 
 use codira_hir::{
     mono::{self, Instance},
-    HasVisibility, ModuleDef,
+    ModuleDef,
 };
 use inkwell::{module::Module, values::FunctionValue};
 
@@ -112,23 +112,13 @@ pub(crate) fn gen_file_ir<'ink>(
         }
         let f = unit.instance.function();
 
-        let fn_sig = f.ty(code_gen.db).callable_sig(code_gen.db).unwrap();
         // A method's receiver is a parameter too: a value-struct or
-        // `String` receiver crosses boxed, like any such argument.
-        let boxed_receiver = f.self_param_ty(code_gen.db).is_some_and(|ty| {
-            ty.is_string()
-                || ty.as_struct().is_some_and(|s| {
-                    s.data(code_gen.db).memory_kind == codira_hir::StructMemoryKind::Value
-                })
-        });
-        // A function taking hidden evidence parameters always gets a
-        // wrapper with the host-visible signature: the runtime finds a
-        // function through it, and must never call the internal one
-        // with too few arguments.
-        if (f.visibility(code_gen.db).is_externally_visible()
-            && (!fn_sig.marshallable(code_gen.db) || boxed_receiver))
-            || crate::ir::body::has_evidence(code_gen.db, f)
-        {
+        // `String` receiver crosses boxed, like any such argument. A
+        // function taking hidden evidence parameters always gets a wrapper
+        // with the host-visible signature: the runtime finds a function
+        // through it, and must never call the internal one with too few
+        // arguments.
+        if function::needs_host_wrapper(code_gen.db, f) {
             let wrapper_fun =
                 function::gen_public_prototype(code_gen.db, &code_gen.hir_types, f, &llvm_module);
             wrapper_functions.insert(f, wrapper_fun);

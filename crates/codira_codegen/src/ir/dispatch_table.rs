@@ -368,23 +368,33 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
         } else if let Expr::MethodCall { .. } = expr {
             // A method or an associated function of another module's type is
             // linked like a free function: `p.describe()`, `Point.origin()`.
-            if let Some(def) = infer.method_resolution(expr_id).map(codira_hir::Function::from) {
-                let local = def.is_intrinsic(self.db)
-                    || def.is_inline_asm(self.db)
-                    || def.is_generic(self.db)
-                    || self.local_copies.contains(&def);
-                if !local && self.module_group.should_runtime_link_fn(self.db, def) {
-                    let fn_module = def.module(self.db);
-                    if !def.is_extern(self.db) && !self.module_group.contains(fn_module) {
-                        self.referenced_modules.insert(fn_module);
-                    }
-                    self.collect_fn_def(def);
-                }
+            if let Some(def) = infer
+                .method_resolution(expr_id)
+                .map(codira_hir::Function::from)
+            {
+                self.collect_callee(def);
             }
         }
 
         // Recurse further
         expr.walk_child_exprs(|expr_id| self.collect_expr(expr_id, body, infer));
+    }
+
+    /// Adds a slot for `def`, a function generated code calls, when it is
+    /// called through the table: not an intrinsic, an `@asm` function, a
+    /// generic one (instantiated here) or a copy this group emits.
+    pub fn collect_callee(&mut self, def: codira_hir::Function) {
+        let local = def.is_intrinsic(self.db)
+            || def.is_inline_asm(self.db)
+            || def.is_generic(self.db)
+            || self.local_copies.contains(&def);
+        if !local && self.module_group.should_runtime_link_fn(self.db, def) {
+            let fn_module = def.module(self.db);
+            if !def.is_extern(self.db) && !self.module_group.contains(fn_module) {
+                self.referenced_modules.insert(fn_module);
+            }
+            self.collect_fn_def(def);
+        }
     }
 
     /// Adds the two entries of every function-value target (see

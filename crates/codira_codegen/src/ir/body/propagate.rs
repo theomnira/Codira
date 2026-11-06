@@ -18,12 +18,18 @@
 //!   %v   = extractvalue %Result %r, <Ok slot>
 //! ```
 //!
-//! No allocation and no call. The early return goes through the same steps
+//! No allocation and no call -- unless the error passes through the
+//! enclosing result's `@error_conversion` (`AnyError.from_error(e)`), which
+//! is called on the `Err` path like any call of a generic function, at the
+//! instance inference recorded for the `?`. The early return goes through the
+//! same steps
 //! as `return`: open `scope`s end first, and a hardware-safety mode undoes
 //! its setup before every `ret` (see `safety`). `x?` on an optional is the
 //! same with the present flag, returning the all-zero `nil`.
 
 use codira_hir::{mono, ExprId, TyKind};
+
+use crate::intrinsics;
 use inkwell::{
     values::{AggregateValueEnum, BasicValueEnum},
     IntPredicate,
@@ -109,6 +115,15 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     .build_extract_value(value, err_slot, "error")
                     .expect("the `Err` slot exists in the layout");
                 let returned_args = mono::enum_args(&returned);
+                // `AnyError.from_error(e)`, when the function's error type
+                // converts this one.
+                if let Some(conversion) = self.infer.method_resolution(expr) {
+                    error = self.gen_call(
+                        Some(expr),
+                        codira_hir::Function::from(conversion),
+                        &[error.into()],
+                    )?;
+                }
                 // `Problem.Io(e)`, when the function's error type wraps
                 // this one.
                 if let Some(wrap) = self.infer.propagation_wrap(expr) {
@@ -168,6 +183,90 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 )
             }
             _ => unreachable!("inference admits `?` only on a `Result` or an optional"),
+        }
+    }
+
+    /// For a `main` that returns a `Result` (see `codira_hir::main_result`):
+    /// before each return, an `Err` writes `Error: <the error>` to standard
+    /// error and ends the program with exit status 1, so that the host is
+    /// only ever handed an `Ok`.
+    pub(super) fn gen_main_result_check(&mut self) {
+        let Some(report) = codira_hir::main_result(self.db, self.hir_function) else {
+            return;
+        };
+        let returned = self.instance.sig(self.db).ret().clone();
+        let args = mono::enum_args(&returned);
+        let returns: Vec<_> = self
+            .fn_value
+            .get_basic_blocks()
+            .into_iter()
+            .filter_map(|block| {
+                let terminator = block.get_terminator()?;
+                if terminator.get_opcode() != inkwell::values::InstructionOpcode::Return {
+                    return None;
+                }
+                let value = terminator.get_operand(0)?.value()?;
+                Some((block, terminator, value))
+            })
+            .collect();
+        let saved = self.builder.get_insert_block();
+        for (block, terminator, value) in returns {
+            terminator.erase_from_basic_block();
+            self.builder.position_at_end(block);
+            let result = value.into_struct_value();
+            let tag = self
+                .builder
+                .build_extract_value(result, 0, "tag")
+                .expect("an enum has a tag")
+                .into_int_value();
+            let is_err = self
+                .builder
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    tag,
+                    tag.get_type()
+                        .const_int(u64::from(report.err.index()), false),
+                    "is_err",
+                )
+                .expect("failed to compare an enum tag");
+            let ok_block = self.context.append_basic_block(self.fn_value, "main.ok");
+            let err_block = self.context.append_basic_block(self.fn_value, "main.err");
+            self.builder
+                .build_conditional_branch(is_err, err_block, ok_block)
+                .expect("failed to branch on `main`'s result");
+            self.builder.position_at_end(ok_block);
+            self.builder
+                .build_return(Some(&result))
+                .expect("failed to return `main`'s result");
+
+            self.builder.position_at_end(err_block);
+            let slot = report.err.slots_at(self.db, &args)[0] as u32 + 1;
+            let error = self
+                .builder
+                .build_extract_value(result, slot, "error")
+                .expect("the `Err` slot exists in the layout");
+            let text = match (report.error_ty.interned(), report.to_string) {
+                (_, Some(to_string)) => self
+                    .gen_call(None, to_string, &[error.into()])
+                    .expect("`to_string` returns a `String`"),
+                (TyKind::String | TyKind::Str, None) => error,
+                (TyKind::Int(_) | TyKind::Float(_), None) => {
+                    self.gen_to_string_of(&report.error_ty, error)
+                }
+                _ => self.gen_debug_string(&report.error_ty, error, false),
+            };
+            let text_ty = match report.error_ty.interned() {
+                TyKind::Str if report.to_string.is_none() => TyKind::Str.intern(),
+                _ => TyKind::String.intern(),
+            };
+            let (data, len) = self.string_text_of(&text_ty, text);
+            self.string_call(&intrinsics::exit_with_error, &[data.into(), len.into()]);
+            self.builder
+                .build_unreachable()
+                .expect("failed to end `main`'s error path");
+        }
+        if let Some(block) = saved {
+            self.builder.position_at_end(block);
         }
     }
 

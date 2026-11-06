@@ -302,6 +302,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         self.finish_safety();
         // One return block for an aggregate result (see `merge`).
         self.unify_aggregate_returns();
+        // A `main` returning a `Result` ends the program on an `Err`.
+        self.gen_main_result_check();
     }
 
     /// Emits a `@runtime_checked` function's `requires` clauses at its
@@ -371,7 +373,25 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             })
             .collect();
 
-        let ret_value = self.gen_call(None, self.hir_function, &args);
+        let mut ret_value = self.gen_call(None, self.hir_function, &args);
+        let mut fn_sig = fn_sig;
+
+        // A `main` returning a `Result` comes back only with an `Ok` (see
+        // `gen_main_result_check`), whose payload the host is handed.
+        if let Some(report) = codira_hir::main_result(self.db, self.hir_function) {
+            let args = codira_hir::mono::enum_args(fn_sig.ret());
+            let slot = report.ok.slots_at(self.db, &args).first().copied();
+            ret_value = match (ret_value, slot) {
+                (Some(value), Some(slot)) if !report.ok_ty.is_empty() => Some(
+                    self.builder
+                        .build_extract_value(value.into_struct_value(), slot as u32 + 1, "ok")
+                        .expect("the `Ok` slot exists in the layout"),
+                ),
+                _ => None,
+            };
+            fn_sig =
+                codira_hir::FnSig::from_params_and_return(fn_sig.params().to_vec(), report.ok_ty);
+        }
 
         // What the wrapper returns is decided by the function's declared
         // result, never by the type of its body expression: a body ending

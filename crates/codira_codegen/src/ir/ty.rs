@@ -331,7 +331,12 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
     /// from the outside of the Codira code. This function should be C ABI
     /// compatible.
     pub fn get_public_function_type(&self, func: &Instance) -> FunctionType<'ink> {
-        let ty = func.sig(self.db);
+        let mut ty = func.sig(self.db);
+        // A `main` returning a `Result` returns its `Ok` payload to the host
+        // (see `codira_hir::main_result`).
+        if let Some(report) = codira_hir::main_result(self.db, func.function()) {
+            ty = codira_hir::FnSig::from_params_and_return(ty.params().to_vec(), report.ok_ty);
+        }
         let param_tys: Vec<_> = self
             .receiver_and_param_tys(func, &ty)
             .map(|p| {

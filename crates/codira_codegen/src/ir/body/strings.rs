@@ -355,6 +355,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             let ty = self.infer[receiver].clone();
             return Some(self.gen_debug_string(&ty, receiver_value, false));
         }
+        if op == StringOp::TypeName {
+            // A constant: the receiver's type is concrete here.
+            let name = codira_hir::HirDisplay::display(&self.infer[receiver], self.db).to_string();
+            return Some(self.gen_string_literal(&name));
+        }
         // A method called on a `str` works on a `String` copy of it.
         let receiver_value = if matches!(self.infer[receiver].interned(), TyKind::Str) {
             self.gen_to_string(receiver, receiver_value)
@@ -587,7 +592,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     .expect("failed to load a parsed number");
                 self.string_optional(&self.infer[expr].clone(), present, value)
             }
-            StringOp::ToString | StringOp::FromUtf8 | StringOp::DebugString => {
+            StringOp::ToString
+            | StringOp::FromUtf8
+            | StringOp::DebugString
+            | StringOp::TypeName => {
                 unreachable!("lowered separately")
             }
         })

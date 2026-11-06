@@ -388,6 +388,9 @@ pub fn collect_instances(
                     _ => return None,
                 },
                 Expr::MethodCall { .. } => Function::from(infer.method_resolution(expr_id)?),
+                // `x?` passing its error on through an `@error_conversion`
+                // calls it (see `ty::infer::propagate`).
+                Expr::Propagate { .. } => Function::from(infer.method_resolution(expr_id)?),
                 _ => return None,
             };
             Some((expr_id, callee))

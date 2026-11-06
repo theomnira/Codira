@@ -76,6 +76,11 @@ pub enum StringOp {
     /// `f"{x:?}"` writes (see `builtin::format`). A method only when the
     /// type declares no `debug_string` of its own.
     DebugString,
+    /// `x.type_name()` on a value of any type: the name of its type as the
+    /// source writes it (`FileError`, `Box[i64]`, `[u8]`), a `str` constant
+    /// chosen per instantiation. A method only when the type declares no
+    /// `type_name` of its own.
+    TypeName,
     /// `string_from_utf8(bytes)`: a copy of `bytes` as a `String` if they are
     /// valid UTF-8, otherwise `nil`. A free function.
     FromUtf8,
@@ -100,6 +105,9 @@ impl StringOp {
         use StringOp::*;
         if name == "debug_string" {
             return Some(DebugString);
+        }
+        if name == "type_name" {
+            return Some(TypeName);
         }
         if name == "to_string" {
             return matches!(
@@ -174,6 +182,7 @@ impl StringOp {
             Hash => "hash",
             ToString => "to_string",
             DebugString => "debug_string",
+            TypeName => "type_name",
             FromUtf8 => "string_from_utf8",
         }
     }
@@ -184,7 +193,8 @@ impl StringOp {
         use StringOp::*;
         match self {
             Len | IsEmpty | CharCount | Chars | Bytes | Lines | Trim | TrimStart | TrimEnd
-            | ToUpper | ToLower | ParseI64 | ParseF64 | Hash | ToString | DebugString => &[],
+            | ToUpper | ToLower | ParseI64 | ParseF64 | Hash | ToString | DebugString
+            | TypeName => &[],
             ByteAt | Repeat => &[StringArg::Integer],
             Find | RFind | Contains | StartsWith | EndsWith | Split => &[StringArg::Text],
             Replace => &[StringArg::Text, StringArg::Text],
@@ -210,6 +220,7 @@ impl StringOp {
             ParseI64 => TyKind::Optional(TyKind::Int(IntTy::i64()).intern()).intern(),
             ParseF64 => TyKind::Optional(TyKind::Float(FloatTy::f64()).intern()).intern(),
             Hash => TyKind::Int(IntTy::u64()).intern(),
+            TypeName => TyKind::Str.intern(),
             FromUtf8 => TyKind::Optional(TyKind::String.intern()).intern(),
         }
     }
@@ -224,6 +235,7 @@ impl StringOp {
             Chars | Bytes | Split | Lines | ToUpper | ToLower | Replace | Repeat | FromUtf8
             | DebugString => true,
             ToString => !matches!(receiver, Some(TyKind::String)),
+            TypeName => false,
             _ => matches!(receiver, Some(TyKind::Str)),
         }
     }

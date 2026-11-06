@@ -596,9 +596,6 @@ impl Collector<'_> {
             | Expr::UnaryOp { .. }
             | Expr::Block { .. }
             | Expr::Return { .. }
-            // `x?` returns early (a `Result`'s `Err`, or `nil`): an ordinary
-            // return, not a panic.
-            | Expr::Propagate { .. }
             | Expr::Break { .. }
             | Expr::Continue
             | Expr::Range { .. }
@@ -617,6 +614,14 @@ impl Collector<'_> {
             // the first iteration, and the counter is not the program's.
             // Over an iterator object it is not.
             Expr::For { .. } => self.iterator_object(expr),
+            // `x?` returns early (a `Result`'s `Err`, or `nil`): an ordinary
+            // return, not a panic. Passing its error on through an
+            // `@error_conversion` calls the conversion on the way out.
+            Expr::Propagate { .. } => {
+                if let Some(conversion) = self.frame.infer.method_resolution(expr) {
+                    self.call(expr, Function::from(conversion));
+                }
+            }
             Expr::Path(_) if self.frame.infer.function_value(expr).is_some() => self.source(
                 expr,
                 EffectSet::GC_ALLOC,

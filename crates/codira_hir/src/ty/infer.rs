@@ -35,7 +35,7 @@ mod format;
 mod pipelines;
 mod place_expr;
 mod propagate;
-pub use propagate::result_variants;
+pub use propagate::{error_conversions, main_result, result_variants, MainResult};
 mod strings;
 mod tasks;
 mod type_variable;
@@ -1483,9 +1483,13 @@ impl InferenceResultBuilder<'_> {
                     // Every type has a debug form, generated per
                     // instantiation.
                     crate::traits::BoundMethod::NotFound(_)
-                        if method_name.as_str() == Some("debug_string") =>
+                        if matches!(method_name.as_str(), Some("debug_string" | "type_name")) =>
                     {
-                        let op = crate::StringOp::DebugString;
+                        let op = if method_name.as_str() == Some("type_name") {
+                            crate::StringOp::TypeName
+                        } else {
+                            crate::StringOp::DebugString
+                        };
                         return self.infer_string_method(tgt_expr, op, &receiver_ty, args);
                     }
                     other => {

@@ -44,7 +44,11 @@ fn gen_prototype_from_function<'ink>(
 
     // Get the `ir::TypeInfo` pointer for the return type of the function
     let fn_sig = function.ty(db).callable_sig(db).unwrap();
-    let return_type = ir_type_builder.construct_from_type_id(&hir_types.ret_type_id(fn_sig.ret()));
+    // A `main` returning a `Result` returns its `Ok` payload to the host
+    // (see `codira_hir::main_result`).
+    let host_ret = codira_hir::main_result(db, function)
+        .map_or_else(|| fn_sig.ret().clone(), |report| report.ok_ty);
+    let return_type = ir_type_builder.construct_from_type_id(&hir_types.ret_type_id(&host_ret));
 
     // Construct an array of pointers to `ir::TypeInfo`s for the arguments of the
     // prototype

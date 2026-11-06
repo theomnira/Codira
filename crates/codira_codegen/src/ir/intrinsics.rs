@@ -123,7 +123,10 @@ fn collect_expr<'ink>(
         // As for a call: a method of another module's type is called
         // through the dispatch table, which boxes a value-struct receiver,
         // argument or result.
-        if let Some(f) = infer.method_resolution(expr_id).map(codira_hir::Function::from) {
+        if let Some(f) = infer
+            .method_resolution(expr_id)
+            .map(codira_hir::Function::from)
+        {
             if boxes_a_value_struct(db, f) {
                 collect_intrinsic(context, target, &intrinsics::new, intrinsics);
                 *needs_alloc = true;
@@ -241,6 +244,27 @@ fn collect_array_intrinsics<'ink>(
         &intrinsics::panic_index_out_of_bounds,
         intrinsics,
     );
+}
+
+/// Collects what reporting the `Err` of a `main` that returns a `Result`
+/// needs (see `codira_hir::main_result`): the string functions, and
+/// boxing for a call of the error's `to_string` through the dispatch table.
+pub fn collect_main_result<'ink>(
+    context: &'ink Context,
+    target: TargetData,
+    db: &dyn HirDatabase,
+    intrinsics: &mut IntrinsicsMap<'ink>,
+    needs_alloc: &mut bool,
+    function: codira_hir::Function,
+) {
+    if codira_hir::main_result(db, function).is_none() {
+        return;
+    }
+    for intrinsic in intrinsics::string_functions() {
+        collect_intrinsic(context, &target, intrinsic, intrinsics);
+    }
+    collect_intrinsic(context, &target, &intrinsics::new, intrinsics);
+    *needs_alloc = true;
 }
 
 /// Collects all intrinsics from the specified `body`.

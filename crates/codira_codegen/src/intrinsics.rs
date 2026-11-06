@@ -256,11 +256,15 @@ runtime_functions! {
 
     /// Ends the innermost instance `debug_enter` recorded.
     pub fn debug_leave() -> () = "codira.debug_leave";
+
+    /// Writes `Error: <text>` to standard error and exits with status 1:
+    /// what `main` does with an `Err` it returns.
+    pub fn exit_with_error(data: *const u8, len: usize) -> () = "codira.exit_with_error";
 }
 
 /// Every runtime function a `String` operation may need, collected together
 /// like [`print_functions`]: a module that uses strings at all gets them all.
-pub fn string_functions() -> [&'static dyn Intrinsic; 37] {
+pub fn string_functions() -> [&'static dyn Intrinsic; 38] {
     [
         &string_from_bytes,
         &string_append,
@@ -299,6 +303,7 @@ pub fn string_functions() -> [&'static dyn Intrinsic; 37] {
         &debug_newline,
         &debug_enter,
         &debug_leave,
+        &exit_with_error,
     ]
 }
 

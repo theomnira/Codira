@@ -47,9 +47,10 @@ pub use crate::{
     resolve::{resolver_for_expr, resolver_for_scope, Resolver, TypeNs, ValueNs},
     ty::{
         cast::{check_cast, CastCheck, CastOp, InvalidCastReason},
+        error_conversions,
         lower::CallableDef,
-        result_variants, ClosureInfo, FloatTy, FnSig, InferenceResult, IntTy, ResolveBitness,
-        Substitution, Ty, TyKind, TypableDef, TypeWalk,
+        main_result, result_variants, ClosureInfo, FloatTy, FnSig, InferenceResult, IntTy,
+        MainResult, ResolveBitness, Substitution, Ty, TyKind, TypableDef, TypeWalk,
     },
     visibility::{HasVisibility, Visibility},
 };

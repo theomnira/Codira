@@ -105,6 +105,28 @@ fn mark_noreturn<'ink>(
 /// reason this is split between two functions is that first all signatures are
 /// generated and then all bodies. This allows bodies to reference
 /// `FunctionValue` wherever they are declared in the file.
+/// Whether `f` is called from the host (and from other modules) through a
+/// `_wrapper` with the host-visible signature: a public function whose
+/// receiver, parameters or result cross boxed (a value struct, a `String`),
+/// a function taking hidden effect evidence, or a `main` returning a
+/// `Result`, which the host sees returning its `Ok` payload.
+pub(crate) fn needs_host_wrapper(
+    db: &dyn codira_hir::HirDatabase,
+    f: codira_hir::Function,
+) -> bool {
+    let fn_sig = f.ty(db).callable_sig(db).unwrap();
+    let boxed_receiver = f.self_param_ty(db).is_some_and(|ty| {
+        ty.is_string()
+            || ty
+                .as_struct()
+                .is_some_and(|s| s.data(db).memory_kind == codira_hir::StructMemoryKind::Value)
+    });
+    (codira_hir::HasVisibility::visibility(&f, db).is_externally_visible()
+        && (!fn_sig.marshallable(db) || boxed_receiver))
+        || crate::ir::body::has_evidence(db, f)
+        || codira_hir::main_result(db, f).is_some()
+}
+
 pub(crate) fn gen_public_prototype<'db, 'ink>(
     db: &'db dyn HirDatabase,
     types: &HirTypeCache<'db, 'ink>,

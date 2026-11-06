@@ -77,6 +77,10 @@ pub struct FunctionData {
     /// `codira test` runner calls (see `expr::validator::test_fn` for what
     /// shape a test must have).
     is_test: bool,
+    /// Whether this function carries the `@error_conversion` attribute: an
+    /// associated function of a type `F` that `?` calls to pass an error of
+    /// another type on as an `F` (see `ty::infer::propagate`).
+    is_error_conversion: bool,
     /// The ABI named by an `@export("C")` attribute, if present.
     ///
     /// `spec/LANGUAGE_SPEC.md` section 10: "`@export(\"C\")` on a Codira
@@ -174,6 +178,14 @@ impl FunctionData {
             })
         });
 
+        let is_error_conversion = src.attribute_list().is_some_and(|attrs| {
+            attrs.attributes().any(|attr| {
+                attr.path().and_then(|p| p.segment()).is_some_and(|s| {
+                    matches!(s.kind(), Some(ast::PathSegmentKind::Name(n)) if n.text() == "error_conversion")
+                })
+            })
+        });
+
         let ret_type = if let Some(type_ref) = src.ret_type().and_then(|rt| rt.type_ref()) {
             type_ref_builder.alloc_from_node(&type_ref)
         } else {
@@ -204,6 +216,7 @@ impl FunctionData {
             consuming_params,
             is_strict,
             is_test,
+            is_error_conversion,
             export_abi,
             asm_variants,
             self_param,
@@ -327,6 +340,11 @@ impl FunctionData {
     pub fn is_test(&self) -> bool {
         self.is_test
     }
+
+    /// Whether this function is an `@error_conversion`.
+    pub fn is_error_conversion(&self) -> bool {
+        self.is_error_conversion
+    }
 }
 
 impl Function {
@@ -395,6 +413,12 @@ impl Function {
     /// Whether this function is a `@test` the `codira test` runner calls.
     pub fn is_test(self, db: &dyn HirDatabase) -> bool {
         self.data(db).is_test()
+    }
+
+    /// Whether this function is an `@error_conversion`, which `?` calls to
+    /// pass an error on as the type it belongs to.
+    pub fn is_error_conversion(self, db: &dyn HirDatabase) -> bool {
+        self.data(db).is_error_conversion()
     }
 
     pub fn ret_type(self, db: &dyn HirDatabase) -> Ty {
