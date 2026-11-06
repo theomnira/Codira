@@ -514,3 +514,59 @@ func builder(n: i64) -> i64 {
     });
     insta::assert_snapshot!(text);
 }
+
+#[test]
+fn a_fold_accumulator_is_carried_across_iterations() {
+    let source = with_classes(
+        "func total(xs: [i64]) -> i64 {
+            let last = xs.fold(Point { x: 0, y: 0 }, func(acc, x) {
+                let p = Point { x: 1, y: x }
+                p.x = acc.x + p.y
+                p
+            })
+            0
+        }",
+    );
+    let out = placements(&source, "total");
+    assert!(
+        out.contains(
+            "Point { x: 1, y: x }: stays on the heap: kept past its loop iteration in \
+                       `fold`'s accumulator"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn what_a_pipeline_stage_produces_escapes() {
+    let source = with_classes(
+        "func boxed(xs: [i64]) -> i64 {
+            let ps = xs.iter().map(func(x) { Point { x: x, y: x } }).collect()
+            ps.len() as i64
+        }",
+    );
+    let out = placements(&source, "boxed");
+    assert!(
+        out.contains("Point { x: x, y: x }: escapes: passed through the pipeline stage `map`"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_trait_method_on_a_concrete_type_uses_the_impl() {
+    let source = with_classes(
+        "trait Keep { func keep(self, p: Point) }
+         extend Holder: Keep { func keep(self, p: Point) { self.p = p } }
+         func give(h: Holder) { let p = Point { x: 1, y: 2 }; h.keep(p) }",
+    );
+    assert!(matches!(placement_of(&source, "give"), Placement::Heap(_)));
+}
+
+#[test]
+fn reference_arguments_of_intrinsics_escape() {
+    let source = with_classes(
+        "extern \"codira-intrinsic\" { func frame_address() -> usize; }
+         func f() -> usize { let p = Point { x: 1, y: 2 }; p.x as usize + frame_address() }",
+    );
+    assert_eq!(placement_of(&source, "f"), Placement::Frame);
+}

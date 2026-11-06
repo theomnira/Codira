@@ -57,3 +57,7 @@ termcolor = { workspace = true }
 [[bench]]
 name = "fuel"
 harness = false
+
+[[bench]]
+name = "frame_alloc"
+harness = false

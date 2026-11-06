@@ -545,10 +545,33 @@ fn analyze(db: &dyn HirDatabase, func: Function, oracle: &mut Oracle<'_>) -> Fun
         return FunctionEscapes {
             allocations: Vec::new(),
             summary: if func.is_intrinsic(db) {
-                EscapeSummary {
-                    params: vec![ParamEscape::NoEscape; arity],
-                    names,
+                // Emitted in place. A scalar argument refers to nothing; any
+                // other one is handed to code the analysis does not model
+                // (an intrinsic may turn a reference into an address).
+                let mut params: Vec<ParamEscape> = Vec::new();
+                if let Some(sig) = func.ty(db).callable_sig(db) {
+                    for ty in sig.params() {
+                        params.push(match ty.interned() {
+                            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => {
+                                ParamEscape::NoEscape
+                            }
+                            _ => ParamEscape::Escapes(Reason::Unknown {
+                                what: format!(
+                                    "passed to the intrinsic `{}`, which the analysis does not \
+                                     model",
+                                    func.name(db)
+                                ),
+                            }),
+                        });
+                    }
                 }
+                params.resize(
+                    arity,
+                    ParamEscape::Escapes(Reason::Unknown {
+                        what: format!("passed to the intrinsic `{}`", func.name(db)),
+                    }),
+                );
+                EscapeSummary { params, names }
             } else {
                 EscapeSummary {
                     names,
@@ -605,7 +628,15 @@ fn analyze(db: &dyn HirDatabase, func: Function, oracle: &mut Oracle<'_>) -> Fun
         a.decl.insert(*pat, Context::default());
     }
 
-    if !matches!(a.frame.body[root], Expr::Missing) {
+    if matches!(a.frame.body[root], Expr::Missing) {
+        // No body to analyse (a trait method without a default, or code
+        // with errors): nothing is known about what a call does.
+        let what = format!(
+            "passed to `{}`, which has no body to analyse",
+            func.name(db)
+        );
+        a.params = vec![ParamEscape::Escapes(Reason::Unknown { what }); arity];
+    } else {
         loop {
             a.changed = false;
             a.context = Context::default();
@@ -1583,24 +1614,26 @@ impl Analysis<'_, '_> {
             }
             BuiltinFn::Array(method) => self.array_method(expr, method, receiver, args),
             BuiltinFn::Pipeline(op) => {
-                // A pipeline's values all pass through generated loops, and
-                // `collect` stores them into a new heap array; everything
-                // the stages may hold is treated as stored there.
-                let mut values = receiver.map(|r| self.eval(r)).unwrap_or_default();
+                // A pipeline's elements pass through generated loops, are
+                // carried between iterations (`fold`) and may be stored into
+                // a new heap array (`collect`): every element of the sources
+                // and everything a stage's closure produces escapes. The
+                // pipeline value itself refers to its sources.
+                let mut sources = receiver.map(|r| self.eval(r)).unwrap_or_default();
                 let closure = op.closure_arg().and_then(|i| args.get(i)).copied();
-                for (i, &arg) in args.iter().enumerate() {
-                    let value = if Some(arg) == closure && self.inlined.contains(&arg) {
-                        self.inline_closure(arg, &Objs::from([Obj::Unknown]))
+                let mut produced = Objs::new();
+                for &arg in args {
+                    if Some(arg) == closure && self.inlined.contains(&arg) {
+                        produced.extend(self.inline_closure(arg, &Objs::from([Obj::Unknown])));
                     } else {
-                        self.eval(arg)
-                    };
-                    let _ = i;
-                    values.extend(value);
+                        let value = self.eval(arg);
+                        sources.extend(value);
+                    }
                 }
-                let held = self.deref(&values);
-                let reachable = self.reach(&held);
+                let mut escaping = self.reach(&self.deref(&sources));
+                escaping.extend(self.reach(&produced));
                 self.escape(
-                    &reachable,
+                    &escaping,
                     Reason::Unknown {
                         what: format!(
                             "passed through the pipeline stage `{}`, which the analysis \
@@ -1609,6 +1642,7 @@ impl Analysis<'_, '_> {
                         ),
                     },
                 );
+                let mut values = sources;
                 if op.allocates() {
                     let site = self.site(
                         expr,
@@ -1676,8 +1710,15 @@ impl Analysis<'_, '_> {
                 let result = self.inline_closure(arg, &bound);
                 let reachable = self.reach(&result);
                 if method == ArrayMethod::Fold {
-                    // The result becomes the next accumulator and the
-                    // method's result: it flows on, below.
+                    // The result is the next iteration's accumulator: it
+                    // lives across iterations of the closure, whose frame
+                    // slots are reused each time.
+                    self.escape(
+                        &reachable,
+                        Reason::OutlivesIteration {
+                            into: "`fold`'s accumulator".to_string(),
+                        },
+                    );
                     result.union(&reachable).copied().collect()
                 } else {
                     // `map` stores it into the new array; the predicates

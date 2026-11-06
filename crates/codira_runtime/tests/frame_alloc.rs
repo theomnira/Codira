@@ -132,3 +132,51 @@ fn collections_on_task_threads_see_frame_objects() {
     });
     assert_eq!(total, 2 * churn(n) + 5 + 12);
 }
+
+const CARRIED: &str = r#"
+    class P { var x: i64, var y: i64 }
+
+    // The closure's result is the next accumulator: its object must not
+    // share a reused frame slot with the next iteration's object.
+    public func folded(n: i64) -> i64 {
+        let xs = [1, 2, 3, 4, 5, 6, 7, 8]
+        var total = 0
+        for i in 0..n {
+            // Used without a binding, so nothing outside the loop holds it.
+            total += xs.fold(P { x: i, y: 0 }, func(acc, x) {
+                let p = P { x: 1, y: x }
+                p.x = acc.x * 2 + acc.y
+                p
+            }).x
+        }
+        total
+    }
+
+    // Objects a pipeline stage builds are stored into the collected array.
+    public func collected(n: i64) -> i64 {
+        let xs = [1, 2, 3, 4]
+        var total = 0
+        for i in 0..n {
+            let ps = xs.iter().map(func(x) { P { x: x + i, y: x * i } }).collect()
+            for p in ps { total += p.x * 3 + p.y }
+        }
+        total
+    }
+"#;
+
+#[test]
+fn loop_carried_and_collected_objects_agree() {
+    for function in ["folded", "collected"] {
+        let results: Vec<i64> = [false, true]
+            .into_iter()
+            .map(|frame| {
+                let driver = CompileAndRunTestDriver::with_frame_allocation(CARRIED, frame, |b| {
+                    b.heap_limit(4 * BLOCK)
+                })
+                .expect("Failed to build test driver");
+                driver.runtime.invoke(function, (3000i64,)).unwrap()
+            })
+            .collect();
+        assert_eq!(results[0], results[1], "{function}");
+    }
+}

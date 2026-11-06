@@ -3115,6 +3115,68 @@ targets always use LLD.
   `.codira-tmp` files and treats a file renamed onto a loaded library as a
   change to it.
 
+### Where objects live: `--explain-alloc` and `--frame-alloc` (experimental)
+
+```bash
+codira build --explain-alloc                 # every allocation site and why it is on the heap
+codira build --frame-alloc --explain-alloc   # ... and move the ones that need not be
+codira run --frame-alloc                     # run with frame allocation
+```
+
+```
+mod.code:6:30: in `make`: class `Point`: escapes: returned from `make`
+mod.code:11:17: in `main`: class `Point`: moved to the stack
+mod.code:13:18: in `main`: array literal of 3 elements: moved to the stack
+mod.code:18:16: in `link`: class `Node`: escapes: stored into field `next` of parameter `head`, which may be a heap object
+mod.code:23:13: in `start`: class `Point`: escapes: sent to a task by `spawn`
+mod.code:27:28: in `builder`: empty array literal: escapes: grown by `push`, which the runtime does on the heap
+mod.code:28:36: in `builder`: class `Point`: escapes: stored into an element of a heap object
+```
+
+The compiler's escape analysis decides, for every class instance, array
+literal, `array_filled`, array built by `copy`/`map`/`filter`/slicing/
+`collect`, and closure, whether the object can outlive the call that made it.
+`--explain-alloc` prints its answer for each site of the package (not the
+standard library), then the totals. Without `--frame-alloc` a site that
+could move says `does not escape (moved to the stack with `--frame-alloc`)`.
+
+An object **escapes** when it is returned (also inside a struct, tuple, enum
+or optional, or by `?`), stored into a field or element of an object that is
+or may be on the heap (a parameter counts: it may be), captured by a
+closure, sent on a channel or to a task (`spawn`), passed to `perform`, or
+passed to code the analysis does not see: an `extern` function, a call
+through a function value, a trait method on a generic type, an array method
+that grows the array (`push`, `insert`, `reserve`, `append`), a builtin it
+does not model (`print`, string operations) and **any function of another
+module** (a hot reload can replace that module's code without recompiling
+the caller). A call to a function of the same module uses that function's
+summary: whether it keeps, returns, or only reads each argument, computed
+through everything it calls, recursion included.
+
+With `--frame-alloc`, a class instance or an array literal of at most 16
+elements that does not escape lives in its function's stack frame: no
+allocation call, no work for the collector, freed when the function returns.
+Some objects stay on the heap without escaping: one allocated in a loop (or
+in a closure that `map`/`filter`/`fold`/a pipeline compiles in place) that is
+kept past its iteration in something outside the loop (the frame slot is
+reused every iteration), arrays whose length is known only at run time,
+closures, and anything allocated inside a closure body, `handle` or `spawn`.
+
+The program's behaviour does not change: the same results, the same
+`{x:?}` output, hot reload and heap snapshots work as before (a reload only
+runs when no Codira frame is live; no heap object ever refers to a frame
+object, so a snapshot is complete without them). The collector scans stacks
+conservatively, so the GC references a frame object holds keep their objects
+alive. Not combined with `--sanitize=memtag`, and not used by `--jit`.
+
+It is experimental and off by default: it is tested on x86-64 Linux only (a
+differential test runs random programs both ways under a small heap limit,
+and GC stress tests check heap objects held only by frame objects), and a
+deep recursion uses more stack per call than before (the frame objects of
+every active call). The analysis and its correctness contract are documented
+in `crates/codira_hir/src/escape.rs`; its results are the salsa queries
+`escape_summary` and `escape_analysis`.
+
 ### Tests, counterexamples and semantic search
 
 ```bash

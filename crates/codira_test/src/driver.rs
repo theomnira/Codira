@@ -78,10 +78,21 @@ impl CompileTestDriver {
     /// letting `configure` adjust the compiler driver before it generates
     /// code.
     pub fn from_file_with(text: &str, configure: impl FnOnce(&mut Driver)) -> Self {
+        Self::from_file_with_config(text, Config::default(), configure)
+    }
+
+    /// Like [`CompileTestDriver::from_file_with`], with `config` (for
+    /// instance another optimization level) instead of the default; its
+    /// output directory is replaced by a temporary one.
+    pub fn from_file_with_config(
+        text: &str,
+        config: Config,
+        configure: impl FnOnce(&mut Driver),
+    ) -> Self {
         let temp_dir = tempfile::TempDir::new().unwrap();
         let config = Config {
             out_dir: Some(temp_dir.path().to_path_buf()),
-            ..Config::default()
+            ..config
         };
         let input = PathOrInline::Inline {
             rel_path: RelativePathBuf::from("mod.code"),
@@ -122,6 +133,11 @@ impl CompileTestDriver {
         self.driver.write_all_assemblies(true).unwrap();
     }
 
+    /// The `codira build --explain-alloc` report of the compiled source.
+    pub fn allocation_report(&self) -> String {
+        self.driver.allocation_report()
+    }
+
     /// Returns the path to the generated `*.codiralib` library.
     pub fn lib_path(&self) -> &Path {
         &self.out_path
@@ -157,6 +173,11 @@ impl std::fmt::Debug for CompileAndRunTestDriver {
 }
 
 impl CompileAndRunTestDriver {
+    /// The `codira build --explain-alloc` report of the compiled source.
+    pub fn allocation_report(&self) -> String {
+        self.driver.allocation_report()
+    }
+
     /// Constructs a `CompileAndRunTestDriver` from a single Codira source file
     /// and a `config_fn` that allows modification of a [`RuntimeBuilder`].
     pub fn from_fixture(
