@@ -957,13 +957,15 @@ where
             }
         }
 
+        let swept = inner.sweep(|handle| self.observer.event(Event::Deallocation(handle)));
+
         let mut moved = 0;
         if compaction {
-            // Safety: the world is stopped and marking is complete.
+            // Safety: the world is stopped and the heap was just swept.
             let forwarded = unsafe { inner.evacuate(&pinned, EVACUATE_LIVE_PERCENT) };
             moved = forwarded.len();
             if moved > 0 {
-                inner.for_each_marked_object(|object| unsafe {
+                inner.for_each_object(|object| unsafe {
                     for_each_reference_slot(object.as_ref(), |slot| {
                         if let Some(&new) = forwarded.get(&(*slot as usize)) {
                             *slot = new as *mut ObjectHeader;
@@ -973,7 +975,6 @@ where
             }
         }
 
-        let swept = inner.sweep(|handle| self.observer.event(Event::Deallocation(handle)));
         let committed = inner.committed();
         drop(inner);
         *self.last_relocation.lock() = RelocationReport {

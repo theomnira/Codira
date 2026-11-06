@@ -1070,87 +1070,95 @@ impl HeapInner {
         }
     }
 
-    /// Moves the live objects out of sparse size-class blocks so the sweep
-    /// that follows can release those blocks, and returns where each moved
-    /// object went (old header address -> new header address). Call it
-    /// after marking (live objects are black) and before sweeping; the
-    /// caller must then rewrite every reference to a moved object.
+    /// Moves the live objects out of sparse size-class blocks and releases
+    /// those blocks; returns where each moved object went (old header
+    /// address -> new header address). Call it right after a sweep (every
+    /// allocated object is live); the caller must then rewrite every
+    /// reference to a moved object.
     ///
-    /// A block is evacuated when at most `max_live_percent` percent of its
-    /// cells are live, none of them is in `pinned`, and no thread cache
-    /// holds a run in it. Objects move into free cells of the same size
-    /// class in other blocks (or a new block, within the heap limit); when
-    /// none is left, the rest of the block stays where it is.
+    /// A block is a candidate when at most `max_live_percent` percent of
+    /// its cells are live, none of them is in `pinned`, and no thread cache
+    /// holds a run in it. Candidates are evacuated sparsest first, and only
+    /// while the free cells of the class's other blocks can take their
+    /// objects, so evacuation never needs memory the heap does not already
+    /// hold.
     ///
     /// # Safety
     ///
-    /// The world must be stopped, and the marks must be those of a
-    /// completed mark phase.
+    /// The world must be stopped, and the heap must have just been swept.
     pub(crate) unsafe fn evacuate(
         &mut self,
         pinned: &FxHashSet<usize>,
         max_live_percent: usize,
     ) -> FxHashMap<usize, usize> {
         let mut forwarded = FxHashMap::default();
-        let leased_blocks: FxHashSet<usize> = self
-            .blocks
-            .iter()
-            .filter(|block| {
-                let (lo, hi) = (block.base.as_ptr() as usize, block.end());
-                self.leases.keys().any(|&start| start >= lo && start < hi)
-            })
-            .map(|block| block.base.as_ptr() as usize)
-            .collect();
+        let leased = |block: &Block| {
+            let (lo, hi) = (block.base.as_ptr() as usize, block.end());
+            self.leases.keys().any(|&start| start >= lo && start < hi)
+        };
 
-        // Choose the candidates, and how many cells they need elsewhere.
-        let mut candidates: Vec<(usize, usize, u8, usize)> = Vec::new();
-        for block in &self.blocks {
-            let base = block.base.as_ptr() as usize;
-            if leased_blocks.contains(&base) {
+        // Per block: (index, live cells, free cells, has a pinned cell).
+        let mut census: Vec<(usize, usize, usize, bool)> = Vec::new();
+        let mut capacity = [0usize; NUM_CLASSES];
+        for (index, block) in self.blocks.iter().enumerate() {
+            if leased(block) {
                 continue;
             }
-            let mut live = 0usize;
-            let mut has_pinned = false;
-            let mut cell = base;
+            let (mut live, mut has_pinned) = (0usize, false);
+            let mut cell = block.base.as_ptr() as usize;
             while cell < block.end() {
                 let header = cell as *const ObjectHeader;
-                if (*header).state.load(Ordering::Acquire) == STATE_ALLOCATED
-                    && (*header).color == COLOR_BLACK
-                {
+                if (*header).state.load(Ordering::Acquire) == STATE_ALLOCATED {
                     live += 1;
                     has_pinned |= pinned.contains(&cell);
                 }
                 cell += block.cell_size;
             }
-            if live > 0 && !has_pinned && live * 100 <= block.cell_count * max_live_percent {
-                candidates.push((base, block.end(), block.class, block.cell_size));
+            let free = block.cell_count - live;
+            capacity[block.class as usize] += free;
+            census.push((index, live, free, has_pinned));
+        }
+        census.sort_unstable_by_key(|&(_, live, _, _)| live);
+        let mut candidates: Vec<usize> = Vec::new();
+        for &(index, live, free, has_pinned) in &census {
+            let block = &self.blocks[index];
+            if has_pinned || live == 0 || live * 100 > block.cell_count * max_live_percent {
+                continue;
             }
+            let class = block.class as usize;
+            // Its own free cells are no destination once it is evacuated.
+            if live + free > capacity[class] {
+                continue;
+            }
+            capacity[class] -= live + free;
+            candidates.push(index);
         }
         if candidates.is_empty() {
             return forwarded;
         }
-
-        // No destination may be in a candidate block.
+        let ranges: Vec<(usize, usize)> = candidates
+            .iter()
+            .map(|&index| (self.blocks[index].base.as_ptr() as usize, self.blocks[index].end()))
+            .collect();
         for runs in &mut self.free_runs {
-            runs.retain(|run| {
-                !candidates
-                    .iter()
-                    .any(|&(lo, hi, _, _)| run.start >= lo && run.start < hi)
-            });
+            runs.retain(|run| !ranges.iter().any(|&(lo, hi)| run.start >= lo && run.start < hi));
         }
 
-        for &(lo, hi, class, cell_size) in &candidates {
-            let mut cell = lo;
-            while cell < hi {
+        let mut emptied = vec![true; candidates.len()];
+        for (slot, &index) in candidates.iter().enumerate() {
+            let (base, end, class, cell_size) = {
+                let block = &self.blocks[index];
+                (block.base.as_ptr() as usize, block.end(), block.class, block.cell_size)
+            };
+            let mut cell = base;
+            while cell < end {
                 let old = cell as *mut ObjectHeader;
                 cell += cell_size;
-                if (*old).state.load(Ordering::Acquire) != STATE_ALLOCATED
-                    || (*old).color != COLOR_BLACK
-                {
+                if (*old).state.load(Ordering::Acquire) != STATE_ALLOCATED {
                     continue;
                 }
                 let Ok(new) = self.alloc_cell_locked(class) else {
-                    // Out of room within the limit: the rest stays put.
+                    emptied[slot] = false;
                     break;
                 };
                 let new = new.as_ptr();
@@ -1161,24 +1169,43 @@ impl HeapInner {
                 } else if let Some(entry) = self.out_of_line.remove(&(old as usize)) {
                     self.out_of_line.insert(new as usize, entry);
                 }
-                (*new).state.store(STATE_ALLOCATED, Ordering::Release);
-                (*new).color = COLOR_BLACK;
                 (*old).flags = 0;
-                (*old).color = COLOR_WHITE;
                 (*old).state.store(STATE_FREE, Ordering::Release);
                 forwarded.insert(old as usize, new as usize);
             }
         }
-        forwarded
-    }
 
-    /// Calls `f` with every live (marked) object.
-    pub(crate) fn for_each_marked_object(&self, mut f: impl FnMut(NonNull<ObjectHeader>)) {
-        self.for_each_object(|object| {
-            if unsafe { (*object.as_ptr()).color } == COLOR_BLACK {
-                f(object);
+        // Release the emptied blocks; give the others their free runs back.
+        let mut released: Vec<usize> = Vec::new();
+        for (slot, &index) in candidates.iter().enumerate() {
+            if emptied[slot] {
+                released.push(index);
+                continue;
             }
-        });
+            let block = &self.blocks[index];
+            let (class, cell_size, end) = (block.class as usize, block.cell_size, block.end());
+            let mut run_start = None;
+            let mut cell = block.base.as_ptr() as usize;
+            while cell < end {
+                let free = (*(cell as *const ObjectHeader)).state.load(Ordering::Acquire)
+                    == STATE_FREE;
+                if free {
+                    run_start.get_or_insert(cell);
+                } else if let Some(start) = run_start.take() {
+                    self.free_runs[class].push(Run { start, end: cell });
+                }
+                cell += cell_size;
+            }
+            if let Some(start) = run_start {
+                self.free_runs[class].push(Run { start, end });
+            }
+        }
+        released.sort_unstable();
+        for index in released.into_iter().rev() {
+            let block = self.blocks.swap_remove(index);
+            self.release_block(block);
+        }
+        forwarded
     }
 
     /// Releases the memory of a dead object. For small cells the cell is

@@ -294,12 +294,13 @@ fn collections_do_not_wait_for_foreign_calls() {
 }
 
 const SPIN_SOURCE: &str = r"
-// A loop that neither allocates nor calls: only its back-edge poll lets a
-// collection on another thread stop it.
+// A loop that neither allocates nor calls, and whose trip count nothing
+// bounds on entry (it depends on the values it computes): only its
+// back-edge poll lets a collection on another thread stop it.
 public func spin(n: i64, seed: i64) -> i64 {
     var x = seed;
     var i = 0;
-    while i < n {
+    while i < n || (x & 7) != 0 {
         x = x * 6364136223846793005 + 1442695040888963407;
         if (x >> 60) == 3 { x = x ^ i };
         i += 1;

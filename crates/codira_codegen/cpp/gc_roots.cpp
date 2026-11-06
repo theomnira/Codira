@@ -25,6 +25,7 @@
 #include <llvm/Analysis/AssumptionCache.h>
 #include <llvm/Analysis/LoopInfo.h>
 #include <llvm/Analysis/ScalarEvolution.h>
+#include <llvm/Analysis/ScalarEvolutionExpressions.h>
 #include <llvm/Analysis/TargetLibraryInfo.h>
 #include <llvm/IR/CFG.h>
 #include <llvm/IR/Constants.h>
@@ -677,8 +678,8 @@ void codira_gc_insert_roots(LLVMModuleRef module_ref, CodiraGcRootStats *out) {
     }
 }
 
-/// Polls on loop back-edges whose trip count is not bounded by
-/// `max_unpolled_trips`, and at the entry of every function that makes a
+/// Polls on the back-edges of loops whose trip count nothing bounds on
+/// entry, and at the entry of every function that makes a
 /// safepoint call. Returns the number of polls inserted. Requires
 /// `codira_gc_insert_roots` to have defined the hooks.
 uint32_t codira_gc_insert_polls(LLVMModuleRef module_ref, uint32_t max_unpolled_trips) {
@@ -710,8 +711,12 @@ uint32_t codira_gc_insert_polls(LLVMModuleRef module_ref, uint32_t max_unpolled_
         ScalarEvolution se(function, tli, ac, dt, loops);
         std::vector<Instruction *> sites;
         for (Loop *loop : loops.getLoopsInPreorder()) {
-            unsigned bound = se.getSmallConstantMaxTripCount(loop);
-            if (bound != 0 && bound <= max_unpolled_trips) {
+            // A loop whose trip count is bounded by a value known when it is
+            // entered (a counted loop, a loop over an array, a loop that
+            // may also leave early) needs no poll: it ends after at most
+            // that many iterations. Only loops nothing bounds are polled.
+            (void)max_unpolled_trips;
+            if (!isa<SCEVCouldNotCompute>(se.getSymbolicMaxBackedgeTakenCount(loop))) {
                 continue;
             }
             SmallVector<BasicBlock *, 4> latches;

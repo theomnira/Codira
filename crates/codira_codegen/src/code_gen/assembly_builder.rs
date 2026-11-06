@@ -194,7 +194,7 @@ impl<'db, 'ink, 'ctx, 't> AssemblyBuilder<'db, 'ink, 'ctx, 't> {
             self.code_gen.optimization_level,
         );
 
-        if gc_frames {
+        if gc_frames && !matches!(std::env::var("CODIRA_GC_POLLS").as_deref(), Ok("0")) {
             let polls = crate::gc_roots::insert_polls(&self.assembly_module);
             if std::env::var_os("CODIRA_GC_DEBUG").is_some() {
                 eprintln!("gc polls: {polls}");

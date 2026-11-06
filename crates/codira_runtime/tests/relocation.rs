@@ -153,3 +153,142 @@ fn rooted_and_pinned_objects_do_not_move() {
     assert_eq!(label, 21);
     gc.unpin(handle);
 }
+
+const FRAGMENT_SOURCE: &str = r"
+public class Small { a: i64, b: i64 }
+public class Wide { f0: i64, f1: i64, f2: i64, f3: i64, f4: i64, f5: i64, f6: i64,
+                    f7: i64, f8: i64, f9: i64, f10: i64, f11: i64, f12: i64, f13: i64 }
+public class Bag { smalls: [Small], wides: [Wide] }
+extern func phase_done();
+
+// Phase 1 leaves every size-class block of `Small` one sixteenth full; phase
+// 2 then needs blocks of another size class.
+public func fragment(smalls: i64, wides: i64) -> i64 {
+    let bag = Bag { smalls: [], wides: [] };
+    var i = 0;
+    while i < smalls {
+        let s = Small { a: i, b: i * 5 };
+        if i % 16 == 0 { bag.smalls.push(s) };
+        i += 1;
+    };
+    phase_done();
+    var j = 0;
+    while j < wides {
+        bag.wides.push(Wide { f0: j, f1: 0, f2: 0, f3: 0, f4: 0, f5: 0, f6: 0,
+                              f7: 0, f8: 0, f9: 0, f10: 0, f11: 0, f12: 0, f13: j * 2 });
+        j += 1;
+    };
+    phase_done();
+    var bad = 0;
+    var k = 0;
+    while k < bag.smalls.len() {
+        let s = bag.smalls[k];
+        if s.a != (k as i64) * 16 || s.b != s.a * 5 { bad += 1 };
+        k += 1;
+    };
+    k = 0;
+    while k < bag.wides.len() {
+        let w = bag.wides[k];
+        if w.f0 != k as i64 || w.f13 != w.f0 * 2 { bad += 1 };
+        k += 1;
+    };
+    bad
+}
+";
+
+const SMALLS: i64 = 400_000;
+const WIDES: i64 = 60_000;
+const LIMIT: usize = 16 << 20;
+
+/// Collections the fragmentation workload's host function made, with what
+/// each reported.
+static REPORTS: std::sync::Mutex<Vec<codira_memory::gc::CollectionReport>> =
+    std::sync::Mutex::new(Vec::new());
+
+extern "C" fn phase_done() {
+    gc().collect();
+    REPORTS.lock().unwrap().push(gc().last_collection());
+}
+
+fn fragment_driver(compaction: bool, limit: Option<usize>) -> CompileAndRunTestDriver {
+    let driver = CompileAndRunTestDriver::new(FRAGMENT_SOURCE, |builder| {
+        let builder = builder
+            .compaction(compaction)
+            .insert_fn("phase_done", phase_done as extern "C" fn());
+        match limit {
+            Some(limit) => builder.heap_limit(limit),
+            None => builder,
+        }
+    })
+    .expect("Failed to build test driver");
+    GC.store(
+        driver.runtime.gc() as *const GarbageCollector as *mut GarbageCollector,
+        Ordering::SeqCst,
+    );
+    driver
+}
+
+/// Without a limit, collecting after each phase: with relocation the heap
+/// holds far less memory, and the pause is reported for both.
+#[test]
+fn fragmentation_uses_less_memory_with_relocation() {
+    let _serial = FRAGMENT_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let mut results = Vec::new();
+    for compaction in [false, true] {
+        REPORTS.lock().unwrap().clear();
+        let driver = fragment_driver(compaction, None);
+        let bad: i64 = driver.runtime.invoke("fragment", (SMALLS, WIDES)).unwrap();
+        assert_eq!(bad, 0, "compaction {compaction}: wrong contents");
+        let reports = REPORTS.lock().unwrap().clone();
+        eprintln!("compaction {compaction}: {reports:?}");
+        results.push(reports);
+    }
+    let (plain, moving) = (&results[0], &results[1]);
+    assert!(moving[0].moved > 0);
+    assert!(
+        moving[1].committed * 2 < plain[1].committed,
+        "relocation did not reduce the heap: {} vs {} bytes",
+        moving[1].committed,
+        plain[1].committed
+    );
+}
+
+static FRAGMENT_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Under a 16 MiB limit the workload completes with relocation; without
+/// it, phase 2 cannot get blocks of its size class and the process aborts
+/// (run in a child process).
+#[test]
+fn fragmentation_fits_a_heap_limit_only_with_relocation() {
+    if let Ok(mode) = std::env::var("CODIRA_FRAGMENT_CHILD") {
+        let driver = fragment_driver(mode == "compaction", Some(LIMIT));
+        let bad: i64 = driver.runtime.invoke("fragment", (SMALLS, WIDES)).unwrap();
+        assert_eq!(bad, 0);
+        assert!(driver.runtime.gc().committed_bytes() <= LIMIT);
+        println!("CHILD-OK committed {}", driver.runtime.gc().committed_bytes());
+        return;
+    }
+    let run = |mode: &str| {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "fragmentation_fits_a_heap_limit_only_with_relocation",
+                "--nocapture",
+            ])
+            .env("CODIRA_FRAGMENT_CHILD", mode)
+            .output()
+            .expect("failed to run the child")
+    };
+    let moving = run("compaction");
+    let moving_out = String::from_utf8_lossy(&moving.stdout);
+    assert!(
+        moving.status.success() && moving_out.contains("CHILD-OK"),
+        "with relocation: {moving_out}\n{}",
+        String::from_utf8_lossy(&moving.stderr)
+    );
+    let plain = run("plain");
+    assert!(
+        !plain.status.success() && !String::from_utf8_lossy(&plain.stdout).contains("CHILD-OK"),
+        "the non-moving collector fit the limit too"
+    );
+}
