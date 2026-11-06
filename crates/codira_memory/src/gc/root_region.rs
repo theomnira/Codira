@@ -5,8 +5,8 @@
 //! Functionality:
 //! - Root regions: memory outside every stack that the collector scans
 //!   conservatively, like a parked thread's stack. The task runtime keeps the
-//!   results of finished tasks in one until the task that joins them has
-//!   copied them out (`codira_runtime::tasks::group`).
+//!   results of finished tasks in one until the task that joins them has copied
+//!   them out (`codira_runtime::tasks::group`).
 //!
 //! # Why
 //!

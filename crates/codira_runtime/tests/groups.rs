@@ -328,11 +328,17 @@ fn a_failure_cancels_the_tasks_after_it() {
     with_timeout(60, || {
         let driver = driver();
         for bad in [0i64, 1, 17, 63] {
-            let value: i64 = driver.runtime.invoke("first_failure", (64i64, bad)).unwrap();
+            let value: i64 = driver
+                .runtime
+                .invoke("first_failure", (64i64, bad))
+                .unwrap();
             assert_eq!(value, -(bad * 100));
         }
         // No failure: every task's Ok.
-        let value: i64 = driver.runtime.invoke("first_failure", (64i64, 1000i64)).unwrap();
+        let value: i64 = driver
+            .runtime
+            .invoke("first_failure", (64i64, 1000i64))
+            .unwrap();
         assert_eq!(value, 64);
     });
 }
@@ -343,10 +349,16 @@ fn a_failure_cancels_the_tasks_after_it() {
 fn the_lowest_index_error_wins_deterministically() {
     let driver = driver();
     for _ in 0..50 {
-        let value: i64 = driver.runtime.invoke("two_failures", (200i64, 150i64, 40i64)).unwrap();
+        let value: i64 = driver
+            .runtime
+            .invoke("two_failures", (200i64, 150i64, 40i64))
+            .unwrap();
         assert_eq!(value, -1040);
     }
-    let value: i64 = driver.runtime.invoke("two_failures", (10i64, 100i64, 200i64)).unwrap();
+    let value: i64 = driver
+        .runtime
+        .invoke("two_failures", (10i64, 100i64, 200i64))
+        .unwrap();
     assert_eq!(value, 90);
 }
 
@@ -436,7 +448,9 @@ fn question_mark_on_a_group() {
 fn groups_nest_with_groups_and_scopes() {
     let driver = driver();
     let value: i64 = driver.runtime.invoke("nested", (30i64,)).unwrap();
-    let expected: i64 = (0..30i64).map(|n| (1..=n).map(|i| i * i).sum::<i64>()).sum();
+    let expected: i64 = (0..30i64)
+        .map(|n| (1..=n).map(|i| i * i).sum::<i64>())
+        .sum();
     assert_eq!(value, expected);
     let value: i64 = driver.runtime.invoke("group_of_scopes", (100i64,)).unwrap();
     assert_eq!(value, (0..100).map(|i| i * 2).sum::<i64>());

@@ -2297,7 +2297,7 @@ Cost: evidence passing. Each `uses` effect is one hidden pointer parameter;
 passed evidence, one load and branch per handler in scope. Code that uses no
 effects pays nothing.
 
-### Structured concurrency: `scope`, `spawn`, channels
+### Structured concurrency: `scope`, `group`, `spawn`, channels
 
 ```codira
 func square(jobs: Channel[i32], results: Channel[i32]) {
@@ -2326,11 +2326,21 @@ public func sum_of_squares(n: i32) -> i32 {
   abandoning the computation. `scope` is a contextual keyword (only before
   `{`; `if scope { .. }` still tests a variable).
 - `spawn f(args)` runs a call to a function of the same module on the
-  runtime's worker pool. It must be inside a `scope` (of the same function;
-  a handler arm counts as its own function); `f` takes only integers,
-  floats, `bool` and `Channel[T]` and declares no effects. Arguments are
-  evaluated by the spawner; the result is discarded -- results come back
-  through channels.
+  runtime's scheduler. It must be inside a `scope` or a `group` (of the same
+  function; a handler arm and a closure count as functions of their own),
+  and belongs to the innermost one; `f` takes only integers, floats, `bool`
+  and `Channel[T]` and declares no effects. Arguments are evaluated by the
+  spawner. In a `scope` the result is discarded -- results come back
+  through channels; in a `group` it is the group's value (below).
+- **No task outlives its block.** That is the only task model: there is no
+  unstructured `spawn`. The compiler guarantees it statically (a `spawn`
+  outside a `scope`/`group` of the same function is an error, and the
+  block's every exit joins), and the runtime checks it again: starting a
+  task of a block that has been joined, or freeing a group before joining
+  it, stops the process with a message, and debug builds also check, when
+  each task ends, that its block was not joined while it ran. Unstructured
+  spawning was not added because nothing could then own a task's channels
+  or bound its lifetime, and every guarantee below depends on that.
 - `let ch = channel(capacity)` creates a bounded blocking `Channel[T]` of
   integers, floats or `bool`, owned by the enclosing `scope` and freed when
   it ends. A channel is only *used*: `ch <- v`, `<-ch`, or passed to a
@@ -2341,14 +2351,134 @@ public func sum_of_squares(n: i32) -> i32 {
   may allocate; a collection on any thread stops it at its next allocation
   (or finds it parked in a channel operation or join) and scans its stack,
   so its objects stay alive (see "End-to-end status today").
-- The pool keeps `available_parallelism()` workers running and starts a
-  replacement when one blocks on a channel or a nested scope, so blocked
-  tasks cannot starve the ones that would unblock them. Mismatched sends and
-  receives still block forever, as with any blocking channel.
+- Scheduling (`crates/codira_runtime/src/tasks/scheduler.rs`): tasks run to
+  completion on worker threads -- a task is compiled code with native
+  frames, so it is never suspended or moved. Each worker has its own deques
+  (Chase-Lev, via `crossbeam-deque`): a task spawned on a worker goes to its
+  deque, the worker takes the newest, idle workers steal the oldest; a task
+  spawned from the host goes to a global queue. A task waiting for its
+  `scope` or `group` first runs its own children that are still on its
+  deque, and nothing else (an unrelated task could wait for something the
+  joiner does after the join). The scheduler keeps
+  `available_parallelism()` workers active (`CODIRA_TASK_WORKERS=n`
+  overrides it), started lazily.
+- **Waiting never occupies a worker.** A task that waits -- a channel
+  operation, `select`, a join it cannot help with, a sleep
+  (`std.time.time`), file I/O (`std.fs`) -- releases its worker for the
+  duration, and a sleeping worker is woken or a new one started if tasks
+  are queued (Go hands a processor off on a blocking system call the same
+  way). So blocked or blocking tasks cannot starve the ones that would
+  unblock them, and a thousand tasks that each sleep 100 ms finish in a
+  fraction of a second, not 25 s (`fabric_stress.rs`). Workers beyond the
+  target exit when they find no work. There is no upper bound on threads
+  while tasks wait: bounding it could deadlock a correct program. A task
+  that *busy-waits* (`while !flag() {}` without a blocking call) keeps its
+  worker, as in any run-to-completion pool. Mismatched sends and receives
+  still block forever, as with any blocking channel.
+- **Priority classes**: `High`, `Normal` (the default) and `Background`.
+  A task inherits its spawner's class; the host picks the class of the
+  tasks a call spawns with `codira_runtime::tasks::with_priority(Priority::
+  Background, || runtime.invoke(..))`. Each worker starts tasks by a fixed
+  weighted round robin, high, normal and background in the ratio 4 : 2 : 1
+  while all three have work (measured: 0.571 / 0.286 / 0.143 of the first
+  1,400 starts of 9,000 queued tasks, five runs out of five; test
+  `priority_classes_share_starts_four_two_one`), so background work is
+  slowed, never starved. The ratio is about *starts*: tasks are not
+  preempted, so a long background task keeps its worker until it ends.
+- `codira_runtime::tasks::stats()` returns the scheduler's counters (tasks
+  spawned, stolen, run by a joining worker, waits, threads started and
+  peak, starts per class).
 - Output printed by a task is not captured by `capture_output` (it is
   per-thread); a task's `print` goes to standard output.
 - A secret (`secret T`) cannot be sent on a channel: what a channel delivers
   is public.
+
+#### `group`: tasks that return values
+
+```codira
+import std.error.error.{AnyError}
+import std.result.result.{Result}
+
+func square(x: i64) -> i64 { x * x }
+
+func check(i: i64) -> Result[i64, AnyError] {
+    if i == 13 { return Result.Err(AnyError.new(f"{i} is unlucky")) }
+    Result.Ok(i * 2)
+}
+
+public func squares(n: i64) -> [i64] {
+    group {                         // [i64]: every task's result, in spawn order
+        var i = 0
+        while i < n { spawn square(i); i += 1 }
+    }
+}
+
+func checked(n: i64) -> Result[i64, AnyError] {
+    let xs = group {                // Result[[i64], AnyError]
+        var i = 0
+        while i < n { spawn check(i); i += 1 }
+    }?                              // the lowest-index error, passed on by `?`
+    Result.Ok(xs.len() as i64)
+}
+```
+
+- `group { .. }` is a `scope` whose tasks return values; `group` is a
+  contextual keyword, promoted under the same condition as `scope`. Its
+  value is the results of the tasks spawned *directly* in it (not in a
+  nested `scope`, `group` or closure), in spawn order: `[R]` when they
+  return `R`, or, when they return a `Result[T, E]` (the `Result` of
+  `?`, with `Ok` holding its type parameter), `Result[[T], E]` -- `Ok` of
+  every `Ok` payload, or one task's `Err`. A group composes with `?`
+  (above) and with `std.error.error`'s `AnyError` like any `Result`.
+- **Errors, deterministically.** When a task fails (returns `Err`), every
+  task spawned *after* it is cancelled; the ones before it are left to
+  finish. The group's value is the `Err` of the **lowest-index** task that
+  failed. That is the value running the tasks one after another and
+  stopping at the first `Err` would give, whatever order they really ran
+  in: the lowest failing task is never cancelled (only a failure before it
+  could cancel it), and every task before it runs to completion. A task
+  cancelled before it started is never started (its result is never
+  read). `tests/groups.rs` checks it with two failures 50 times over, and
+  `crates/codira/tests/task_groups.rs` with `AnyError` and `?`.
+- All tasks must return one type, and not `()` (that is a `scope`), not a
+  `secret`, not a channel or endpoint. They take only integers, floats and
+  `bool` -- no channels: the group does not start the tasks after a failed
+  one, and a task that never runs must not leave a sibling waiting on a
+  channel (a task *may* open a `scope` of its own). A result may hold
+  anything else, `String`s, arrays, objects: a task's arguments are
+  scalars and there is no module-level state, so everything its result
+  refers to was made by the task, which has finished -- the result is moved
+  to the joining task, not shared. Until then the runtime keeps it in
+  memory the collector scans (`codira_memory::gc::root_region`).
+- A group that spawns nothing is an error (its value's type comes from its
+  tasks). Every exit from the block -- its end, `return`, `break`, `?`, a
+  handler aborting -- joins its tasks; only the end reads their results.
+- Cost (measured below): a `group` task is a 16-byte-aligned copy of its
+  arguments, a deque push and a result slot; the value is built with one
+  array allocation.
+
+#### Cancellation
+
+- Every `scope` and `group` records the task that opened it, so they form a
+  tree rooted at the host call. A task is *cancelled* when its group
+  cancelled it (a failure before it, above) or any task above it in the
+  tree is cancelled. `cancelled()` (a builtin, no effects: allowed in
+  `@realtime` code) says whether the running task is; it is `false` outside
+  any task.
+- Cancellation is cooperative: nothing is interrupted, a cancelled task
+  stops where its code checks `cancelled()`, and leaves through its
+  `scope`s and `group`s as usual, which joins their tasks and frees their
+  channels and buffers -- that is how resources are released. A `scope`
+  never cancels or skips its own tasks (they talk through channels, and
+  skipping one could leave another waiting forever); only a group's
+  not-yet-started tasks after a failure are skipped.
+- The host cancels a call with `codira_runtime::tasks::CancelToken`:
+  `token.run(|| runtime.invoke(..))` on one thread, `token.cancel()` on
+  any other; every task below sees `cancelled()`.
+- A blocked channel operation is not woken by cancellation (it would have
+  to return a value it does not have); a task that may wait for a cancelled
+  sibling should check `cancelled()` between waits, or use `select` with
+  `default`.
 
 #### `select`: wait on several channel operations
 
@@ -2718,7 +2848,7 @@ What counts, exactly (today's code generator and runtime):
   `filter`, slicing `xs[lo..hi]`), a pipeline's `collect`, a closure (except
   one an array method or a pipeline stage compiles in place, see "Growable
   arrays and collections" and "Lazy pipelines"),
-  `print`/`println`, `channel(n)`, `scope`, `spawn`, a channel send, `select`
+  `print`/`println`, `channel(n)`, `scope`, `group`, `spawn`, a channel send, `select`
   (even with `default`), opening a session (`S.open()`), making or
   growing a `String` (see "Strings" for exactly which operations), and a
   call to a function of *another module* that takes or returns a value
@@ -2726,8 +2856,10 @@ What counts, exactly (today's code generator and runtime):
   String literals, views of a `String` (`slice`, `trim`), value structs,
   tuples and effect handler records allocate nothing.
 - **Blocks**: channel send and receive (also on a session endpoint, and
-  `ep.choose(..)` and `offer`), `select`, the end of a `scope`, and the
-  allocations above.
+  `ep.choose(..)` and `offer`), `select`, the end of a `scope` or a
+  `group` (`@noblock` and `@realtime` code cannot wait on a group,
+  directly or through a call: "`group` waits for its tasks at the end"),
+  and the allocations above. `cancelled()` does not block.
 - **Panics**: `a[i]` and `a[i] = v` (bounds check; `a.unchecked_get(i)` is
   the unchecked escape hatch), `xs.insert(i, x)`, `xs.remove(i)` and slicing
   (their index checks), `s.slice(a, b)` and `s.byte_at(i)` on a
