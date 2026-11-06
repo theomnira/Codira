@@ -2392,6 +2392,13 @@ public func sum_of_squares(n: i32) -> i32 {
   per-thread); a task's `print` goes to standard output.
 - A secret (`secret T`) cannot be sent on a channel: what a channel delivers
   is public.
+- What crosses between tasks today: scalars (arguments, channels, sessions)
+  and a finished group task's result, handed over through the join. Letting
+  a `String` (or any heap value) travel to a *running* task -- as an
+  argument or on a channel -- would need the `String` ownership argument
+  (see "Strings") checked again: a worker that exits can have its thread
+  pointer reused by a new worker, and today no `String` can reach a task on
+  another thread except through a join.
 
 #### `group`: tasks that return values
 
