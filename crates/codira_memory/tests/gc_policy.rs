@@ -5,7 +5,7 @@
 //! Functionality:
 //! - Tests of `GcPolicy` and the collection API: pacing collects a churning
 //!   mutator without any limit and follows the live set, pacing off collects
-//!   nothing, a failure at the limit reports what is live, back-to-back
+//!   nothing, a host allocation never starts a paced collection, a failure at the limit reports what is live, back-to-back
 //!   blocking collections leave Codira code its window, concurrent blocking
 //!   calls coalesce, `request_collection` returns at once and is served, and
 //!   the statistics count all of it.
@@ -124,6 +124,45 @@ fn without_pacing_nothing_is_collected() {
     assert_eq!(stats.collections.total(), 0);
     assert_eq!(stats.next_paced_collection_at, None);
     assert!(stats.peak_heap_bytes >= 100_000 * 64);
+}
+
+/// Allocation from a host thread, one not running Codira code, never starts
+/// a paced collection: a host thread is scanned only while it allocates, so
+/// a collection started by one host thread could free an object another
+/// holds unrooted between two allocations. Pacing stays due, and the next
+/// allocation by Codira code collects.
+#[test]
+fn host_allocation_never_starts_a_paced_collection() {
+    let _serial = SERIAL.lock();
+    let ty = quad();
+    let gc = Arc::new(Gc::default());
+    gc.set_policy(policy(64 * 1024));
+
+    let n = 20_000; // 640 KB of payload: ten times the pacing threshold
+    std::thread::scope(|scope| {
+        for t in 0..4i64 {
+            let gc = gc.clone();
+            let ty = ty.clone();
+            scope.spawn(move || {
+                for i in 0..n {
+                    // Held unrooted across the next allocation, as a host
+                    // may when it never collects itself.
+                    let held = gc.alloc(&ty);
+                    unsafe { write(held, t * 1_000_000 + i) };
+                    let _next = gc.alloc(&ty);
+                    assert_eq!(unsafe { read(held) }, t * 1_000_000 + i);
+                }
+            });
+        }
+    });
+    let stats = gc.heap_stats();
+    assert_eq!(stats.collections.total(), 0, "a host allocation collected");
+    assert_eq!(stats.objects_allocated, 4 * 2 * n as u64);
+
+    // The collection pacing has been asking for runs on the first
+    // allocation by Codira code.
+    churn(&gc, &ty, 1);
+    assert!(gc.heap_stats().collections.paced >= 1);
 }
 
 #[test]

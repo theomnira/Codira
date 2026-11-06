@@ -87,9 +87,15 @@ rule of Go's `GOGC`:
 trigger = max(min_heap, live_after_the_last_collection * (100 + growth_percent) / 100)
 ```
 
-The next allocation by a thread running Codira code then collects (an
-allocation by the host does too; it scans the host thread's stack the same
-way). The defaults (`GcPolicy::default()`) are `growth_percent = 100` and
+The next allocation by a thread running Codira code then collects. An
+allocation by the host never does: a host thread's stack is scanned only
+while that thread is inside an allocation, so a collection started by one
+host thread could free an object another host thread holds unrooted
+between two of its allocations (which a host may do as long as it never
+collects itself). The collection stays due until Codira code allocates.
+The heap limit still collects on a host allocation, as it always has; a
+host that sets a limit and allocates from several threads must root what
+it holds. The defaults (`GcPolicy::default()`) are `growth_percent = 100` and
 `min_heap = 4 MiB`: a program with a small live set collects every 4 MiB of
 allocation, and one with a large live set lets the heap grow to about twice
 that set. Pacing counts payload bytes (as `Stats::allocated_memory` does,

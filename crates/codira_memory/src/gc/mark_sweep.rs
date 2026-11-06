@@ -445,13 +445,15 @@ where
         } else {
             // Not running Codira code: allocate in a brief running section,
             // so no collection can sweep the cell while it is initialized.
-            // Collecting in it scans this thread's stack like a mutator's.
-            safepoint::with_allocation_section(|| {
-                if safepoint::is_running() && self.heap.collection_due() {
-                    self.core.collect_for_pacing();
-                }
-                self.alloc_or_collect(ty, layout)
-            })
+            //
+            // A host allocation never starts a paced collection. A host
+            // thread is scanned only while it is inside such a section, so a
+            // collection started here could free an object another host
+            // thread holds unrooted between two of its allocations, which
+            // a host may do as long as it never collects itself. Pacing
+            // stays due and the next allocation by Codira code collects.
+            // The heap limit still collects here, as it always has.
+            safepoint::with_allocation_section(|| self.alloc_or_collect(ty, layout))
         }
     }
 
