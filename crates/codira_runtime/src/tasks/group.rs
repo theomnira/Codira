@@ -4,8 +4,8 @@
 //!
 //! Functionality:
 //! - The runtime half of `group { .. }`: a set of tasks whose results come
-//!   back, in spawn order, when the group ends; the lowest-index error wins
-//!   and cancels the tasks spawned after it.
+//!   back, in spawn order, when the group ends; the lowest-index error wins and
+//!   cancels the tasks spawned after it.
 //!
 //! # Lifecycle
 //!
@@ -85,7 +85,10 @@ impl GroupState {
         // SAFETY: `group_spawn` was given a trampoline of this signature.
         let entry: GroupEntry = unsafe { std::mem::transmute::<usize, GroupEntry>(entry) };
         let mut out = vec![0u128; self.result_size.div_ceil(16)];
-        let failed = entry(args.as_mut_ptr().cast::<u8>(), out.as_mut_ptr().cast::<u8>()) != 0;
+        let failed = entry(
+            args.as_mut_ptr().cast::<u8>(),
+            out.as_mut_ptr().cast::<u8>(),
+        ) != 0;
         // Still running: no collection can start before the result is in
         // the region.
         let stride = self.stride;
@@ -283,7 +286,11 @@ mod tests {
             let group = group_begin(8);
             for i in 0..20i64 {
                 // Tasks 7 and 13 fail.
-                spawn(group, fail_if_negative, if i == 7 || i == 13 { -i } else { i });
+                spawn(
+                    group,
+                    fail_if_negative,
+                    if i == 7 || i == 13 { -i } else { i },
+                );
             }
             assert_eq!(group_end(group), 20);
             assert_eq!(group_first_error(group), 7);

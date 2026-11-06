@@ -33,19 +33,18 @@
 //!   at most one `default`. Every other arm is a channel operation (`name =
 //!   <-ch`, `<-ch` or `ch <- value`), and only a receive binds a name.
 //! * `group { .. }` is a `scope` whose tasks return values. A `spawn` belongs
-//!   to the innermost `scope` or `group` around it. A group's tasks take
-//!   only integers, floats and `bool` -- no channels or endpoints: the group
-//!   does not start the tasks after a failed one, and a task that never runs
-//!   must not leave a sibling waiting on a channel. A group spawns at least
-//!   one task (its value's type comes from them), and its tasks return a
-//!   value -- not `()` (that is a `scope`), not a `secret` (the value crosses
-//!   to the joining task outside the secrecy checker's sight), not a channel
-//!   or endpoint. Any other result type is allowed: a task's arguments are
-//!   scalars and there is no module-level state, so everything its result
-//!   refers to was made by the task, which has finished when the result is
-//!   read -- the result is moved, never shared. Channels and sessions are
-//!   still created only inside a `scope` (the one that owns them), which may
-//!   enclose the group.
+//!   to the innermost `scope` or `group` around it. A group's tasks take only
+//!   integers, floats and `bool` -- no channels or endpoints: the group does
+//!   not start the tasks after a failed one, and a task that never runs must
+//!   not leave a sibling waiting on a channel. A group spawns at least one task
+//!   (its value's type comes from them), and its tasks return a value -- not
+//!   `()` (that is a `scope`), not a `secret` (the value crosses to the joining
+//!   task outside the secrecy checker's sight), not a channel or endpoint. Any
+//!   other result type is allowed: a task's arguments are scalars and there is
+//!   no module-level state, so everything its result refers to was made by the
+//!   task, which has finished when the result is read -- the result is moved,
+//!   never shared. Channels and sessions are still created only inside a
+//!   `scope` (the one that owns them), which may enclose the group.
 //! * A closure is a function of its own: a `scope` around the literal does not
 //!   cover a `spawn` in its body. `spawn` never runs a function *value* (a
 //!   closure, or a named function passed around as a value): a closure carries
@@ -367,10 +366,7 @@ impl ExprValidator<'_> {
                 .spawned_function(call)
                 .is_some_and(|f| crate::verify::flow::secret_signature(self.db, f).result);
             let problem = if secret {
-                Some(
-                    "a `secret`, which would reach the joining task as a public value"
-                        .to_string(),
-                )
+                Some("a `secret`, which would reach the joining task as a public value".to_string())
             } else if matches!(result.interned(), TyKind::Tuple(0, _)) {
                 Some("nothing (`()`): spawn it in a `scope` instead".to_string())
             } else {
@@ -384,7 +380,9 @@ impl ExprValidator<'_> {
             if let Some(problem) = problem {
                 self.push_task_error(
                     call,
-                    format!("a task in a `group` returns its result, and this one returns {problem}"),
+                    format!(
+                        "a task in a `group` returns its result, and this one returns {problem}"
+                    ),
                     sink,
                 );
             }

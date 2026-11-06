@@ -222,7 +222,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .get_basic_type(&result_ty)
             .expect("a task's result has a basic type");
         let usize_ty = self.hir_types.get_usize_type();
-        let size = usize_ty.const_int(self.hir_types.target_data().get_abi_size(&result_llvm), false);
+        let size = usize_ty.const_int(
+            self.hir_types.target_data().get_abi_size(&result_llvm),
+            false,
+        );
         let group = self
             .call_runtime(&intrinsics::group_begin, &[size.into()])
             .expect("`codira.group_begin` returns a handle")
@@ -260,8 +263,14 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 let result_args = codira_hir::mono::enum_args(&result_ty);
                 let ok_slot = ok.slots_at(self.db, &result_args)[0] as u32 + 1;
                 let err_slot = err.slots_at(self.db, &result_args)[0] as u32 + 1;
-                let oks =
-                    self.gen_group_array(group, array, first_error, slot, result_llvm, Some(ok_slot));
+                let oks = self.gen_group_array(
+                    group,
+                    array,
+                    first_error,
+                    slot,
+                    result_llvm,
+                    Some(ok_slot),
+                );
                 let failed = self
                     .builder
                     .build_int_compare(IntPredicate::ULT, first_error, count, "group.failed")
@@ -291,14 +300,24 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     .builder
                     .build_extract_value(failed_result, err_slot, "group.error")
                     .expect("the `Err` slot exists in the layout");
-                let err_value = self.gen_result_variant(value_type, err.index(), error, err.slots_at(self.db, &value_args)[0] as u32 + 1);
+                let err_value = self.gen_result_variant(
+                    value_type,
+                    err.index(),
+                    error,
+                    err.slots_at(self.db, &value_args)[0] as u32 + 1,
+                );
                 let err_end = self.builder.get_insert_block().expect("in a block");
                 self.builder
                     .build_unconditional_branch(done_block)
                     .expect("failed to branch to the group's end");
 
                 self.builder.position_at_end(ok_block);
-                let ok_value = self.gen_result_variant(value_type, ok.index(), oks.into(), ok.slots_at(self.db, &value_args)[0] as u32 + 1);
+                let ok_value = self.gen_result_variant(
+                    value_type,
+                    ok.index(),
+                    oks.into(),
+                    ok.slots_at(self.db, &value_args)[0] as u32 + 1,
+                );
                 let ok_end = self.builder.get_insert_block().expect("in a block");
                 self.builder
                     .build_unconditional_branch(done_block)
@@ -360,7 +379,9 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .expect("generating code inside a block");
         let cond_block = self.context.append_basic_block(self.fn_value, "group.cond");
         let body_block = self.context.append_basic_block(self.fn_value, "group.body");
-        let done_block = self.context.append_basic_block(self.fn_value, "group.collected");
+        let done_block = self
+            .context
+            .append_basic_block(self.fn_value, "group.collected");
         self.builder
             .build_unconditional_branch(cond_block)
             .expect("failed to build a branch");
@@ -417,7 +438,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// `value` (a `usize`) cast to `array`'s length type.
-    fn index_as_length(&self, value: IntValue<'ink>, array: RuntimeArrayValue<'ink>) -> IntValue<'ink> {
+    fn index_as_length(
+        &self,
+        value: IntValue<'ink>,
+        array: RuntimeArrayValue<'ink>,
+    ) -> IntValue<'ink> {
         let length_ty = array.length_ty();
         if value.get_type() == length_ty {
             value

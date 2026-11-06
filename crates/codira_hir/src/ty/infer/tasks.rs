@@ -19,9 +19,9 @@
 //! * `group { body }`: the body is typed as a statement; every task spawned
 //!   directly in it must return the same type `R`, and the group is
 //!   [`group_shape`]`(R)`: `Result[[T], E]` when `R` is a `Result[T, E]` (in
-//!   the sense of `?`) whose `Ok` holds the declaration's type parameter,
-//!   `[R]` otherwise. A group that spawns nothing is reported by the
-//!   validator; its type is unknown.
+//!   the sense of `?`) whose `Ok` holds the declaration's type parameter, `[R]`
+//!   otherwise. A group that spawns nothing is reported by the validator; its
+//!   type is unknown.
 use super::{error_type, Expectation, InferenceDiagnostic, InferenceResultBuilder};
 use crate::{
     code_model::{EnumVariant, Session},
@@ -78,7 +78,13 @@ pub fn group_shape(db: &dyn HirDatabase, result: &Ty) -> GroupShape {
                     let value_args: Substitution = args
                         .iter()
                         .enumerate()
-                        .map(|(i, arg)| if i == index { array.clone() } else { arg.clone() })
+                        .map(|(i, arg)| {
+                            if i == index {
+                                array.clone()
+                            } else {
+                                arg.clone()
+                            }
+                        })
                         .collect();
                     return GroupShape::Result {
                         ok,

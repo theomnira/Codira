@@ -34,9 +34,9 @@ pub use crate::{
     diagnostics::{Diagnostic, DiagnosticSink},
     display::HirDisplay,
     expr::{
-        direct_spawns, opened_session, ArithOp, BinaryOp, Body, BodyContracts, CmpOp, Expr, ExprId, ExprScopes,
-        HandlerArm, Literal, LogicOp, LoopContract, MatchArm, MatchSource, Ordering, Pat, PatId,
-        RecordLitField, SelectArm, SelectOp, SessionFlow, Statement, UnaryOp,
+        direct_spawns, opened_session, ArithOp, BinaryOp, Body, BodyContracts, CmpOp, Expr, ExprId,
+        ExprScopes, HandlerArm, Literal, LogicOp, LoopContract, MatchArm, MatchSource, Ordering,
+        Pat, PatId, RecordLitField, SelectArm, SelectOp, SessionFlow, Statement, UnaryOp,
     },
     ids::{AssocItemId, ItemLoc},
     in_file::InFile,
@@ -47,10 +47,10 @@ pub use crate::{
     resolve::{resolver_for_expr, resolver_for_scope, Resolver, TypeNs, ValueNs},
     ty::{
         cast::{check_cast, CastCheck, CastOp, InvalidCastReason},
-        error_conversions,
+        error_conversions, group_shape,
         lower::CallableDef,
-        group_shape, main_result, result_variants, ClosureInfo, GroupShape, FloatTy, FnSig, InferenceResult, IntTy,
-        MainResult, ResolveBitness, Substitution, Ty, TyKind, TypableDef, TypeWalk,
+        main_result, result_variants, ClosureInfo, FloatTy, FnSig, GroupShape, InferenceResult,
+        IntTy, MainResult, ResolveBitness, Substitution, Ty, TyKind, TypableDef, TypeWalk,
     },
     visibility::{HasVisibility, Visibility},
 };

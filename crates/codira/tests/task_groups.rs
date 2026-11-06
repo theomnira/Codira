@@ -7,8 +7,8 @@
 //!   and `std.error.error`'s `AnyError`: tasks that fail through `?` and an
 //!   error conversion, a group whose value is passed on by `?`, the
 //!   lowest-index error winning, and `main` reporting it. Programs are built
-//!   and run by the real `codira` binary against this source tree's
-//!   standard library.
+//!   and run by the real `codira` binary against this source tree's standard
+//!   library.
 
 use std::{
     path::{Path, PathBuf},

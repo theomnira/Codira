@@ -1,0 +1,116 @@
+// The Codira half of the task benchmarks (`examples/fabric_bench`): each
+// public function is one workload and returns a check value the Rust and Go
+// programs reproduce. The host (`host/`) times the calls.
+
+// -- spawn/join: `n` tasks that do almost nothing -------------------------
+
+func ident(i: i64) -> i64 {
+    i
+}
+
+public func spawn_join(n: i64) -> i64 {
+    let xs = group {
+        var i = 0
+        while i < n {
+            spawn ident(i)
+            i += 1
+        }
+    }
+    var total = 0
+    for x in xs { total += x }
+    total
+}
+
+// -- fan-out/fan-in map over `n` items, `chunks` tasks ---------------------
+
+func mix(i: i64) -> i64 {
+    var x = i * 2654435761 + 1
+    x = x ^ (x >> 13)
+    x = x * 1274126177
+    x ^ (x >> 16)
+}
+
+func map_chunk(lo: i64, hi: i64) -> [i64] {
+    var out: [i64] = []
+    out.reserve((hi - lo) as usize)
+    var i = lo
+    while i < hi {
+        out.push(mix(i))
+        i += 1
+    }
+    out
+}
+
+public func fan_out_map(n: i64, chunks: i64) -> i64 {
+    let parts = group {
+        var c = 0
+        while c < chunks {
+            spawn map_chunk(n * c / chunks, n * (c + 1) / chunks)
+            c += 1
+        }
+    }
+    // Fan in: one array of every result, in order.
+    var all: [i64] = []
+    all.reserve(n as usize)
+    for part in parts {
+        for x in part { all.push(x) }
+    }
+    var check = 0
+    var i = 0
+    while i < all.len() {
+        check = check ^ (all[i] + i as i64)
+        i += 1
+    }
+    check
+}
+
+// -- producer/consumer over a channel of capacity 64 -----------------------
+
+func produce(out: Channel[i64], n: i64) {
+    var i = 0
+    while i < n {
+        out <- i
+        i += 1
+    }
+}
+
+public func pipeline(n: i64) -> i64 {
+    scope {
+        let ch = channel(64)
+        spawn produce(ch, n)
+        var total = 0
+        var i = 0
+        while i < n {
+            total += <-ch
+            i += 1
+        }
+        total
+    }
+}
+
+// -- CPU-bound work in `tasks` pieces, for the parallel speedup -----------
+
+func burn(seed: i64, iterations: i64) -> i64 {
+    var x = seed * 2 + 1
+    var i = 0
+    while i < iterations {
+        x = x ^ (x << 13)
+        x = x ^ (x >> 7)
+        x = x ^ (x << 17)
+        i += 1
+    }
+    x
+}
+
+public func compute(tasks: i64, iterations: i64) -> i64 {
+    let xs = group {
+        var t = 0
+        while t < tasks {
+            spawn burn(t, iterations)
+            t += 1
+        }
+    }
+    var check = 0
+    for x in xs { check += x }
+    check
+}

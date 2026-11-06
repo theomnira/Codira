@@ -2146,10 +2146,7 @@ impl InferenceResultBuilder<'_> {
                 if !args.is_empty() {
                     self.diagnostics.push(InferenceDiagnostic::ExprError {
                         id: tgt_expr.into(),
-                        message: format!(
-                            "`cancelled` takes no arguments, found {}",
-                            args.len()
-                        ),
+                        message: format!("`cancelled` takes no arguments, found {}", args.len()),
                     });
                 }
                 for &arg in args {

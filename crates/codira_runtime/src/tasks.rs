@@ -37,10 +37,10 @@
 //! # Scopes and channels
 //!
 //! A scope counts its unfinished tasks; `codira.scope_end` waits for the
-//! count to reach zero (helping first, see the scheduler). A channel belongs to the scope that created it and is
-//! freed with it, after every task of the scope has finished -- the compiler
-//! guarantees no code can name the channel after that (see
-//! `codira_hir::expr::validator::tasks`).
+//! count to reach zero (helping first, see the scheduler). A channel belongs to
+//! the scope that created it and is freed with it, after every task of the
+//! scope has finished -- the compiler guarantees no code can name the channel
+//! after that (see `codira_hir::expr::validator::tasks`).
 //!
 //! Elements are scalars of at most 16 bytes, copied in and out by value;
 //! tasks share nothing else. A channel whose senders and receivers do not
@@ -97,14 +97,12 @@ use std::{
     },
 };
 
-use parking_lot::{Condvar, Mutex};
-
 use codira_memory::gc::safepoint::blocking;
-
+use parking_lot::{Condvar, Mutex};
+use scheduler::scheduler;
 pub use scheduler::{blocking_io, stats, with_priority, Priority, SchedulerStats};
 
 use crate::{FunctionDefinition, IntoFunctionDefinition};
-use scheduler::scheduler;
 
 /// The largest channel element, in bytes: an `i128`.
 const MAX_ELEMENT_SIZE: usize = 16;
@@ -253,6 +251,32 @@ impl TaskSet {
     }
 }
 
+/// Where task-local allocation regions plug in; today it does nothing.
+///
+/// A region would hold every object a task allocates that escape analysis
+/// (the compiler's, not this module's) proves does not outlive the task,
+/// and be released in one step when the task ends -- the end of
+/// [`run`], after the task's body returned and, for a group's task, after
+/// its result was copied into the group's root region. What a region must
+/// never contain: anything reachable from a task's *result* (a group hands
+/// it to the joining task) or from a channel (only scalars cross them
+/// today). Until the compiler can prove that, no task allocates in a
+/// region, so this stays empty and costs nothing.
+struct TaskRegion;
+
+impl TaskRegion {
+    /// Called as a task's body starts, with a mutator guard held.
+    #[inline(always)]
+    fn begin() -> TaskRegion {
+        TaskRegion
+    }
+
+    /// Called once the task's body (and, in a group, the copy of its
+    /// result) is done, still with the mutator guard held.
+    #[inline(always)]
+    fn end(self) {}
+}
+
 /// Runs `job` on the current thread, as the current task.
 fn run(job: Job) {
     let set = Arc::clone(job.set());
@@ -275,16 +299,19 @@ fn run(job: Job) {
         let previous_priority = scheduler::set_current_priority(job.priority);
         {
             let _guard = codira_memory::gc::safepoint::enter();
+            let region = TaskRegion::begin();
             let mut args = job.args;
             match &job.owner {
                 Owner::Scope(_) => {
                     // SAFETY: `scope_spawn` was given a trampoline of this
                     // signature.
-                    let entry: TaskEntry = unsafe { std::mem::transmute::<usize, TaskEntry>(job.entry) };
+                    let entry: TaskEntry =
+                        unsafe { std::mem::transmute::<usize, TaskEntry>(job.entry) };
                     entry(args.as_mut_ptr().cast::<u8>());
                 }
                 Owner::Group(group) => group.run_task(job.entry, &mut args, job.index),
             }
+            region.end();
         }
         scheduler::set_current_priority(previous_priority);
         CURRENT.with(|current| *current.borrow_mut() = previous);
@@ -300,7 +327,12 @@ fn run(job: Job) {
 /// [`TaskSet`]). False outside any task, unless a [`CancelToken`] in force
 /// on the thread was cancelled.
 pub fn is_cancelled() -> bool {
-    CURRENT.with(|current| current.borrow().as_ref().is_some_and(|task| task.is_cancelled()))
+    CURRENT.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .is_some_and(|task| task.is_cancelled())
+    })
 }
 
 /// Lets the host cancel the tasks a call into Codira code spawns: inside
@@ -355,7 +387,8 @@ impl CancelToken {
                 CURRENT.with(|current| *current.borrow_mut() = self.0.take());
             }
         }
-        let _restore = Restore(CURRENT.with(|current| current.replace(Some(Arc::clone(&self.task)))));
+        let _restore =
+            Restore(CURRENT.with(|current| current.replace(Some(Arc::clone(&self.task)))));
         f()
     }
 }
@@ -1170,7 +1203,8 @@ mod tests {
             let scope = scope_begin();
             for i in 0..per_class * 3 {
                 let class = (i % 3) as u8;
-                let priority = [Priority::High, Priority::Normal, Priority::Background][class as usize];
+                let priority =
+                    [Priority::High, Priority::Normal, Priority::Background][class as usize];
                 with_priority(priority, || {
                     scope_spawn(
                         scope,
@@ -1186,12 +1220,22 @@ mod tests {
             // The first 1400 starts: the high class runs out after 3000, so
             // all three classes are still queued throughout.
             let window = &order[..1400];
-            let count = |c: u8| window.iter().filter(|&&x| x == c).count() as f64 / window.len() as f64;
+            let count =
+                |c: u8| window.iter().filter(|&&x| x == c).count() as f64 / window.len() as f64;
             let (high, normal, background) = (count(0), count(1), count(2));
             eprintln!("starts: high {high:.3}, normal {normal:.3}, background {background:.3}");
-            assert!((high - 4.0 / 7.0).abs() < 0.08, "high {high:.3}, normal {normal:.3}, background {background:.3}");
-            assert!((normal - 2.0 / 7.0).abs() < 0.08, "high {high:.3}, normal {normal:.3}, background {background:.3}");
-            assert!(background > 1.0 / 7.0 - 0.06, "background starved: {background:.3}");
+            assert!(
+                (high - 4.0 / 7.0).abs() < 0.08,
+                "high {high:.3}, normal {normal:.3}, background {background:.3}"
+            );
+            assert!(
+                (normal - 2.0 / 7.0).abs() < 0.08,
+                "high {high:.3}, normal {normal:.3}, background {background:.3}"
+            );
+            assert!(
+                background > 1.0 / 7.0 - 0.06,
+                "background starved: {background:.3}"
+            );
         });
     }
 
@@ -1236,7 +1280,10 @@ mod tests {
             }
             scope_end(scope);
             let after = stats();
-            assert_eq!(HELPED_SUM.load(Ordering::SeqCst), 32 * (width * (width - 1) / 2));
+            assert_eq!(
+                HELPED_SUM.load(Ordering::SeqCst),
+                32 * (width * (width - 1) / 2)
+            );
             assert!(after.helped > before.helped, "{after:?}");
             assert!(after.spawned - before.spawned >= 32 * 65);
         });
@@ -1246,12 +1293,21 @@ mod tests {
     /// runs this test binary again with `CODIRA_TASKS_PROBE` set.
     fn aborts_with(probe: &str, message: &str) {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "tasks::tests::probes", "--nocapture", "--test-threads", "1"])
+            .args([
+                "--exact",
+                "tasks::tests::probes",
+                "--nocapture",
+                "--test-threads",
+                "1",
+            ])
             .env("CODIRA_TASKS_PROBE", probe)
             .output()
             .unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(!output.status.success(), "the probe `{probe}` did not stop the process");
+        assert!(
+            !output.status.success(),
+            "the probe `{probe}` did not stop the process"
+        );
         assert!(stderr.contains(message), "{stderr}");
     }
 
@@ -1291,9 +1347,15 @@ mod tests {
     /// process with a message instead of touching freed memory.
     #[test]
     fn a_task_cannot_outlive_its_scope() {
-        aborts_with("spawn_after_end", "a task was spawned into a scope that has ended");
+        aborts_with(
+            "spawn_after_end",
+            "a task was spawned into a scope that has ended",
+        );
         aborts_with("start_after_end", "a task outlived its scope");
-        aborts_with("free_unjoined_group", "a group was freed before its tasks were joined");
+        aborts_with(
+            "free_unjoined_group",
+            "a group was freed before its tasks were joined",
+        );
     }
 
     /// More sleeping selects than workers: the pool compensates for them as
