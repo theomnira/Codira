@@ -52,3 +52,22 @@ kernels = [
   { name = "context_err" },
   { name = "propagate_depth8", ci = true },
 ]
+
+[[workload]]
+name = "collections"
+title = "Arrays and pipelines"
+kernels = [
+  { name = "push_10m", ci = true, note = "libstdc++'s `std::vector` grows by allocating new memory and copying; Rust's `Vec` grows with `realloc`, which can remap the pages in place." },
+  { name = "sum_for" },
+  { name = "sort_1m", ci = true, note = "C++ is libstdc++'s `std::sort` (introsort); Rust's `sort_unstable` and Codira's `sort` are pattern-defeating quicksort (Codira's is Rust's)." },
+  { name = "map_filter_sum_eager" },
+  { name = "map_filter_sum_lazy", ci = true },
+  { name = "map_filter_sum_fold" },
+  { name = "enumerate_filter_count" },
+  { name = "zip_fold_dot" },
+  { name = "take_while_sum" },
+  { name = "map_collect" },
+  { name = "filter_collect", ci = true },
+  { name = "range_filter_map_sum" },
+  { name = "chain_filter_count", note = "C++ has no `views::concat` before C++26; it is two loops." },
+]
