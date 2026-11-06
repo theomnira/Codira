@@ -1,0 +1,121 @@
+// AURORA: `Result` and `?`. Passing errors on: wrapped in an enum variant
+// (no allocation), converted to an `AnyError` (a message and a context
+// list), with a context added, and through eight frames of `?` in a tight
+// loop. `result.rs` and `result.cpp` (`std::expected`) do the same work
+// with the same error types and print the same check values. Folds in what
+// `examples/error_bench` measured.
+
+import std.error.error.{AnyError}
+import std.result.result.{Result}
+import std.text.ascii.{parse_i64, ParseError}
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+enum Problem { Parse(ParseError) }
+
+// `bytes[0..end]`: "42" parses, "42x" does not.
+func wrapped(bytes: [u8], end: usize) -> Result[i64, Problem] {
+    let v = parse_i64(bytes, 0, end)?
+    Result.Ok(v + 1)
+}
+
+func converted(bytes: [u8], end: usize) -> Result[i64, AnyError] {
+    let v = parse_i64(bytes, 0, end)?
+    Result.Ok(v + 1)
+}
+
+func with_context(bytes: [u8], end: usize) -> Result[i64, AnyError] {
+    let v = parse_i64(bytes, 0, end).context("parsing the answer")?
+    Result.Ok(v + 1)
+}
+
+func run_wrapped(end: usize) {
+    let bytes = "42x".bytes()
+    let start = now()
+    var check: u64 = 0
+    var i = 0
+    while i < 10000000 {
+        match wrapped(bytes, end) {
+            Result.Ok(v) -> check += v as u64,
+            Result.Err(_) -> check += 1,
+        }
+        i += 1
+    }
+    report(start, check)
+}
+
+// 10M parses that succeed, passed on through `?`.
+public func wrapped_ok() { run_wrapped(2) }
+
+// 10M parses that fail, the error wrapped in `Problem.Parse` by `?`.
+public func wrapped_err() { run_wrapped(3) }
+
+// 1M failures converted to an `AnyError` by `?`.
+public func converted_err() {
+    let bytes = "42x".bytes()
+    let start = now()
+    var check: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        match converted(bytes, 3) {
+            Result.Ok(v) -> check += v as u64,
+            Result.Err(e) -> check += e.root_cause().len() as u64,
+        }
+        i += 1
+    }
+    report(start, check)
+}
+
+// 1M failures converted, with a context added.
+public func context_err() {
+    let bytes = "42x".bytes()
+    let start = now()
+    var check: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        match with_context(bytes, 3) {
+            Result.Ok(v) -> check += v as u64,
+            Result.Err(e) -> check += e.root_cause().len() as u64 + e.chain().len() as u64,
+        }
+        i += 1
+    }
+    report(start, check)
+}
+
+// Eight frames of `?`; one value in 16 fails at the bottom.
+enum Bad { Odd(i64) }
+
+func level0(x: i64) -> Result[i64, Bad] {
+    if (x & 15) == 0 { Result.Err(Bad.Odd(x)) } else { Result.Ok(x * 3) }
+}
+func level1(x: i64) -> Result[i64, Bad] { let v = level0(x)?; Result.Ok(v + 1) }
+func level2(x: i64) -> Result[i64, Bad] { let v = level1(x)?; Result.Ok(v ^ 5) }
+func level3(x: i64) -> Result[i64, Bad] { let v = level2(x)?; Result.Ok(v + 7) }
+func level4(x: i64) -> Result[i64, Bad] { let v = level3(x)?; Result.Ok(v ^ 9) }
+func level5(x: i64) -> Result[i64, Bad] { let v = level4(x)?; Result.Ok(v + 11) }
+func level6(x: i64) -> Result[i64, Bad] { let v = level5(x)?; Result.Ok(v ^ 13) }
+func level7(x: i64) -> Result[i64, Bad] { let v = level6(x)?; Result.Ok(v + 15) }
+
+// 10M calls through eight `?` frames.
+public func propagate_depth8() {
+    let start = now()
+    var check: u64 = 0
+    var i: i64 = 0
+    while i < 10000000 {
+        match level7(i) {
+            Result.Ok(v) -> check += v as u64,
+            Result.Err(e) -> match e { Bad.Odd(x) -> check += (x as u64) >> 4 },
+        }
+        i += 1
+    }
+    report(start, check)
+}

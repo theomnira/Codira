@@ -30,3 +30,25 @@ kernels = [
   { name = "find_10mb" },
   { name = "parse_i64" },
 ]
+
+[[workload]]
+name = "format"
+title = "Formatting: integers, floats, format specs, the debug form"
+kernels = [
+  { name = "int_display", ci = true },
+  { name = "int_zero_8", ci = true },
+  { name = "float_display" },
+  { name = "float_right_10_3", ci = true },
+  { name = "debug_struct", ci = true },
+]
+
+[[workload]]
+name = "result"
+title = "Result propagation with `?`"
+kernels = [
+  { name = "wrapped_ok", ci = true },
+  { name = "wrapped_err", ci = true },
+  { name = "converted_err" },
+  { name = "context_err" },
+  { name = "propagate_depth8", ci = true },
+]

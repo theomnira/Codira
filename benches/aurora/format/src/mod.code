@@ -1,0 +1,97 @@
+// AURORA: formatting. Integers and floats to text, format specs and the
+// debug form, 1M values per kernel, against `format.rs` (`to_string`,
+// `format!`) and `format.cpp` (`std::to_string`, `std::to_chars`,
+// `std::format`), which format the same values to the same text. The check
+// value adds, per string, its length and its last byte.
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+struct Point { x: i64, y: f64 }
+
+// The value formatted at step `i`: both signs, three to six digits before
+// the point, and digits after it that a precision rounds.
+func value(i: i64) -> f64 {
+    ((i * 7919) % 1000003) as f64 / 997.0 - 300.0
+}
+
+func integer(i: i64) -> i64 {
+    (i * 7919) % 1000003 - 500000
+}
+
+func check(s: String) -> u64 {
+    s.len() as u64 + s.byte_at(s.len() - 1) as u64
+}
+
+// `n.to_string()`
+public func int_display() {
+    let start = now()
+    var sum: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        let n = integer(i)
+        sum += check(n.to_string())
+        i += 1
+    }
+    report(start, sum)
+}
+
+// `f"{n:08}"`
+public func int_zero_8() {
+    let start = now()
+    var sum: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        let n = integer(i)
+        sum += check(f"{n:08}")
+        i += 1
+    }
+    report(start, sum)
+}
+
+// `x.to_string()`: the shortest text that reads back as `x`.
+public func float_display() {
+    let start = now()
+    var sum: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        let x = value(i)
+        sum += check(x.to_string())
+        i += 1
+    }
+    report(start, sum)
+}
+
+// `f"{x:>10.3}"`
+public func float_right_10_3() {
+    let start = now()
+    var sum: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        let x = value(i)
+        sum += check(f"{x:>10.3}")
+        i += 1
+    }
+    report(start, sum)
+}
+
+// `f"{p:?}"` of `Point { x: i64, y: f64 }`
+public func debug_struct() {
+    let start = now()
+    var sum: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        let p = Point { x: i, y: value(i) }
+        sum += check(f"{p:?}")
+        i += 1
+    }
+    report(start, sum)
+}

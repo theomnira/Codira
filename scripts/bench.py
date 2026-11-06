@@ -345,9 +345,13 @@ class Builder:
                         ["--manifest-path", manifest], env=self.codira_env())
         if r is None:
             return None, "the Codira program does not build"
-        dst = os.path.join(self.work, "bin", f"{w.name}.codiralib")
-        shutil.copyfile(os.path.join(w.dir, "target", "mod.codiralib"), dst)
-        return dst, None
+        # The package's library and one library per standard-library module
+        # it imports, loaded from the same directory.
+        dst = os.path.join(self.work, "bin", f"{w.name}-codira")
+        shutil.rmtree(dst, ignore_errors=True)
+        shutil.copytree(os.path.join(w.dir, "target"), dst,
+                        ignore=shutil.ignore_patterns(".codira*", "*.codira-tmp"))
+        return os.path.join(dst, "mod.codiralib"), None
 
     def rust(self, w):
         out = os.path.join(self.work, "bin", f"{w.name}_rust")
@@ -419,6 +423,10 @@ def compile_times(builder, workloads, runs, rng):
             if p.returncode == 0:
                 rec["seconds"].append(dt)
                 rec["bytes"] = os.path.getsize(art)
+                if v == "codira":
+                    libs = _glob(os.path.join(w.dir, "target", "*.codiralib"))
+                    rec["libraries"] = len(libs)
+                    rec["bytes"] = sum(os.path.getsize(x) for x in libs)
                 if v != "codira":
                     stripped = art + ".stripped"
                     if sh(["strip", "-o", stripped, art]) is not None:
@@ -737,8 +745,9 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests):
         L.append("")
     if compile_info:
         L.append("## Compile time and binary size\n")
-        L.append("From-scratch builds of each workload's program (Codira: `codira build -O 3`, "
-                 "the `.codiralib`, which needs the runtime to run; Rust: one `rustc` "
+        L.append("From-scratch builds of each workload's program (Codira: `codira build -O 3`; "
+                 "the size is every `.codiralib` it writes, the package's and one per "
+                 "standard-library module it imports, without the runtime that loads them; Rust: one `rustc` "
                  "invocation; C++: one compiler invocation). Seconds: median [bootstrap 95%].\n")
         L.append("| workload | variant | build (s) | artifact (KiB) | stripped (KiB) |")
         L.append("|---|---|---:|---:|---:|")
