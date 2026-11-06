@@ -3248,6 +3248,17 @@ runs random programs on both and compares. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
 build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time and the run time.
 
+The collector treats JIT frames as it treats AOT frames: the entry point
+runs registered as a thread running Codira code, every allocation and
+growth is a safepoint, and a stopped thread's stack is scanned
+conservatively. JIT code keeps an object's handle (never only its payload
+address) live across a call that can reach a safepoint, and reads the
+payload address again after it. For precise scanning, JIT frames will need
+the stack slots of the handles live at each such call: Cranelift computes
+them on request (`codira_cranelift::Options::precise_stack_maps`, off by
+default, which nothing consumes yet), and a precise collector would read
+them by return address from the compiled code.
+
 ### Standalone executables: `codira build --exe`
 
 ```bash
