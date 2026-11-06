@@ -27,6 +27,13 @@
 //!
 //! # Where each effect comes from (today's code generator and runtime)
 //!
+//! Each construct below lowers to calls of runtime functions, and what those
+//! calls can do is read from the runtime function catalogue
+//! (`codira_abi::runtime_functions`, see [`runtime_function_effects`]), the
+//! same declarations both code generators import and the runtime is tested
+//! to register. Marking a runtime function as allocating or blocking there
+//! changes the effects of every construct that calls it here.
+//!
 //! Alloc -- every one of these is a call into the runtime that can also take
 //! the GC heap's lock (Block) and aborts the process when the heap limit or
 //! the machine's memory is exhausted (Panic):
@@ -110,6 +117,7 @@
 
 use std::sync::Arc;
 
+use codira_abi::runtime_functions::{self as rt, RuntimeFunction};
 use codira_syntax::{
     ast::{self, AstNode, AttributeOwner, NameOwner},
     SyntaxNodePtr,
@@ -206,11 +214,6 @@ impl EffectSet {
     /// The four effects the `@noalloc`/`@nopanic`/`@noblock`/`@realtime`
     /// attributes are about: Alloc, Block, Panic and Unbounded.
     pub const CLASSIC: EffectSet = EffectSet(0b1111);
-    /// A GC allocation: it can take the heap lock and aborts when memory
-    /// runs out.
-    const GC_ALLOC: EffectSet = EffectSet(0b0111);
-    /// `scope` and `spawn`: an allocation that starts concurrent work.
-    const TASKS: EffectSet = EffectSet(0b0010_0111);
     /// Everything that comes from code the analysis cannot see, except
     /// handling secrets: a secret can only reach such code through a
     /// function that itself mentions `secret`, which is counted there.
@@ -253,6 +256,50 @@ impl EffectSet {
             [init @ .., last] => format!("{} and {last}", init.join(", ")),
         }
     }
+}
+
+/// What a call to the runtime function `function` can do, read from the
+/// runtime function catalogue (`codira_abi::runtime_functions`), which also
+/// declares it to both code generators: Alloc when it allocates (on the GC
+/// heap or, on the program's behalf, the system heap), Block when it can wait
+/// for another thread (a lock, a channel, a collection), Panic when it can
+/// end the program, Spawn when it starts tasks. A function that never
+/// returns -- a panic -- is Panic alone: what it does on the way out cannot
+/// affect the program.
+pub fn runtime_function_effects(function: &RuntimeFunction) -> EffectSet {
+    if function.never_returns() {
+        return EffectSet::of(&[Effect::Panic]);
+    }
+    let mut effects = EffectSet::NONE;
+    for (has, effect) in [
+        (function.allocates(), Effect::Alloc),
+        (function.blocks, Effect::Block),
+        (function.can_panic(), Effect::Panic),
+        (function.spawns, Effect::Spawn),
+    ] {
+        if has {
+            effects = effects.union(EffectSet::of(&[effect]));
+        }
+    }
+    effects
+}
+
+/// What a construct that calls these runtime functions can do.
+fn runtime(functions: &[&RuntimeFunction]) -> EffectSet {
+    functions.iter().fold(EffectSet::NONE, |all, f| {
+        all.union(runtime_function_effects(f))
+    })
+}
+
+/// What a construct that calls one of the allocating runtime functions of
+/// `group` can do (every `print` calls some of the print functions, a string
+/// operation that allocates one of the allocating string functions).
+fn runtime_group(group: rt::Group) -> EffectSet {
+    rt::group(group)
+        .filter(|f| f.allocates())
+        .fold(EffectSet::NONE, |all, f| {
+            all.union(runtime_function_effects(f))
+        })
 }
 
 /// One thing a function's own body does that has effects.
@@ -584,7 +631,7 @@ impl Collector<'_> {
         if self.frame.infer.is_string_conversion(expr) {
             self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::STRING_FROM_BYTES]),
                 "a `str` used as a `String` is copied to the heap",
             );
         }
@@ -624,7 +671,7 @@ impl Collector<'_> {
             }
             Expr::Path(_) if self.frame.infer.function_value(expr).is_some() => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::NEW]),
                 "a function used as a value allocates its function value object",
             ),
             Expr::Path(path) => self.unit_struct(expr, path),
@@ -639,7 +686,7 @@ impl Collector<'_> {
                 if crate::is_inlined_closure_arg(&self.frame.body, &self.frame.infer, expr) => {}
             Expr::Closure { .. } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::NEW]),
                 "a closure allocates its function value object",
             ),
             Expr::Call { .. } | Expr::MethodCall { .. }
@@ -678,7 +725,7 @@ impl Collector<'_> {
             {
                 self.source(
                     expr,
-                    EffectSet::GC_ALLOC,
+                    runtime(&[&rt::SESSION_OPEN]),
                     "opening a session allocates its two channels",
                 );
             }
@@ -688,7 +735,7 @@ impl Collector<'_> {
             {
                 self.source(
                     expr,
-                    EffectSet::of(&[Effect::Block]),
+                    runtime(&[&rt::SESSION_SEND]),
                     "`choose` waits while the other endpoint has not taken the previous message",
                 );
             }
@@ -746,12 +793,12 @@ impl Collector<'_> {
             }
             Expr::Unwrap { .. } => self.source(
                 expr,
-                EffectSet::of(&[Effect::Panic]),
+                runtime(&[&rt::PANIC]),
                 "postfix `!` panics when the optional is `nil`",
             ),
             Expr::Format { spec, .. } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::STRING_FORMAT_INT, &rt::STRING_FORMAT_FLOAT, &rt::STRING_FORMAT_TEXT]),
                 format!(
                     "formatting a hole (`{{..:{}}}`) builds a new `String` on the heap",
                     spec.text
@@ -760,16 +807,16 @@ impl Collector<'_> {
             Expr::Index { index, .. } if matches!(body[*index], Expr::Range { .. }) => {
                 self.source(
                     expr,
-                    EffectSet::GC_ALLOC,
+                    runtime(&[&rt::NEW_ARRAY, &rt::PANIC]),
                     "slicing allocates a new array, and panics when the range is out of bounds",
                 );
             }
             Expr::Index { .. } => self.source(
                 expr,
-                EffectSet::of(&[Effect::Panic]),
+                runtime(&[&rt::PANIC_INDEX_OUT_OF_BOUNDS]),
                 "indexing panics when the index is out of range (`unchecked_get` skips the check)",
             ),
-            Expr::Array(_) => self.source(expr, EffectSet::GC_ALLOC, "array literal allocated"),
+            Expr::Array(_) => self.source(expr, runtime(&[&rt::NEW_ARRAY]), "array literal allocated"),
             Expr::Loop { .. } | Expr::While { .. } => self.loop_bound(expr),
             Expr::Perform { .. } => self.source(
                 expr,
@@ -778,29 +825,29 @@ impl Collector<'_> {
             ),
             Expr::Scope { .. } => self.source(
                 expr,
-                EffectSet::TASKS,
+                runtime(&[&rt::SCOPE_BEGIN, &rt::SCOPE_SPAWN, &rt::SCOPE_END]),
                 "`scope` allocates its task bookkeeping and waits for its tasks at the end",
             ),
             Expr::Spawn { .. } => self.source(
                 expr,
-                EffectSet::TASKS,
+                runtime(&[&rt::SCOPE_SPAWN]),
                 "`spawn` copies the task's arguments to the heap and queues it",
             ),
             Expr::ChannelSend { .. } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::CHANNEL_SEND]),
                 "channel send waits while the channel is full (and may grow its queue)",
             ),
             Expr::ChannelReceive { .. } => self.source(
                 expr,
-                EffectSet::of(&[Effect::Block]),
+                runtime(&[&rt::CHANNEL_RECEIVE]),
                 "channel receive waits while the channel is empty",
             ),
             // Even with `default` a select takes its channels' locks; it
             // also builds its wait list on the heap.
             Expr::Select { arms } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::CHANNEL_SELECT]),
                 if arms
                     .iter()
                     .any(|arm| matches!(arm.op, crate::SelectOp::Default))
@@ -813,7 +860,7 @@ impl Collector<'_> {
             ),
             Expr::Offer { .. } => self.source(
                 expr,
-                EffectSet::of(&[Effect::Block]),
+                runtime(&[&rt::SESSION_RECEIVE]),
                 "`offer` waits for the other endpoint's choice",
             ),
         }
@@ -829,7 +876,7 @@ impl Collector<'_> {
         match builtin {
             BuiltinFn::Print | BuiltinFn::Println => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime_group(rt::Group::Print),
                 format!(
                     "`{}` formats its arguments on the heap and writes them under standard \
                      output's lock",
@@ -839,14 +886,14 @@ impl Collector<'_> {
             BuiltinFn::Channel => {
                 self.source(
                     expr,
-                    EffectSet::GC_ALLOC,
+                    runtime(&[&rt::CHANNEL_NEW]),
                     "`channel(..)` allocates a channel",
                 );
             }
             BuiltinFn::ArrayFilled => {
                 self.source(
                     expr,
-                    EffectSet::GC_ALLOC,
+                    runtime(&[&rt::NEW_ARRAY]),
                     "`array_filled(..)` allocates an array",
                 );
             }
@@ -880,7 +927,7 @@ impl Collector<'_> {
         if op.allocates() {
             self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::NEW_ARRAY, &rt::ARRAY_GROW]),
                 format!("`{}` allocates the array it returns", op.name()),
             );
         }
@@ -930,24 +977,21 @@ impl Collector<'_> {
     fn array_method(&mut self, expr: ExprId, method: crate::ArrayMethod) {
         if method.allocates() {
             let what = match method {
-                crate::ArrayMethod::Copy
-                | crate::ArrayMethod::Map
-                | crate::ArrayMethod::Filter => format!("`{}` allocates a new array", method.name()),
+                crate::ArrayMethod::Copy | crate::ArrayMethod::Map | crate::ArrayMethod::Filter => {
+                    format!("`{}` allocates a new array", method.name())
+                }
                 _ => format!(
                     "`{}` can grow the array, which allocates a new buffer",
                     method.name()
                 ),
             };
-            self.source(expr, EffectSet::GC_ALLOC, what);
+            self.source(expr, runtime(&[&rt::NEW_ARRAY, &rt::ARRAY_GROW]), what);
         }
         if method.checks_index() {
             self.source(
                 expr,
-                EffectSet::of(&[Effect::Panic]),
-                format!(
-                    "`{}` panics when the index is out of range",
-                    method.name()
-                ),
+                runtime(&[&rt::PANIC_INDEX_OUT_OF_BOUNDS]),
+                format!("`{}` panics when the index is out of range", method.name()),
             );
         }
         if let (Some(index), Expr::MethodCall { args, .. }) =
@@ -978,16 +1022,22 @@ impl Collector<'_> {
         if op.allocates(receiver.as_ref().map(crate::Ty::interned)) {
             self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime_group(rt::Group::String),
                 format!("`{}` allocates a new string or array", op.name()),
             );
         } else if op.panics() {
-            let what = if op == crate::StringOp::Slice {
-                "`slice` panics on a range out of bounds or off a character boundary"
+            let (check, what) = if op == crate::StringOp::Slice {
+                (
+                    &rt::STRING_CHECK_SLICE,
+                    "`slice` panics on a range out of bounds or off a character boundary",
+                )
             } else {
-                "`byte_at` panics on an index out of bounds"
+                (
+                    &rt::PANIC_INDEX_OUT_OF_BOUNDS,
+                    "`byte_at` panics on an index out of bounds",
+                )
             };
-            self.source(expr, EffectSet::of(&[Effect::Panic]), what);
+            self.source(expr, runtime(&[check]), what);
         }
     }
 
@@ -1016,7 +1066,7 @@ impl Collector<'_> {
         {
             self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::STRING_CONCAT, &rt::STRING_APPEND]),
                 "string concatenation allocates (or grows) a buffer",
             );
         }
@@ -1042,7 +1092,7 @@ impl Collector<'_> {
     fn construct(&mut self, expr: ExprId, s: crate::Struct) {
         if s.data(self.db).memory_kind == StructMemoryKind::Gc {
             let what = format!("class `{}` constructed", s.name(self.db));
-            self.source(expr, EffectSet::GC_ALLOC, what);
+            self.source(expr, runtime(&[&rt::NEW]), what);
         }
     }
 
@@ -1080,7 +1130,7 @@ impl Collector<'_> {
                 callee.name(self.db),
             );
             self.out.sources.push(Source {
-                effects: EffectSet::GC_ALLOC,
+                effects: runtime(&[&rt::NEW]),
                 site,
                 what,
             });
@@ -1153,7 +1203,7 @@ impl Collector<'_> {
                 "non-zero"
             }
         );
-        self.source(expr, EffectSet::of(&[Effect::Panic]), what);
+        self.source(expr, runtime(&[&rt::PANIC]), what);
     }
 
     fn loop_bound(&mut self, expr: ExprId) {

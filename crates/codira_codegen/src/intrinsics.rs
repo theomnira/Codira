@@ -376,3 +376,90 @@ pub fn array_functions() -> [&'static dyn Intrinsic; 4] {
         &array_reverse,
     ]
 }
+
+/// Every runtime function this backend declares: what generated code may
+/// import from the runtime's dispatch table. Each is an entry of the runtime
+/// function catalogue (`codira_abi::runtime_functions`), with the same
+/// signature; `declarations_match_the_catalogue` checks both directions.
+pub fn runtime_function_declarations() -> Vec<&'static dyn Intrinsic> {
+    let mut all: Vec<&'static dyn Intrinsic> = vec![
+        &new,
+        &new_array,
+        &panic,
+        &str_eq,
+        &panic_index_out_of_bounds,
+        &fuel_exhausted,
+    ];
+    all.extend(print_functions());
+    all.extend(string_functions());
+    all.extend(array_functions());
+    all.extend(task_functions());
+    all
+}
+
+#[cfg(test)]
+mod catalogue_tests {
+    use std::{collections::BTreeSet, ffi::c_void, sync::Arc};
+
+    use codira_abi::runtime_functions::{Repr, CATALOGUE};
+
+    use super::runtime_function_declarations;
+    use crate::type_info::{HasStaticTypeId, TypeId};
+
+    fn type_id_of(repr: Repr) -> Arc<TypeId> {
+        match repr {
+            Repr::Unit => <()>::type_id().clone(),
+            Repr::U8 => u8::type_id().clone(),
+            Repr::U32 => u32::type_id().clone(),
+            Repr::I32 => i32::type_id().clone(),
+            Repr::I64 => i64::type_id().clone(),
+            Repr::U64 => u64::type_id().clone(),
+            Repr::Usize => usize::type_id().clone(),
+            Repr::F32 => f32::type_id().clone(),
+            Repr::F64 => f64::type_id().clone(),
+            Repr::ConstBytes => <*const u8>::type_id().clone(),
+            Repr::MutBytes => <*mut u8>::type_id().clone(),
+            Repr::Handle => <*const c_void>::type_id().clone(),
+            Repr::MutHandle => <*mut c_void>::type_id().clone(),
+            Repr::Object => <*const *mut c_void>::type_id().clone(),
+        }
+    }
+
+    #[test]
+    fn declarations_match_the_catalogue() {
+        let declared = runtime_function_declarations();
+        let mut names = BTreeSet::new();
+        for function in &declared {
+            let prototype = function.prototype();
+            assert!(
+                names.insert(prototype.name.clone()),
+                "`{}` is declared twice",
+                prototype.name
+            );
+            let Some(entry) = codira_abi::runtime_functions::lookup(&prototype.name) else {
+                panic!(
+                    "`{}` is not in the runtime function catalogue",
+                    prototype.name
+                );
+            };
+            let expected: Vec<_> = entry.params.iter().map(|&(_, r)| type_id_of(r)).collect();
+            assert_eq!(
+                prototype.arg_types, expected,
+                "`{}`'s parameters",
+                entry.symbol
+            );
+            assert_eq!(
+                prototype.ret_type,
+                type_id_of(entry.ret),
+                "`{}`'s result",
+                entry.symbol
+            );
+        }
+        let catalogued: BTreeSet<String> = CATALOGUE.iter().map(|f| f.symbol.to_owned()).collect();
+        let undeclared: Vec<_> = catalogued.difference(&names).collect();
+        assert!(
+            undeclared.is_empty(),
+            "catalogued, but the LLVM backend does not declare: {undeclared:?}"
+        );
+    }
+}

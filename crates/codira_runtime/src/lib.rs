@@ -17,6 +17,8 @@ mod garbage_collector;
 mod adt;
 mod array;
 mod builtins;
+#[cfg(test)]
+mod catalogue_tests;
 mod dispatch_table;
 mod fn_cells;
 mod fuel;
@@ -311,6 +313,68 @@ extern "C" fn new_array(
     }
 }
 
+/// Every function generated code calls on its own: `new`, `new_array` and
+/// the `codira.*` functions of `codira_abi::runtime_functions::CATALOGUE`,
+/// which lists exactly these (see `catalogue_matches_registration`). A
+/// runtime registers them in its dispatch table; the Cranelift backend
+/// resolves its imports to the same functions.
+pub fn generated_code_functions() -> Vec<FunctionDefinition> {
+    let mut functions = vec![
+        IntoFunctionDefinition::into(
+            new as extern "C" fn(*const ffi::c_void, *mut ffi::c_void) -> *const *mut ffi::c_void,
+            "new",
+        ),
+        IntoFunctionDefinition::into(
+            new_array
+                as extern "C" fn(
+                    *const ffi::c_void,
+                    usize,
+                    *mut ffi::c_void,
+                ) -> *const *mut ffi::c_void,
+            "new_array",
+        ),
+    ];
+    // The functions compiled `print`/`println` calls lower to.
+    functions.extend(builtins::definitions());
+    // Growing arrays, and the array operations generated code delegates.
+    functions.extend(native_array::functions());
+    // The functions compiled `String` operations lower to.
+    functions.extend(string::definitions());
+    // What fuel-instrumented code calls when its budget runs out
+    functions.push(IntoFunctionDefinition::into(
+        fuel::fuel_exhausted as extern "C" fn(),
+        abi::FUEL_EXHAUSTED_FN_NAME,
+    ));
+    // `scope`, `spawn` and channels.
+    functions.extend(tasks::functions());
+    functions
+}
+
+/// The native services the standard library reaches through `extern`
+/// declarations (`std/fs/fs.code`, `std/time/time.code`, ...).
+fn native_services() -> Vec<FunctionDefinition> {
+    let mut functions = Vec::new();
+    // Raw memory services for `std/memory/{region,page}.code`
+    functions.extend(native_memory::functions());
+    // File services for `std/fs/fs.code`, hashing for `std/crypto/hash.code`
+    functions.extend(native_fs::functions());
+    functions.extend(native_hash::functions());
+    // Entropy for `std/random/rng.code` and hash-table keys for
+    // `std/hashlib/hash.code`
+    functions.extend(native_random::functions());
+    // Float formatting for `std/json/json.code`
+    functions.extend(native_json::functions());
+    // Termination for `std/sys/terminate.code`, clocks and sleeping for
+    // `std/time/time.code`
+    functions.extend(native_process::functions());
+    functions.extend(native_time::functions());
+    // The storage engine for `std/db/db.code`, tensors for
+    // `std/ai/runtime.code`
+    functions.extend(native_db::functions());
+    functions.extend(native_ai::functions());
+    functions
+}
+
 /// A builder for the [`Runtime`].
 pub struct RuntimeBuilder {
     options: RuntimeOptions,
@@ -492,61 +556,10 @@ impl Runtime {
         let mut dispatch_table = DispatchTable::default();
         let type_table = options.type_table;
 
-        // Add internal functions
-        options.user_functions.push(IntoFunctionDefinition::into(
-            new as extern "C" fn(*const ffi::c_void, *mut ffi::c_void) -> *const *mut ffi::c_void,
-            "new",
-        ));
-
-        options.user_functions.push(IntoFunctionDefinition::into(
-            new_array
-                as extern "C" fn(
-                    *const ffi::c_void,
-                    usize,
-                    *mut ffi::c_void,
-                ) -> *const *mut ffi::c_void,
-            "new_array",
-        ));
-
-        // The functions compiled `print`/`println` calls lower to.
-        options.user_functions.extend(builtins::definitions());
-
-        // Growing arrays, and the array operations generated code delegates.
-        options.user_functions.extend(native_array::functions());
-
-        // The functions compiled `String` operations lower to.
-        options.user_functions.extend(string::definitions());
-
-        // Raw memory services for `std/memory/{region,page}.code`
-        options.user_functions.extend(native_memory::functions());
-
-        // File services for `std/fs/fs.code`, hashing for `std/crypto/hash.code`
-        options.user_functions.extend(native_fs::functions());
-        options.user_functions.extend(native_hash::functions());
-        // Entropy for `std/random/rng.code` and hash-table keys for
-        // `std/hashlib/hash.code`
-        options.user_functions.extend(native_random::functions());
-        // Float formatting for `std/json/json.code`
-        options.user_functions.extend(native_json::functions());
-
-        // Termination for `std/sys/terminate.code`, clocks and sleeping for
-        // `std/time/time.code`
-        options.user_functions.extend(native_process::functions());
-        options.user_functions.extend(native_time::functions());
-
-        // The storage engine for `std/db/db.code`, tensors for
-        // `std/ai/runtime.code`
-        options.user_functions.extend(native_db::functions());
-        options.user_functions.extend(native_ai::functions());
-
-        // What fuel-instrumented code calls when its budget runs out
-        options.user_functions.push(IntoFunctionDefinition::into(
-            fuel::fuel_exhausted as extern "C" fn(),
-            abi::FUEL_EXHAUSTED_FN_NAME,
-        ));
-
-        // `scope`, `spawn` and channels.
-        options.user_functions.extend(tasks::functions());
+        // What generated code calls, then the native services the standard
+        // library declares `extern`.
+        options.user_functions.extend(generated_code_functions());
+        options.user_functions.extend(native_services());
 
         options.user_functions.into_iter().for_each(|fn_def| {
             dispatch_table.insert_fn(fn_def.prototype.name.clone(), Arc::new(fn_def));

@@ -868,6 +868,7 @@ name = "codira_hir"
 version = "0.6.0-dev"
 dependencies = [
  "bitflags 2.13.1",
+ "codira_abi",
  "codira_comptime",
  "codira_hir_input",
  "codira_mir",

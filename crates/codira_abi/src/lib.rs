@@ -30,6 +30,7 @@ mod dispatch_table;
 mod function_info;
 mod module_info;
 mod primitive;
+pub mod runtime_functions;
 pub mod static_type_map;
 mod struct_info;
 mod type_id;
