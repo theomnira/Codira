@@ -60,6 +60,7 @@ constexpr const char *SET_HOOKS_FN = "set_gc_hooks";
 constexpr const char *FRAME_ATTR = "codira-gc-frame";
 constexpr const char *CONSERVATIVE_ATTR = "codira-gc-conservative";
 constexpr const char *LEAF_ATTR = "codira-gc-leaf";
+constexpr const char *FOREIGN_ATTR = "codira-gc-foreign";
 
 // The frame record layout (all offsets in bytes).
 constexpr uint64_t REC_PREV = 0;
@@ -246,6 +247,20 @@ struct Stats {
 /// claim its machine frame (by being inlined into it) nor may its code end
 /// up inside a precise function's frame (by being inlined there).
 void markConservative(Function &function) {
+    // A foreign transition is only sound in a function whose references are
+    // in its frame record at the call; here they may sit in callee-saved
+    // registers, so the foreign call keeps the thread running.
+    std::vector<CallBase *> transitions;
+    for (BasicBlock &block : function) {
+        for (Instruction &inst : block) {
+            if (auto *call = dyn_cast<CallBase>(&inst); call && call->hasFnAttr(FOREIGN_ATTR)) {
+                transitions.push_back(call);
+            }
+        }
+    }
+    for (CallBase *call : transitions) {
+        call->eraseFromParent();
+    }
     function.addFnAttr(CONSERVATIVE_ATTR);
     function.removeFnAttr(Attribute::AlwaysInline);
     function.addFnAttr(Attribute::NoInline);
@@ -536,25 +551,25 @@ void defineHooks(Module &module) {
     LLVMContext &context = module.getContext();
     auto *ptrTy = PointerType::getUnqual(context);
 
-    // Fallback chain: a private thread-local head nobody scans, so a host
-    // that never installs the hooks just sees every frame conservatively.
+    // Fallback chain: a private head nobody reads, so a host that never
+    // installs the hooks just sees every frame conservatively. Not
+    // thread-local (the image writer has no thread-local sections): threads
+    // then overwrite each other's links, which nothing reads.
     auto *fallbackHead = new GlobalVariable(module, ptrTy, false, GlobalValue::PrivateLinkage,
                                             ConstantPointerNull::get(ptrTy),
-                                            "codira.gc.fallback_head", nullptr,
-                                            GlobalValue::GeneralDynamicTLSModel);
+                                            "codira.gc.fallback_head");
     auto *getterTy = FunctionType::get(ptrTy, false);
     Function *fallbackGetter = Function::Create(getterTy, GlobalValue::PrivateLinkage,
                                                 "codira.gc.fallback_chain", module);
     {
         IRBuilder<> b(BasicBlock::Create(context, "entry", fallbackGetter));
-        Value *address = b.CreateThreadLocalAddress(fallbackHead);
-        b.CreateRet(address);
+        b.CreateRet(fallbackHead);
     }
     auto *neverStop = new GlobalVariable(module, Type::getInt8Ty(context), true,
                                          GlobalValue::PrivateLinkage,
                                          ConstantInt::get(Type::getInt8Ty(context), 0),
                                          "codira.gc.never");
-    auto *pollTy = FunctionType::get(Type::getVoidTy(context), {ptrTy}, false);
+    auto *pollTy = FunctionType::get(Type::getVoidTy(context), false);
     Function *fallbackPoll = Function::Create(pollTy, GlobalValue::PrivateLinkage,
                                               "codira.gc.fallback_poll", module);
     {
@@ -594,9 +609,9 @@ void defineHooks(Module &module) {
     }
 }
 
-/// Inserts `if (*poll_word) poll_fn(<address of the return address>)`
+/// Inserts `if (*poll_word) poll_fn()`
 /// before `before`.
-void insertPoll(Instruction *before, bool knowsFrameTop) {
+void insertPoll(Instruction *before) {
     Module &module = *before->getModule();
     LLVMContext &context = module.getContext();
     auto *ptrTy = PointerType::getUnqual(context);
@@ -615,12 +630,8 @@ void insertPoll(Instruction *before, bool knowsFrameTop) {
     then->getParent()->setName("gc.poll.slow");
     IRBuilder<> slow(then);
     Value *fn = slow.CreateLoad(ptrTy, fnGlobal, "gc.poll_fn");
-    Value *top = ConstantPointerNull::get(ptrTy);
-    if (knowsFrameTop) {
-        top = slow.CreateIntrinsic(Intrinsic::addressofreturnaddress, {ptrTy}, {});
-    }
-    auto *pollTy = FunctionType::get(Type::getVoidTy(context), {ptrTy}, false);
-    CallInst *call = slow.CreateCall(pollTy, fn, {top});
+    auto *pollTy = FunctionType::get(Type::getVoidTy(context), false);
+    CallInst *call = slow.CreateCall(pollTy, fn, {});
     call->addFnAttr(Attribute::Cold);
     call->addFnAttr(Attribute::NoUnwind);
     call->addFnAttr(Attribute::get(context, LEAF_ATTR));
@@ -675,7 +686,6 @@ uint32_t codira_gc_insert_polls(LLVMModuleRef module_ref, uint32_t max_unpolled_
     if (module.getGlobalVariable(POLL_WORD_GLOBAL, true) == nullptr) {
         return 0;
     }
-    const bool knowsFrameTop = targetKnowsFrameTop(module);
     Triple triple(module.getTargetTriple());
     TargetLibraryInfoImpl tlii(triple);
     uint32_t polls = 0;
@@ -719,7 +729,7 @@ uint32_t codira_gc_insert_polls(LLVMModuleRef module_ref, uint32_t max_unpolled_
             sites.push_back(&*at);
         }
         for (Instruction *site : sites) {
-            insertPoll(site, knowsFrameTop);
+            insertPoll(site);
             polls++;
         }
     }

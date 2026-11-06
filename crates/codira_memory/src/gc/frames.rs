@@ -102,10 +102,9 @@ pub fn hooks() -> GcHooks {
 }
 
 /// The poll compiled code calls from loop back-edges and function entries
-/// when the poll word is set. `top` is the address of the polling
-/// function's return address (unused: the whole thread is then scanned
-/// conservatively, because spill words need not be up to date at a poll).
-pub extern "C" fn codira_gc_poll(_top: *const u8) {
+/// when the poll word is set. The whole thread is then scanned
+/// conservatively: spill words need not be up to date at a poll.
+pub extern "C" fn codira_gc_poll() {
     super::safepoint::poll_from_code();
 }
 

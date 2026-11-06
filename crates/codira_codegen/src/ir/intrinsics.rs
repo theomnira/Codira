@@ -114,6 +114,10 @@ fn collect_expr<'ink>(
                     collect_intrinsic(context, target, &intrinsics::new, intrinsics);
                     *needs_alloc = true;
                 }
+                if crate::gc_roots::is_foreign_transition(db, f) {
+                    collect_intrinsic(context, target, &intrinsics::gc_foreign_enter, intrinsics);
+                    collect_intrinsic(context, target, &intrinsics::gc_foreign_leave, intrinsics);
+                }
             }
             // A call through a function value calls no runtime function.
             None if infer.is_indirect_call(expr_id) => (),

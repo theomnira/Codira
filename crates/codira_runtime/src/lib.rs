@@ -79,7 +79,7 @@ pub use codira_memory::{
 pub type RuntimeStats = gc::GcStats;
 use codira_project::LOCKFILE_NAME;
 use dispatch_table::DispatchTable;
-use garbage_collector::GarbageCollector;
+pub use garbage_collector::GarbageCollector;
 use log::{debug, error, info};
 use notify::{
     event::{ModifyKind, RenameMode},
@@ -543,6 +543,16 @@ impl Runtime {
         options.user_functions.push(IntoFunctionDefinition::into(
             fuel::fuel_exhausted as extern "C" fn(),
             abi::FUEL_EXHAUSTED_FN_NAME,
+        ));
+
+        // Foreign transitions around calls to `@noalloc` extern functions
+        options.user_functions.push(IntoFunctionDefinition::into(
+            gc::safepoint::codira_gc_foreign_enter as extern "C" fn(*const u8),
+            "codira.gc.foreign_enter",
+        ));
+        options.user_functions.push(IntoFunctionDefinition::into(
+            gc::safepoint::codira_gc_foreign_leave as extern "C" fn(),
+            "codira.gc.foreign_leave",
         ));
 
         // `scope`, `spawn` and channels.

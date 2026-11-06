@@ -116,7 +116,21 @@ struct Record {
     /// spill words need not be up to date, so its whole stack is scanned
     /// conservatively. Only the thread itself writes it, while running.
     at_poll: AtomicBool,
+    /// While the thread is in a foreign call (`enter_foreign`): the
+    /// callee-saved registers at the transition, which may hold the calling
+    /// frames' references. Only the thread itself writes them, while
+    /// running; the collector reads them while it is parked.
+    foreign_registers: std::cell::UnsafeCell<[usize; 16]>,
+    /// `low` before `enter_foreign`.
+    foreign_previous_low: AtomicUsize,
+    /// The thread is in a foreign call.
+    in_foreign: AtomicBool,
 }
+
+// Safety: `foreign_registers` is written only by the owning thread while it
+// is running and read only by a collector while that thread is parked (the
+// handshake orders the two).
+unsafe impl Sync for Record {}
 
 /// [`Record::low`] of a thread parked on a platform whose stacks cannot be
 /// scanned.
@@ -193,6 +207,9 @@ fn registered_or_new() -> Option<Arc<Record>> {
                     high: stack_scan::stack_base().unwrap_or(0),
                     chain: frames::chain_slot_address(),
                     at_poll: AtomicBool::new(false),
+                    foreign_registers: std::cell::UnsafeCell::new([0; 16]),
+                    foreign_previous_low: AtomicUsize::new(0),
+                    in_foreign: AtomicBool::new(false),
                 });
                 REGISTRY.lock().records.push(record.clone());
                 *holder = Some(Holder(record));
@@ -427,6 +444,66 @@ pub fn blocking<R>(f: impl FnOnce() -> R) -> R {
     result
 }
 
+/// Parks the current thread for a call into foreign code: until the
+/// matching [`leave_foreign`], a collection runs without waiting for it,
+/// scanning its stack from `low` (the stack pointer of the calling frame at
+/// the call) up, plus the callee-saved registers at this transition.
+///
+/// The foreign code must not touch the GC heap or Codira values, nor call
+/// back into Codira code except through [`enter`] (which makes the thread
+/// running again for the duration). Compiled code brackets calls to
+/// `extern` functions declared `@noalloc` with this pair; does nothing on a
+/// thread that is not running Codira code.
+pub fn enter_foreign(low: usize) {
+    if MODE.with(Cell::get) != RUNNING {
+        return;
+    }
+    let Some(record) = record() else {
+        return;
+    };
+    if record.in_foreign.load(Ordering::Relaxed) || record.high == 0 || low == 0 {
+        return;
+    }
+    let mut registers = [0usize; 16];
+    if !stack_scan::capture_callee_saved_registers(&mut registers) {
+        return;
+    }
+    // Safety: only this thread writes the registers, and no collector
+    // reads them while it is running.
+    unsafe { *record.foreign_registers.get() = registers };
+    let word = std::mem::size_of::<usize>();
+    let previous = record.low.swap(low & !(word - 1), Ordering::Relaxed);
+    record.foreign_previous_low.store(previous, Ordering::Relaxed);
+    record.in_foreign.store(true, Ordering::Relaxed);
+    make_idle(record);
+}
+
+/// Ends the foreign call [`enter_foreign`] began: waits for a collection in
+/// progress to end, and makes the thread running again.
+pub fn leave_foreign() {
+    let Some(record) = record() else {
+        return;
+    };
+    if !record.in_foreign.load(Ordering::Relaxed) || MODE.with(Cell::get) != IDLE {
+        return;
+    }
+    make_running(record);
+    record.in_foreign.store(false, Ordering::Relaxed);
+    record
+        .low
+        .store(record.foreign_previous_low.load(Ordering::Relaxed), Ordering::Relaxed);
+}
+
+/// `codira.gc.foreign_enter`: see [`enter_foreign`].
+pub extern "C" fn codira_gc_foreign_enter(low: *const u8) {
+    enter_foreign(low as usize);
+}
+
+/// `codira.gc.foreign_leave`: see [`leave_foreign`].
+pub extern "C" fn codira_gc_foreign_leave() {
+    leave_foreign();
+}
+
 /// What a stop-the-world operation sees: every other thread is parked.
 pub(crate) struct World {
     /// When this thread asked the others to stop (after any stop already in
@@ -436,6 +513,8 @@ pub(crate) struct World {
     pub(crate) stopped_at: std::time::Instant,
     /// The parked threads' stacks.
     stacks: Vec<ParkedStack>,
+    /// The callee-saved registers of threads parked in a foreign call.
+    foreign_registers: Vec<usize>,
     /// Some thread holds Codira frames that cannot be scanned.
     unscannable: bool,
     /// Some thread other than the current one has Codira frames.
@@ -453,6 +532,7 @@ impl World {
             requested_at,
             stopped_at: std::time::Instant::now(),
             stacks: Vec::new(),
+            foreign_registers: Vec::new(),
             unscannable: false,
             others_in_codira: false,
             self_in_codira: false,
@@ -470,7 +550,15 @@ impl World {
             match record.low.load(Ordering::Relaxed) {
                 0 => world.unscannable |= active,
                 UNSCANNABLE => world.unscannable = true,
-                low => world.stacks.push(ParkedStack {
+                low => {
+                    if record.in_foreign.load(Ordering::Relaxed) {
+                        // Safety: the thread is parked in a foreign call, so
+                        // it does not write them.
+                        world
+                            .foreign_registers
+                            .extend_from_slice(unsafe { &*record.foreign_registers.get() });
+                    }
+                    world.stacks.push(ParkedStack {
                     low,
                     high: record.high,
                     // Safety: `chain` is the address of the thread's chain
@@ -478,7 +566,8 @@ impl World {
                     // thread is registered (so alive) and parked.
                     head: unsafe { *(record.chain as *const *const frames::FrameRecord) },
                     conservative: record.at_poll.load(Ordering::Relaxed),
-                }),
+                    })
+                }
             }
         }
         world
@@ -512,6 +601,9 @@ impl World {
             // memory is mapped and nothing writes it.
             unsafe { stack.roots(mode, &mut roots) };
         }
+        roots
+            .conservative
+            .extend_from_slice(&self.foreign_registers);
         roots
     }
 
@@ -656,6 +748,8 @@ pub unsafe fn restore(checkpoint: ThreadCheckpoint) {
     DEPTH.with(|depth| depth.set(checkpoint.depth));
     record.active.store(checkpoint.depth > 0, Ordering::Relaxed);
     record.low.store(checkpoint.low, Ordering::Relaxed);
+    // A checkpoint is never taken inside a foreign call.
+    record.in_foreign.store(false, Ordering::Relaxed);
     // The frames whose records were linked since are gone.
     frames::set_chain_head(checkpoint.chain);
 }

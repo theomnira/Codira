@@ -107,6 +107,21 @@ pub(crate) fn enabled() -> bool {
     !matches!(std::env::var("CODIRA_GC_FRAMES").as_deref(), Ok("0"))
 }
 
+/// Whether a call to `function` is bracketed by a foreign transition
+/// (`codira.gc.foreign_enter` / `foreign_leave`), so a collection runs while
+/// it executes instead of waiting for it: an `extern` function declared
+/// `@noalloc` (a trusted assertion that it neither allocates nor calls back
+/// into Codira code), with frame records on.
+pub(crate) fn is_foreign_transition(
+    db: &dyn codira_hir::HirDatabase,
+    function: codira_hir::Function,
+) -> bool {
+    enabled()
+        && function.is_extern(db)
+        && codira_hir::realtime::declared_forbidden(db, function)
+            .contains(codira_hir::realtime::Effect::Alloc)
+}
+
 /// Runs the frame-record pass over `module` (see the module docs).
 pub(crate) fn insert_roots(module: &Module<'_>) -> GcRootStats {
     let mut stats = GcRootStats::default();

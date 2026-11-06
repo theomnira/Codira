@@ -525,6 +525,14 @@ where
             .collect_stopped_then(Trigger::Explicit, |_| false, || ());
     }
 
+    /// Returns true if `address` points into an object the heap holds (its
+    /// header, its inline payload, or its out-of-line payload). For tests
+    /// and diagnostics: it takes the heap lock and searches every block.
+    pub fn holds_object_at(&self, address: usize) -> bool {
+        let inner = self.heap.inner.read();
+        !inner.objects_referenced_by(&mut [address]).is_empty()
+    }
+
     /// Collects all memory that is no longer referenced by rooted objects
     /// or from the stack of a thread running Codira code, and returns what
     /// was reclaimed once the collection is done.

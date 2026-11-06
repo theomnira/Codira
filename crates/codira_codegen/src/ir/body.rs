@@ -2821,6 +2821,10 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         };
 
         let through_table = local.is_none() && self.should_use_dispatch_table(function);
+        let foreign = crate::gc_roots::is_foreign_transition(self.db, function);
+        if foreign {
+            self.gen_foreign_transition(true);
+        }
         let call_site = if through_table {
             // A method's receiver comes first, and is boxed like any other
             // argument.
@@ -2895,6 +2899,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .expect("failed to build call")
         };
 
+        if foreign {
+            self.gen_foreign_transition(false);
+        }
         let ret_value = call_site.try_as_basic_value().basic();
         if !evidence.is_empty() {
             self.gen_abort_check();
@@ -4608,6 +4615,50 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .expect("failed to branch after `codira.fuel_exhausted`");
 
         self.builder.position_at_end(continue_block);
+    }
+
+    /// Emits one half of a foreign transition (see
+    /// `crate::gc_roots::is_foreign_transition`): `enter` passes the stack
+    /// pointer at the call, from which a collection scans this thread while
+    /// the foreign function runs.
+    fn gen_foreign_transition(&mut self, enter: bool) {
+        let (fn_type, fn_ptr) = if enter {
+            self.dispatch_table.gen_intrinsic_lookup(
+                self.external_globals.dispatch_table,
+                &self.builder,
+                &intrinsics::gc_foreign_enter,
+            )
+        } else {
+            self.dispatch_table.gen_intrinsic_lookup(
+                self.external_globals.dispatch_table,
+                &self.builder,
+                &intrinsics::gc_foreign_leave,
+            )
+        };
+        let args: Vec<BasicMetadataValueEnum<'ink>> = if enter {
+            let ptr_type = self.context.ptr_type(AddressSpace::default());
+            let stacksave = inkwell::intrinsics::Intrinsic::find("llvm.stacksave")
+                .expect("llvm.stacksave exists")
+                .get_declaration(self.module, &[ptr_type.into()])
+                .expect("llvm.stacksave has a declaration");
+            let sp = self
+                .builder
+                .build_call(stacksave, &[], "gc.foreign.sp")
+                .expect("failed to read the stack pointer")
+                .try_as_basic_value()
+                .unwrap_basic();
+            vec![sp.into()]
+        } else {
+            Vec::new()
+        };
+        let call = self
+            .builder
+            .build_indirect_call(fn_type, fn_ptr, &args, "")
+            .expect("failed to build a foreign transition");
+        let attribute = self
+            .context
+            .create_string_attribute("codira-gc-foreign", "");
+        call.add_attribute(inkwell::attributes::AttributeLoc::Function, attribute);
     }
 
     /// Returns a pointer to the allocator handle

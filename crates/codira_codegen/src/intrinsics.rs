@@ -66,6 +66,14 @@ runtime_functions! {
     /// zero. The runtime ends the call (see `codira_runtime`); if a host's
     /// handler returns, execution continues with the counter still negative.
     pub fn fuel_exhausted() -> () = "codira.fuel_exhausted";
+
+    /// Parks the thread for a call to an `extern` function declared
+    /// `@noalloc`: a collection need not wait for it. `low` is the stack
+    /// pointer at the call. See `codira_memory::gc::safepoint::enter_foreign`.
+    pub fn gc_foreign_enter(low: *const u8) -> () = "codira.gc.foreign_enter";
+
+    /// Ends the foreign call `gc_foreign_enter` began.
+    pub fn gc_foreign_leave() -> () = "codira.gc.foreign_leave";
 }
 
 runtime_functions! {
