@@ -75,7 +75,7 @@ fn noalloc_rejects_every_allocation_source() {
     @noalloc
     func tasks() {
         scope {
-            let ch = channel(4)
+            let ch: Channel[i64] = channel(4)
         }
     }
     @noalloc

@@ -82,3 +82,27 @@ fn a_tuple_index_too_large_for_usize() {
 fn a_brace_inside_an_import_list() {
     rejected("import x.{{");
 }
+
+
+/// Two programs whose types nothing determines were accepted, and code
+/// generation then met the unknown type ("expected basic type", and a
+/// channel without an element type): a `let` with neither a type nor a
+/// value, and a channel no operation uses (an unknown type nested inside
+/// another was never reported).
+#[test]
+fn bindings_and_channels_whose_type_nothing_determines() {
+    for source in [
+        "func s(n: i32) -> i32 { let x; 0 }",
+        "func s(n: i32) -> i32 { var x; 0 }",
+        "func s(n: i32) -> i32 { scope { let r = channel(4); 0 } }",
+    ] {
+        let found = rejected(source);
+        assert!(found.contains("type annotations needed"), "{source}: {found}");
+    }
+    // Still fine: a type, or a use that determines it.
+    assert_eq!(diagnostics("func s() -> i32 { var x: i32; x = 1; x }"), "");
+    assert_eq!(
+        diagnostics("func s() -> i32 { scope { let r = channel(4); r <- 1; <-r } }"),
+        ""
+    );
+}

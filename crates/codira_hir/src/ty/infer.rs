@@ -2554,11 +2554,18 @@ impl InferenceResultBuilder<'_> {
     fn resolve_all(mut self) -> InferenceResult {
         // FIXME resolve obligations as well (use Guidance if necessary)
         //let mut tv_stack = Vec::new();
+        // An unknown type nested in another (a channel no operation uses
+        // is `Channel[?]`) is reported only when the body has no other
+        // error: then nothing else stops code generation from meeting it,
+        // while after an error it is usually that error's echo.
+        let clean = self.diagnostics.is_empty();
         let mut expr_types = std::mem::take(&mut self.type_of_expr);
         for (expr, ty) in expr_types.iter_mut() {
             let was_unknown = ty.is_unknown() || contains_unknown(ty);
             let resolved = self.type_variables.resolve_ty_completely(ty.clone());
-            if !was_unknown && is_ambiguous(&resolved) {
+            if !was_unknown
+                && (is_ambiguous(&resolved) || (clean && contains_unknown(&resolved)))
+            {
                 self.report_expr_inference_failure(expr);
             }
             *ty = resolved;
@@ -2585,7 +2592,9 @@ impl InferenceResultBuilder<'_> {
         for (pat, ty) in pat_types.iter_mut() {
             let was_unknown = ty.is_unknown() || contains_unknown(ty);
             let resolved = self.type_variables.resolve_ty_completely(ty.clone());
-            if !was_unknown && is_ambiguous(&resolved) {
+            if !was_unknown
+                && (is_ambiguous(&resolved) || (clean && contains_unknown(&resolved)))
+            {
                 self.report_pat_inference_failure(pat);
             }
             *ty = resolved;
@@ -2750,6 +2759,13 @@ impl InferenceResultBuilder<'_> {
                     let ty = if let Some(expr) = initializer {
                         self.infer_expr_coerce(*expr, &Expectation::has_type(decl_ty))
                     } else {
+                        // Neither a type nor a value: nothing can say what
+                        // the binding holds. Its type is the error type, so
+                        // nothing later reports it, and code generation
+                        // used to meet it.
+                        if type_ref.is_none() {
+                            self.report_pat_inference_failure(*pat);
+                        }
                         decl_ty
                     };
 
