@@ -910,22 +910,21 @@ extend Parser {
         let text = self.text
         let n = text.len()
         let start = self.pos + 1
-        var i = start
-        while i < n {
-            let b = text.byte_at(i)
-            if b == 34 {
-                self.pos = i + 1
-                return Result.Ok(text.slice(start, i))
-            }
-            if b == 92 {
-                return self.escaped_string(start, i)
-            }
-            if b < 32 {
-                return Result.Err(self.error(JsonErrorKind.ControlCharacter, i))
-            }
-            i += 1
+        // The first quote, backslash or control character, 16 bytes at a
+        // time.
+        let i = text.find_json_escape(start)
+        if i >= n {
+            return Result.Err(self.error(JsonErrorKind.UnterminatedString, n))
         }
-        Result.Err(self.error(JsonErrorKind.UnterminatedString, n))
+        let b = text.byte_at(i)
+        if b == 34 {
+            self.pos = i + 1
+            return Result.Ok(text.slice(start, i))
+        }
+        if b == 92 {
+            return self.escaped_string(start, i)
+        }
+        Result.Err(self.error(JsonErrorKind.ControlCharacter, i))
     }
 
     // The rest of a string from `start`, whose first escape is at `escape`.
@@ -937,6 +936,11 @@ extend Parser {
         var i = escape
         var run = escape
         while i < n {
+            // Plain bytes are skipped 16 at a time.
+            i = text.find_json_escape(i)
+            if i >= n {
+                break
+            }
             let b = text.byte_at(i)
             if b == 34 {
                 if run < i {
@@ -948,10 +952,7 @@ extend Parser {
             if b < 32 {
                 return Result.Err(self.error(JsonErrorKind.ControlCharacter, i))
             }
-            if b != 92 {
-                i += 1
-                continue
-            }
+            // A backslash.
             if run < i {
                 out += text.slice(run, i)
             }
