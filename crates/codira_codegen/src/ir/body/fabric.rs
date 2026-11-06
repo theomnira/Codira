@@ -58,6 +58,17 @@
 //! spec through the runtime's `string_append_format_*` with the spec as
 //! constants. The format string itself is not in the program: nothing is
 //! parsed at run time. `s += f"..."` appends the pieces to `s` directly.
+//!
+//! A plan's buffer usually comes without an allocation: the function keeps
+//! the result of its last plan in a stack slot, and a new plan starts as
+//! the empty string at that result's end -- in the same buffer -- when the
+//! buffer is this thread's, the result still ends at its fill (nothing was
+//! appended to it since) and the room is there. Only then is a new buffer
+//! allocated, of at least [`PLAN_CHUNK`] bytes, so a loop of `f"..."`
+//! allocates once per few dozen results. The earlier results lie below
+//! the fill and are never written again, as for any two values on one
+//! buffer; what it costs is that a result kept alive keeps its chunk alive,
+//! as a view does.
 //! A chain that starts with an existing `String` (`s + t + u`) appends to
 //! it, as before.
 
@@ -81,6 +92,10 @@ use crate::intrinsics;
 /// the elements (whose first word is a string buffer's owner).
 const CAPACITY_OFFSET: u64 = 8;
 const ELEMENTS_OFFSET: u64 = 16;
+
+/// The least a plan allocates when it needs a new buffer: room for the
+/// results of the plans after it in the same function.
+const PLAN_CHUNK: u64 = 256;
 
 /// The most a plan allocates up front for one piece whose size has no
 /// useful bound (a float with a huge precision); it grows past it.
@@ -934,6 +949,73 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         function
     }
 
+    /// The slot holding the last plan result of the function being
+    /// generated (the all-zero `String`, with no buffer, until there is
+    /// one).
+    fn plan_arena(&mut self) -> PointerValue<'ink> {
+        if let Some((function, slot)) = self.plan_arena {
+            if function == self.fn_value {
+                return slot;
+            }
+        }
+        let string_ty = self.hir_types.get_string_type();
+        let builder = self.new_alloca_builder();
+        let slot = builder
+            .build_alloca(string_ty, "plan.arena")
+            .expect("failed to allocate a plan's slot");
+        builder
+            .build_store(slot, string_ty.const_zero())
+            .expect("failed to start a plan's slot");
+        self.plan_arena = Some((self.fn_value, slot));
+        slot
+    }
+
+    /// The empty string a plan of `capacity` bytes starts from: at the end
+    /// of the function's last plan result when that is allowed (see the
+    /// module docs), else at the fill of a new buffer of at least
+    /// [`PLAN_CHUNK`] bytes.
+    fn plan_start(&mut self, capacity: IntValue<'ink>) -> BasicValueEnum<'ink> {
+        let slot = self.plan_arena();
+        let string_ty = self.hir_types.get_string_type();
+        let last = self
+            .builder
+            .build_load(string_ty, slot, "plan.last")
+            .expect("failed to load a plan's slot");
+        let (buf, start, len) = self.string_fields(last.into_struct_value());
+        let end = self
+            .builder
+            .build_int_add(start, len, "plan.at")
+            .expect("failed to add");
+        let empty = self.make_string(buf, end, len.get_type().const_zero());
+        let chunk = capacity.get_type().const_int(PLAN_CHUNK, false);
+        self.gen_fast_append(
+            empty,
+            capacity,
+            false,
+            |this, _| this.hir_types.get_usize_type().const_zero(),
+            |this, _, _, _| {
+                let small = this
+                    .builder
+                    .build_int_compare(IntPredicate::ULT, capacity, chunk, "plan.small")
+                    .expect("failed to compare");
+                let size = this
+                    .builder
+                    .build_select(small, chunk, capacity, "plan.size")
+                    .expect("failed to select")
+                    .into_int_value();
+                this.with_capacity(size)
+            },
+        )
+    }
+
+    /// Records `result` as the function's last plan result.
+    fn plan_finish(&mut self, result: BasicValueEnum<'ink>) {
+        let slot = self.plan_arena();
+        self.builder
+            .build_store(slot, result)
+            .expect("failed to store a plan's result");
+    }
+
     /// A new, empty `String` with room for `capacity` bytes, at its fill.
     fn with_capacity(&mut self, capacity: IntValue<'ink>) -> BasicValueEnum<'ink> {
         self.string_making_call(&intrinsics::string_with_capacity, &[capacity.into()])
@@ -1308,15 +1390,19 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         for &part in rest {
             pieces.push(self.eval_piece(part)?);
         }
+        let fresh_plan = start.is_none();
         let mut value = match start {
             Some(start) => start,
             None => {
                 let capacity = self.plan_capacity(&pieces);
-                self.with_capacity(capacity)
+                self.plan_start(capacity)
             }
         };
         for piece in pieces {
             value = self.append_piece(value, piece);
+        }
+        if fresh_plan {
+            self.plan_finish(value);
         }
         Some(value)
     }
@@ -1367,6 +1453,24 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             TyKind::Float(_) => self.append_float(current, value.into_float_value()),
             other => unreachable!("not a number: {other:?}"),
         }
+    }
+
+    /// `x.to_string()` for a number `x` of type `ty`: a plan of one piece.
+    pub(super) fn gen_number_string(
+        &mut self,
+        ty: &Ty,
+        value: BasicValueEnum<'ink>,
+    ) -> BasicValueEnum<'ink> {
+        let piece = match ty.interned() {
+            TyKind::Int(_) => Piece::Int(value.into_int_value(), self.is_signed_ty(ty)),
+            TyKind::Float(_) => Piece::Float(value.into_float_value()),
+            other => unreachable!("not a number: {other:?}"),
+        };
+        let capacity = self.plan_capacity(std::slice::from_ref(&piece));
+        let start = self.plan_start(capacity);
+        let result = self.append_piece(start, piece);
+        self.plan_finish(result);
+        result
     }
 
     /// A new `String` with room for `capacity` bytes (for the debug form).

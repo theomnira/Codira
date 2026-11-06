@@ -680,7 +680,6 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         ty: &Ty,
         value: BasicValueEnum<'ink>,
     ) -> BasicValueEnum<'ink> {
-        let i64_type = self.context.i64_type();
         match ty.interned() {
             // Immutable, so the value itself is its own copy.
             TyKind::String => value,
@@ -688,47 +687,9 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 let (data, len) = self.string_text_of(ty, value);
                 self.string_making_call(&intrinsics::string_from_bytes, &[data.into(), len.into()])
             }
-            TyKind::Int(int_ty) => {
-                let value = value.into_int_value();
-                let signed = int_ty.signedness == codira_hir::Signedness::Signed;
-                if value.get_type().get_bit_width() > 64 {
-                    let low = self
-                        .builder
-                        .build_int_truncate(value, i64_type, "low")
-                        .expect("failed to truncate to the low half");
-                    let shift = value.get_type().const_int(64, false);
-                    let high = self
-                        .builder
-                        .build_right_shift(value, shift, false, "high_bits")
-                        .and_then(|high| self.builder.build_int_truncate(high, i64_type, "high"))
-                        .expect("failed to extract the high half");
-                    let signed = self.context.i8_type().const_int(u64::from(signed), false);
-                    self.string_making_call(
-                        &intrinsics::string_from_i128,
-                        &[low.into(), high.into(), signed.into()],
-                    )
-                } else if signed {
-                    let wide = self
-                        .builder
-                        .build_int_s_extend_or_bit_cast(value, i64_type, "wide")
-                        .expect("failed to widen an integer");
-                    self.string_making_call(&intrinsics::string_from_i64, &[wide.into()])
-                } else {
-                    let wide = self
-                        .builder
-                        .build_int_z_extend_or_bit_cast(value, i64_type, "wide")
-                        .expect("failed to widen an integer");
-                    self.string_making_call(&intrinsics::string_from_u64, &[wide.into()])
-                }
-            }
-            TyKind::Float(_) => {
-                let value = value.into_float_value();
-                if value.get_type() == self.context.f32_type() {
-                    self.string_making_call(&intrinsics::string_from_f32, &[value.into()])
-                } else {
-                    self.string_making_call(&intrinsics::string_from_f64, &[value.into()])
-                }
-            }
+            // A plan of one piece: the digits written into the function's
+            // plan buffer (see `fabric`), usually with no allocation.
+            TyKind::Int(_) | TyKind::Float(_) => self.gen_number_string(ty, value),
             TyKind::Bool => {
                 let byte = self
                     .builder
