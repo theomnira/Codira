@@ -47,13 +47,19 @@ pub(crate) const TOUCHED: u32 = 1 << 7;
 const BORROW_SHIFT: u32 = 8;
 const BORROW_MASK: u32 = 0b111 << BORROW_SHIFT;
 /// The largest number of simultaneous borrows.
+///
+/// cbindgen:ignore
 pub const MAX_BORROWS: u32 = 7;
 
 const COUNT_SHIFT: u32 = 11;
 /// The largest representable count. A count that reaches it is sticky.
+///
+/// cbindgen:ignore
 pub const MAX_COUNT: u32 = u32::MAX >> COUNT_SHIFT;
 
 /// A decoded ownership word.
+///
+/// cbindgen:ignore
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Word(pub(crate) u32);
 
@@ -72,6 +78,7 @@ impl std::fmt::Debug for Word {
     }
 }
 
+/// cbindgen:ignore
 impl Word {
     /// The word of an object Cascade does not manage.
     pub const UNTRACKED: Word = Word(0);
