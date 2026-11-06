@@ -75,3 +75,10 @@ fn a_tuple_index_too_large_for_usize() {
     let found = rejected("func f(t: (i64, i64)) -> i64 { t.340282366920938463463374607431768211456 }");
     assert!(found.contains("non-existent field"), "{found}");
 }
+
+/// A `{` inside an import list sent the parser into a loop that ended in
+/// its "the parser seems stuck" panic.
+#[test]
+fn a_brace_inside_an_import_list() {
+    rejected("import x.{{");
+}

@@ -388,6 +388,13 @@ fn use_tree(p: &mut Parser<'_>, top_level: bool) {
             let msg = "expected one of `self`, `super`, `root` or an identifier";
             if top_level {
                 p.error_recover(msg, DECLARATION_RECOVERY_SET);
+            } else if p.at(T!['{']) {
+                // `error_and_bump` leaves a `{` in place, and the list
+                // around this tree would then try it again forever.
+                let error = p.start();
+                p.error(msg);
+                p.bump_any();
+                error.complete(p, ERROR);
             } else {
                 // if we are parsing a nested tree, we have to eat a token to remain balanced
                 // `{}`

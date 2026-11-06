@@ -1920,3 +1920,14 @@ fn a_brace_where_a_match_arm_should_start_is_an_error() {
         );
     }
 }
+
+/// A `{` where an imported name should be: recovery left it in place and
+/// the list loop retried it until the step limit panicked. Found by the
+/// compiler fuzzer.
+#[test]
+fn a_brace_inside_an_import_list_is_an_error() {
+    for text in ["import x.{{", "import a.b.{c, {d}, e}\nfunc f() {}"] {
+        let parse = SourceFile::parse(text);
+        assert!(!parse.errors().is_empty(), "{text}");
+    }
+}
