@@ -81,6 +81,10 @@ pub struct FunctionData {
     /// associated function of a type `F` that `?` calls to pass an error of
     /// another type on as an `F` (see `ty::infer::propagate`).
     is_error_conversion: bool,
+    /// Whether this function carries the `@inline` attribute: every call is
+    /// to be inlined (LLVM's `alwaysinline`), for a small function on a hot
+    /// path whose callers the optimizer would otherwise leave calling it.
+    is_inline: bool,
     /// The ABI named by an `@export("C")` attribute, if present.
     ///
     /// `spec/LANGUAGE_SPEC.md` section 10: "`@export(\"C\")` on a Codira
@@ -186,6 +190,14 @@ impl FunctionData {
             })
         });
 
+        let is_inline = src.attribute_list().is_some_and(|attrs| {
+            attrs.attributes().any(|attr| {
+                attr.path()
+                    .and_then(|p| p.segment())
+                    .is_some_and(|s| matches!(s.kind(), Some(ast::PathSegmentKind::Name(n)) if n.text() == "inline"))
+            })
+        });
+
         let ret_type = if let Some(type_ref) = src.ret_type().and_then(|rt| rt.type_ref()) {
             type_ref_builder.alloc_from_node(&type_ref)
         } else {
@@ -217,6 +229,7 @@ impl FunctionData {
             is_strict,
             is_test,
             is_error_conversion,
+            is_inline,
             export_abi,
             asm_variants,
             self_param,
@@ -345,6 +358,11 @@ impl FunctionData {
     pub fn is_error_conversion(&self) -> bool {
         self.is_error_conversion
     }
+
+    /// Whether this function is marked `@inline`.
+    pub fn is_inline(&self) -> bool {
+        self.is_inline
+    }
 }
 
 impl Function {
@@ -450,6 +468,12 @@ impl Function {
     /// pass an error on as the type it belongs to.
     pub fn is_error_conversion(self, db: &dyn HirDatabase) -> bool {
         self.data(db).is_error_conversion()
+    }
+
+    /// Whether this function is marked `@inline`: code generation asks
+    /// LLVM to inline every call of it (`alwaysinline`).
+    pub fn is_inline(self, db: &dyn HirDatabase) -> bool {
+        self.data(db).is_inline()
     }
 
     pub fn ret_type(self, db: &dyn HirDatabase) -> Ty {

@@ -86,11 +86,19 @@ pub(crate) fn code_units(db: &dyn HirDatabase, module_group: &ModuleGroup) -> Ve
         .collect();
     roots.sort();
     let foreign = |f: codira_hir::Function| !module_group.contains(f.module(db));
+    // A foreign function is copied into the group when the group cannot
+    // call it by name (a private helper of a generic function it
+    // instantiates), and when it is marked `@inline`: like a generic
+    // function's instance, the copy is the group's own, so LLVM can inline
+    // it where a call through the dispatch table could never be. (A hot
+    // reload of the function's module therefore reaches the group only
+    // when the group is rebuilt, as for generic instances.)
     let instances = mono::collect_instances(db, roots, |f| {
         foreign(f)
-            && !module_group
-                .iter()
-                .any(|module| mono::is_callable_from(db, f, module))
+            && (f.is_inline(db)
+                || !module_group
+                    .iter()
+                    .any(|module| mono::is_callable_from(db, f, module)))
     })
     .unwrap_or_else(|overflow| {
         panic!(

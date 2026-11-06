@@ -36,6 +36,7 @@ pub(crate) fn gen_prototype<'db, 'ink>(
     if instance.is_generic() || local_copy {
         let value = module.add_function(&instance.name(db), ir_ty, Some(Linkage::Private));
         mark_noreturn(db, func, value);
+        mark_inline(db, func, value);
         return value;
     }
     let name = func.name(db).to_string();
@@ -65,7 +66,23 @@ pub(crate) fn gen_prototype<'db, 'ink>(
 
     let value = module.add_function(&name, ir_ty, linkage);
     mark_noreturn(db, func, value);
+    mark_inline(db, func, value);
     value
+}
+
+/// Gives `value` LLVM's `alwaysinline` attribute when `func` is marked
+/// `@inline`. Only direct calls in the same library can be inlined; a call
+/// through the dispatch table (to a public function of another library)
+/// stays a call.
+fn mark_inline<'ink>(db: &dyn HirDatabase, func: codira_hir::Function, value: FunctionValue<'ink>) {
+    if func.is_inline(db) {
+        let context = value.get_type().get_context();
+        let kind = Attribute::get_named_enum_kind_id("alwaysinline");
+        value.add_attribute(
+            AttributeLoc::Function,
+            context.create_enum_attribute(kind, 0),
+        );
+    }
 }
 
 /// Whether a call to `func` can never come back: it returns `never` and
