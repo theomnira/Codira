@@ -7,7 +7,9 @@
 #
 # `save_baseline` writes a fresh baseline from this run instead of gating,
 # and uploads it with the results; commit it as
-# benches/aurora/baseline/ci.json to adopt it.
+# benches/aurora/baseline/ci.json to adopt it. A baseline from another
+# machine class is not compared: the step ends with a warning ("no
+# comparable baseline") instead of a pass or a fail.
 
 name: AURORA benchmarks
 
@@ -75,7 +77,15 @@ jobs:
           else
             args+=(--baseline benches/aurora/baseline/ci.json)
           fi
-          python3 scripts/bench.py "${args[@]}"
+          status=0
+          python3 scripts/bench.py "${args[@]}" || status=$?
+          if [ "$status" -eq 4 ]; then
+            # The stored baseline is from another machine class: nothing was
+            # compared, which is neither a pass nor a fail.
+            echo "::warning title=AURORA gate::No comparable baseline for this runner's machine class; run with save_baseline to make one."
+            exit 0
+          fi
+          exit "$status"
 
       - name: Summary
         if: always()

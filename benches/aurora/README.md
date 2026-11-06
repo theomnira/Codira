@@ -164,10 +164,20 @@ the same machine class; absolute times on another machine are not.
 runs the CI subset (the kernels marked `ci = true`) and compares each with
 the stored baseline:
 
+- **Only on the baseline's machine class.** A baseline records its
+  machine: the CPU model, the number of logical CPUs and the architecture.
+  When the current machine differs in any of them, nothing is compared and
+  the summary says **no comparable baseline**; the runner exits with
+  status 4 and the workflow turns that into a warning, neither a pass nor a
+  fail. Ratios move between CPUs: `loops.store_field`, a loop that loads
+  and stores a heap field per element against Rust's register, read 2.5x
+  on this suite's VM and 17-19% higher on another machine with the same
+  code. `--allow-other-machine` compares anyway, and the summary says so.
 - The metric is the **per-round ratio** of Codira's time to Rust's time
   (the two ran in the same round, close together), or Codira's time alone
-  for a kernel without a Rust variant. The ratio removes most of the
-  difference between machines and between a quiet and a loaded moment.
+  for a kernel without a Rust variant. The ratio removes the difference
+  between a quiet and a loaded moment on one machine, and much (not all)
+  of the difference between machines.
 - For each kernel, a **one-sided Mann-Whitney U test** asks whether the
   current ratios tend to be larger than the baseline's.
 - The p-values are **Holm-corrected** over the kernels, for a family-wise
@@ -177,8 +187,8 @@ the stored baseline:
   bootstrap 95% interval of the change in the median ratio lies above
   zero. There is no fixed percentage threshold.
 - A regression makes the runner exit with status 3; a check value mismatch
-  or a failed kernel with status 1. The table of every test is in the
-  summary.
+  or a failed kernel with status 1; a baseline from another machine class
+  with status 4. The table of every test is in the summary.
 
 The workflow `.github/workflows/aurora-bench.yml` runs it on demand
 (Actions, "AURORA benchmarks", `suite: ci`) and every Sunday; it is not part
@@ -191,7 +201,8 @@ otherwise hide a later regression of the same size), when the gate's
 machine class changes, or when a kernel in the CI subset changes:
 
 1. Run the workflow with `save_baseline: true` (the gate's own machine
-   class), or locally on the machine that will run the gate:
+   class), or locally on the machine that will run the gate (a baseline
+   gates only runs on its own machine class):
 
    ```bash
    python3 scripts/bench.py --suite ci --save-baseline benches/aurora/baseline/ci.json

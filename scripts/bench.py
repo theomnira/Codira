@@ -21,7 +21,9 @@
 # - With `--baseline <results.json>`, compares with a stored run and fails
 #   (exit status 3) on a statistically significant regression: a one-sided
 #   Mann-Whitney U test per kernel, Holm-corrected over the kernels, and a
-#   bootstrap interval for the change that excludes zero.
+#   bootstrap interval for the change that excludes zero. A baseline from
+#   another machine class (CPU model, logical CPUs, architecture) is not
+#   compared: the run ends with exit status 4, "no comparable baseline".
 #
 #   python3 scripts/bench.py                       # the full suite
 #   python3 scripts/bench.py --suite ci            # the CI subset
@@ -187,6 +189,17 @@ def parse_perf(text):
     return out
 
 
+def machine_fingerprint(env):
+    """What a baseline's numbers depend on most: the CPU model, how many
+    logical CPUs, the architecture. Ratios of Codira to Rust move between
+    CPUs (a store-bound loop against a register loop, say), so the gate
+    compares only runs of the same machine class."""
+    m = env.get("machine") or {}
+    return {"cpu": m.get("cpu", env.get("cpu")),
+            "logical_cpus": m.get("logical_cpus", env.get("logical_cpus")),
+            "arch": m.get("arch", env.get("arch"))}
+
+
 def environment(args, perf, perf_status):
     def first(path, key):
         try:
@@ -251,6 +264,8 @@ def environment(args, perf, perf_status):
         },
         "perf": perf or ("not used (--no-perf)" if args.no_perf else "unavailable"),
         "perf_events": perf_status,
+        "machine": {"cpu": first("/proc/cpuinfo", "model name") or platform.processor(),
+                    "logical_cpus": os.cpu_count(), "arch": platform.machine()},
         "codira_env": {k: v for k, v in sorted(os.environ.items())
                        if k.startswith("CODIRA_") and k != "CODIRA_STD_PATH"},
         "runs": args.runs,
@@ -714,7 +729,8 @@ def fmt_ratio(r, ci):
     return s
 
 
-def markdown(env, workloads, kernels, results, compile_info, gate_tests, floor=None, floor_cmp=None):
+def markdown(env, workloads, kernels, results, compile_info, gate_tests, floor=None, floor_cmp=None,
+             gate_note=None):
     L = []
     L.append("# AURORA benchmark run\n")
     L.append(f"- date: {env['date']}, commit `{(env['commit'] or '?')[:12]}`"
@@ -878,8 +894,13 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests, floor=N
                      f"| {w} | {v} | {rec['median_s']:.3f} [{ci[0]:.3f}, {ci[1]:.3f}] | "
                      f"{rec.get('bytes', 0) / 1024:.0f} | – |")
         L.append("")
+    if gate_note and gate_tests is None:
+        L.append("## Regression gate\n")
+        L.append(gate_note + "\n")
     if gate_tests is not None:
         L.append("## Regression gate\n")
+        if gate_note:
+            L.append(gate_note + "\n")
         if not gate_tests:
             L.append("No kernel could be compared with the baseline.\n")
         else:
@@ -927,6 +948,8 @@ def main():
     ap.add_argument("--baseline", help="results.json to compare with (the regression gate)")
     ap.add_argument("--alpha", type=float, default=0.05, help="family-wise error rate of the gate")
     ap.add_argument("--save-baseline", help="also write the results here, trimmed for a baseline")
+    ap.add_argument("--allow-other-machine", action="store_true",
+                    help="compare with a baseline from another machine class anyway (labelled)")
     args = ap.parse_args()
 
     defaults, workloads = load_suite()
@@ -1002,13 +1025,31 @@ def main():
         "heap_floor": floor,
     }
     gate_tests = None
+    gate_note = None
     failed_gate = False
+    not_comparable = False
     if args.baseline:
         with open(args.baseline) as f:
             base = json.load(f)
-        gate_tests = gate(base, doc, [k.id for k in kernels], args.alpha, rng)
-        doc["gate"] = {"baseline": args.baseline, "alpha": args.alpha, "tests": gate_tests}
-        failed_gate = any(t["regressed"] for t in gate_tests)
+        theirs, ours = machine_fingerprint(base.get("environment", {})), machine_fingerprint(env)
+        doc["gate"] = {"baseline": args.baseline, "alpha": args.alpha,
+                       "baseline_machine": theirs, "machine": ours}
+        if theirs != ours and not args.allow_other_machine:
+            not_comparable = True
+            gate_note = ("**No comparable baseline**: the baseline was measured on "
+                         f"{theirs['cpu']} ({theirs['logical_cpus']} logical CPUs, {theirs['arch']}), "
+                         f"this run on {ours['cpu']} ({ours['logical_cpus']} logical CPUs, "
+                         f"{ours['arch']}). Nothing was compared: neither a pass nor a fail. "
+                         "Save a baseline on this machine class (`--save-baseline`) to gate here.")
+            doc["gate"]["comparable"] = False
+        else:
+            if theirs != ours:
+                gate_note = (f"Compared across machines on request (`--allow-other-machine`): the "
+                             f"baseline is from {theirs['cpu']} ({theirs['logical_cpus']} logical CPUs), "
+                             f"this run from {ours['cpu']} ({ours['logical_cpus']}). Expect ratios to move.")
+            gate_tests = gate(base, doc, [k.id for k in kernels], args.alpha, rng)
+            doc["gate"].update({"comparable": True, "tests": gate_tests})
+            failed_gate = any(t["regressed"] for t in gate_tests)
         bf, cf = base.get("heap_floor"), floor
         if bf and cf and bf.get("floor_mb") and cf.get("floor_mb"):
             doc["gate"]["heap_floor"] = {"baseline_mb": bf["floor_mb"], "current_mb": cf["floor_mb"],
@@ -1021,7 +1062,7 @@ def main():
     with open(os.path.join(out, "results.json"), "w") as f:
         json.dump(doc, f, indent=1, default=str)
     md = markdown(env, used, kernels, results, compile_info, gate_tests, floor,
-                  doc.get("gate", {}).get("heap_floor"))
+                  doc.get("gate", {}).get("heap_floor"), gate_note)
     with open(os.path.join(out, "summary.md"), "w") as f:
         f.write(md + "\n")
     if args.save_baseline:
@@ -1052,6 +1093,9 @@ def main():
     if failed_gate:
         log("REGRESSION: " + ", ".join(t["kernel"] for t in gate_tests if t["regressed"]))
         return 3
+    if not_comparable:
+        log("no comparable baseline: it was measured on another machine class (see the summary)")
+        return 4
     return 1 if (bad_checks or errors) else 0
 
 
