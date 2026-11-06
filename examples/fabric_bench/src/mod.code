@@ -52,9 +52,7 @@ public func fan_out_map(n: i64, chunks: i64) -> i64 {
     // Fan in: one array of every result, in order.
     var all: [i64] = []
     all.reserve(n as usize)
-    for part in parts {
-        for x in part { all.push(x) }
-    }
+    for part in parts { all.append(part) }
     var check = 0
     var i = 0
     while i < all.len() {
@@ -66,10 +64,10 @@ public func fan_out_map(n: i64, chunks: i64) -> i64 {
 
 // -- producer/consumer over a channel of capacity 64 -----------------------
 
-func produce(out: Channel[i64], n: i64) {
+func produce(dest: Channel[i64], n: i64) {
     var i = 0
     while i < n {
-        out <- i
+        dest <- i
         i += 1
     }
 }

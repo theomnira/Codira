@@ -4,8 +4,9 @@
 //!
 //! Functionality:
 //! - Times each workload of the `.codiralib` named on the command line and
-//!   prints one line per workload: `name nanoseconds check`. The worker count
-//!   comes from `CODIRA_TASK_WORKERS`, as for any Codira program.
+//!   prints one line per workload: `name nanoseconds check` (only those whose
+//!   name contains the optional second argument). The worker count comes from
+//!   `CODIRA_TASK_WORKERS`, as for any Codira program.
 
 use std::time::Instant;
 
@@ -16,7 +17,12 @@ fn main() {
     // Safety: the library is the benchmark program, built by this checkout.
     let runtime = unsafe { codira_runtime::Runtime::builder(lib).finish() }
         .expect("failed to load the library");
+    // An optional second argument runs only the workloads it names a part of.
+    let only = std::env::args().nth(2).unwrap_or_default();
     let time = |name: &str, f: &dyn Fn() -> i64| {
+        if !name.contains(&only) {
+            return;
+        }
         // One untimed call first: starts the workers, warms the caches.
         f();
         let start = Instant::now();
