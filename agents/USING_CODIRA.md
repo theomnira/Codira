@@ -3184,16 +3184,18 @@ from `Runtime::stats().objects_allocated`):
 
 | workload | heap allocs | frame allocs | heap ns/it | heap + GC (16 MiB) | frame ns/it | Rust stack | Rust `Box` |
 |---|---|---|---|---|---|---|---|
-| two temporaries passed to a reader | 4,000,000 | 0 | 53.1 | 63.4 | 0.00 | 1.45 | 26.3 |
-| builder threaded through setters | 2,000,000 | 0 | 28.6 | 35.9 | 0.00 | 0.00 | 11.8 |
-| temporary 4-element array | 2,000,000 | 0 | 41.1 | 46.1 | 0.97 | 0.00 | 17.3 |
+| two temporaries passed to a reader | 4,000,000 | 0 | 63.5 | 63.9 | 0.00 | 1.32 | 25.3 |
+| builder threaded through setters | 2,000,000 | 0 | 33.9 | 34.2 | 0.00 | 0.00 | 12.3 |
+| temporary 4-element array | 2,000,000 | 0 | 45.4 | 46.0 | 0.97 | 0.00 | 17.4 |
 
 With the objects in the frame LLVM keeps their fields in registers and
 reduces the first two loops to closed forms, as it does for the Rust stack
 versions: "0.00" means the whole call took microseconds, not that the
 allocation became free in a loop that still runs. The heap columns are where
 these programs are without the flag: an allocation through the runtime costs
-about twice a Rust `Box`.
+about two and a half times a Rust `Box`. ("heap ns/it" runs with no
+heap limit, where the collector's pacing still collects; "heap + GC" with a
+16 MiB limit.)
 
 `@noalloc` and `@realtime` still count a class construction or an array
 literal as an allocation even where `--frame-alloc` would move it: the
