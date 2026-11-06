@@ -344,8 +344,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // The host has no handlers to give: see `effects`.
         self.bind_unhandled_evidence();
         let fn_sig = self.hir_function.ty(self.db).callable_sig(self.db).unwrap();
-        let args: Vec<BasicMetadataValueEnum<'_>> = fn_sig
-            .params()
+        // A method's receiver is the wrapper's first parameter, boxed like
+        // the others.
+        let param_tys: Vec<Ty> = Instance::of(self.hir_function)
+            .self_param_ty(self.db)
+            .into_iter()
+            .chain(fn_sig.params().iter().cloned())
+            .collect();
+        let args: Vec<BasicMetadataValueEnum<'_>> = param_tys
             .iter()
             .enumerate()
             .map(|(idx, ty)| {
@@ -2796,9 +2802,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         let through_table = local.is_none() && self.should_use_dispatch_table(function);
         let call_site = if through_table {
+            // A method's receiver comes first, and is boxed like any other
+            // argument.
+            let param_tys: Vec<Ty> = instance
+                .self_param_ty(self.db)
+                .into_iter()
+                .chain(sig.params().iter().cloned())
+                .collect();
             let boxed_args: Vec<BasicMetadataValueEnum<'ink>> = args
                 .iter()
-                .zip(sig.params().iter())
+                .zip(param_tys.iter())
                 .map(|(arg, param_ty)| {
                     if let Some(hir_struct) = param_ty.as_struct() {
                         if hir_struct.data(self.db).memory_kind

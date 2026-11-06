@@ -110,18 +110,7 @@ fn collect_expr<'ink>(
             // `gen_call`), and boxing allocates: a module whose only
             // allocation is such a call still needs `new`.
             Some(codira_hir::CallableDef::Function(f)) => {
-                let boxes_a_value_struct = f.ty(db).callable_sig(db).is_some_and(|sig| {
-                    sig.params()
-                        .iter()
-                        .chain(std::iter::once(sig.ret()))
-                        .any(|ty| {
-                            ty.is_string()
-                                || ty.as_struct().is_some_and(|s| {
-                                    s.data(db).memory_kind == codira_hir::StructMemoryKind::Value
-                                })
-                        })
-                });
-                if boxes_a_value_struct {
+                if boxes_a_value_struct(db, f) {
                     collect_intrinsic(context, target, &intrinsics::new, intrinsics);
                     *needs_alloc = true;
                 }
@@ -129,6 +118,16 @@ fn collect_expr<'ink>(
             // A call through a function value calls no runtime function.
             None if infer.is_indirect_call(expr_id) => (),
             None => panic!("expected a callable expression"),
+        }
+    } else if let Expr::MethodCall { .. } = expr {
+        // As for a call: a method of another module's type is called
+        // through the dispatch table, which boxes a value-struct receiver,
+        // argument or result.
+        if let Some(f) = infer.method_resolution(expr_id).map(codira_hir::Function::from) {
+            if boxes_a_value_struct(db, f) {
+                collect_intrinsic(context, target, &intrinsics::new, intrinsics);
+                *needs_alloc = true;
+            }
         }
     }
 
@@ -204,6 +203,24 @@ fn collect_expr<'ink>(
             infer,
         );
     });
+}
+
+/// Whether a call of `f` through the dispatch table boxes a value: a
+/// `String` or a value struct as its receiver, a parameter or its result.
+fn boxes_a_value_struct(db: &dyn HirDatabase, f: codira_hir::Function) -> bool {
+    let receiver = f.self_param_ty(db);
+    f.ty(db).callable_sig(db).is_some_and(|sig| {
+        receiver
+            .iter()
+            .chain(sig.params().iter())
+            .chain(std::iter::once(sig.ret()))
+            .any(|ty| {
+                ty.is_string()
+                    || ty.as_struct().is_some_and(|s| {
+                        s.data(db).memory_kind == codira_hir::StructMemoryKind::Value
+                    })
+            })
+    })
 }
 
 /// Collects every runtime function an array method or a slice may call.

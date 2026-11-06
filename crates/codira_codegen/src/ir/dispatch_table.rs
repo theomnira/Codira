@@ -365,6 +365,22 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
                 None if infer.is_indirect_call(expr_id) => (),
                 None => panic!("expected a callable expression"),
             }
+        } else if let Expr::MethodCall { .. } = expr {
+            // A method or an associated function of another module's type is
+            // linked like a free function: `p.describe()`, `Point.origin()`.
+            if let Some(def) = infer.method_resolution(expr_id).map(codira_hir::Function::from) {
+                let local = def.is_intrinsic(self.db)
+                    || def.is_inline_asm(self.db)
+                    || def.is_generic(self.db)
+                    || self.local_copies.contains(&def);
+                if !local && self.module_group.should_runtime_link_fn(self.db, def) {
+                    let fn_module = def.module(self.db);
+                    if !def.is_extern(self.db) && !self.module_group.contains(fn_module) {
+                        self.referenced_modules.insert(fn_module);
+                    }
+                    self.collect_fn_def(def);
+                }
+            }
         }
 
         // Recurse further

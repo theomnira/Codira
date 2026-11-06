@@ -200,6 +200,10 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
                 None if infer.is_indirect_call(expr_id) => (),
                 None => panic!("expected a callable expression"),
             }
+        } else if let codira_hir::Expr::MethodCall { .. } = expr {
+            if let Some(hir_fn) = infer.method_resolution(expr_id) {
+                self.maybe_collect_fn_signature(hir_fn.into());
+            }
         } else if let codira_hir::Expr::Array(..) = expr {
             self.collect_type(self.hir_types.type_id(&infer[expr_id]));
         } else if let codira_hir::Expr::Index { index, .. } = expr {
@@ -217,8 +221,10 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
     pub fn collect_fn_signature(&mut self, hir_fn: codira_hir::Function) {
         let fn_sig = hir_fn.ty(self.db).callable_sig(self.db).unwrap();
 
-        // Collect argument types
-        for ty in fn_sig.params().iter() {
+        // Collect argument types, a method's receiver first (a value-struct
+        // receiver is boxed for a call through the dispatch table).
+        let receiver = hir_fn.self_param_ty(self.db);
+        for ty in receiver.iter().chain(fn_sig.params().iter()) {
             self.collect_type(self.hir_types.type_id(ty));
         }
 

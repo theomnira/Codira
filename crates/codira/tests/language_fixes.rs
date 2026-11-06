@@ -13,7 +13,11 @@
 //!   - module-level `let` and `var`, which were dropped and are rejected;
 //!   - assignment to a `let` binding, which is rejected, while what a `let`
 //!     refers to but does not hold (a class field, an array element) stays
-//!     assignable.
+//!     assignable;
+//!   - a call of a method or an associated function of another module's
+//!     type, which stopped code generation with "unknown function": method
+//!     calls never reached the dispatch table, and the receiver was left out
+//!     of the boxing on both sides of a call through it.
 
 use std::{
     path::Path,
@@ -315,4 +319,49 @@ public func main() {
     let (code, stdout, stderr) = run(&[("mod.code", program)], &[]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(stdout, "2\n11\n6\n7\n");
+}
+
+// ---- methods of another module's types ------------------------------------
+
+/// Methods and associated functions of types declared in another module:
+/// a value-struct receiver, `String` arguments and results, a value-struct
+/// result, a class receiver and an associated function, all called through
+/// the dispatch table.
+#[test]
+fn methods_of_another_modules_types_are_called() {
+    let shapes = r#"
+public struct Size { public w: i64, public h: i64 }
+public class Counter { public n: i64 }
+
+extend Size {
+    public func area(self) -> i64 { self.w * self.h }
+    public func describe(self, unit: String) -> String { f"{self.w}x{self.h} {unit}" }
+    public func doubled(self) -> Size { Size { w: self.w * 2, h: self.h * 2 } }
+    public func square(side: i64) -> Size { Size { w: side, h: side } }
+}
+
+extend Counter {
+    public func bump(self, by: i64) -> i64 {
+        self.n += by
+        self.n
+    }
+}
+"#;
+    let main = r#"
+import shapes.{Size, Counter}
+public func main() {
+    let s = Size { w: 2, h: 3 }
+    println(s.area())
+    println(s.describe("cm"))
+    let d = s.doubled()
+    println(d.w, " ", d.h, " ", d.area())
+    let q = Size.square(4)
+    println(q.area())
+    let c = Counter { n: 1 }
+    println(c.bump(2), " ", c.bump(3), " ", c.n)
+}
+"#;
+    let (code, stdout, stderr) = run(&[("mod.code", main), ("shapes.code", shapes)], &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "6\n2x3 cm\n4 6 24\n16\n3 6 6\n");
 }
