@@ -245,7 +245,14 @@ away):
 - **`?` wrapping an error from an inlined parse** of an input that changes
   every iteration: 2.8x (`Ok`) and 4.7x (`Err`).
 - **Heap field stores in a loop** (`store_field`): 2.5x. The field is
-  stored on every iteration; Rust and C++ keep it in a register.
+  stored on every iteration; Rust and C++ keep it in a register. **A known
+  optimisation gap**: the loop loads `acc.total`, adds and stores it back
+  per element (and reloads the array's length), because LLVM cannot tell
+  that the store to the field leaves the array's elements and length
+  alone. Promoting the field into a register needs alias
+  information that separates class fields from array elements (type-based
+  alias metadata covers class fields; the array alias classes do not
+  yet).
 - **A 200x200 matrix product with checked indexing**: 3.0x. Rust checks its
   indexes too.
 - **Array loops that store**: copying into another array 1.25x; the sieve
