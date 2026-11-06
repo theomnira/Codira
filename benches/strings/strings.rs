@@ -1,4 +1,4 @@
-// The Rust half of the String benchmarks: the same four algorithms as
+// The Rust half of the String benchmarks: the same algorithms as
 // `src/mod.code`, on `String` and `&str`. Build with
 // `rustc -C opt-level=3 strings.rs` and run `./strings`; each line printed is
 // `<name> <nanoseconds> <check value>`.
@@ -32,6 +32,23 @@ fn main() {
     let start = Instant::now();
     let lines: Vec<&str> = black_box(&text).lines().collect();
     report("split_10mb_lines", start, lines.len() as u64);
+
+    // 2b. The same lines read lazily.
+    let start = Instant::now();
+    let mut line_bytes = 0;
+    for line in black_box(&text).lines() {
+        line_bytes += line.len();
+    }
+    report("lines_10mb_lazy", start, line_bytes as u64);
+
+    // 2c. Split at commas lazily, the long fields counted.
+    let fields_text = "the,quick,brown,fox,jumps,over,the,lazy,dog,012345\n".repeat(205_600);
+    let start = Instant::now();
+    let long_fields = black_box(&fields_text)
+        .split(',')
+        .filter(|w| w.len() > 3)
+        .count();
+    report("split_10mb_lazy_count", start, long_fields as u64);
 
     // 3. `find` on a long haystack.
     let hay = "ab".repeat(5_000_000) + "needle";

@@ -1,4 +1,4 @@
-// The String benchmarks: the same four algorithms as `strings.rs`, timed
+// The String benchmarks: the same algorithms as `strings.rs`, timed
 // with the runtime's monotonic clock. Each line printed is
 // `<name> <nanoseconds> <check value>`; the check value keeps the work from
 // being optimized away and is compared with the Rust program's.
@@ -43,6 +43,22 @@ public func main() {
     start = now()
     let lines = text.lines()
     report("split_10mb_lines", start, lines.len() as u64)
+
+    // 2b. The same lines read lazily: no array, the bytes of every line
+    // summed (`for line in text.lines()`).
+    start = now()
+    var line_bytes = 0
+    for line in text.lines() {
+        line_bytes += line.len()
+    }
+    report("lines_10mb_lazy", start, line_bytes as u64)
+
+    // 2c. A 10 MB text split at commas lazily, the long fields counted
+    // (`split(",").filter(..).count()`).
+    let fields_text = "the,quick,brown,fox,jumps,over,the,lazy,dog,012345\n".repeat(205600)
+    start = now()
+    let long_fields = fields_text.split(",").filter(func(w) { w.len() > 3 }).count()
+    report("split_10mb_lazy_count", start, long_fields as u64)
 
     // 3. `find` on a long haystack: 10 MB of "ab", the needle at the end.
     let hay = "ab".repeat(5000000) + "needle"

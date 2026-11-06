@@ -392,8 +392,11 @@ println(c.iter().chain(0..2).sum())                                        // 4+
 - **Sources.** `xs.iter()` on an array; a range, directly (`(0..n).map(f)`)
   or as `(0..n).iter()`; `it.iter()` on an *iterator object* -- an object of
   a class with a method `next(self) -> T?` taking nothing else, which is
-  called until it returns `nil` (`for x in it` loops over one directly).
-  `iter()` on a pipeline changes nothing.
+  called until it returns `nil` (`for x in it` loops over one directly);
+  the pieces of a string, `s.lines()` and `s.split(sep)`, read as they are
+  found with no array (`s.split(",").map(f).count()`, `s.lines().iter()..`,
+  `for line in s.lines()`; see "Strings"). `iter()` on a pipeline changes
+  nothing.
 - **Adapters**, each returning a pipeline: `map(f)`, `filter(f)`,
   `take(n)`, `skip(n)` (`n: usize`), `take_while(f)`, `skip_while(f)`,
   `enumerate()` (`(usize, T)` pairs), `zip(ys)` (`(T, U)` pairs, ending with
@@ -550,8 +553,8 @@ milliseconds, 10M elements. The programs are
   array or an iterator object.
 - Not provided: `flat_map`, `step_by`, `peekable`, `last`, `nth`,
   `sum`/`min`/`max` with a key or a comparator, `rev` after the adapters
-  above, `zip` with a staged pipeline, `str`/`String` sources (bytes or
-  characters).
+  above, `zip` with a staged pipeline, `rev()` over the pieces of a
+  string, other `str`/`String` sources (bytes or characters).
 - A `for` loop over a pipeline with `chain` compiles its body once per
   part of the chain (two copies for one `chain`), like the stages after the
   `chain`: code size, not time.
@@ -635,13 +638,115 @@ it, and its length. That gives one type the roles Rust splits between
   needs `&str` and a lifetime for this; here the collector does that job.
 - **Appending in place.** `s += t` (and `s + t`) writes into the buffer only
   past the end of every existing value: when `s` ends exactly at the
-  buffer's fill and there is room, the bytes go there and the fill rises
-  (with a compare-and-swap, so two appends racing on one buffer cannot both
-  win); otherwise the bytes are copied into a new buffer, which doubles the
+  buffer's fill and there is room, the bytes go there and the fill rises;
+  otherwise the bytes are copied into a new buffer, which doubles the
   capacity when `s` was at the fill (it is being built up) and is exact
   otherwise. A loop of `s += piece` is amortized O(1) per byte, as Rust's
   `push_str` is, with no builder type. Appending to a value that does not
   end at the fill (an older copy, a view in the middle) copies.
+
+#### String Fabric: appends and formatting without a call
+
+The AURORA memory architecture asks three things of string building, and
+the compiler and runtime do them as follows (`codira_codegen`'s
+`ir::body::fabric`, `codira_runtime`'s `string` module).
+
+- **An append with room is a check, a copy and a store.** `s += t` is
+  compiled inline:
+
+  ```text
+  payload = *s.buf                       ; fill, capacity, owner word
+  if owner == thread pointer && fill == s.start + s.len && capacity - fill >= n:
+      memcpy(payload + 16 + fill, t.data, n);  payload.fill = fill + n
+  else:
+      call codira.string_append          ; copies, or grows
+  ```
+
+  No allocation, no call through the dispatch table, no atomic
+  read-modify-write; `string_fabric.rs`'s
+  `the_common_append_path_calls_nothing` checks the `-O 2` IR.
+- **Numbers go straight into the destination.** `s += n.to_string()` (and
+  a `{n}` hole) writes the digits of an integer of at most 64 bits in
+  place, with a digit writer generated into the module (two digits per
+  step from a table); no temporary string exists. A float, a 128-bit
+  integer, or an append without room calls the runtime, which writes the
+  text into the destination's buffer (or the one it grows into).
+- **Static format strings are compiled into a plan.** Interpolation
+  already parses and checks every spec at compile time; an `f"..."`
+  literal (and any `a + b + c` chain whose first piece makes new text) is
+  then compiled as one plan: its pieces evaluated left to right, one buffer
+  sized for the whole result (the literal pieces' lengths, the strings'
+  lengths, an upper bound per number), and one append per piece. A literal
+  piece is an inline copy; a decimal integer with a constant width and an
+  ASCII fill (`{n:08}`, `{n:>6}`, `{n:*^9}`) is written inline, padding
+  and sign included; any other spec is one call of
+  `codira.string_append_format_int`, `_float` or `_text` with the spec as
+  constant arguments, which writes into the destination; `{x:?}` is the
+  type's generated debug function writing into it. The template text is
+  not in the program, and nothing is parsed, boxed or collected into an
+  argument array at run time (`a_static_format_plan_parses_nothing_at_run_time`).
+  `s += f"..."` appends the pieces to `s` itself. `std.format.format`
+  (a template known only at run time) stays the general path.
+- **A plan usually allocates nothing.** A function keeps the result of its
+  last plan in a stack slot, and the next plan starts as the empty string
+  at that result's end, in the same buffer, when the buffer is this
+  thread's, the result still ends at its fill and the room is there;
+  otherwise it allocates a buffer of at least 256 bytes. The earlier
+  results lie below the fill and are never written again. A loop of
+  `f"{n:08}"` or `n.to_string()` allocates once per few dozen results.
+
+**Who may raise the fill, and why no atomic is needed.** Two values on
+one buffer can both end at its fill (`let b = a`); if both were appended
+to at the same time, both could write the same bytes. Within one thread
+that cannot happen: appends run one after the other, and the second sees
+the fill the first raised and copies. So every buffer carries, in its
+first eight bytes (the *owner word*; a string's bytes start after it), the
+identity of the one thread that may raise its fill: the thread pointer of
+the thread that allocated it (`fs:0` on x86-64 Linux, `TPIDR_EL0` on
+AArch64 Linux, `llvm.thread.pointer` in compiled code). That thread
+appends in place with plain loads and stores; **any other thread
+appending to a value on the buffer copies**, so it never writes the
+buffer at all. The argument that this is sound:
+
+1. The owner word is written before the buffer is reachable from anything
+   and never changes, so every thread reads the same owner.
+2. No two live threads have the same thread pointer, so at most one thread
+   passes the check: the fill, and the bytes above it, are written by that
+   thread alone. Other threads read only the bytes of values they were
+   given, which lie below the fill and are never written again.
+3. A thread pointer is reused only after its thread has exited, and the C
+   library hands the memory to a new thread under a lock, after the old one
+   is gone, so the new owner sees everything the old one wrote.
+4. A value reaches another thread only through something that
+   synchronises: Codira tasks share nothing but channels of scalars, so in
+   practice the host (`Runtime::invoke` from two threads with one
+   `StringRef`, or a class instance both reach).
+5. A buffer whose owner word is stale -- restored from a heap snapshot of
+   another process -- is still matched by at most one thread, which is all
+   the argument needs.
+
+Where the thread pointer is not known (other targets) buffers are marked
+*shared* (owner word zero) and every thread claims the fill with a
+compare-and-swap, as before; compiled code there makes the same inline
+check with a `cmpxchg`. A thread that cannot prove ownership takes the
+safe path: it copies. Reuse never shows: no `String` value changes after it
+is made, which the runtime's property tests check under random appends,
+aliases and views and with two threads appending at once to values on one
+buffer (`no_value_changes_under_random_appends_and_aliases`,
+`two_threads_appending_on_one_buffer_change_no_value`).
+
+**No builder type.** A builder would compile to the same check, copy and
+store as `+=` does now, so it would not be faster; there is no
+`StringBuilder`.
+
+**No small-string optimisation.** Measured before the plans reused their
+buffers: a small `String` cost one GC allocation of about 65-70 ns on the
+benchmark machine (about 420 instructions, 265 of them in the collector's
+allocator), which was most of `f"{n:08}"` (85 ns) and `n.to_string()`
+(80 ns). With plans continuing in their function's buffer those are 16 ns
+and 12 ns, so an inline representation for short strings -- a second
+layout every string operation would have to test for -- would now save
+little on these workloads, and is not done.
 
 Considered and not chosen: a *mutable* growable string shared by reference
 (as arrays and classes are) needs no offset word, but `let b = a;
@@ -674,10 +779,10 @@ Construction and conversion:
   `format!("{x}")` -- no calls, no operators -- and is converted with
   `to_string()`, so it type-checks like that call (a hole of a type without
   `to_string` is an error at the literal; a type's own `to_string(self) ->
-  String` method counts). `{{` and `}}` are literal braces. The first piece
-  becomes a `String` and the rest are appended to it. A hole may carry a
-  format spec, `{x:>8.3}`, and `{x:?}` writes any value: see "Format specs
-  and the debug form" below.
+  String` method counts). `{{` and `}}` are literal braces. The literal is
+  compiled as a format plan (see "String Fabric" above): one buffer, one
+  append per piece. A hole may carry a format spec, `{x:>8.3}`, and `{x:?}`
+  writes any value: see "Format specs and the debug form" below.
 
 Operators: `a + b` (either side a `String` or a `str`; the result is a new
 `String`), `s += t` (`s` a `String` place, `t` a `String` or `str`), and
@@ -697,8 +802,8 @@ costs nothing):
 | `byte_at(i)` | `u8` | bounds-checked like `a[i]` |
 | `find(p)`, `rfind(p)` | `usize?` | byte offset of the first / last match |
 | `contains(p)`, `starts_with(p)`, `ends_with(p)` | `bool` | |
-| `split(sep)` | `[String]` | Rust's `str::split`; views; an empty `sep` panics |
-| `lines()` | `[String]` | Rust's `str::lines` (`\n`, `\r\n`, no empty last line); views |
+| `split(sep)` | `[String]` | Rust's `str::split`; views; an empty `sep` panics; lazy where no array is needed (below) |
+| `lines()` | `[String]` | Rust's `str::lines` (`\n`, `\r\n`, no empty last line); views; lazy likewise |
 | `trim()`, `trim_start()`, `trim_end()` | `String` | Unicode `White_Space`, as Rust; views |
 | `slice(start, end)` | `String` | the byte range; a view |
 | `to_upper()`, `to_lower()` | `String` | ASCII letters only (see below) |
@@ -707,6 +812,23 @@ costs nothing):
 | `parse_i64()`, `parse_f64()` | `i64?`, `f64?` | Rust's `from_str`: no white space, `+`/`-` sign, `inf`, `NaN` |
 | `hash()` | `u64` | FNV-1a 64 of the bytes |
 | `to_string()` | `String` | itself |
+
+**`lines()` and `split()` without the array.** Where the `[String]` would
+be a temporary nothing else sees, the pieces are read as they are found,
+in one loop, with no array: `for line in text.lines() { .. }`, `for p in
+text.split(",") { .. }`, `text.lines().iter()..` (any pipeline), and a
+chain on `text.split(sep)` or `text.lines()` that uses a pipeline
+operation arrays do not have -- `text.split(",").map(f).count()`,
+`.enumerate()`, `.take(n)`, `.find(f)`; see "Lazy pipelines". The string
+and the separator are evaluated once, before the first piece, as the call
+would be; a line break or a one-byte separator (always ASCII in UTF-8) is
+found with `memchr`, a longer separator with `str::find`; an empty
+separator panics before the first piece, with `split`'s message. A chain
+of only methods arrays have (`text.split(",").map(f)`,
+`.filter(g).sum()`) keeps the eager arrays, so no program changes meaning,
+and `let parts = text.split(",")` is an array as always. The eager
+`split` on one byte and `lines()` scan with `memchr` too and fill the
+array with no list in between.
 
 `std.collections.string` adds what is written in Codira on top: `join`,
 `insert`, `remove`, `reverse`, `count`, `compare`, `split_whitespace`,
@@ -804,9 +926,15 @@ type      := '' | '?' | 'x' | 'X' | 'o' | 'b' | 'e' | 'E'
   in the module that needs it (`codira.debug:<type>`, private), from the
   type alone, and a type that contains itself (through an array, a class
   or an optional) gets a function that calls itself. Nothing at run time
-  inspects a type. A spec hole is one call to `codira.string_format_int`,
-  `_float` or `_text`, chosen by the type, with the spec passed as four
-  scalars; Rust's formatter makes the digits and the runtime pads them.
+  inspects a type; the debug function appends straight into the string
+  being built (numbers with the inline digit writer). A spec hole is a
+  piece of the literal's format plan (see "String Fabric"): a decimal
+  integer with a constant width and an ASCII fill is padded inline; any
+  other is one call to `codira.string_append_format_int`, `_float` or
+  `_text`, chosen by the type, with the spec passed as four constant
+  scalars; Rust's formatter makes the digits of floats and radix forms,
+  and the runtime pads them on the stack and appends them to the
+  destination.
 - `x.type_name()` is the name of `x`'s type as a `str` constant (`FileError`,
   `Box[i64]`, `[u8]`), chosen per instantiation; `std.error.error` records
   it.
@@ -859,7 +987,10 @@ of a table hashed with it can make them all collide.
 
 - **Allocates** (so rejected by `@noalloc`): `to_string()` on anything but a
   `String`, the implicit `str`-to-`String` conversion, `+` and `+=`
-  (counted as allocating even when the append fits), `chars`, `bytes`,
+  (counted as allocating even when the append fits: whether it fits is a
+  property of the buffer at run time, which the compiler does not track,
+  so the inline fast path that allocates nothing is not proved and the
+  effect stays), `chars`, `bytes`,
   `split`, `lines`, `to_upper`/`to_lower`, `replace`, `repeat`,
   `string_from_utf8`, interpolation (a hole with a format spec and the
   debug form included), `debug_string()`, and every method called on a
@@ -897,38 +1028,52 @@ heap, which this backend does not reach)`).
 
 #### Performance
 
-Measured against Rust's `String` on the same four algorithms: `find` on
-a 10 MB haystack at parity (0.85x Rust's time), parsing 1M integers 1.4x,
-splitting 10 MB into lines 1.7x, and appending 1M short strings with `+=`
-3.9x (each append is a call into the runtime and a compare-and-swap, where
-Rust's `push_str` inlines). See
-`crates/codira_runtime/README.md` ("Strings: measured against Rust") for the
-numbers, the machine, and both programs (`benches/strings/`).
+Measured against Rust's `String` and `format!` on the same algorithms
+(`benches/strings/`: `src/mod.code` and `strings.rs`;
+`examples/format_bench/`: `src/mod.code` and `format_rust.rs`; each pair
+prints the same check values). Medians of 11 alternating runs of each
+program (format specs: 5 runs, each the median of 7 rounds of 1M
+formats), on an Intel Xeon @ 2.10 GHz VM (4 vCPUs, Linux 6.18) shared with
+other builds (load average 4 to 5 during the runs, so single runs vary by
+up to 30%); Codira built with `codira build -O 3` and run by
+`benches/strings/host` (the runtime in release mode), Rust 1.97.1 with
+`rustc -C opt-level=3`.
 
-Format specs, measured against Rust's `format!` on the same values in a
-loop (`examples/format_bench/`: `src/mod.code` and `format_rust.rs`, which
-print the same check values), 1M formats per run, the median of 7 runs in
-each process and the median of 5 processes, interleaved:
+| benchmark | before | Codira | Rust | Codira / Rust |
+|---|---:|---:|---:|---:|
+| 1M short appends (`s += "word "`) | 17.3 ms | 7.5 ms | 5.3 ms | 1.42x |
+| 1M `s += i.to_string()` and `"\n"` | 112.6 ms | 12.0 ms | 26.1 ms | 0.46x |
+| `lines()` of 10.5 MB into an array | 10.3 ms | 6.5 ms | 5.7 ms | 1.15x |
+| `for line in text.lines()`, lazily | -- | 2.3 ms | 4.2 ms | 0.56x |
+| `text.split(",").filter(..).count()`, lazily, 10.5 MB | -- | 16.3 ms | 22.1 ms | 0.74x |
+| `find` in 10 MB | 1.8 ms | 1.4 ms | 1.7 ms | 0.80x |
+| `parse_i64` of 1M fields | 11.5 ms | 6.8 ms | 6.5 ms | 1.05x |
+| `f"{x:>10.3}"`, a float, 1M | 261.2 ms | 197.4 ms | 187.9 ms | 1.05x |
+| `f"{n:08}"`, an integer, 1M | 102.7 ms | 18.6 ms | 43.4 ms | 0.43x |
+| `f"{p:?}"`, `Point { x: i64, y: f64 }`, 1M | 553.1 ms | 164.7 ms | 273.6 ms | 0.60x |
 
-| hole | Codira | Rust | Codira / Rust |
-|---|---:|---:|---:|
-| `f"{x:>10.3}"`, a float | 261.2 ms | 184.3 ms | 1.42x |
-| `f"{n:08}"`, an `i64` | 102.7 ms | 42.1 ms | 2.44x |
-| `f"{p:?}"`, `Point { x: i64, y: f64 }` | 553.1 ms | 259.2 ms | 2.13x |
+What still loses, and why:
 
-The same machine as the String numbers (Intel Xeon @ 2.10 GHz, 4 vCPUs,
-Linux 6.18, Rust 1.97.1); the program built by a release build of `codira`
-with `-O 3`, the Rust one with `rustc -C opt-level=3`. The machine was
-shared with other builds while it ran (load average 3.6 to 3.9 on 4
-vCPUs), so the absolute times are noisy; the per-round ratios stayed within
-1.31x to 1.48x, 2.30x to 2.53x and 2.10x to 2.22x. A hole is one indirect
-call into the runtime, which formats with Rust's formatter into a
-thread-local buffer and then copies the text into a new `String` on the GC
-heap; the debug form of a struct is several appends (each a runtime call)
-and a `to_string()` per field. Where the time goes beyond that was not
-profiled.
+- **1M short appends, 1.4x.** Most of the gap is memory, not the append:
+  100 strings of 10,000 appends each took 6.5 ms against Rust's 2.7 ms,
+  and Rust's own time rose to 5.1 ms when its strings were leaked instead
+  of freed -- which is what happens here, since nothing is collected while
+  the benchmark runs and every new buffer is fresh memory. Growth adds to
+  it: each doubling allocates a new buffer on the GC heap and copies into
+  it, where Rust's `realloc` of a large block remaps pages without
+  copying.
+- **`lines()` into an array, 1.15x**: the `[String]` (24-byte views,
+  4.9 MB) is allocated and filled on the GC heap after a counting pass.
+- **A float with a precision, 1.05x**: the digits are Rust's own
+  `{:.3}`; the rest is the call into the runtime and the padding.
 
-Not done yet: a `push_str` method (write `+=`); `match` on a `String`
+Each of these used to be a call through the runtime's dispatch table per
+append and, for numbers and specs, a new GC string per piece.
+
+Not done yet: inline digits for a float (it is one runtime call per
+hole or `to_string()`); a plan buffer shared across functions (each
+function has its own); growing a buffer in place on the heap (`realloc`);
+a `push_str` method (write `+=`); `match` on a `String`
 scrutinee; iterating a string directly (`for c in s.chars()` iterates the
 array of code points); a `char` type; Unicode case mapping and
 normalization; expressions in holes (a hole is a name and fields); a

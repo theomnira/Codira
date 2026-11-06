@@ -476,41 +476,48 @@ from mold, and what is still only a goal.
 ## Strings: measured against Rust
 
 `String` (see "Strings" in `agents/USING_CODIRA.md`) against Rust's
-`String` on the same four algorithms. The programs are in `benches/strings/`:
+`String` on the same algorithms. The programs are in `benches/strings/`:
 `src/mod.code` (Codira) and `strings.rs` (Rust), each printing one line per
 benchmark with the elapsed nanoseconds and a check value; the check values
 of the two programs are equal for every benchmark.
 
-| benchmark | Codira | Rust | Codira / Rust |
-|---|---:|---:|---:|
-| `concat_1m_short`: 1M appends of `"word "` (`s += ..` / `push_str`) | 17.3 ms | 4.5 ms | 3.9x |
-| `concat_1m_numbers`: 1M appends of `i.to_string()` and `"\n"` | 112.6 ms | 24.2 ms | 4.7x |
-| `split_10mb_lines`: `lines()` of a 10.5 MB text (205,600 lines, views) | 10.3 ms | 6.2 ms | 1.7x |
-| `find_10mb`: `find("needle")` at the end of 10 MB of `"ab"` | 1.8 ms | 2.1 ms | 0.85x |
-| `parse_1m_i64`: `parse_i64()` of 1M decimal fields, summed | 11.5 ms | 7.9 ms | 1.4x |
+| benchmark | before String Fabric | Codira | Rust | Codira / Rust |
+|---|---:|---:|---:|---:|
+| `concat_1m_short`: 1M appends of `"word "` (`s += ..` / `push_str`) | 17.3 ms | 7.5 ms | 5.3 ms | 1.42x |
+| `concat_1m_numbers`: 1M appends of `i.to_string()` and `"\n"` | 112.6 ms | 12.0 ms | 26.1 ms | 0.46x |
+| `split_10mb_lines`: `lines()` of a 10.5 MB text (205,600 lines, views) | 10.3 ms | 6.5 ms | 5.7 ms | 1.15x |
+| `lines_10mb_lazy`: `for line in text.lines()`, bytes summed | -- | 2.3 ms | 4.2 ms | 0.56x |
+| `split_10mb_lazy_count`: `split(",").filter(len > 3).count()` | -- | 16.3 ms | 22.1 ms | 0.74x |
+| `find_10mb`: `find("needle")` at the end of 10 MB of `"ab"` | 1.8 ms | 1.4 ms | 1.7 ms | 0.80x |
+| `parse_1m_i64`: `parse_i64()` of 1M decimal fields, summed | 11.5 ms | 6.8 ms | 6.5 ms | 1.05x |
 
-Medians of 7 runs, on one machine: Intel Xeon @ 2.10 GHz (4 vCPUs, AVX2
-and AVX-512), 16 GB, Linux 6.18; Rust 1.97.1. Codira: the program built with
-`codira build -O 3` and run by `benches/strings/host` (the runtime in
-release mode, so its string functions are optimized as in a release
-`codira`); Rust: `rustc -C opt-level=3 strings.rs`. Both for the default
-x86-64 target.
+Medians of 11 alternating runs, on one machine: Intel Xeon @ 2.10 GHz (4
+vCPUs, AVX2 and AVX-512), 16 GB, Linux 6.18; Rust 1.97.1. The machine was
+shared with other builds (load average 4 to 5), so single runs vary by up
+to 30%. Codira: the program built with `codira build -O 3` and run by
+`benches/strings/host` (the runtime in release mode, so its string
+functions are optimized as in a release `codira`); Rust: `rustc -C
+opt-level=3 strings.rs`. Both for the default x86-64 target. (Rust's lazy
+split uses a `char` pattern, `split(',')`, its fastest.)
 
 What the numbers say:
 
-- **Search and parsing** run Rust's own code (`str::find`, `str::lines`,
-  `i64::from_str` inside the runtime), so `find` is at parity and the
-  remaining cost of `split` and `parse` is the call through the runtime's
-  dispatch table and building each `String` view (24 bytes, with the
-  `[String]` array allocated on the GC heap).
-- **Appending is 4-5x slower than `push_str`.** Each `+=` is an indirect call
-  into the runtime (Rust's `push_str` inlines to a capacity check and a
-  `memcpy`), and the in-place append raises the buffer's fill with a
-  compare-and-swap so that two appends racing on one buffer cannot both
-  win: replacing it with a plain store measured 12.9 ms instead of 17.3 ms
-  for `concat_1m_short`, so the atomic costs about a quarter. With numbers,
-  every `i.to_string()` also allocates a short-lived GC string before it is
-  copied.
+- **An append with room is inline**: a check of the buffer's owner word
+  against the thread pointer, of the fill and of the room, a copy and a
+  plain store of the fill (see "String Fabric" in `agents/USING_CODIRA.md`
+  for why no atomic is needed). Most of what is left of the 1.4x is
+  memory: nothing is collected during the run, so every buffer is fresh
+  memory (Rust's time on 100 strings of 10,000 appends rises from 2.7 ms
+  to 5.1 ms when its strings are leaked instead of freed; Codira's is
+  6.5 ms), and each doubling copies into a new GC buffer, where Rust's
+  `realloc` of a large block remaps pages.
+- **Numbers are written into the destination** (`concat_1m_numbers`): the
+  digits go into the string's buffer; Rust's `i.to_string()` allocates a
+  temporary `String` first.
+- **Lazy `lines()`/`split()`** find each piece with `memchr` and make a
+  view; the eager `lines()` counts the lines, then fills the `[String]`.
+- **Search and parsing** run Rust's own code (`str::find`, `i64::from_str`
+  inside the runtime), so they are at parity.
 - Not measured: memory use, and GC pause times while strings are built.
 
 To run them:
