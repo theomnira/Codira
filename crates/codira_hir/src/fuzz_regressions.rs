@@ -55,3 +55,15 @@ fn diagnostics_without_syntax_are_reported_on_the_function() {
     // An `if let` cut short inside an `if` condition.
     rejected("func s{if if let t");
 }
+
+/// A function declared without a body outside an `extern` block (the
+/// fuzzer moved the `}` of one) was accepted, and code generation then
+/// panicked on its missing body.
+#[test]
+fn a_function_without_a_body_outside_an_extern_block() {
+    let found = rejected("func g(x: u32) -> f32;\npublic func main() -> f32 { g(1u32) }");
+    assert!(found.contains("a function needs a body"), "{found}");
+    // Still fine where a body may be left out.
+    assert_eq!(diagnostics("extern func g(x: u32) -> f32;"), "");
+    assert_eq!(diagnostics("trait T { func f(self) -> i64; }"), "");
+}
