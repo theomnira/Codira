@@ -13,8 +13,9 @@
 //!     and is live across a safepoint call into the record, and registers
 //!     every stack slot that may hold one.
 //!   - `codira_gc_insert_polls` runs after the final optimization and puts
-//!     a poll (one load and a branch) on loop back-edges and at the entry of
-//!     functions that make calls.
+//!     a poll (one load and a branch) on the back-edges of loops nothing
+//!     bounds. Recursion is not polled: a thread that takes too long to
+//!     reach a safepoint is interrupted by a signal (`gc::preempt`).
 
 #include <llvm/ADT/BitVector.h>
 #include <llvm/ADT/DenseMap.h>
@@ -50,6 +51,7 @@
 #include <llvm-c/Core.h>
 
 #include <cstdint>
+#include <cstdlib>
 #include <vector>
 
 using namespace llvm;
@@ -58,7 +60,7 @@ namespace {
 
 // Names shared with `src/gc_roots.rs` and the runtime.
 constexpr const char *CHAIN_FN_GLOBAL = "codira.gc.chain_fn";
-constexpr const char *POLL_WORD_GLOBAL = "codira.gc.poll_word";
+constexpr const char *POLL_BYTE_GLOBAL = "codira.gc.poll_byte";
 constexpr const char *POLL_FN_GLOBAL = "codira.gc.poll_fn";
 constexpr const char *SET_HOOKS_FN = "set_gc_hooks";
 constexpr const char *FRAME_ATTR = "codira-gc-frame";
@@ -500,6 +502,16 @@ bool instrumentFunction(Function &function, const DataLayout &layout, bool knows
     }
     offset = alignTo(offset, 8);
     const uint64_t words = (offset - wordsStart) / 8;
+
+    // Nothing to describe: no reference is live across a safepoint call
+    // and no stack slot may hold one. The frame then needs no record (it is
+    // scanned conservatively, which is always sound), and the function pays
+    // nothing: recursion on integers (`fib`) cost about twice its own body
+    // with an empty record. The price is that integers in such a frame are
+    // read conservatively.
+    if (slots.empty() && regions.empty()) {
+        return false;
+    }
     const uint64_t total = offset;
 
     // Build the record in the entry block, after its static allocas.
@@ -612,10 +624,6 @@ void defineHooks(Module &module) {
         IRBuilder<> b(BasicBlock::Create(context, "entry", fallbackGetter));
         b.CreateRet(fallbackHead);
     }
-    auto *neverStop = new GlobalVariable(module, Type::getInt8Ty(context), true,
-                                         GlobalValue::PrivateLinkage,
-                                         ConstantInt::get(Type::getInt8Ty(context), 0),
-                                         "codira.gc.never");
     auto *pollTy = FunctionType::get(Type::getVoidTy(context), false);
     Function *fallbackPoll = Function::Create(pollTy, GlobalValue::PrivateLinkage,
                                               "codira.gc.fallback_poll", module);
@@ -636,39 +644,44 @@ void defineHooks(Module &module) {
         return global;
     };
     GlobalVariable *chain = define(CHAIN_FN_GLOBAL, fallbackGetter);
-    GlobalVariable *word = define(POLL_WORD_GLOBAL, neverStop);
     GlobalVariable *poll = define(POLL_FN_GLOBAL, fallbackPoll);
+    // The module's own poll byte, which the runtime writes (see
+    // `set_gc_hooks`): a poll is then one load of it and a branch.
+    auto *i8Ty = Type::getInt8Ty(context);
+    auto *byte = new GlobalVariable(module, i8Ty, false, GlobalValue::InternalLinkage,
+                                    ConstantInt::get(i8Ty, 0), POLL_BYTE_GLOBAL);
+    byte->setAlignment(Align(64));
     // The poll globals have no loads until the polls are inserted, after
-    // the optimizer ran: keep it from deleting them.
-    appendToCompilerUsed(module, {word, poll});
+    // the optimizer ran: keep it from deleting them, or assuming the byte
+    // stays 0.
+    appendToCompilerUsed(module, {byte, poll});
 
-    // void set_gc_hooks(void *chain_fn, void *poll_word, void *poll_fn)
+    // void *set_gc_hooks(void *chain_fn, void *poll_word, void *poll_fn):
+    // returns the address of the module's poll byte, which the runtime keeps
+    // equal to its poll word for as long as the module is loaded.
+    // `poll_word` is not used.
     if (module.getFunction(SET_HOOKS_FN) == nullptr) {
-        auto *setTy = FunctionType::get(Type::getVoidTy(context), {ptrTy, ptrTy, ptrTy}, false);
+        auto *setTy = FunctionType::get(ptrTy, {ptrTy, ptrTy, ptrTy}, false);
         Function *set =
             Function::Create(setTy, GlobalValue::ExternalLinkage, SET_HOOKS_FN, module);
         set->setDLLStorageClass(GlobalValue::DLLExportStorageClass);
         IRBuilder<> b(BasicBlock::Create(context, "body", set));
         b.CreateStore(set->getArg(0), chain);
-        b.CreateStore(set->getArg(1), word);
         b.CreateStore(set->getArg(2), poll);
-        b.CreateRetVoid();
+        b.CreateRet(byte);
     }
 }
 
-/// Inserts `if (*poll_word) poll_fn()`
-/// before `before`.
+/// Inserts `if (poll_byte) poll_fn()` before `before`.
 void insertPoll(Instruction *before) {
     Module &module = *before->getModule();
     LLVMContext &context = module.getContext();
     auto *ptrTy = PointerType::getUnqual(context);
-    GlobalVariable *wordGlobal = module.getGlobalVariable(POLL_WORD_GLOBAL, true);
+    GlobalVariable *byteGlobal = module.getGlobalVariable(POLL_BYTE_GLOBAL, true);
     GlobalVariable *fnGlobal = module.getGlobalVariable(POLL_FN_GLOBAL, true);
 
     IRBuilder<> builder(before);
-    LoadInst *wordPtr = builder.CreateLoad(ptrTy, wordGlobal, "gc.poll_word");
-    wordPtr->setMetadata(LLVMContext::MD_invariant_load, MDNode::get(context, {}));
-    LoadInst *word = builder.CreateAlignedLoad(builder.getInt8Ty(), wordPtr, Align(1), "gc.poll");
+    LoadInst *word = builder.CreateAlignedLoad(builder.getInt8Ty(), byteGlobal, Align(1), "gc.poll");
     word->setAtomic(AtomicOrdering::Monotonic);
     Value *stop = builder.CreateICmpNE(word, builder.getInt8(0));
     MDBuilder md(context);
@@ -729,12 +742,11 @@ void codira_gc_insert_roots(LLVMModuleRef module_ref, CodiraGcRootStats *out) {
 }
 
 /// Polls on the back-edges of loops whose trip count nothing bounds on
-/// entry, and at the entry of every function that makes a
-/// safepoint call. Returns the number of polls inserted. Requires
+/// entry. Returns the number of polls inserted. Requires
 /// `codira_gc_insert_roots` to have defined the hooks.
 uint32_t codira_gc_insert_polls(LLVMModuleRef module_ref, uint32_t max_unpolled_trips) {
     Module &module = *unwrap(module_ref);
-    if (module.getGlobalVariable(POLL_WORD_GLOBAL, true) == nullptr) {
+    if (module.getGlobalVariable(POLL_BYTE_GLOBAL, true) == nullptr) {
         return 0;
     }
     Triple triple(module.getTargetTriple());
@@ -745,24 +757,11 @@ uint32_t codira_gc_insert_polls(LLVMModuleRef module_ref, uint32_t max_unpolled_
             function.getName() == SET_HOOKS_FN) {
             continue;
         }
+        // Constant-time code gets no polls: their branches are what its
+        // guarantee rules out.
         if (function.hasFnAttribute(CONSTANT_TIME_ATTR)) {
             continue;
         }
-        // Calls to constant-time functions do not count: they have no polls
-        // to reach, and a poll here would put a branch next to their
-        // (possibly inlined) bodies.
-        bool calls = false;
-        for (BasicBlock &block : function) {
-            for (Instruction &inst : block) {
-                if (auto *call = dyn_cast<CallBase>(&inst); call && isSafepointCall(*call)) {
-                    const Function *callee = call->getCalledFunction();
-                    if (callee == nullptr || !callee->hasFnAttribute(CONSTANT_TIME_ATTR)) {
-                        calls = true;
-                    }
-                }
-            }
-        }
-
         DominatorTree dt(function);
         LoopInfo loops(dt);
         TargetLibraryInfo tli(tlii, &function);
@@ -783,14 +782,6 @@ uint32_t codira_gc_insert_polls(LLVMModuleRef module_ref, uint32_t max_unpolled_
             for (BasicBlock *latch : latches) {
                 sites.push_back(latch->getTerminator());
             }
-        }
-        if (calls) {
-            BasicBlock &entry = function.getEntryBlock();
-            BasicBlock::iterator at = entry.getFirstInsertionPt();
-            while (at != entry.end() && isa<AllocaInst>(*at)) {
-                ++at;
-            }
-            sites.push_back(&*at);
         }
         for (Instruction *site : sites) {
             insertPoll(site);

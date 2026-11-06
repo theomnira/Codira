@@ -347,12 +347,14 @@ rounds of a string workload) took 1.06, 1.08 and 1.03 s alone and 1.04,
   concurrent or generational collection. Pauses grow with the heap: marking
   with the live data, sweeping and the scan for rooted objects with every
   object in the heap.
-- **A bounded loop is not a safepoint.** Polls sit on the back-edges of
-  loops whose trip count the optimizer cannot bound on entry; a counted
-  loop, or a loop over an array or a range, has none, so a collection waits
-  for it to finish however many iterations it has. Calls into the file,
-  database and tensor services, and into `extern` functions not declared
-  `@noalloc`, are not safepoints either.
+- **Bounded loops and recursion are reached by preemption only.** Polls
+  sit on the back-edges of loops whose trip count the optimizer cannot
+  bound on entry. Counted loops, loops over arrays or ranges, and recursion
+  stop for a collection only when the collector interrupts them (Linux,
+  x86-64 and AArch64). Elsewhere a collection waits for them to finish.
+  Calls into the file, database and tensor services, into `extern`
+  functions not declared `@noalloc`, and host functions called from Codira
+  code are not interrupted either.
 - **Relocation is experimental and mostly-copying.** It is off unless
   turned on; when on, it moves objects only out of blocks at most a quarter
   full, and never an object a stack, a root or a pin refers to.
@@ -448,47 +450,60 @@ the chain head, a handful of stores on entry and one on return, plus one
 store per spilled value at its definition.
 
 Measured on `examples/collections_bench` and `examples/pipelines_bench`
-(milliseconds, medians of 11 interleaved runs pinned to one core; "off" is
+(milliseconds; medians of 9 interleaved runs pinned to one core). "Off" is
 the same release `codira` building with `CODIRA_GC_FRAMES=0`, which turns
-off both records and polls; Rust is `rustc -C opt-level=3` of the
-benchmarks' Rust programs; every checksum is identical across the three):
+off both records and polls. Rust is `rustc -C opt-level=3` of the
+benchmarks' Rust programs. Every checksum is identical across the three.
 
 | benchmark | off | on | on / off | Rust |
 |---|---:|---:|---:|---:|
-| `push_10m` | 43.90 | 45.19 | 1.03 | 44.56 |
-| `sum_builtin` | 9.97 | 10.45 | 1.05 | -- |
-| `sum_fold_closure` | 9.65 | 10.33 | 1.07 | 10.01 |
-| `sum_for_loop` | 9.68 | 10.36 | 1.07 | 10.53 |
-| `sum_indexed_while` | 9.82 | 10.57 | 1.08 | -- |
-| `map_filter_sum` | 83.82 | 88.01 | 1.05 | 20.28 |
-| `map_filter_sum_fused_fold` | 17.24 | 17.20 | 1.00 | -- |
-| `sort_1m` | 20.53 | 20.07 | 0.98 | -- |
-| `map_int_1m_fast_insert` | 81.16 | 85.75 | 1.06 | 80.69 |
-| `map_int_1m_fast_hit` | 55.20 | 55.55 | 1.01 | 40.16 |
-| `map_str_1m_fast_insert` | 373.68 | 406.67 | 1.09 | 284.76 |
-| `map_str_1m_fast_hit` | 187.85 | 181.80 | 0.97 | 132.25 |
-| `map_filter_sum_lazy` | 17.43 | 17.25 | 0.99 | 17.73 |
-| `map_filter_sum_eager` | 95.41 | 93.79 | 0.98 | -- |
-| `map_filter_sum_fold` | 18.97 | 18.13 | 0.96 | -- |
-| `enumerate_filter_count` | 17.93 | 16.82 | 0.94 | 17.14 |
-| `zip_fold_dot` | 19.21 | 18.37 | 0.96 | 22.55 |
-| `take_while_sum` | 16.81 | 14.78 | 0.88 | 15.08 |
-| `map_collect` | 55.96 | 51.53 | 0.92 | 52.81 |
-| `filter_collect` | 65.30 | 70.19 | 1.07 | 63.65 |
-| `range_filter_map_sum` | 5.16 | 5.58 | 1.08 | 6.62 |
-| `chain_filter_count` | 79.16 | 83.60 | 1.06 | 76.51 |
+| `push_10m` | 45.64 | 49.11 | 1.08 | 42.64 |
+| `sum_builtin` | 10.30 | 10.36 | 1.01 | -- |
+| `sum_fold_closure` | 10.29 | 10.93 | 1.06 | 9.79 |
+| `sum_for_loop` | 9.92 | 11.21 | 1.13 | 9.84 |
+| `sum_indexed_while` | 9.97 | 11.34 | 1.14 | -- |
+| `map_filter_sum` | 95.55 | 97.97 | 1.03 | 17.46 |
+| `map_filter_sum_fused_fold` | 19.21 | 21.78 | 1.13 | -- |
+| `sort_1m` | 21.44 | 26.87 | 1.25 | -- |
+| `map_int_1m_fast_insert` | 74.39 | 78.88 | 1.06 | 75.59 |
+| `map_int_1m_fast_hit` | 54.91 | 49.34 | 0.90 | 38.27 |
+| `map_str_1m_fast_insert` | 348.33 | 414.90 | 1.19 | 279.77 |
+| `map_str_1m_fast_hit` | 177.50 | 181.66 | 1.02 | 140.81 |
+| `map_filter_sum_lazy` | 17.53 | 17.08 | 0.97 | 18.26 |
+| `map_filter_sum_eager` | 102.21 | 87.86 | 0.86 | -- |
+| `map_filter_sum_fold` | 16.85 | 17.31 | 1.03 | -- |
+| `enumerate_filter_count` | 16.86 | 17.06 | 1.01 | 18.04 |
+| `zip_fold_dot` | 18.02 | 18.87 | 1.05 | 22.15 |
+| `take_while_sum` | 14.95 | 15.77 | 1.06 | 15.29 |
+| `map_collect` | 50.16 | 51.54 | 1.03 | 52.25 |
+| `filter_collect` | 58.82 | 59.21 | 1.01 | 61.40 |
+| `range_filter_map_sum` | 4.88 | 5.30 | 1.08 | 6.45 |
+| `chain_filter_count` | 83.91 | 82.37 | 0.98 | 83.34 |
 
 Intel Xeon @ 2.10 GHz (4 vCPUs), Linux 6.18, Rust 1.97.1, `codira build -O
-2`. The machine is noisy: the same loop code measured from 15 to 24 ms
-across runs, so differences under about 10% are within what repeated runs
-of identical code show. The array sums are 5-8% slower in the full
-benchmark, although their loops compile to the same IR with and without
-records (they are counted loops, so they have no poll); a program that runs
-only `for x in xs { s += x }` over 10M elements measured 9.25 ms against
-9.11 ms (medians of 7 runs of the best of 15). `map_str_1m_fast_insert` is
-the largest loss (9%). Polling every loop back-edge, which an earlier
-version did, cost up to 2x on `range_filter_map_sum` and about 35% on
-several pipelines; polls are now only on loops nothing bounds.
+2`. The machine is noisy: identical code measured from 15 to 24 ms across
+runs. A second run of `collections_bench` (11 rounds, another core) put
+every kernel above between 0.92x and 1.02x of "off", except
+`map_str_1m_fast_insert` at 1.06x (minimum 1.11x). In that run `sort_1m`
+was 0.97x and the sums 0.97-1.02x, where the table shows 1.13-1.25x.
+
+`fib` (`benches/aurora/loops`, `fib_32`): 6.60 ms with records and polls,
+6.62 ms without (medians of 21 interleaved runs). The AURORA gate against
+its stored baseline gave `loops.fib_32` 0.82-0.90x Rust (baseline 0.99x)
+and `groups.fib_64` 0.35-0.38x (0.49x). Two earlier versions cost more:
+
+- An empty record in every function that makes a call (`fib` has nothing
+  to spill) and a poll at every function entry made `fib_32` 1.84x Rust.
+- With the record left out, a poll at entry still cost 28%, and a poll
+  before each call 48%, measured with every function aligned to 64 bytes
+  so that code placement could not account for it. `fib`'s body is a few
+  cycles per call.
+
+Calls therefore get no polls, and preemption bounds recursion instead.
+`loops.store_field` fails the gate against the stored baseline, but by the
+same amount with records and polls off: 31.7 ms on against 31.4 ms off,
+with equal minima. Polling every loop back-edge, as the first version did,
+cost up to 2x on `range_filter_map_sum`.
 
 Selection: `CODIRA_GC_ROOTS=conservative` (or
 `frames::set_root_mode(RootMode::Conservative)`) scans every stack word
@@ -508,15 +523,22 @@ with the conservative scan.
 - Every allocation (as before), and every call into the runtime that
   allocates.
 - **Polls**, inserted after the final optimization so they never block
-  vectorization: on the back-edge of every loop whose trip count scalar
-  evolution cannot bound when the loop is entered, and at the entry of
-  every function that makes a call (which every recursion goes through).
-  A poll is a load of the poll word and a branch to a cold call. A loop
-  the optimizer can bound (counted loops, loops over arrays and ranges,
-  loops that may also exit early) is not polled: a collection may wait for
-  it to finish. A thread parked at a poll is scanned conservatively: the
-  optimizer ran before the poll existed, so the spill words need not be
-  current there.
+  vectorization, on the back-edge of every loop whose trip count scalar
+  evolution cannot bound when the loop is entered. A poll is one load of
+  the library's own poll byte (which the runtime keeps equal to its poll
+  word) and a branch to a cold call. A thread parked at a poll is scanned
+  conservatively: the optimizer ran before the poll existed, so the spill
+  words need not be current there.
+- **Preemption** (Linux, x86-64 and AArch64; `gc/preempt.rs`): a loop the
+  optimizer can bound (counted loops, loops over arrays and ranges) and
+  calls get no poll. A poll at every function entry, which an earlier
+  version had, made `fib` 30% slower. Instead a stop that has waited more
+  than 1 ms for a running thread sends it `SIGURG`, and again every
+  millisecond. The handler parks the thread only when the signal
+  interrupted code of a loaded Codira library, which never holds a runtime
+  lock. Such a thread is scanned conservatively, its signal frame (every
+  register of the interrupted code) included. On other platforms a
+  collection waits for such code to reach a safepoint.
 - **Blocking regions** (`safepoint::blocking`): channel operations, joins,
   sleeps. The thread is parked for their duration.
 - **Foreign calls**: a call to an `extern` function declared `@noalloc`

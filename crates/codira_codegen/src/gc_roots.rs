@@ -60,20 +60,22 @@
 //!
 //! After the final optimization (so they never stand in the way of
 //! vectorization), the back-edge of every loop whose trip count the
-//! optimizer cannot bound when the loop is entered, and the entry of every
-//! function that makes a safepoint call (which is what any recursion goes
-//! through), gets a poll: a load of the byte `codira.gc.poll_word` points at, and a
-//! branch to a cold call of `codira.gc.poll_fn` when it is set. A thread
-//! parked at a poll is scanned conservatively from top to bottom: the
-//! optimizer ran before the poll existed, so spill words need not be up to
-//! date there.
+//! optimizer cannot bound when the loop is entered gets a poll: one load
+//! of the module's own byte `codira.gc.poll_byte` (the runtime keeps it
+//! equal to its poll word; `set_gc_hooks` returns its address) and a branch
+//! to a cold call of `codira.gc.poll_fn` when it is set. A thread parked at
+//! a poll is scanned conservatively from top to bottom: the optimizer ran
+//! before the poll existed, so spill words need not be up to date there.
 //!
 //! A loop the optimizer can bound (scalar evolution computes a symbolic
 //! maximum of its back-edge count: a counted loop, a loop over an array or
-//! a range, one that may also leave early) gets no poll: it ends after at
-//! most that many iterations, and the loops and calls around it poll. The
-//! price is latency: a collection may wait for such a loop to finish,
-//! however many iterations it has.
+//! a range, one that may also leave early) gets no poll, and neither do
+//! calls: a poll at every function entry cost recursive integer code such
+//! as `fib` 30% or more. Instead, on Linux, a collector that has waited
+//! more than a millisecond for a running thread interrupts it with a
+//! signal, and the thread parks if it was in Codira code
+//! (`codira_memory::gc::preempt`). Elsewhere a collection waits for such a
+//! loop or recursion to finish.
 //!
 //! # Interface for other back ends
 //!
