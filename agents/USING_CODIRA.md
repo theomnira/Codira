@@ -930,10 +930,40 @@ the compiler and runtime do them as follows (`codira_codegen`'s
 - **A plan usually allocates nothing.** A function keeps the result of its
   last plan in a stack slot, and the next plan starts as the empty string
   at that result's end, in the same buffer, when the buffer is this
-  thread's, the result still ends at its fill and the room is there;
-  otherwise it allocates a buffer of at least 256 bytes. The earlier
-  results lie below the fill and are never written again. A loop of
-  `f"{n:08}"` or `n.to_string()` allocates once per few dozen results.
+  thread's, the result still ends at its fill and the room is there. The
+  earlier results lie below the fill and are never written again. A loop
+  of `f"{n:08}"` or `n.to_string()` allocates once per few dozen results.
+- **What a program keeps costs what it holds.** A `String` is a view, so
+  a result that is kept keeps its whole buffer, and every other result in
+  it, alive. So a function has two such slots, and each plan uses the one
+  the compiler picks for it (`codira_hir`'s `string_escape`):
+  - a *temporary* -- read, compared, printed, copied into another string,
+    or passed to a function that does no more with it -- continues in the
+    temporaries' buffer, and a new one is at least 256 bytes;
+  - a *kept* result -- returned, stored in a field, an array or a map,
+    captured by a closure, sent, or passed to a function that does any of
+    these -- continues only after other kept results. Its plan counts the
+    digits of each integer first (inline, a few instructions) and sets
+    aside exactly the text's length, so the first kept result of a call
+    gets a buffer of just its size, and a later one that does not fit gets
+    one of up to twice the last, at most 256 bytes. A function that returns
+    one formatted string allocates what it returns; a loop that keeps every
+    result packs them as densely as a loop of temporaries.
+
+  The analysis follows a value through locals, branches, views
+  (`slice`, `trim`, `lines`, `split`) and a chain that starts with an
+  existing `String`, and into the bodies of the functions it is passed to,
+  up to 8 calls deep (`map.insert(f"k{i}", v)` is kept because `insert`
+  stores its key; `check(f"{n:08}")` is not when `check` only reads its
+  argument). It keeps whatever it cannot see into: an `extern` function, a
+  call through a function value, anything deeper. A trait method called
+  on a generic type (`key.eq(other)` in a generic map) is taken to read
+  its arguments. It is separate from the escape analysis behind
+  `--frame-alloc` (`codira_hir`'s `escape`), which must treat every string
+  operation as handing the value to the runtime and every call into
+  another module as unknown; here a wrong answer changes only where bytes
+  go, never what a program computes, so reading a string's bytes keeps
+  nothing and a hot reload cannot make it unsound.
 
 **Who may raise the fill, and why no atomic is needed.** Two values on
 one buffer can both end at its fill (`let b = a`); if both were appended
@@ -974,6 +1004,65 @@ is made, which the runtime's property tests check under random appends,
 aliases and views and with two threads appending at once to values on one
 buffer (`no_value_changes_under_random_appends_and_aliases`,
 `two_threads_appending_on_one_buffer_change_no_value`).
+
+**Measured: kept results.** Before the two slots every plan continued in
+one chunk of at least 256 bytes per call, so a short result that was kept
+kept a chunk alive: `examples/gc_churn` (each live entry holds a
+`label(i)`, `"item-" + i.to_string() + ..`) held 728 KiB live after a
+collection in its `quick` run, where it had held about 250 KB before plans
+reused their buffers. The candidates, measured:
+
+- *One exact buffer per kept result* (and the shared chunk for the rest)
+  fixes `gc_churn`, but a loop that keeps every result
+  (`kept.push(f"{i:08}")`, 1M) took 153 ms instead of 28 ms and held
+  98.7 MiB instead of 32.7 MiB: each 8-byte string paid a 56-byte object
+  and owner word of its own and an allocation. Rejected.
+- *Copying a kept result out of a shared chunk where it escapes* is that
+  plus a copy; the compiler already knows at the plan whether the result is
+  kept, so it can size the buffer then instead. Not built.
+- *Compacting mostly dead buffers during a collection* needs the collector
+  to relocate objects and rewrite the views into them, which it does not
+  do. Not built.
+- *Two slots, kept results sized and packed with each other* (the design
+  above): measured below.
+
+On one machine (Intel Xeon @ 2.10 GHz, 4 vCPUs, Linux 6.18, shared with
+other builds), `codira run -O 3 --runtime-stats` with a release `codira`,
+medians of 5 alternating runs; "fits in" is the smallest `--heap-limit`
+under which the run completes, found by bisection (to 1/128 of the range;
+for `gc_churn` the same in 3 of 3 runs at each end). Before is main just
+before this change; every check value is the same before and after.
+
+| workload | live after a collection | peak heap | fits in | allocated | time |
+|---|---:|---:|---:|---:|---:|
+| `gc_churn` (50,000 live, 2M steps), before | 17.9 MiB | 45.8 MiB | 23.8 MiB | 2.38 GiB | 2.51 s |
+| `gc_churn`, after | 6.41 MiB | 24.7 MiB | 12.4 MiB | 732 MiB | 1.89 s |
+| `gc_churn quick` (2,000 live), before | 728 KiB | 5.14 MiB | 1.04 MiB | 242 MiB | 97 ms |
+| `gc_churn quick`, after | 256 KiB | 8.08 MiB | 632 KiB | 67.1 MiB | 82 ms |
+| 1M `kept.push(f"{i:08}")`, before | 32.7 MiB | 68.0 MiB | 68.1 MiB | 396 MiB | 25.8 ms |
+| same, after | 46.9 MiB | 82.6 MiB | 68.1 MiB | 394 MiB | 26.4 ms |
+| 1M temporaries, one in 16 kept (`kept.push(f"k{i}")`), before | 33.5 MiB | 80.8 MiB | 41.7 MiB | 171 MiB | 30.4 ms |
+| same, after | 3.86 MiB | 8.88 MiB | 8.97 MiB | 167 MiB | 18.1 ms |
+| 1M calls of a `label(i)` returning `f"item-{i}-{j}"`, 100K kept, before | 59.4 MiB | 136 MiB | 67.5 MiB | 1.87 GiB | 121 ms |
+| same, after | 13.4 MiB | 49.1 MiB | 22.9 MiB | 301 MiB | 60.7 ms |
+
+(The last three are `examples/string_retention`; their time is the median
+of 7 rounds inside the program.) Two rows rise, and both are the
+collector's pacing, not what is held: it collects after an amount of
+*payload* has been allocated (at least 4 MiB), and its heap is cells with
+a 32-byte header each. `gc_churn quick` now allocates small objects, whose
+cells are about twice their payload rather than 1.1 times a 256-byte
+chunk's, so its default run peaks higher between collections while it
+fits in 40% less; the keep-everything loop holds the same bytes (it fits in
+the same limit) and its last collection simply fell at a different point.
+Temporaries are unchanged: the String and format benchmarks (below) build
+to byte-identical libraries before and after.
+
+Not done: a float's text length is not counted before it is written, so a
+kept plan sets aside the most a float can take (24 bytes) and keeps the
+rest when nothing follows it; a view taken with `slice` or `trim` still
+keeps its whole buffer (copy it to let the buffer go); and the collector
+still paces on payload rather than on the cells it carves.
 
 **No builder type.** A builder would compile to the same check, copy and
 store as `+=` does now, so it would not be faster; there is no

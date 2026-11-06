@@ -63,12 +63,32 @@
 //! the result of its last plan in a stack slot, and a new plan starts as
 //! the empty string at that result's end -- in the same buffer -- when the
 //! buffer is this thread's, the result still ends at its fill (nothing was
-//! appended to it since) and the room is there. Only then is a new buffer
-//! allocated, of at least [`PLAN_CHUNK`] bytes, so a loop of `f"..."`
-//! allocates once per few dozen results. The earlier results lie below
-//! the fill and are never written again, as for any two values on one
-//! buffer; what it costs is that a result kept alive keeps its chunk alive,
-//! as a view does.
+//! appended to it since) and the room is there. The earlier results lie
+//! below the fill and are never written again, as for any two values on one
+//! buffer.
+//!
+//! # Temporaries and kept results
+//!
+//! A `String` is a view, so a result that is kept keeps its whole buffer,
+//! and every other result in it, alive. So a function has two slots, two
+//! [`Arena`]s, and each plan uses the one `codira_hir`'s `string_escape`
+//! picks for it:
+//!
+//! - A *temporary* -- a result only read, compared, printed or copied while
+//!   the function runs, or passed to a function that does no more -- starts
+//!   in the temporaries' buffer; when it does not fit, a new one of at least
+//!   [`PLAN_CHUNK`] bytes is allocated, so a loop of `f"..."` allocates once
+//!   per few dozen results. These buffers die with the temporaries in them.
+//! - A *kept* result -- returned, stored in an object, an array or a map,
+//!   captured, or passed to a function that keeps it -- starts only after
+//!   other kept results. Its plan counts the digits of each integer of at
+//!   most 64 bits first (inline, as the digit writer does) and sets aside
+//!   exactly the text's length, so the first kept result of a call gets a
+//!   buffer of just its size; when a later one does not fit, the next buffer
+//!   is up to twice the last one, at most [`KEPT_CHUNK`] bytes. A function
+//!   that returns one formatted string allocates what it returns; a loop
+//!   that keeps every result packs them as densely as before.
+//!
 //! A chain that starts with an existing `String` (`s + t + u`) appends to
 //! it, as before.
 
@@ -93,9 +113,28 @@ use crate::intrinsics;
 const CAPACITY_OFFSET: u64 = 8;
 const ELEMENTS_OFFSET: u64 = 16;
 
-/// The least a plan allocates when it needs a new buffer: room for the
-/// results of the plans after it in the same function.
+/// The least a temporary's plan allocates when it needs a new buffer: room
+/// for the temporaries of the plans after it in the same function.
 const PLAN_CHUNK: u64 = 256;
+
+/// The most a buffer of kept results grows to (see [`Arena::Kept`]).
+const KEPT_CHUNK: u64 = 256;
+
+/// The bytes of a string buffer's owner word (`codira_runtime`'s
+/// `OWNER_BYTES`), counted in its array's capacity.
+const OWNER_BYTES: u64 = 8;
+
+/// Which of a function's two plan buffers a plan continues in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum Arena {
+    /// Results used only while the function runs: they continue in a chunk
+    /// of at least [`PLAN_CHUNK`] bytes, which dies with them.
+    Temporary = 0,
+    /// Results the program may keep (returned, stored, passed to a function
+    /// that stores them; see `codira_hir`'s `string_escape`): they continue
+    /// only in a buffer of other kept results, sized for what they hold.
+    Kept = 1,
+}
 
 /// The most a plan allocates up front for one piece whose size has no
 /// useful bound (a float with a huge precision); it grows past it.
@@ -151,6 +190,17 @@ fn inline_padding(spec: &FormatSpec, bits: u32) -> Option<Padding> {
         align: spec.align.unwrap_or(FormatAlign::Right),
         zero: spec.zero,
     })
+}
+
+/// Whether a hole's spec asks for nothing but the value's plain text
+/// (`{n}`, `{n:?}` for a number).
+fn format_is_plain(spec: &FormatSpec) -> bool {
+    !spec.width.is_present()
+        && !spec.precision.is_present()
+        && !spec.plus
+        && !spec.alternate
+        && !spec.zero
+        && matches!(spec.kind, FormatKind::Display | FormatKind::Debug)
 }
 
 /// The size of an integer type in bits (`usize` and `isize` are 64 bits
@@ -485,6 +535,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         current: BasicValueEnum<'ink>,
         value: IntValue<'ink>,
         signed: bool,
+        exact: Option<IntValue<'ink>>,
     ) -> BasicValueEnum<'ink> {
         let usize_ty = self.hir_types.get_usize_type();
         let slow = |this: &mut Self,
@@ -518,9 +569,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         }
         .expect("failed to widen an integer");
         // The most digits (and sign) a value of its type has: what the plan
-        // set aside for it.
+        // set aside for it, unless the plan sized its buffer for the text
+        // itself.
         let bound = int_text_bound(value.get_type().get_bit_width(), signed);
-        let room = usize_ty.const_int(bound, false);
+        let room = exact.unwrap_or_else(|| usize_ty.const_int(bound, false));
         self.gen_fast_append(
             current,
             room,
@@ -557,6 +609,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         value: IntValue<'ink>,
         signed: bool,
         padding: Padding,
+        exact: Option<IntValue<'ink>>,
     ) -> BasicValueEnum<'ink> {
         let usize_ty = self.hir_types.get_usize_type();
         let i8_ty = self.context.i8_type();
@@ -575,7 +628,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .build_array_alloca(i8_ty, i64_ty.const_int(24, false), "digits")
             .expect(ok);
         let bound = int_text_bound(value.get_type().get_bit_width(), signed);
-        let room = usize_ty.const_int(padding.width.max(bound), false);
+        let room = exact.unwrap_or_else(|| usize_ty.const_int(padding.width.max(bound), false));
         let slow = |this: &mut Self,
                     buf: PointerValue<'ink>,
                     start: IntValue<'ink>,
@@ -949,33 +1002,42 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         function
     }
 
-    /// The slot holding the last plan result of the function being
-    /// generated (the all-zero `String`, with no buffer, until there is
-    /// one).
-    fn plan_arena(&mut self) -> PointerValue<'ink> {
-        if let Some((function, slot)) = self.plan_arena {
-            if function == self.fn_value {
-                return slot;
-            }
+    /// The slot holding the last plan result of `arena` in the function
+    /// being generated (the all-zero `String`, with no buffer, until there
+    /// is one).
+    fn plan_arena(&mut self, arena: Arena) -> PointerValue<'ink> {
+        let mut slots = match self.plan_arena {
+            Some((function, slots)) if function == self.fn_value => slots,
+            _ => [None; 2],
+        };
+        if let Some(slot) = slots[arena as usize] {
+            return slot;
         }
         let string_ty = self.hir_types.get_string_type();
         let builder = self.new_alloca_builder();
+        let name = match arena {
+            Arena::Temporary => "plan.arena",
+            Arena::Kept => "plan.kept",
+        };
         let slot = builder
-            .build_alloca(string_ty, "plan.arena")
+            .build_alloca(string_ty, name)
             .expect("failed to allocate a plan's slot");
         builder
             .build_store(slot, string_ty.const_zero())
             .expect("failed to start a plan's slot");
-        self.plan_arena = Some((self.fn_value, slot));
+        slots[arena as usize] = Some(slot);
+        self.plan_arena = Some((self.fn_value, slots));
         slot
     }
 
     /// The empty string a plan of `capacity` bytes starts from: at the end
-    /// of the function's last plan result when that is allowed (see the
-    /// module docs), else at the fill of a new buffer of at least
-    /// [`PLAN_CHUNK`] bytes.
-    fn plan_start(&mut self, capacity: IntValue<'ink>) -> BasicValueEnum<'ink> {
-        let slot = self.plan_arena();
+    /// of the function's last plan result of `arena` when that is allowed
+    /// (see the module docs), else at the fill of a new buffer -- for a
+    /// temporary, of at least [`PLAN_CHUNK`] bytes; for a kept result, of
+    /// exactly `capacity` bytes the first time, then of up to twice the
+    /// last kept buffer's capacity, at most [`KEPT_CHUNK`].
+    fn plan_start(&mut self, capacity: IntValue<'ink>, arena: Arena) -> BasicValueEnum<'ink> {
+        let slot = self.plan_arena(arena);
         let string_ty = self.hir_types.get_string_type();
         let last = self
             .builder
@@ -987,30 +1049,106 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .build_int_add(start, len, "plan.at")
             .expect("failed to add");
         let empty = self.make_string(buf, end, len.get_type().const_zero());
-        let chunk = capacity.get_type().const_int(PLAN_CHUNK, false);
         self.gen_fast_append(
             empty,
             capacity,
             false,
             |this, _| this.hir_types.get_usize_type().const_zero(),
-            |this, _, _, _| {
-                let small = this
-                    .builder
-                    .build_int_compare(IntPredicate::ULT, capacity, chunk, "plan.small")
-                    .expect("failed to compare");
-                let size = this
-                    .builder
-                    .build_select(small, chunk, capacity, "plan.size")
-                    .expect("failed to select")
-                    .into_int_value();
+            |this, last, _, _| {
+                let size = match arena {
+                    Arena::Temporary => this.at_least(capacity, PLAN_CHUNK, "plan.size"),
+                    Arena::Kept => this.kept_size(last, capacity),
+                };
                 this.with_capacity(size)
             },
         )
     }
 
-    /// Records `result` as the function's last plan result.
-    fn plan_finish(&mut self, result: BasicValueEnum<'ink>) {
-        let slot = self.plan_arena();
+    /// `value`, or `least` if that is more.
+    fn at_least(&self, value: IntValue<'ink>, least: u64, name: &str) -> IntValue<'ink> {
+        let least = value.get_type().const_int(least, false);
+        let small = self
+            .builder
+            .build_int_compare(IntPredicate::ULT, value, least, name)
+            .expect("failed to compare");
+        self.builder
+            .build_select(small, least, value, name)
+            .expect("failed to select")
+            .into_int_value()
+    }
+
+    /// The size of the next buffer for kept results, which need `capacity`
+    /// bytes: exactly that when `last`, the buffer of the function's last
+    /// kept result, is null (this call has kept nothing yet); else up to
+    /// twice `last`'s capacity, at most [`KEPT_CHUNK`], so a loop that keeps
+    /// what it makes allocates once per few dozen results and a call that
+    /// keeps one result allocates only what it holds.
+    fn kept_size(&mut self, last: PointerValue<'ink>, capacity: IntValue<'ink>) -> IntValue<'ink> {
+        let usize_ty = self.hir_types.get_usize_type();
+        let ptr_ty = self.context.ptr_type(AddressSpace::default());
+        let ok = "failed to size a buffer for kept results";
+        let first = self.builder.build_is_null(last, "kept.first").expect(ok);
+        let from = self.builder.get_insert_block().expect("inside a block");
+        let grow = self.context.append_basic_block(self.fn_value, "kept.grow");
+        let sized = self.context.append_basic_block(self.fn_value, "kept.sized");
+        self.builder
+            .build_conditional_branch(first, sized, grow)
+            .expect(ok);
+        self.builder.position_at_end(grow);
+        let payload = self
+            .builder
+            .build_load(ptr_ty, last, "kept.payload")
+            .expect(ok)
+            .into_pointer_value();
+        let capacity_ptr = self.byte_offset(
+            payload,
+            usize_ty.const_int(CAPACITY_OFFSET, false),
+            "kept.capacity_ptr",
+        );
+        let old = self
+            .builder
+            .build_load(usize_ty, capacity_ptr, "kept.capacity")
+            .expect(ok)
+            .into_int_value();
+        // The array's capacity counts the owner word; the text's does not.
+        let text = self
+            .builder
+            .build_int_sub(old, usize_ty.const_int(OWNER_BYTES, false), "kept.text")
+            .expect(ok);
+        let doubled = self
+            .builder
+            .build_int_add(text, text, "kept.doubled")
+            .expect(ok);
+        let limit = usize_ty.const_int(KEPT_CHUNK, false);
+        let over = self
+            .builder
+            .build_int_compare(IntPredicate::UGT, doubled, limit, "kept.over")
+            .expect(ok);
+        let next = self
+            .builder
+            .build_select(over, limit, doubled, "kept.next")
+            .expect(ok)
+            .into_int_value();
+        let short = self
+            .builder
+            .build_int_compare(IntPredicate::ULT, next, capacity, "kept.short")
+            .expect(ok);
+        let grown = self
+            .builder
+            .build_select(short, capacity, next, "kept.grown")
+            .expect(ok)
+            .into_int_value();
+        let grow_end = self.builder.get_insert_block().expect("inside a block");
+        self.builder.build_unconditional_branch(sized).expect(ok);
+        self.builder.position_at_end(sized);
+        let size = self.builder.build_phi(usize_ty, "kept.size").expect(ok);
+        size.add_incoming(&[(&capacity, from), (&grown, grow_end)]);
+        size.as_basic_value().into_int_value()
+    }
+
+    /// Records `result` as the function's last plan result of `arena`.
+    fn plan_finish(&mut self, result: BasicValueEnum<'ink>, arena: Arena) {
+        let slot = self.plan_arena(arena);
         self.builder
             .build_store(slot, result)
             .expect("failed to store a plan's result");
@@ -1218,17 +1356,227 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         }
     }
 
-    /// `current` with `piece` appended.
+    /// `current` with `piece` appended; `exact` is the length of its text
+    /// when the plan computed it (see [`Self::piece_text_len`]).
     fn append_piece(
         &mut self,
         current: BasicValueEnum<'ink>,
         piece: Piece<'ink>,
+        exact: Option<IntValue<'ink>>,
     ) -> BasicValueEnum<'ink> {
         match piece {
             Piece::Bytes(data, len) => self.append_bytes(current, data, len),
-            Piece::Int(value, signed) => self.append_int(current, value, signed),
+            Piece::Int(value, signed) => self.append_int(current, value, signed, exact),
             Piece::Float(value) => self.append_float(current, value),
-            Piece::Format(hole) => self.append_format(current, hole),
+            Piece::Format(hole) => self.append_format(current, hole, exact),
+        }
+    }
+
+    /// The length of the text of an integer of at most 64 bits, sign
+    /// included: the digit count `codira.fmt.dec` computes (from the bit
+    /// length, corrected by one comparison with a power of ten), inline.
+    fn int_text_len(&mut self, value: IntValue<'ink>, signed: bool) -> IntValue<'ink> {
+        let i64_ty = self.context.i64_type();
+        let ok = "failed to count an integer's digits";
+        // The digit writer owns the table of powers of ten.
+        self.decimal_function();
+        let powers = self
+            .module
+            .get_global("codira.fmt.pow10")
+            .expect("the digit writer made its table");
+        let b = &self.builder;
+        let wide = if signed {
+            b.build_int_s_extend_or_bit_cast(value, i64_ty, "wide")
+        } else {
+            b.build_int_z_extend_or_bit_cast(value, i64_ty, "wide")
+        }
+        .expect(ok);
+        let (magnitude, sign) = if signed {
+            let negative = b
+                .build_int_compare(IntPredicate::SLT, wide, i64_ty.const_zero(), "negative")
+                .expect(ok);
+            let negated = b.build_int_neg(wide, "negated").expect(ok);
+            let magnitude = b
+                .build_select(negative, negated, wide, "magnitude")
+                .expect(ok)
+                .into_int_value();
+            let sign = b.build_int_z_extend(negative, i64_ty, "sign").expect(ok);
+            (magnitude, sign)
+        } else {
+            (wide, i64_ty.const_zero())
+        };
+        let ctlz = inkwell::intrinsics::Intrinsic::find("llvm.ctlz")
+            .and_then(|intrinsic| intrinsic.get_declaration(self.module, &[i64_ty.into()]))
+            .expect("llvm.ctlz is always available");
+        let or_one = b
+            .build_or(magnitude, i64_ty.const_int(1, false), "or_one")
+            .expect(ok);
+        let zeros = b
+            .build_call(
+                ctlz,
+                &[or_one.into(), self.context.bool_type().const_zero().into()],
+                "zeros",
+            )
+            .expect(ok)
+            .try_as_basic_value()
+            .basic()
+            .expect("llvm.ctlz returns a count")
+            .into_int_value();
+        let bits = b
+            .build_int_sub(i64_ty.const_int(64, false), zeros, "bits")
+            .expect(ok);
+        let scaled = b
+            .build_int_mul(bits, i64_ty.const_int(1233, false), "scaled")
+            .expect(ok);
+        let estimate = b
+            .build_right_shift(scaled, i64_ty.const_int(12, false), false, "estimate")
+            .expect(ok);
+        let table = i64_ty.array_type(20);
+        // Safety: `estimate` is at most 19, within the 20 powers.
+        let power_ptr = unsafe {
+            b.build_gep(
+                table,
+                powers.as_pointer_value(),
+                &[i64_ty.const_zero(), estimate],
+                "power_ptr",
+            )
+            .expect(ok)
+        };
+        let power = b
+            .build_load(i64_ty, power_ptr, "power")
+            .expect(ok)
+            .into_int_value();
+        let below = b
+            .build_int_compare(IntPredicate::ULT, magnitude, power, "below")
+            .expect(ok);
+        let below = b.build_int_z_extend(below, i64_ty, "below").expect(ok);
+        let count = b
+            .build_int_add(estimate, i64_ty.const_int(1, false), "count")
+            .and_then(|count| b.build_int_sub(count, below, "count"))
+            .and_then(|count| b.build_int_add(count, sign, "text.len"))
+            .expect(ok);
+        let usize_ty = self.hir_types.get_usize_type();
+        self.builder
+            .build_int_cast(count, usize_ty, "text.len")
+            .expect(ok)
+    }
+
+    /// The exact length of `piece`'s text where it is cheap to know before
+    /// writing it: an integer of at most 64 bits, plain or with a padding
+    /// the plan writes inline (then at least its width). A plan whose result
+    /// is kept sizes its buffer with these, and appends the piece with room
+    /// for exactly its text.
+    fn piece_text_len(&mut self, piece: &Piece<'ink>) -> Option<IntValue<'ink>> {
+        let usize_ty = self.hir_types.get_usize_type();
+        match piece {
+            Piece::Int(value, signed) if value.get_type().get_bit_width() <= 64 => {
+                Some(self.int_text_len(*value, *signed))
+            }
+            Piece::Format(hole) if matches!(hole.ty.interned(), TyKind::Int(_)) => {
+                let value = hole.value.into_int_value();
+                let bits = value.get_type().get_bit_width();
+                let signed = self.is_signed_ty(&hole.ty);
+                if bits > 64 {
+                    return None;
+                }
+                if format_is_plain(&hole.spec) {
+                    return Some(self.int_text_len(value, signed));
+                }
+                let padding = inline_padding(&hole.spec, bits)?;
+                let len = self.int_text_len(value, signed);
+                let width = usize_ty.const_int(padding.width, false);
+                let short = self
+                    .builder
+                    .build_int_compare(IntPredicate::ULT, len, width, "padded.short")
+                    .expect("failed to compare");
+                Some(
+                    self.builder
+                        .build_select(short, width, len, "padded.len")
+                        .expect("failed to select")
+                        .into_int_value(),
+                )
+            }
+            _ => None,
+        }
+    }
+
+    /// The bytes a kept plan sets aside for all of `pieces`: their exact
+    /// lengths where [`Self::piece_text_len`] knows them, else what
+    /// [`Self::piece_estimate`] allows.
+    fn kept_capacity(
+        &mut self,
+        pieces: &[Piece<'ink>],
+        exact: &[Option<IntValue<'ink>>],
+    ) -> IntValue<'ink> {
+        let usize_ty = self.hir_types.get_usize_type();
+        let mut constant = 0u64;
+        let mut total = None::<IntValue<'ink>>;
+        for (piece, exact) in pieces.iter().zip(exact) {
+            let (fixed, dynamic) = match exact {
+                Some(len) => (0, Some(*len)),
+                None => self.piece_estimate(piece),
+            };
+            constant = constant.saturating_add(fixed);
+            if let Some(dynamic) = dynamic {
+                total = Some(match total {
+                    None => dynamic,
+                    Some(sum) => self
+                        .builder
+                        .build_int_add(sum, dynamic, "plan.len")
+                        .expect("failed to add lengths"),
+                });
+            }
+        }
+        let constant = usize_ty.const_int(constant, false);
+        match total {
+            None => constant,
+            Some(sum) => self
+                .builder
+                .build_int_add(sum, constant, "plan.capacity")
+                .expect("failed to add a capacity"),
+        }
+    }
+
+    /// Whether the plan `expr` makes a result the program may keep: one
+    /// returned, stored in an object, an array or a map, or passed to a
+    /// function that does so (`codira_hir`'s `string_escape`).
+    fn plan_is_kept(&self, expr: ExprId) -> bool {
+        codira_hir::string_escape::is_kept(self.db, self.hir_function, expr)
+    }
+
+    /// Starts a plan of `pieces` in `arena` (see the module docs): a kept
+    /// result is sized for the pieces' text, from their exact lengths where
+    /// they are cheap to count; a temporary, for the most they can be.
+    /// Returns the empty string to append the pieces to, and each piece's
+    /// exact length where the plan counted it.
+    fn plan_begin(
+        &mut self,
+        pieces: &[Piece<'ink>],
+        arena: Arena,
+    ) -> (BasicValueEnum<'ink>, Vec<Option<IntValue<'ink>>>) {
+        match arena {
+            Arena::Kept => {
+                let exact: Vec<_> = pieces
+                    .iter()
+                    .map(|piece| self.piece_text_len(piece))
+                    .collect();
+                let capacity = self.kept_capacity(pieces, &exact);
+                (self.plan_start(capacity, arena), exact)
+            }
+            Arena::Temporary => {
+                let capacity = self.plan_capacity(pieces);
+                (self.plan_start(capacity, arena), vec![None; pieces.len()])
+            }
+        }
+    }
+
+    /// The arena of the plan `expr`: [`Arena::Kept`] when its result may be
+    /// kept (see [`Self::plan_is_kept`]).
+    fn plan_arena_of(&self, expr: ExprId) -> Arena {
+        if self.plan_is_kept(expr) {
+            Arena::Kept
+        } else {
+            Arena::Temporary
         }
     }
 
@@ -1242,15 +1590,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         &mut self,
         current: BasicValueEnum<'ink>,
         hole: FormatPiece<'ink>,
+        exact: Option<IntValue<'ink>>,
     ) -> BasicValueEnum<'ink> {
         let spec = &hole.spec;
         let numeric = matches!(hole.ty.interned(), TyKind::Int(_) | TyKind::Float(_));
-        let plain = !spec.width.is_present()
-            && !spec.precision.is_present()
-            && !spec.plus
-            && !spec.alternate
-            && !spec.zero
-            && matches!(spec.kind, FormatKind::Display | FormatKind::Debug);
+        let plain = format_is_plain(spec);
         if spec.is_debug() && !numeric {
             if !spec.width.is_present() {
                 return self.append_debug(current, &hole.ty, hole.value, spec.is_pretty());
@@ -1274,10 +1618,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 let value = hole.value.into_int_value();
                 let signed = self.is_signed_ty(&hole.ty);
                 if plain {
-                    return self.append_int(current, value, signed);
+                    return self.append_int(current, value, signed, exact);
                 }
                 if let Some(padding) = inline_padding(spec, value.get_type().get_bit_width()) {
-                    return self.append_padded_int(current, value, signed, padding);
+                    return self.append_padded_int(current, value, signed, padding, exact);
                 }
                 let bits = value.get_type().get_bit_width();
                 let (low, high) = self.int_halves(value, signed);
@@ -1390,19 +1734,19 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         for &part in rest {
             pieces.push(self.eval_piece(part)?);
         }
-        let fresh_plan = start.is_none();
-        let mut value = match start {
-            Some(start) => start,
+        let (mut value, exact, arena) = match start {
+            Some(start) => (start, vec![None; pieces.len()], None),
             None => {
-                let capacity = self.plan_capacity(&pieces);
-                self.plan_start(capacity)
+                let arena = self.plan_arena_of(expr);
+                let (value, exact) = self.plan_begin(&pieces, arena);
+                (value, exact, Some(arena))
             }
         };
-        for piece in pieces {
-            value = self.append_piece(value, piece);
+        for (piece, exact) in pieces.into_iter().zip(exact) {
+            value = self.append_piece(value, piece, exact);
         }
-        if fresh_plan {
-            self.plan_finish(value);
+        if let Some(arena) = arena {
+            self.plan_finish(value, arena);
         }
         Some(value)
     }
@@ -1429,7 +1773,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .build_load(string_ty, place, "string")
             .expect("failed to load a string place");
         for piece in pieces {
-            value = self.append_piece(value, piece);
+            value = self.append_piece(value, piece, None);
         }
         self.builder
             .build_store(place, value)
@@ -1448,29 +1792,41 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         match ty.interned() {
             TyKind::Int(_) => {
                 let signed = self.is_signed_ty(ty);
-                self.append_int(current, value.into_int_value(), signed)
+                self.append_int(current, value.into_int_value(), signed, None)
             }
             TyKind::Float(_) => self.append_float(current, value.into_float_value()),
             other => unreachable!("not a number: {other:?}"),
         }
     }
 
-    /// `x.to_string()` for a number `x` of type `ty`: a plan of one piece.
+    /// `x.to_string()` for a number `x` of type `ty`: a plan of one piece
+    /// in `arena`.
     pub(super) fn gen_number_string(
         &mut self,
         ty: &Ty,
         value: BasicValueEnum<'ink>,
+        arena: Arena,
     ) -> BasicValueEnum<'ink> {
         let piece = match ty.interned() {
             TyKind::Int(_) => Piece::Int(value.into_int_value(), self.is_signed_ty(ty)),
             TyKind::Float(_) => Piece::Float(value.into_float_value()),
             other => unreachable!("not a number: {other:?}"),
         };
-        let capacity = self.plan_capacity(std::slice::from_ref(&piece));
-        let start = self.plan_start(capacity);
-        let result = self.append_piece(start, piece);
-        self.plan_finish(result);
+        let (start, exact) = self.plan_begin(std::slice::from_ref(&piece), arena);
+        let result = self.append_piece(start, piece, exact[0]);
+        self.plan_finish(result, arena);
         result
+    }
+
+    /// `expr`, a number's `to_string()`, as a plan of one piece.
+    pub(super) fn gen_number_to_string(
+        &mut self,
+        expr: ExprId,
+        ty: &Ty,
+        value: BasicValueEnum<'ink>,
+    ) -> BasicValueEnum<'ink> {
+        let arena = self.plan_arena_of(expr);
+        self.gen_number_string(ty, value, arena)
     }
 
     /// A new `String` with room for `capacity` bytes (for the debug form).

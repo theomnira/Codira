@@ -117,9 +117,10 @@ pub(crate) struct BodyIrGenerator<'db, 'ink, 't> {
     /// What the hardware-safety mode undoes before each return. See
     /// `safety`.
     safety: safety::SafetyState<'ink>,
-    /// The slot holding the last result of a format plan in the function
-    /// being generated, from which the next plan continues (see `fabric`).
-    plan_arena: Option<(FunctionValue<'ink>, PointerValue<'ink>)>,
+    /// The slots holding the last result of a format plan in the function
+    /// being generated, from which the next plan continues: one for
+    /// temporaries, one for results the program may keep (see `fabric`).
+    plan_arena: Option<(FunctionValue<'ink>, [Option<PointerValue<'ink>>; 2])>,
     /// The escape analysis of `hir_function` when frame allocation is on or
     /// the function is `@region`. See `frame`.
     escapes: Option<Arc<codira_hir::escape::FunctionEscapes>>,

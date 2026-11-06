@@ -670,3 +670,116 @@ public func main() {
         "{errors}"
     );
 }
+
+#[test]
+fn a_kept_plan_gets_a_buffer_sized_for_its_text() {
+    let ir = optimized_ir(
+        r#"
+public func kept(n: i64) -> String { f"id-{n}" }
+public func kept_padded(n: i32) -> String { f"<{n:08}>" }
+public func temporary(n: i64) -> usize {
+    let s = f"id-{n}"
+    s.len()
+}
+"#,
+    );
+    let capacity_call = |name: &str| {
+        let function = function_ir(&ir, name);
+        function
+            .lines()
+            .find(|line| line.contains("call void %codira.string_with_capacity_ptr"))
+            .unwrap_or_else(|| panic!("`{name}` allocates no buffer:\n{function}"))
+            .to_owned()
+    };
+    // A returned result: its buffer holds the literal pieces and the digits
+    // counted from the number, not a chunk, and the digits are still
+    // written inline, with room for exactly them.
+    for name in ["kept", "kept_padded"] {
+        let call = capacity_call(name);
+        assert!(call.contains("(i64 %plan.capacity"), "{name}: {call}");
+        let function = function_ir(&ir, name);
+        assert!(function.contains("@llvm.ctlz.i64"), "{function}");
+        assert!(function.contains("append.fast"), "{function}");
+    }
+    // A temporary starts in a shared chunk of at least 256 bytes.
+    let call = capacity_call("temporary");
+    assert!(call.contains("(i64 256,"), "{call}");
+}
+
+/// `v` formatted as the spec `spec` (one of those
+/// `kept_plans_write_every_integer_as_rust_does` uses) says.
+fn rust_format(v: i128, spec: &str) -> String {
+    match spec {
+        ":08" => format!("{v:08}"),
+        ":>12" => format!("{v:>12}"),
+        ":*^9" => format!("{v:*^9}"),
+        ":<3" => format!("{v:<3}"),
+        ":+" => format!("{v:+}"),
+        ":>4" => format!("{v:>4}"),
+        _ => format!("{v}"),
+    }
+}
+
+#[test]
+fn kept_plans_write_every_integer_as_rust_does() {
+    let mut rng = Rng(0x0dd_ba11);
+    let types = [
+        ("i64", 64, true),
+        ("u64", 64, false),
+        ("i32", 32, true),
+        ("u32", 32, false),
+        ("i16", 16, true),
+        ("u8", 8, false),
+        ("i8", 8, true),
+        ("i128", 128, true),
+    ];
+    let specs = ["", ":08", ":>12", ":*^9", ":<3", ":+", ":>4"];
+    let mut program = String::new();
+    let mut calls = String::new();
+    let mut expected = String::new();
+    for (index, (ty, bits, signed)) in types.into_iter().enumerate() {
+        for (k, spec) in specs.iter().enumerate() {
+            let name = format!("f{index}_{k}");
+            let _ = writeln!(
+                program,
+                "func {name}(v: {ty}, w: {ty}) -> String {{ f\"[{{v{spec}}}|{{w}}]\" }}"
+            );
+            for _ in 0..6 {
+                // A magnitude of any length the type allows, either sign.
+                let magnitude_bits = if signed { bits - 1 } else { bits };
+                let random = u128::from(rng.next()) << 64 | u128::from(rng.next());
+                let shift = 128 - magnitude_bits + rng.below(u64::from(magnitude_bits)) as u32;
+                let magnitude = (random >> shift) as i128;
+                let v = if signed && rng.below(2) == 0 {
+                    -magnitude
+                } else {
+                    magnitude
+                };
+                let w = v / 3;
+                let _ = writeln!(calls, "    kept.push({name}({v}, {w}))");
+                let _ = writeln!(expected, "[{}|{w}]", rust_format(v, spec));
+            }
+        }
+    }
+    // A number's `to_string()` returned is a kept plan of one piece.
+    program.push_str("func digits(v: i64) -> String { v.to_string() }\n");
+    for v in [0i64, 7, -7, 10, 99, -100, i64::MAX, i64::MIN + 1, 1 << 40] {
+        let _ = writeln!(calls, "    kept.push(digits({v}))");
+        let _ = writeln!(expected, "{v}");
+    }
+    // A loop that keeps every result: they continue one after another in
+    // buffers of kept results, which grow.
+    let _ = writeln!(
+        calls,
+        "    var i = -150\n    while i < 150 {{\n        let n = i * 7919\n        kept.push(f\"<{{n:>9}}|{{i}}>\")\n        kept.push(n.to_string())\n        i += 1\n    }}"
+    );
+    for i in -150i64..150 {
+        let n = i * 7919;
+        let _ = writeln!(expected, "<{n:>9}|{i}>\n{n}");
+    }
+    let _ = write!(
+        program,
+        "public func main() {{\n    var kept: [String] = []\n{calls}    for s in kept {{ println(s) }}\n}}\n"
+    );
+    assert_eq!(run_ok(&program), expected);
+}

@@ -349,6 +349,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             arg_values.push(self.gen_expr(arg)?);
         }
         if op == StringOp::ToString {
+            let receiver_ty = self.infer[receiver].clone();
+            if matches!(receiver_ty.interned(), TyKind::Int(_) | TyKind::Float(_)) {
+                return Some(self.gen_number_to_string(expr, &receiver_ty, receiver_value));
+            }
             return Some(self.gen_to_string(receiver, receiver_value));
         }
         if op == StringOp::DebugString {
@@ -689,7 +693,9 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             }
             // A plan of one piece: the digits written into the function's
             // plan buffer (see `fabric`), usually with no allocation.
-            TyKind::Int(_) | TyKind::Float(_) => self.gen_number_string(ty, value),
+            TyKind::Int(_) | TyKind::Float(_) => {
+                self.gen_number_string(ty, value, super::fabric::Arena::Temporary)
+            }
             TyKind::Bool => {
                 let byte = self
                     .builder

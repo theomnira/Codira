@@ -98,7 +98,7 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
 }
 
-/// The churn example allocates more than ten times the limit in total, with
+/// The churn example allocates more than five times the limit in total, with
 /// well under a megabyte live; under an 8 MiB limit it completes, its check
 /// value says no live object was lost, and the statistics show the
 /// collections that made it possible.
@@ -129,7 +129,7 @@ fn a_program_allocating_far_more_than_the_limit_completes() {
         .and_then(|rest| rest.split_whitespace().next())
         .and_then(|n| n.parse().ok())
         .unwrap_or_else(|| panic!("no allocated line\n{err}"));
-    assert!(allocated_mib > 80.0, "{err}");
+    assert!(allocated_mib > 5.0 * 8.0, "{err}");
     let collections: u64 = err
         .lines()
         .find_map(|line| line.trim().strip_prefix("collections"))
