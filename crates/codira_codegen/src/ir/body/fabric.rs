@@ -741,7 +741,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     /// number's bit length (`bits * 1233 >> 12` is `floor(bits * log10 2)`,
     /// corrected by one comparison with a power of ten), then two digits are
     /// written per step from a table, from the last one back.
-    fn decimal_function(&mut self) -> FunctionValue<'ink> {
+    pub(super) fn decimal_function(&mut self) -> FunctionValue<'ink> {
         const NAME: &str = "codira.fmt.dec";
         if let Some(function) = self.module.get_function(NAME) {
             return function;

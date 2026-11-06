@@ -225,13 +225,17 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                         .build_int_z_extend(value, i64_ty, "int.wide")
                         .expect("failed to widen an integer")
                 };
+                // The digit writer `+=` uses for integers (`codira.fmt.dec`,
+                // generated in this module): no call into the runtime.
+                let decimal = self.decimal_function();
                 self.push_formatted(array, 20, |this, dest| {
-                    let flag = this.context.i8_type().const_int(u64::from(signed), false);
-                    this.gen_runtime_call_value(
-                        &intrinsics::bytes_format_int,
-                        &[dest.into(), wide.into(), flag.into()],
-                    )
-                    .into_int_value()
+                    let flag = this.context.bool_type().const_int(u64::from(signed), false);
+                    this.builder
+                        .build_call(decimal, &[dest.into(), wide.into(), flag.into()], "digits")
+                        .expect("failed to call the digit writer")
+                        .try_as_basic_value()
+                        .unwrap_basic()
+                        .into_int_value()
                 });
                 Some(self.gen_empty())
             }

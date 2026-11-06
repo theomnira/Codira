@@ -6,11 +6,11 @@
 //!   array's elements to a larger buffer, and the element-wise operations
 //!   generated code hands to the runtime instead of emitting them inline
 //!   (`sort`, `binary_search`, `reverse`).
-//! - The number formatting of the byte-buffer methods of `[u8]`:
-//!   `codira.bytes_format_int` (`push_int`) and
-//!   `codira.bytes_format_json_f64` (`push_json_float`) write the text into
-//!   the spare capacity generated code has made room in, and return its
-//!   length.
+//! - The float formatting of `[u8]`'s `push_json_float`:
+//!   `codira.bytes_format_json_f64` writes the text into the spare capacity
+//!   generated code has made room in, and returns its length. (`push_int`
+//!   needs no runtime call: it uses the digit writer generated code has for
+//!   `+=`.)
 //!
 //! The compiler side is `codira_codegen::intrinsics::array_functions` and
 //! `codira_codegen::ir::body::arrays`; names and signatures must match the
@@ -219,68 +219,6 @@ extern "C" fn array_reverse(data: *mut u8, len: usize, stride: usize) {
     }
 }
 
-/// The bytes [`bytes_format_int`] may write: `-9223372036854775808` and
-/// `18446744073709551615` are 20 long.
-pub const FORMAT_INT_CAPACITY: usize = 20;
-
-/// Two decimal digits for every value below 100, for [`format_u64`].
-const DIGIT_PAIRS: &[u8; 200] = b"\
-0001020304050607080910111213141516171819\
-2021222324252627282930313233343536373839\
-4041424344454647484950515253545556575859\
-6061626364656667686970717273747576777879\
-8081828384858687888990919293949596979899";
-
-/// The decimal digits of `value`, right-aligned in `buf`; returns where they
-/// start.
-fn format_u64(mut value: u64, buf: &mut [u8; FORMAT_INT_CAPACITY]) -> usize {
-    let mut at = FORMAT_INT_CAPACITY;
-    while value >= 100 {
-        let pair = (value % 100) as usize * 2;
-        value /= 100;
-        at -= 2;
-        buf[at..at + 2].copy_from_slice(&DIGIT_PAIRS[pair..pair + 2]);
-    }
-    if value >= 10 {
-        let pair = value as usize * 2;
-        at -= 2;
-        buf[at..at + 2].copy_from_slice(&DIGIT_PAIRS[pair..pair + 2]);
-    } else {
-        at -= 1;
-        buf[at] = b'0' + value as u8;
-    }
-    at
-}
-
-/// `bytes.push_int(n)`: the decimal text of `value` -- an `i64` when
-/// `signed` is non-zero, a `u64` otherwise -- at `out`, returning its
-/// length. Generated code has made room for [`FORMAT_INT_CAPACITY`] bytes
-/// there. The text is what `to_string()` writes for the same integer.
-extern "C" fn bytes_format_int(out: *mut u8, value: u64, signed: u8) -> usize {
-    let mut buf = [0u8; FORMAT_INT_CAPACITY];
-    let negative = signed != 0 && (value as i64) < 0;
-    let magnitude = if negative {
-        (value as i64).unsigned_abs()
-    } else {
-        value
-    };
-    let start = format_u64(magnitude, &mut buf);
-    let digits = &buf[start..];
-    let len = digits.len() + usize::from(negative);
-    debug_assert!(len <= FORMAT_INT_CAPACITY);
-    // Safety: generated code passes `FORMAT_INT_CAPACITY` writable bytes of
-    // the array's spare capacity, and `len` is at most that.
-    unsafe {
-        let mut dest = out;
-        if negative {
-            *dest = b'-';
-            dest = dest.add(1);
-        }
-        std::ptr::copy_nonoverlapping(digits.as_ptr(), dest, digits.len());
-    }
-    len
-}
-
 /// `bytes.push_json_float(x)`: the JSON text of `value` at `out` (room for
 /// [`crate::native_json::FORMAT_F64_CAPACITY`] bytes), as
 /// `codira_json_format_f64` writes it; returns its length.
@@ -309,45 +247,8 @@ pub(crate) fn functions() -> Vec<FunctionDefinition> {
             "codira.array_reverse",
         ),
         IntoFunctionDefinition::into(
-            bytes_format_int as extern "C" fn(*mut u8, u64, u8) -> usize,
-            "codira.bytes_format_int",
-        ),
-        IntoFunctionDefinition::into(
             bytes_format_json_f64 as extern "C" fn(f64, *mut u8) -> usize,
             "codira.bytes_format_json_f64",
         ),
     ]
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn int_text(value: u64, signed: bool) -> String {
-        let mut out = [0u8; FORMAT_INT_CAPACITY];
-        let len = bytes_format_int(out.as_mut_ptr(), value, u8::from(signed));
-        String::from_utf8(out[..len].to_vec()).unwrap()
-    }
-
-    /// Every boundary, and a seeded spread of values, are written as Rust's
-    /// `to_string` writes them.
-    #[test]
-    fn integers_are_written_as_to_string_writes_them() {
-        for value in [0i64, 1, -1, 9, 10, 99, 100, -100, i64::MAX, i64::MIN] {
-            assert_eq!(int_text(value as u64, true), value.to_string());
-        }
-        for value in [0u64, 9, 10, 1 << 63, u64::MAX] {
-            assert_eq!(int_text(value, false), value.to_string());
-        }
-        let mut state = 0x9e37_79b9_7f4a_7c15u64;
-        for _ in 0..100_000 {
-            state ^= state >> 12;
-            state ^= state << 25;
-            state ^= state >> 27;
-            let bits = state.wrapping_mul(0x2545_f491_4f6c_dd1d);
-            let value = bits >> (bits % 64);
-            assert_eq!(int_text(value, false), value.to_string());
-            assert_eq!(int_text(value, true), (value as i64).to_string());
-        }
-    }
 }

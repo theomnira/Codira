@@ -400,11 +400,6 @@ runtime_functions! {
     /// Reverses the `len` elements of `stride` bytes at `data` in place.
     pub fn array_reverse(data: *mut u8, len: usize, stride: usize) -> () = "codira.array_reverse";
 
-    /// `bytes.push_int(n)`: writes the decimal text of `value` (read as an
-    /// `i64` when `signed` is 1, else as a `u64`) to the 20 bytes at `out`
-    /// and returns its length.
-    pub fn bytes_format_int(out: *mut u8, value: u64, signed: u8) -> usize = "codira.bytes_format_int";
-
     /// `bytes.push_json_float(x)`: writes the JSON text of `value` to the
     /// 24 bytes at `out` and returns its length.
     pub fn bytes_format_json_f64(value: f64, out: *mut u8) -> usize = "codira.bytes_format_json_f64";
@@ -412,13 +407,12 @@ runtime_functions! {
 
 /// Every runtime function the array methods lower to (`push`, `sort`, ...),
 /// collected together like [`print_functions`].
-pub fn array_functions() -> [&'static dyn Intrinsic; 6] {
+pub fn array_functions() -> [&'static dyn Intrinsic; 5] {
     [
         &array_grow,
         &array_sort,
         &array_binary_search,
         &array_reverse,
-        &bytes_format_int,
         &bytes_format_json_f64,
     ]
 }
