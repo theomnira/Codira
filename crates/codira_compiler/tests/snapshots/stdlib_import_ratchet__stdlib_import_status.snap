@@ -3,7 +3,7 @@ source: crates/codira_compiler/tests/stdlib_import_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-35 of 95 std modules are importable from a program
+36 of 96 std modules are importable from a program
 
 importable:
   std.ai.runtime

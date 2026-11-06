@@ -1,7 +1,7 @@
 # Standard library status
 
 What each module of `std/` does today, what shows it, and what stands in
-its way. One row per module that exists (95 files, the prelude included)
+its way. One row per module that exists (96 files, the prelude included)
 and one per module that is planned. This page says what the standard
 library *is*; [ARCHITECTURE.md](ARCHITECTURE.md) says what it should
 become and [ROADMAP.md](ROADMAP.md) in what order.
@@ -10,13 +10,13 @@ become and [ROADMAP.md](ROADMAP.md) in what order.
 
 | status | modules | meaning |
 |---|---:|---|
-| importable | 35 | A program's `import std.<module>.*` checks, builds and loads. |
+| importable | 36 | A program's `import std.<module>.*` checks, builds and loads. |
 | checks-but-not-importable | 4 | Clean when `std/` is checked as one package with its prelude, but a program importing it fails: it imports a module with errors, or uses a prelude name. |
 | fails | 56 | The module's own file has diagnostics. |
-| planned | 51 | No file yet; part of the target layout. |
+| planned | 50 | No file yet; part of the target layout. |
 | unsupported | 7 | Not planned, with the reason given in its row. |
 
-Of the 35 importable modules, 33 are run end to end by a program against
+Of the 36 importable modules, 34 are run end to end by a program against
 independently computed values; `std.memory.page` and
 `std.builtin.type_aliases` are imported but not run.
 

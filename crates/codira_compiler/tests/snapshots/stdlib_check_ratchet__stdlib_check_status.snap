@@ -3,7 +3,7 @@ source: crates/codira_compiler/tests/stdlib_check_ratchet.rs
 expression: summary
 snapshot_kind: text
 ---
-39 of 95 std files check clean
+40 of 96 std files check clean
 0 syntax, 2012 semantic
 
    0 syntax     0 semantic  ai/algorithm/functional.code
