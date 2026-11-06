@@ -10,6 +10,7 @@
 //! ```text
 //!   %tag = extractvalue %Result %r, 0
 //!   %ok  = icmp eq i32 %tag, <Ok>
+//!   %ok  = call i1 @llvm.expect.i1(i1 %ok, i1 true)
 //!   br i1 %ok, label %propagate.ok, label %propagate.err
 //! propagate.err:                      ; build the caller's Err, return it
 //!   %e   = extractvalue %Result %r, <Err slot>
@@ -17,6 +18,16 @@
 //! propagate.ok:
 //!   %v   = extractvalue %Result %r, <Ok slot>
 //! ```
+//!
+//! The branch is weighted towards `Ok` (`llvm.expect`, which becomes branch
+//! weights): an error is expected to be rare, so LLVM lays the error path
+//! out of line, after the function's hot code, keeps the success path
+//! straight-line, and does not spend inlining on calls made only to build
+//! the error (an `@error_conversion`). With the callee inlined -- a
+//! function of the same library, an instance of a generic one, or an
+//! `@inline` function of another library, which the caller compiles a copy
+//! of -- the `Result` is never materialized: its tag test folds into the
+//! callee's own branches.
 //!
 //! No allocation and no call -- unless the error passes through the
 //! enclosing result's `@error_conversion` (`AnyError.from_error(e)`), which
@@ -31,7 +42,7 @@ use codira_hir::{mono, ExprId, TyKind};
 
 use crate::intrinsics;
 use inkwell::{
-    values::{AggregateValueEnum, BasicValueEnum},
+    values::{AggregateValueEnum, BasicValueEnum, IntValue},
     IntPredicate,
 };
 
@@ -66,6 +77,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     .build_extract_value(value, 0, "is_some")
                     .expect("an optional has a present flag")
                     .into_int_value();
+                let present = self.likely_ok(present, "is_some");
                 self.builder
                     .build_conditional_branch(present, continue_block, return_block)
                     .expect("failed to branch on an optional");
@@ -102,6 +114,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                         "is_ok",
                     )
                     .expect("failed to compare an enum tag");
+                let is_ok = self.likely_ok(is_ok, "is_ok");
                 self.builder
                     .build_conditional_branch(is_ok, continue_block, return_block)
                     .expect("failed to branch on a `Result`");
@@ -268,6 +281,25 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         if let Some(block) = saved {
             self.builder.position_at_end(block);
         }
+    }
+
+    /// `condition`, through `llvm.expect.i1(condition, true)`: the branch
+    /// on it is weighted towards true.
+    fn likely_ok(&mut self, condition: IntValue<'ink>, name: &str) -> IntValue<'ink> {
+        let bool_ty = self.context.bool_type();
+        let expect = inkwell::intrinsics::Intrinsic::find("llvm.expect")
+            .and_then(|i| i.get_declaration(self.module, &[bool_ty.into()]))
+            .expect("llvm.expect is always available");
+        self.builder
+            .build_call(
+                expect,
+                &[condition.into(), bool_ty.const_all_ones().into()],
+                name,
+            )
+            .expect("failed to build llvm.expect")
+            .try_as_basic_value()
+            .unwrap_basic()
+            .into_int_value()
     }
 
     /// `return value`, from wherever code generation is: every open scope
