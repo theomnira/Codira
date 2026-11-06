@@ -40,7 +40,7 @@ pub(crate) fn scan_current_thread(f: &mut dyn FnMut(usize)) -> bool {
     while address + word <= high {
         // Safety: `[address, high)` is the live part of the current thread's
         // stack, which is mapped and readable.
-        f(unsafe { std::ptr::read_volatile(address as *const usize) });
+        f(unsafe { read_stack_word(address) });
         address += word;
     }
     std::hint::black_box(&registers);
@@ -149,4 +149,33 @@ mod tests {
             assert!(seen);
         }
     }
+}
+
+/// Reads one word of a stack for a conservative scan.
+///
+/// # Safety
+///
+/// `address` must be a mapped, word-aligned address of a stack that nothing
+/// writes during the read.
+#[cfg(not(codira_asan))]
+#[inline(always)]
+pub(crate) unsafe fn read_stack_word(address: usize) -> usize {
+    std::ptr::read_volatile(address as *const usize)
+}
+
+/// Reads one word of a stack for a conservative scan, uninstrumented.
+///
+/// Built with AddressSanitizer (`--cfg codira_asan -Zsanitizer=address`,
+/// see `TESTING.md`), a conservative scan would be reported: it reads every
+/// word of the frames, the redzones the sanitizer puts between locals
+/// included. Only this read is exempt; everything else stays checked.
+///
+/// # Safety
+///
+/// As for the other `read_stack_word`.
+#[cfg(codira_asan)]
+#[sanitize(address = "off")]
+#[inline(never)]
+pub(crate) unsafe fn read_stack_word(address: usize) -> usize {
+    *(address as *const usize)
 }

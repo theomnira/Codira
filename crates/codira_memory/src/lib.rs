@@ -4,6 +4,9 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
+// AddressSanitizer builds exempt the conservative stack scan (see
+// `gc::stack_scan::read_stack_word`).
+#![cfg_attr(codira_asan, feature(sanitize))]
 pub use r#type::{
     ArrayType, Field, FieldData, HasStaticType, PointerType, StructType, StructTypeBuilder, Type,
     TypeCollectionStats, TypeKind,

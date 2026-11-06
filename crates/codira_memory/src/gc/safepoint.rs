@@ -449,7 +449,7 @@ impl World {
                 // stack that holds its caller frames. The thread is blocked
                 // below it until the stop ends, so the memory is mapped and
                 // nothing writes it.
-                words.push(unsafe { std::ptr::read_volatile(address as *const usize) });
+                words.push(unsafe { stack_scan::read_stack_word(address) });
                 address += word;
             }
         }

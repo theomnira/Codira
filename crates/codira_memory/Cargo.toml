@@ -30,6 +30,11 @@ codira_capi_utils = { version = "0.6.0-dev", path = "../codira_capi_utils", feat
 insta = { workspace = true, features = ["ron"] }
 paste = { workspace = true }
 
+[lints.rust]
+# `codira_asan`: an AddressSanitizer build (TESTING.md); `loom`: the loom
+# model of the safepoint protocol (tests/safepoint_loom.rs).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(codira_asan)', 'cfg(loom)'] }
+
 [[bench]]
 name = "gc"
 harness = false
