@@ -186,7 +186,7 @@ kernels = [
 
 [[workload]]
 name = "json"
-title = "JSON: parsing, printing, pretty-printing"
+title = "JSON: parsing, printing, pretty-printing, streaming, typed decoding"
 setup = ["gen_inputs.py"]
 rust_cargo = "rust/Cargo.toml"
 rust_bin = "aurora_json_rust"
@@ -203,6 +203,10 @@ kernels = [
   { name = "pretty_twitter" },
   { name = "pretty_canada", check_differs = { cpp = "RapidJSON prints 320 of the 600,000 floats one or two digits longer than the shortest round-trip text (Grisu2), 357 bytes in all; the values read back the same" } },
   { name = "pretty_deep" },
+  { name = "stream_twitter" },
+  { name = "stream_canada" },
+  { name = "stream_deep" },
+  { name = "typed_twitter", cpp = "RapidJSON has no typed decoding: a SAX state machine per struct, written by hand, would measure that code, not a library's" },
 ]
 
 # A heap cap well above the live set, so that the collector runs often.

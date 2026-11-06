@@ -46,7 +46,7 @@ The workloads:
 |---|---|---|
 | `strings` | append, concatenation, splitting (into arrays and lazily), search, parsing | 9 |
 | `format` | integers and floats to text, format specs, the debug form | 5 |
-| `json` | parse, print, pretty-print three inputs (`gen_inputs.py`) | 9 |
+| `json` | parse, print, pretty-print three inputs (`gen_inputs.py`); stream them with no tree (a pull parser; Rust: a `serde` visitor; C++: RapidJSON's SAX reader); decode one into structs (Rust: `#[derive(Deserialize)]`; no C++) | 13 |
 | `hashmap` | insert, hit, miss, iterate, remove at 1K/100K/1M keys, small maps, churn: Codira's unkeyed hash in all three, and the default keyed SipHash-1-3 (Codira, Rust) separately | 66 |
 | `result` | `?` wrapping, converting to `AnyError`, with context (Ok and Err paths), a parse loop, eight frames deep | 8 |
 | `collections` | push, sum, sort, eager and lazy pipelines over 10M elements | 13 |

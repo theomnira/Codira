@@ -4,11 +4,15 @@
 // in insertion order (RapidJSON keeps members in an array), compact and
 // pretty printing with a two-space indent. Same kernels, same check values
 // where RapidJSON writes the same text (see the README of the suite).
+// `stream_*`: RapidJSON's SAX `Reader` (same flags) with a handler that
+// adds to the sums, no tree. `typed_twitter` has no C++ variant (see
+// suite.toml).
 #include <fstream>
 #include <sstream>
 
 #include <rapidjson/document.h>
 #include <rapidjson/prettywriter.h>
+#include <rapidjson/reader.h>
 #include <rapidjson/stringbuffer.h>
 #include <rapidjson/writer.h>
 
@@ -53,6 +57,30 @@ static void parse_into(Document& d, const std::string& text) {
     if (d.HasParseError()) { std::fprintf(stderr, "parse error\n"); std::exit(1); }
 }
 
+// The sums of `walk`, from the reader's events. A number is an integer
+// when the text's integer fits an i64 (RapidJSON reports those through
+// Int, Uint, Int64 or Uint64), a float otherwise.
+struct StreamSums : rapidjson::BaseReaderHandler<rapidjson::UTF8<>, StreamSums> {
+    Sums s;
+    bool Null() { s.nodes++; return true; }
+    bool Bool(bool b) { s.nodes++; if (b) s.ints++; return true; }
+    bool Int(int i) { s.nodes++; s.ints += (uint64_t)(int64_t)i; return true; }
+    bool Uint(unsigned u) { s.nodes++; s.ints += u; return true; }
+    bool Int64(int64_t i) { s.nodes++; s.ints += (uint64_t)i; return true; }
+    bool Uint64(uint64_t u) {
+        s.nodes++;
+        if (u <= (uint64_t)INT64_MAX) s.ints += u; else s.floats += bits((double)u);
+        return true;
+    }
+    bool Double(double d) { s.nodes++; s.floats += bits(d); return true; }
+    bool String(const char*, rapidjson::SizeType len, bool) { s.nodes++; s.strings += len; return true; }
+    bool Key(const char*, rapidjson::SizeType len, bool) { s.strings += len; return true; }
+    bool StartObject() { s.nodes++; return true; }
+    bool EndObject(rapidjson::SizeType) { return true; }
+    bool StartArray() { s.nodes++; return true; }
+    bool EndArray(rapidjson::SizeType) { return true; }
+};
+
 int main(int argc, char** argv) {
     if (argc < 2) unknown("");
     std::string k = argv[1];
@@ -94,5 +122,19 @@ int main(int argc, char** argv) {
             len = out.size();
         }
         report(start, len);
+    } else if (phase == "stream") {
+        auto start = now();
+        uint64_t check = 0;
+        for (int i = 0; i < REPS; i++) {
+            StreamSums h;
+            rapidjson::Reader reader;
+            rapidjson::StringStream ms(text.c_str());
+            if (reader.Parse<rapidjson::kParseFullPrecisionFlag>(ms, h).IsError()) {
+                std::fprintf(stderr, "parse error\n");
+                std::exit(1);
+            }
+            check = h.s.nodes * 1000003 + h.s.strings * 10007 + h.s.ints * 101 + h.s.floats;
+        }
+        report(start, check);
     } else unknown(k);
 }

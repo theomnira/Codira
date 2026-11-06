@@ -1803,10 +1803,11 @@ strings as themselves). It was not done, for these reasons:
 
 **Measured** against Rust's `serde_json` (1.0.133) on the same machine:
 an x86-64 VM, Intel Xeon @ 2.10 GHz, 4 vCPUs, 16 GB, Linux 6.18, Rust
-1.97.1. Codira: `codira
-build -O 3` with a release build of the compiler, run by
-`examples/json_bench/host` (the runtime in release mode, a 1 GiB heap
-limit and the default pacing). Rust: `cargo build --release` with
+1.97.1. These numbers were taken with the former `examples/json_bench`
+harness (in the history at c2e477fae3; its workloads are now kernels of
+the benchmark suite, below). Codira: `codira build -O 3` with a release
+build of the compiler, run by that harness's host (the runtime in release
+mode, a 1 GiB heap limit and the default pacing). Rust: `cargo build --release` with
 `serde_json`'s `preserve_order` (insertion order, as here) and
 `float_roundtrip` (correctly rounded floats, as here), default target
 CPU. Each program runs each phase 11 times and reports the median; the
@@ -1814,14 +1815,13 @@ table is the median of 5 alternating runs of both, in milliseconds, and
 both print the same check values on every row (node count, string bytes,
 sums of the integers and of the floats' bits, output lengths; for
 `typed`, sums over every decoded field). The inputs are written by
-`examples/json_bench/gen_inputs.py` (seeded): `twitter`, an array of
+`benches/aurora/json/gen_inputs.py` (seeded): `twitter`, an array of
 20,000 records of a social network's API (16.9 MB); `canada`, GeoJSON
 polygons of 300,000 17-digit coordinate pairs (11.8 MB); `deep`, 4,000
 trees of objects and arrays 100 deep (7.0 MB; its pretty text is 149 MB of
 mostly indentation). "Before" is the previous `std.json.json` and
 compiler (main at f8b145c6a1) measured the same way on the same machine
-the same day. `python3 examples/json_bench/bench.py --codira <codira>
---work <dir> --rounds 5` does all of it.
+the same day.
 
 | input | phase | before | Codira | Rust | Codira / Rust |
 |---|---|---:|---:|---:|---:|
@@ -1848,7 +1848,7 @@ twitter 50.2 / 58.1, canada 32.0 / 46.3 and deep 41.3 / 242.2 ms for print
 falls depends on what the phase before allocated, so the sum is steadier
 than each phase): twitter 233.7 against 277.1 ms (0.84x), canada 153.8
 against 149.5 (1.03x), deep 413.6 against 494.2 (0.84x). `simd-json`
-0.14, built for the host CPU (`--simd`), parses into its `OwnedValue` in
+0.14, built for the host CPU, parsed into its `OwnedValue` in
 63.7 (twitter), 35.6 (canada) and 61.4 ms (deep), with the same check
 values (quiet run).
 
@@ -1881,9 +1881,45 @@ values (quiet run).
   and does not reject a repeated unknown key). A call from the program
   into the reader, another module, was measured at about 2 ns. Not
   optimised further.
-- Not measured: memory use (a Codira value is 64 bytes, an object member
-  96), pause times, and the pull parser on pretty-printed input (white
-  space is skipped a byte at a time).
+- Not measured: the pull parser on pretty-printed input (white space is
+  skipped a byte at a time).
+
+**In the benchmark suite.** The workloads are kernels of
+`benches/aurora/json` -- `parse_*`, `print_*`, `pretty_*`, `stream_*` for
+the three inputs and `typed_twitter` -- run by `python3 scripts/bench.py
+--only json.` against Rust (`serde_json`; a `serde` visitor for
+`stream_*`, `#[derive(Deserialize)]` for `typed_twitter`) and C++
+(RapidJSON's DOM, and its SAX `Reader` for `stream_*`; `typed_twitter` has
+no C++ variant), with peak RSS and the collector's figures (the method:
+`benches/aurora/README.md`). A kernel repeats its phase 5 times in one
+process. One run (5 processes per kernel and variant, interleaved; load
+average 3.5 falling to 1.2: not an idle machine), milliseconds, every
+check value the same across the variants but RapidJSON's canada prints,
+whose floats are not always the shortest text:
+
+| kernel | Codira | Rust | C++ | Codira / Rust | Codira / C++ |
+|---|---:|---:|---:|---:|---:|
+| parse_twitter | 971.6 | 1168.5 | 299.3 | 0.83x | 3.25x |
+| parse_canada | 591.7 | 468.5 | 200.7 | 1.26x | 2.95x |
+| parse_deep | 1062.8 | 953.4 | 169.1 | 1.11x | 6.28x |
+| print_twitter | 297.5 | 308.4 | 246.6 | 0.96x | 1.21x |
+| print_canada | 224.2 | 165.0 | 243.1 | 1.36x | 0.92x |
+| print_deep | 311.6 | 166.0 | 145.4 | 1.88x | 2.14x |
+| pretty_twitter | 425.4 | 407.0 | 402.1 | 1.05x | 1.06x |
+| pretty_canada | 408.9 | 332.7 | 333.0 | 1.23x | 1.23x |
+| pretty_deep | 994.7 | 1510.7 | 1063.5 | 0.66x | 0.94x |
+| stream_twitter | 458.3 | 163.3 | 239.7 | 2.81x | 1.91x |
+| stream_canada | 290.0 | 134.7 | 167.7 | 2.15x | 1.73x |
+| stream_deep | 367.0 | 157.2 | 108.8 | 2.33x | 3.37x |
+| typed_twitter | 920.5 | 183.0 | -- | 5.03x | -- |
+
+The suite's kernels differ from the harness above (five repetitions of one
+phase per process, so each kernel's own garbage drives the collections,
+where the harness alternated parse, print and pretty), and the gaps are
+wider there for compact printing of canada and deep and for streaming;
+peak RSS is 1.1x to 2.8x Rust's for the tree kernels (a Codira value is 64
+bytes, an object member 96) and 2x to 4.5x for the streaming ones. Taken
+on a loaded machine; rerun with `scripts/bench.py` before quoting a ratio.
 
 **Not done:** generated typed decoders and encoders (see above: decoders
 and encoders are written by hand over `JsonReader` and `JsonWriter`); a

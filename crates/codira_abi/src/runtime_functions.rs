@@ -683,8 +683,10 @@ pub const STRING_TAKE_UTF8: RuntimeFunction = string_alloc(
     with_alloc_out![("array", Handle)],
     U8,
     "The bytes of the `[u8]` `array` as a `String` written to `out`, when they are valid \
-     UTF-8 (returns 1; else 0 and nothing written). Takes the array's buffer over when it \
-     can, leaving the array empty; otherwise copies.",
+     UTF-8 (returns 1; else 0, nothing written and `array` unchanged). Writes `array`: it \
+     is left empty. A grown array's buffer becomes the string's (the bytes moved up in \
+     place for the owner word, the buffer shrunk when it has much room to spare); a small \
+     one is copied.",
 )
 .fallible();
 /// `codira.bytes_format_json_f64`.
