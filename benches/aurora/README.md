@@ -121,6 +121,13 @@ command, the machine) and `summary.md` (the tables).
   99th percentile and maximum. The collector runs with the runtime's
   default pacing (the next collection at 100% growth over the live data)
   under the kernel's cap, as under `codira run`.
+- **Heap floor.** After the kernels, the runner bisects (to 4 MiB, between
+  16 and 256 MiB, one run per cap tried) for the smallest GC heap cap under
+  which the server's long run completes, and records the live bytes at that
+  cap (`[heap_floor]` in `suite.toml`). It is in every result and in the
+  baseline; the gate prints the baseline's floor next to the current one. A
+  memory regression raises it (String Fabric's 256-byte buffers for kept
+  format results moved it from under 80 MiB to above 96 MiB).
 - **Latency.** The `server` workload times each request and prints the
   p50, p95, p99, p99.9 and maximum; the tables give the median of each over
   the runs, with an interval.

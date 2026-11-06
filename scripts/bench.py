@@ -308,10 +308,14 @@ class Workload:
         self.kernels = [Kernel(self, k, defaults) for k in spec["kernels"]]
 
 
+SUITE_HEAP_FLOOR = [None]
+
+
 def load_suite():
     with open(os.path.join(SUITE_DIR, "suite.toml"), "rb") as f:
         data = tomllib.load(f)
     defaults = data.get("defaults", {})
+    SUITE_HEAP_FLOOR[0] = data.get("heap_floor")
     return defaults, [Workload(w, defaults) for w in data["workload"]]
 
 
@@ -602,6 +606,50 @@ def summarize(kernels, results, rng):
     return rows
 
 
+# --------------------------------------------------------------- heap floor
+
+def heap_floor(args, spec, binaries, host):
+    """The smallest GC heap cap, to `step_mb`, under which a Codira kernel
+    completes, found by bisection between `lo_mb` and `hi_mb`, with the
+    live bytes the runtime reports at that cap. A tracked metric: the next
+    memory regression shows up as a larger number."""
+    w, entry = spec["workload"], spec["entry"]
+    lib = binaries.get(w, {}).get("codira", (None, None))[0]
+    if lib is None or host is None:
+        return {"error": "the Codira variant of the workload was not built"}
+    step = spec.get("step_mb", 4)
+    lo, hi = spec.get("lo_mb", 16), spec.get("hi_mb", 256)
+    tries = {}
+
+    def attempt(mb):
+        env = dict(os.environ, AURORA_HEAP_LIMIT_MB=str(mb))
+        values, _, _, error = run_one([host, lib, entry] + [str(a) for a in spec.get("args", [])],
+                                      env, args.work, None, args.timeout)
+        tries[mb] = values if values else {"error": (error or "")[-300:]}
+        log(f"heap floor: {mb} MiB {'completes' if values else 'fails'}")
+        return values
+
+    if not attempt(hi):
+        return {"error": f"does not complete under the largest cap tried, {hi} MiB", "tries": tries}
+    if attempt(lo):
+        hi = lo
+    else:
+        while hi - lo > step:  # invariant: lo fails, hi completes
+            mid = (lo + hi) // 2 // step * step or step
+            if mid <= lo or mid >= hi:
+                break
+            if attempt(mid):
+                hi = mid
+            else:
+                lo = mid
+    at = tries[hi]
+    return {"kernel": f"{w}.{entry}", "floor_mb": hi, "fails_at_mb": lo if lo < hi else None,
+            "step_mb": step, "live_after_last_bytes": int(at.get("gc_live_after_last_bytes", 0)),
+            "peak_heap_bytes": int(at.get("gc_peak_heap_bytes", 0)),
+            "collections": int(at.get("gc_collections", 0)), "ns": int(at["ns"]),
+            "tries": tries}
+
+
 # --------------------------------------------------------------------- gate
 
 def round_ratios(res):
@@ -663,7 +711,7 @@ def fmt_ratio(r, ci):
     return s
 
 
-def markdown(env, workloads, kernels, results, compile_info, gate_tests):
+def markdown(env, workloads, kernels, results, compile_info, gate_tests, floor=None, floor_cmp=None):
     L = []
     L.append("# AURORA benchmark run\n")
     L.append(f"- date: {env['date']}, commit `{(env['commit'] or '?')[:12]}`"
@@ -788,6 +836,21 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests):
             for n in notes:
                 L.append(f"- {n}")
         L.append("")
+    if floor:
+        L.append("## Heap floor\n")
+        if "error" in floor:
+            L.append(f"Not found: {floor['error']}\n")
+        else:
+            L.append(f"The smallest GC heap cap under which `{floor['kernel']}` completes, found by "
+                     f"bisection to {floor['step_mb']} MiB (one run per cap tried), and what the "
+                     f"runtime reports at that cap. A tracked metric: a memory regression raises it.\n")
+            L.append("| kernel | completes at (MiB) | fails at (MiB) | live after last GC (MiB) "
+                     "| peak heap (MiB) | collections | time (ms) |")
+            L.append("|---|---:|---:|---:|---:|---:|---:|")
+            L.append(f"| {floor['kernel']} | {floor['floor_mb']} | {floor['fails_at_mb'] or '–'} | "
+                     f"{floor['live_after_last_bytes'] / 2**20:.1f} | {floor['peak_heap_bytes'] / 2**20:.1f} | "
+                     f"{floor['collections']} | {floor['ns'] / 1e6:.0f} |")
+            L.append("")
     if compile_info:
         L.append("## Compile time and binary size\n")
         L.append("From-scratch builds of each workload's program (Codira: `codira build -O 3`; "
@@ -826,6 +889,11 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests):
                 L.append(f"| {t['kernel']} | {t['metric']} | {fmt(t['baseline_median'])} | "
                          f"{fmt(t['current_median'])} | {t['change'] * 100:+.1f}% {ci} | {t['p']:.4f} | "
                          f"{t['holm_threshold']:.4f} | {'**REGRESSED**' if t['regressed'] else 'ok'} |")
+        if floor_cmp:
+            moved = floor_cmp["current_mb"] - floor_cmp["baseline_mb"]
+            L.append(f"Heap floor: {floor_cmp['baseline_mb']} MiB in the baseline, "
+                     f"{floor_cmp['current_mb']} MiB now"
+                     f"{' (higher: memory use grew; one bisection, no statistical test)' if moved > 0 else ''}.")
         L.append("")
     return "\n".join(L)
 
@@ -847,6 +915,7 @@ def main():
     ap.add_argument("--no-perf", action="store_true")
     ap.add_argument("--no-warmup", action="store_true")
     ap.add_argument("--compile-runs", type=int, help="builds per variant for compile time (0: skip)")
+    ap.add_argument("--no-heap-floor", action="store_true", help="skip the heap floor bisection")
     ap.add_argument("--timeout", type=float, default=300)
     ap.add_argument("--seed", type=int, default=20261106)
     ap.add_argument("--baseline", help="results.json to compare with (the regression gate)")
@@ -903,6 +972,13 @@ def main():
     env["load_average_end"] = [round(x, 2) for x in os.getloadavg()]
     summarize(kernels, results, rng)
 
+    floor = None
+    floor_spec = SUITE_HEAP_FLOOR[0]
+    if floor_spec and not args.no_heap_floor and "codira" in variants and \
+            any(w.name == floor_spec["workload"] for w in used):
+        log("finding the heap floor ...")
+        floor = heap_floor(args, floor_spec, binaries, host)
+
     compile_info = None
     if args.compile_runs > 0:
         log("timing builds ...")
@@ -917,6 +993,7 @@ def main():
         "kernels": {k.id: dict(results[k.id], heap_limit_mb=k.heap_limit_mb, ci=k.ci)
                     for k in kernels},
         "compile": compile_info,
+        "heap_floor": floor,
     }
     gate_tests = None
     failed_gate = False
@@ -926,17 +1003,24 @@ def main():
         gate_tests = gate(base, doc, [k.id for k in kernels], args.alpha, rng)
         doc["gate"] = {"baseline": args.baseline, "alpha": args.alpha, "tests": gate_tests}
         failed_gate = any(t["regressed"] for t in gate_tests)
+        bf, cf = base.get("heap_floor"), floor
+        if bf and cf and bf.get("floor_mb") and cf.get("floor_mb"):
+            doc["gate"]["heap_floor"] = {"baseline_mb": bf["floor_mb"], "current_mb": cf["floor_mb"],
+                                         "baseline_live": bf.get("live_after_last_bytes"),
+                                         "current_live": cf.get("live_after_last_bytes")}
 
     out = args.out or os.path.join(args.work, "results",
                                    datetime.datetime.now().strftime("%Y%m%d-%H%M%S"))
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "results.json"), "w") as f:
         json.dump(doc, f, indent=1, default=str)
-    md = markdown(env, used, kernels, results, compile_info, gate_tests)
+    md = markdown(env, used, kernels, results, compile_info, gate_tests, floor,
+                  doc.get("gate", {}).get("heap_floor"))
     with open(os.path.join(out, "summary.md"), "w") as f:
         f.write(md + "\n")
     if args.save_baseline:
         trimmed = {"format": doc["format"], "environment": env,
+                   "heap_floor": {k: v for k, v in (floor or {}).items() if k != "tries"} or None,
                    "kernels": {kid: {v: {"samples": [{"round": s["round"],
                                                       "values": {"ns": s["values"]["ns"],
                                                                  "check": s["values"].get("check")}}

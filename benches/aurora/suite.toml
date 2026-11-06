@@ -23,6 +23,16 @@ runs = 11
 ci_runs = 9
 compile_runs = 5
 
+# The heap floor: the smallest GC heap cap (to `step_mb`) under which this
+# Codira kernel completes, found by bisection, with the live bytes at that
+# cap. Recorded with every run and in the baseline.
+[heap_floor]
+workload = "server"
+entry = "long_run"
+lo_mb = 16
+hi_mb = 256
+step_mb = 4
+
 [[workload]]
 name = "strings"
 title = "Strings: append, concatenation, splitting, search, parsing"
