@@ -167,7 +167,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     ) -> Option<BasicValueEnum<'ink>> {
         let handle = callee.into_pointer_value();
         let mut call_args: Vec<BasicMetadataValueEnum<'ink>> = vec![handle.into()];
-        call_args.extend(values.iter().map(|&value| BasicMetadataValueEnum::from(value)));
+        call_args.extend(
+            values
+                .iter()
+                .map(|&value| BasicMetadataValueEnum::from(value)),
+        );
 
         // Only a hot reload can leave a function value empty; stop there
         // rather than call through null.

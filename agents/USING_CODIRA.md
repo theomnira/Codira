@@ -176,6 +176,15 @@ binding *refers to* but does not hold: a field of a class instance
 (`c.n = 3`) and an element of an array (`a[0] = 5`). Parameters are
 mutable local copies.
 
+An assignment evaluates each operand of its place once. For a number or a
+`bool` (`xs[i] = v`, `xs[f()] += 1`, `make().n *= 2`) the order is: the
+place's operands (the array and the index, the instance), left to right;
+an element's index is checked; for a compound assignment the old value is
+read; then the right operand; then the store, with the index checked again
+against the array as it is then. For other types (`String`, arrays,
+classes, value structs, optionals) the right operand comes first and then
+the place.
+
 Bindings exist only inside functions. A module-level `let` or `var`
 (`public let LIMIT: i64 = 10;`) is rejected ("module-level `let` is not
 supported yet"): write a function returning the value instead, as

@@ -1,6 +1,7 @@
 ---
 source: crates/codira_codegen/src/test.rs
-expression: "\n    public func fibonacci(n:i32) -> i32 {\n        let a = 0;\n        let b = 1;\n        let i = 1;\n        loop {\n            if i > n {\n                return a\n            }\n            let sum = a + b;\n            a = b;\n            b = sum;\n            i += 1;\n        }\n    }\n    "
+expression: "\n    public func fibonacci(n:i32) -> i32 {\n        var a = 0;\n        var b = 1;\n        var i = 1;\n        loop {\n            if i > n {\n                return a\n            }\n            let sum = a + b;\n            a = b;\n            b = sum;\n            i += 1;\n        }\n    }\n    "
+snapshot_kind: text
 ---
 ; == FILE IR (mod) =====================================
 ; ModuleID = 'mod'
@@ -9,20 +10,20 @@ source_filename = "mod"
 ; Function Attrs: nofree norecurse nosync nounwind memory(none)
 define i32 @fibonacci(i32 %0) local_unnamed_addr #0 {
 body:
-  %greater17 = icmp slt i32 %0, 1
-  br i1 %greater17, label %then, label %if_merge
+  %greater12 = icmp slt i32 %0, 1
+  br i1 %greater12, label %then, label %if_merge
 
 then:                                             ; preds = %if_merge, %body
-  %a.0.lcssa = phi i32 [ 0, %body ], [ %b.018, %if_merge ]
+  %a.0.lcssa = phi i32 [ 0, %body ], [ %b.013, %if_merge ]
   ret i32 %a.0.lcssa
 
 if_merge:                                         ; preds = %body, %if_merge
-  %i.020 = phi i32 [ %add11, %if_merge ], [ 1, %body ]
-  %a.019 = phi i32 [ %b.018, %if_merge ], [ 0, %body ]
-  %b.018 = phi i32 [ %add, %if_merge ], [ 1, %body ]
-  %add = add i32 %a.019, %b.018
-  %add11 = add i32 %i.020, 1
-  %greater = icmp sgt i32 %add11, %0
+  %i.015 = phi i32 [ %add8, %if_merge ], [ 1, %body ]
+  %a.014 = phi i32 [ %b.013, %if_merge ], [ 0, %body ]
+  %b.013 = phi i32 [ %add, %if_merge ], [ 1, %body ]
+  %add = add i32 %a.014, %b.013
+  %add8 = add i32 %i.015, 1
+  %greater = icmp sgt i32 %add8, %0
   br i1 %greater, label %then, label %if_merge
 }
 

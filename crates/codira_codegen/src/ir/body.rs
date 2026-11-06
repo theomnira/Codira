@@ -2126,6 +2126,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         rhs_expr: ExprId,
         op: BinaryOp,
     ) -> Option<BasicValueEnum<'ink>> {
+        if let BinaryOp::Assignment { op } = op {
+            return self.gen_scalar_assignment(lhs_expr, rhs_expr, op, |this, old, rhs, op| {
+                this.gen_arith_bin_op_bool(old.into_int_value(), rhs.into_int_value(), op)
+                    .into()
+            });
+        }
         let lhs: IntValue<'ink> = self
             .gen_expr(lhs_expr)
             .map(|value| self.opt_deref_value(lhs_expr, value))?
@@ -2165,6 +2171,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         rhs_expr: ExprId,
         op: BinaryOp,
     ) -> Option<BasicValueEnum<'ink>> {
+        if let BinaryOp::Assignment { op } = op {
+            return self.gen_scalar_assignment(lhs_expr, rhs_expr, op, |this, old, rhs, op| {
+                this.gen_arith_bin_op_float(old.into_float_value(), rhs.into_float_value(), op)
+                    .into()
+            });
+        }
         let lhs = self
             .gen_expr(lhs_expr)
             .map(|value| self.opt_deref_value(lhs_expr, value))
@@ -2238,6 +2250,20 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         op: BinaryOp,
         signedness: codira_hir::Signedness,
     ) -> Option<BasicValueEnum<'ink>> {
+        if let BinaryOp::Assignment { op } = op {
+            return self.gen_scalar_assignment(lhs_expr, rhs_expr, op, |this, old, rhs, op| {
+                let (old, rhs) = (old.into_int_value(), rhs.into_int_value());
+                if codira_hir::realtime::division_needs_check(
+                    this.db,
+                    &this.body,
+                    &this.infer,
+                    expr,
+                ) {
+                    this.gen_division_check(expr, op, old, rhs, signedness);
+                }
+                this.gen_arith_bin_op_int(old, rhs, op, signedness).into()
+            });
+        }
         let lhs = self
             .gen_expr(lhs_expr)
             .map(|value| self.opt_deref_value(lhs_expr, value))
@@ -4421,8 +4447,22 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         index: ExprId,
     ) -> Option<PointerValue<'ink>> {
         let base_value = self.gen_expr(base)?;
-        let base = self.array_value(base, base_value);
         let index_value = self.gen_expr(index)?.into_int_value();
+        Some(self.gen_element_ptr(expr, base, base_value, index, index_value))
+    }
+
+    /// The address of the element `index_value` of the array `base_value`
+    /// (the values of `base` and `index` in `expr`, already evaluated),
+    /// checking that the index is in range first; see [`Self::gen_place_index`].
+    fn gen_element_ptr(
+        &mut self,
+        expr: ExprId,
+        base_expr: ExprId,
+        base_value: BasicValueEnum<'ink>,
+        index: ExprId,
+        index_value: IntValue<'ink>,
+    ) -> PointerValue<'ink> {
+        let base = self.array_value(base_expr, base_value);
 
         let length_type = base.length_ty();
         let length = self
@@ -4514,7 +4554,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let elements = base.get_elements(&self.builder);
         let element_basic_ty = base.element_ty();
         // Safety: `index < len`, checked above.
-        Some(unsafe {
+        unsafe {
             self.builder
                 .build_gep(
                     element_basic_ty,
@@ -4523,7 +4563,164 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     &format!("{}+index", elements.get_name().to_string_lossy()),
                 )
                 .expect("failed to build GEP for array index")
-        })
+        }
+    }
+
+    /// Evaluates the operands of the place `expr` -- the array and index of
+    /// `a[i]`, the instance of `obj.field` -- once, so that its address can
+    /// be computed again after other code has run (see
+    /// [`Self::gen_scalar_assignment`]) without evaluating them again.
+    fn gen_saved_place(&mut self, expr: ExprId) -> Option<SavedPlace<'ink>> {
+        let body = self.body.clone();
+        match &body[expr] {
+            Expr::Index { base, index } => {
+                let array = self.gen_expr(*base)?;
+                let index_value = self.gen_expr(*index)?.into_int_value();
+                Some(SavedPlace::Element {
+                    expr,
+                    base: *base,
+                    array,
+                    index: *index,
+                    index_value,
+                })
+            }
+            Expr::Field {
+                expr: receiver,
+                name,
+            } => {
+                let receiver_ty = self.infer[*receiver].clone();
+                if let TyKind::Tuple(_, substs) = receiver_ty.interned() {
+                    let index = name
+                        .as_tuple_index()
+                        .expect("inference accepted a non-index field name on a tuple");
+                    let tuple_ty = self.hir_types.get_tuple_type(substs.as_ref());
+                    let inner = self.gen_saved_place(*receiver)?;
+                    return Some(SavedPlace::Field {
+                        inner: Box::new(inner),
+                        struct_ty: tuple_ty,
+                        index: index as u32,
+                    });
+                }
+                let hir_struct = receiver_ty.as_struct().expect("expected a struct");
+                let index = hir_struct
+                    .field(self.db, name)
+                    .expect("expected a struct field")
+                    .index(self.db);
+                let struct_ty = self.hir_types.get_struct_type(&receiver_ty);
+                if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Gc {
+                    // The instance's handle, which keeps it alive (and is
+                    // what the collector sees) until the store.
+                    let handle = self.gen_expr(*receiver)?.into_pointer_value();
+                    Some(SavedPlace::ObjectField {
+                        handle,
+                        struct_ty,
+                        index,
+                    })
+                } else {
+                    let inner = self.gen_saved_place(*receiver)?;
+                    Some(SavedPlace::Field {
+                        inner: Box::new(inner),
+                        struct_ty,
+                        index,
+                    })
+                }
+            }
+            _ => self.gen_place_expr(expr).map(SavedPlace::Address),
+        }
+    }
+
+    /// The address of a place whose operands [`Self::gen_saved_place`]
+    /// evaluated: an element's index is checked against the array's length
+    /// as it is now.
+    fn gen_saved_place_ptr(&mut self, place: &SavedPlace<'ink>) -> PointerValue<'ink> {
+        match place {
+            SavedPlace::Address(address) => *address,
+            SavedPlace::Element {
+                expr,
+                base,
+                array,
+                index,
+                index_value,
+            } => self.gen_element_ptr(*expr, *base, *array, *index, *index_value),
+            SavedPlace::ObjectField {
+                handle,
+                struct_ty,
+                index,
+            } => {
+                // Safety: the handle is the value of a class-typed expression.
+                let reference =
+                    unsafe { RuntimeReferenceValue::from_ptr_unchecked(*handle, *struct_ty) };
+                let data = reference.get_data_ptr(&self.builder);
+                self.builder
+                    .build_struct_gep(*struct_ty, data, *index, "field")
+                    .expect("could not get the address of a field")
+            }
+            SavedPlace::Field {
+                inner,
+                struct_ty,
+                index,
+            } => {
+                let inner = self.gen_saved_place_ptr(inner);
+                self.builder
+                    .build_struct_gep(*struct_ty, inner, *index, "field")
+                    .expect("could not get the address of a field")
+            }
+        }
+    }
+
+    /// `place = rhs` and `place op= rhs` on a number or `bool`.
+    ///
+    /// The place's operands (an array and an index, an instance) are
+    /// evaluated once, first; an element's index is checked; for a compound
+    /// assignment the old value is read; then `rhs` is evaluated; then the
+    /// result is stored, the address recomputed from the saved operands and
+    /// an element's index checked again -- `rhs` may have resized the array.
+    /// Each operand used to be evaluated twice (once to read the old value,
+    /// once for the address of the store), so `xs[f()] += 1` called `f`
+    /// twice, and `make().n += 1` was a compiler crash.
+    fn gen_scalar_assignment(
+        &mut self,
+        lhs_expr: ExprId,
+        rhs_expr: ExprId,
+        op: Option<ArithOp>,
+        combine: impl FnOnce(
+            &mut Self,
+            BasicValueEnum<'ink>,
+            BasicValueEnum<'ink>,
+            ArithOp,
+        ) -> BasicValueEnum<'ink>,
+    ) -> Option<BasicValueEnum<'ink>> {
+        let value_ty = self
+            .hir_types
+            .get_basic_type(&self.infer[lhs_expr].clone())
+            .expect("a scalar has a basic type");
+        let saved = self.gen_saved_place(lhs_expr)?;
+        let place = self.gen_saved_place_ptr(&saved);
+        let old = match op {
+            Some(_) => {
+                let old = self
+                    .builder
+                    .build_load(value_ty, place, "old")
+                    .expect("failed to build a load");
+                if matches!(saved, SavedPlace::Element { .. }) {
+                    array_tbaa::tag_value(old, ArrayAccess::Element);
+                }
+                Some(old)
+            }
+            None => None,
+        };
+        let rhs = self.gen_expr(rhs_expr)?;
+        let value = match (op, old) {
+            (Some(op), Some(old)) => combine(self, old, rhs, op),
+            _ => rhs,
+        };
+        let place = self.gen_saved_place_ptr(&saved);
+        let store = self
+            .builder
+            .build_store(place, value)
+            .expect("failed to build store");
+        self.tag_if_indexed(lhs_expr, store);
+        Some(self.gen_empty())
     }
 
     /// Charges one unit of fuel: decrements the counter `fuelCounter` points
@@ -4664,4 +4861,31 @@ fn target_has_fused_multiply_add(target: &codira_target::spec::Target) -> bool {
             .any(|feature| feature == "+fma"),
         _ => false,
     }
+}
+
+/// A place whose operands are evaluated: see
+/// [`BodyIrGenerator::gen_saved_place`].
+enum SavedPlace<'ink> {
+    /// An address that stays valid: a local's slot.
+    Address(PointerValue<'ink>),
+    /// `base[index]`: the array (its handle) and the index.
+    Element {
+        expr: ExprId,
+        base: ExprId,
+        array: BasicValueEnum<'ink>,
+        index: ExprId,
+        index_value: IntValue<'ink>,
+    },
+    /// A field of a class instance, by the instance's handle.
+    ObjectField {
+        handle: PointerValue<'ink>,
+        struct_ty: inkwell::types::StructType<'ink>,
+        index: u32,
+    },
+    /// A field of a value struct or tuple that is itself in a place.
+    Field {
+        inner: Box<SavedPlace<'ink>>,
+        struct_ty: inkwell::types::StructType<'ink>,
+        index: u32,
+    },
 }

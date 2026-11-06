@@ -26,7 +26,12 @@
 //!   - non-generic methods of another module's types (value structs,
 //!     classes, enums), which could not be called from outside it;
 //!   - a private function named like a C library function (`error`),
-//!     which the dynamic linker bound to the C library's.
+//!     which the dynamic linker bound to the C library's;
+//!   - an assignment to an element or a field of a number or `bool`
+//!     (`xs[f()] += 1`, `xs[f()] = v`), which evaluated the place's
+//!     operands twice -- once to read the old value, once for the store --
+//!     and crashed the code generator when the instance was a call result
+//!     (`make().n += 1`).
 
 use std::{
     path::Path,
@@ -610,5 +615,68 @@ public func main() {
         );
         assert_eq!(code, Some(0), "-O {level}: {stderr}");
         assert_eq!(stdout, format!("{expected}\n"), "-O {level}");
+    }
+}
+
+// ---- assignment to an element or a field --------------------------------
+
+const PLACE_OPERANDS_ONCE: &str = r#"
+class C { v: i64 }
+struct P { x: i32, y: i32 }
+func f() -> i64 { println("f"); 0 }
+func g(c: C) -> C { println("g"); c }
+public func main() {
+    let xs = [1, 2]
+    xs[f()] += 5
+    xs[f()] = xs[1] + 4
+    println(xs[0])
+    let c = C { v: 1 }
+    g(c).v += 3
+    g(c).v = g(c).v * 2
+    println(c.v)
+    var ps = [P { x: 1, y: 2 }]
+    ps[f()].y *= 10
+    println(ps[0].y)
+    var b = [true]
+    b[f()] = false
+    var fl = [1.5]
+    fl[f()] -= 0.25
+    println(b[0], fl[0])
+}
+"#;
+
+/// Each operand of the place of an assignment is evaluated once, on both
+/// backends and at both optimization levels.
+#[test]
+fn an_assigned_place_is_evaluated_once() {
+    let expected = "f\nf\n6\ng\ng\ng\n8\nf\n20\nf\nf\nfalse1.25\n";
+    for args in [&[][..], &["-O", "0"], &["--jit"]] {
+        let (code, stdout, stderr) = run(&[("mod.code", PLACE_OPERANDS_ONCE)], args);
+        assert_eq!(code, Some(0), "{args:?}: {stderr}");
+        assert_eq!(stdout, expected, "{args:?}");
+    }
+}
+
+/// The element of a compound assignment is still checked before the right
+/// operand runs, and reported at the assignment.
+#[test]
+fn an_assigned_element_is_checked_before_the_right_operand() {
+    let program = r#"
+func f() -> i64 { println("rhs"); 1 }
+public func main() {
+    var xs = [1, 2]
+    xs[2] += f()
+}
+"#;
+    for args in [&[][..], &["-O", "0"], &["--jit"]] {
+        let (code, stdout, stderr) = run(&[("mod.code", program)], args);
+        assert_eq!(code, Some(101), "{args:?}: {stderr}");
+        assert_eq!(stdout, "", "{args:?}");
+        assert!(
+            stderr.contains(
+                "panic at mod.code:5:5: index out of bounds: the length is 2 but the index is 2"
+            ),
+            "{args:?}: {stderr}"
+        );
     }
 }
