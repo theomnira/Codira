@@ -166,7 +166,7 @@ fn collections_never_deadlock_against_blocked_or_joining_tasks() {
         std::thread::scope(|s| {
             s.spawn(|| {
                 while !stop.load(Ordering::SeqCst) {
-                    gc.collect();
+                    gc.collect_blocking().unwrap();
                     collections.fetch_add(1, Ordering::Relaxed);
                 }
             });
