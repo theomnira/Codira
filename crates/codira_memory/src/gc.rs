@@ -9,8 +9,10 @@ mod heap;
 mod mark_sweep;
 mod policy;
 mod ptr;
+mod region;
 mod root_ptr;
 pub mod root_region;
+mod root_ranges;
 pub mod safepoint;
 mod snapshot;
 mod stack_scan;
@@ -22,6 +24,7 @@ pub use heap::AllocError;
 pub use mark_sweep::{CollectRefused, MarkSweep};
 pub use policy::GcPolicy;
 pub use ptr::{GcPtr, HasIndirectionPtr, RawGcPtr};
+pub use region::{Region, RegionLeak, RegionStats};
 pub use root_ptr::GcRootPtr;
 pub use snapshot::{RestoredHeap, SnapshotError};
 pub use stats::{

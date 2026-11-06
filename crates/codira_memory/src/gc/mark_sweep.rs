@@ -53,7 +53,10 @@ pub(crate) fn array_data_offset(element: &TypeData) -> usize {
 ///
 /// `header` must be an allocated object whose payload matches its type.
 #[inline]
-unsafe fn for_each_reference(header: &ObjectHeader, mut f: impl FnMut(NonNull<ObjectHeader>)) {
+pub(crate) unsafe fn for_each_reference(
+    header: &ObjectHeader,
+    mut f: impl FnMut(NonNull<ObjectHeader>),
+) {
     let ty = header.type_data();
     let payload = header.data;
     let mut visit = |slot: *const u8| {
@@ -153,7 +156,7 @@ where
     O: Observer<Event = Event>,
 {
     pub(crate) heap: Arc<Heap>,
-    core: Arc<Core<O>>,
+    pub(crate) core: Arc<Core<O>>,
     /// Requests for [`MarkSweep::request_collection`]'s thread.
     requests: Arc<Requests>,
     /// That thread, once started.
@@ -165,13 +168,18 @@ where
 
 /// What a collection needs, shared with [`MarkSweep::request_collection`]'s
 /// thread.
-struct Core<O> {
+pub(crate) struct Core<O> {
     heap: Arc<Heap>,
     observer: O,
     policy: Mutex<GcPolicy>,
     accounting: Mutex<Accounting>,
     /// Collections started, ever. Written with the world stopped.
     started: AtomicU64,
+    /// Memory outside the heap scanned for roots (region chunks). See
+    /// `gc::root_ranges`.
+    pub(crate) root_ranges: super::root_ranges::RootRanges,
+    /// What region arenas did. See `gc::region`.
+    pub(crate) regions: super::region::RegionCounters,
 }
 
 /// The collector's statistics and the state its fairness rule needs.
@@ -235,6 +243,8 @@ where
                 policy: Mutex::new(policy),
                 accounting: Mutex::new(Accounting::default()),
                 started: AtomicU64::new(0),
+                root_ranges: Default::default(),
+                regions: super::region::RegionCounters::new(),
             }),
             requests: Arc::new(Requests::default()),
             request_thread: Mutex::new(None),
@@ -753,6 +763,8 @@ where
             }
             self.started.fetch_add(1, Ordering::SeqCst);
             let mut words = world.stack_words();
+            // Region chunks are roots like stacks (see `gc::root_ranges`).
+            self.root_ranges.extend_words(&mut words);
             let swept = if words.is_empty() {
                 self.collect_impl(None)
             } else {
