@@ -144,6 +144,18 @@ function returning `never` can still come back when a handler aborts it,
 and is not `noreturn`. The Cranelift `--jit` backend compiles a call to one
 as a trap after the call.
 
+`@inline` before a function asks for every call of it to be inlined
+(LLVM's `alwaysinline`). It matters most across modules: a call into
+another module's library is otherwise an indirect call through the
+dispatch table, which LLVM can never inline, while a public `@inline`
+function is compiled into each library that calls it, like an instance of
+a generic function, and inlined there. Use it for small functions on hot
+paths (`std.text.ascii`'s `parse_i64`, `std.hashlib.hash`'s integer
+hashes, `std.collections.map`'s lookups). As for generic instances, a hot
+reload of the function's module reaches the callers when they are rebuilt.
+(`inline_functions_of_other_modules_are_compiled_in`,
+`crates/codira/tests/hash_map.rs`.)
+
 ### Bindings
 
 ```codira
@@ -292,22 +304,76 @@ let ages: Map[str, i64] = Map.new()
 ages.insert("ada", 36);                  // returns the replaced value, i64?
 if let age = ages.get("ada") { println(age) }
 ages.get_or("bob", 0); ages.contains_key("ada"); ages.remove("ada")
-ages.len(); ages.keys(); ages.values(); ages.clear()
+ages.len(); ages.keys(); ages.values(); ages.entries(); ages.clear()
+for (name, age) in ages.iter() { println(name, " ", age) }
+let big: Map[i64, i64] = Map.with_capacity(10000)   // no growth up to 10000
+big.reserve(5000); big.capacity(); big.shrink_to_fit()
 
 let seen: Set[i64] = Set.from_array([1, 2, 3])
 seen.insert(4); seen.contains(2); seen.remove(1)   // bool each
 seen.union(other); seen.intersection(other); seen.difference(other)
 ```
 
-- `Map[K, V]` (`std.collections.map`): open addressing with linear probing
-  over a power-of-two table, grown at three quarters full; keys need
-  `Hashable` (`std.hashlib.hash`) and `Eq` (`std.cmp.cmp`), which every
-  integer and float type, `bool` and `str` have; implement both for a type of
-  your own. **Not DoS-resistant**: the hashes are fixed and unseeded
-  (integers through a MurmurHash3 finalizer, `str` with FNV-1a), so whoever
-  picks the keys can make them collide.
+- `Map[K, V]` (`std.collections.map`) is a **Swiss table**: `8 * G` slots
+  in `G` groups of 8 (a power of two), each slot a `(K, V)` pair, and one
+  control byte per slot packed into a `u64` per group -- EMPTY (`0xFF`),
+  DELETED (`0x80`, a tombstone), or FULL with the top 7 bits of the key's
+  hash. A lookup reads the group the hash's low bits pick and tests its 8
+  control bytes at once with word arithmetic (SWAR, as hashbrown's portable
+  implementation does: the language has no vector types, so no SSE2/NEON
+  16-byte groups); the bytes equal to the 7-bit tag give the few slots
+  whose key is compared, and a group with an EMPTY byte ends the search.
+  Groups are probed in triangular order. The table holds at most 7/8 of
+  its slots and doubles when full; a removal leaves a tombstone only when
+  its group has no EMPTY byte (a probe could pass through it), and a full
+  table whose live entries are at most half its capacity is rebuilt at its
+  size, which clears the tombstones.
+- **Keys** need `Hashable` (`std.hashlib.hash`) and `Eq`
+  (`std.cmp.cmp`), which every integer and float type, `bool`, `str` and
+  `String` have; implement both for a type of your own.
+- **Hashing, DoS-resistant by default.** `Map.new()` hashes with
+  SipHash-1-3 under a secret 128-bit key of its own, drawn from the
+  runtime's entropy service with the map's first insertion (see
+  `std.hashlib.hash` below for why SipHash-1-3): whoever does not know the
+  key cannot choose keys that collide. `Map.with_key(HashKey.new(k0, k1))`
+  uses a key you give (the same iteration order every run, as resistant as
+  the key is secret). `Map.unkeyed()` uses the keys' fast `hash_value()`
+  (the MurmurHash3 finalizer for integers, FNV-1a for strings) and is
+  **not DoS-resistant**: hash-flooding keys make it quadratic
+  (`flooding_keys_slow_the_unkeyed_hash_and_not_the_keyed_default`
+  computes 20,000 such keys by inverting the hash: 393 ms to insert and
+  find them unkeyed, 1.5 ms keyed, 1.5 ms for random keys).
+- **Custom hashers** are the key type's: wrap the key in a struct whose
+  `Hashable` implementation (`hash_keyed` for `new`/`with_key`,
+  `hash_value` for `unkeyed`) hashes what you want, for instance strings
+  equal up to case (`custom_key_types_bring_their_own_hash`); every call is
+  resolved at compile time and inlined. A hasher held as a function value
+  was measured first and dropped: the indirect call it put into the probe
+  loop of every map, custom or not, stopped LLVM from keeping the table in
+  registers across lookups (2 ns more per lookup in a 1K-entry map).
+- **Small maps**: a map of at most 7 entries is one group; with integer,
+  float or `bool` keys (`compares_cheaply()`) it is scanned without
+  hashing, which costs less than SipHash (`map_small5_secure_get` below).
+- **Capacity**: `Map.new()` allocates only the map object; the key, the
+  control words and the slot array come with the first insertion. The
+  slot array is filled with copies of a key and value at hand (an array of
+  a type parameter has no default value), so `with_capacity`/`reserve`
+  allocate the control words at once and the slots on the first insertion.
+  A removed entry's key and value stay in its slot until it is reused.
+- **Iteration** (`m.iter()`, an iterator object over `(key, value)`
+  pairs, in table order, which differs between maps): replacing the value
+  of a present key and removing keys during an iteration are allowed --
+  an entry removed before the iterator reaches it is not produced, and
+  every entry present throughout is produced exactly once; an entry
+  inserted under a new key may or may not be produced; an insertion that
+  grows or rebuilds the table, and `reserve`, `shrink_to_fit` and `clear`,
+  make the iterator's next step panic ("the map was resized or cleared
+  while being iterated"). `keys()`, `values()` and `entries()` are copies.
+  Nothing is ever memory-unsafe. (`iteration_follows_the_documented_mutation_rules`)
 - `Set[T]` (`std.collections.set`) and `Counter[T]`
-  (`std.collections.counter`: `add`, `count`, `most_common`, ...) on `Map`.
+  (`std.collections.counter`: `add`, `count`, `most_common`, ...) are on
+  `Map` and hash as it does; both have `unkeyed()`, `Set` also
+  `with_capacity`, `with_key` and `reserve`.
 - `Deque[T]` (`std.collections.deque`): a ring buffer, `push_front`,
   `push_back`, `pop_front`, `pop_back` (`T?`), `front`, `back`, `get`.
 - `BinaryHeap[T]` (`std.collections.binary_heap`): a max-heap, elements
@@ -318,6 +384,11 @@ seen.union(other); seen.intersection(other); seen.difference(other)
 - A `for` body, like any block, is checked against `()`: write
   `m.insert(k, v);` (with the `;`) as the last statement of a loop body,
   because `insert` returns the old value.
+- Tests: `std_collections_map_matches_rust_hash_map` (`tests/std_imports.rs`)
+  replays random sequences -- removals, re-insertions, growth to 50,000
+  keys, `reserve`/`shrink_to_fit`/`clear`, tombstone churn over 48 and
+  2,000 keys -- on every hasher, on `String` keys and on `Set`, against
+  Rust's `HashMap`/`HashSet`; `tests/hash_map.rs` has the rest.
 
 **Measured** (x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores; Codira at `-O 2`
 with a release build of the compiler and runtime, Rust 1.97 at `-C
@@ -335,8 +406,120 @@ checksums.
 | `xs.map(x * 2).filter(x % 3 == 0).sum()` | 78.9 | 15.9 (lazy chain) |
 | the same as one `fold` | 16.1 | 15.9 |
 | sort 1M random `i64` | 19.5 | 19.7 (`sort_unstable`; `sort` 29.9) |
-| `Map[i64, i64]`: insert 1M random keys | 106.2 | 89.5 (`HashMap`, SipHash); 66.1 (same hash as Codira) |
-| `Map[i64, i64]`: look the 1M keys up | 48.1 | 92.4 (SipHash); 30.8 (same hash) |
+
+The map, at 1K, 100K and 1M keys (`i64` keys random, `String` keys
+`"key-<n>"`); every 1K and 100K measurement repeats the operation on fresh
+maps so that each is at least a million operations. Same machine, method
+and checksums as above, `codira start` with its default heap limit; load
+average about 2 on the 4 cores during the runs (other builds), so
+differences under 10% are noise.
+
+*Same hash on both sides* (`Map.unkeyed()` against `HashMap` with a `BuildHasher` computing the same function: the MurmurHash3 finalizer for `i64`, FNV-1a over the bytes for strings; neither is DoS-resistant):
+
+| keys | operation | Codira ns/op | Rust ns/op | Codira / Rust |
+|---|---|---:|---:|---:|
+| 1K `i64` | insert into a new map | 62.4 | 17.9 | 3.49x |
+| 1K `i64` | lookup, hit | 4.3 | 3.0 | 1.43x |
+| 1K `i64` | lookup, miss | 3.7 | 3.0 | 1.23x |
+| 1K `i64` | iterate | 2.9 | 0.9 | 3.11x |
+| 1K `i64` | remove | 6.4 | 5.8 | 1.09x |
+| 100K `i64` | insert into a new map | 28.1 | 17.3 | 1.62x |
+| 100K `i64` | lookup, hit | 10.4 | 6.8 | 1.52x |
+| 100K `i64` | lookup, miss | 13.6 | 8.8 | 1.54x |
+| 100K `i64` | iterate | 3.9 | 1.6 | 2.45x |
+| 100K `i64` | remove | 19.7 | 15.7 | 1.25x |
+| 1M `i64` | insert into a new map | 65.7 | 63.9 | 1.03x |
+| 1M `i64` | lookup, hit | 27.5 | 25.5 | 1.08x |
+| 1M `i64` | lookup, miss | 10.5 | 9.5 | 1.10x |
+| 1M `i64` | iterate | 6.1 | 3.9 | 1.54x |
+| 1M `i64` | remove | 33.8 | 24.3 | 1.39x |
+| 1K `String` | insert into a new map | 88.8 | 47.0 | 1.89x |
+| 1K `String` | lookup, hit | 19.6 | 20.7 | 0.95x |
+| 1K `String` | lookup, miss | 15.8 | 15.3 | 1.03x |
+| 1K `String` | iterate | 3.2 | 0.9 | 3.39x |
+| 1K `String` | remove | 24.4 | 25.5 | 0.96x |
+| 100K `String` | insert into a new map | 94.9 | 52.9 | 1.79x |
+| 100K `String` | lookup, hit | 34.9 | 34.6 | 1.01x |
+| 100K `String` | lookup, miss | 37.0 | 31.8 | 1.16x |
+| 100K `String` | iterate | 3.9 | 1.8 | 2.19x |
+| 100K `String` | remove | 45.3 | 46.5 | 0.97x |
+| 1M `String` | insert into a new map | 241.2 | 164.9 | 1.46x |
+| 1M `String` | lookup, hit | 105.9 | 90.1 | 1.18x |
+| 1M `String` | lookup, miss | 42.8 | 44.5 | 0.96x |
+| 1M `String` | iterate | 10.5 | 6.7 | 1.58x |
+| 1M `String` | remove | 106.6 | 103.0 | 1.04x |
+
+*The DoS-resistant defaults* (`Map.new()` against `HashMap::new()`: SipHash-1-3 under a random key on both sides):
+
+| keys | operation | Codira ns/op | Rust ns/op | Codira / Rust |
+|---|---|---:|---:|---:|
+| 1K `i64` | insert into a new map | 91.0 | 39.5 | 2.30x |
+| 1K `i64` | lookup, hit | 11.1 | 10.8 | 1.02x |
+| 1K `i64` | lookup, miss | 9.9 | 12.2 | 0.81x |
+| 1K `i64` | iterate | 3.6 | 0.9 | 3.79x |
+| 1K `i64` | remove | 14.6 | 14.5 | 1.01x |
+| 100K `i64` | insert into a new map | 42.2 | 35.6 | 1.18x |
+| 100K `i64` | lookup, hit | 20.1 | 19.7 | 1.02x |
+| 100K `i64` | lookup, miss | 20.9 | 18.2 | 1.15x |
+| 100K `i64` | iterate | 3.7 | 1.6 | 2.35x |
+| 100K `i64` | remove | 28.6 | 29.4 | 0.97x |
+| 1M `i64` | insert into a new map | 96.0 | 97.3 | 0.99x |
+| 1M `i64` | lookup, hit | 73.3 | 67.5 | 1.09x |
+| 1M `i64` | lookup, miss | 21.6 | 23.5 | 0.92x |
+| 1M `i64` | iterate | 7.2 | 4.8 | 1.52x |
+| 1M `i64` | remove | 68.2 | 88.3 | 0.77x |
+| 1K `String` | insert into a new map | 93.8 | 60.6 | 1.55x |
+| 1K `String` | lookup, hit | 18.2 | 23.8 | 0.77x |
+| 1K `String` | lookup, miss | 14.8 | 21.0 | 0.71x |
+| 1K `String` | iterate | 3.4 | 1.2 | 2.89x |
+| 1K `String` | remove | 21.4 | 26.5 | 0.81x |
+| 100K `String` | insert into a new map | 91.0 | 64.8 | 1.40x |
+| 100K `String` | lookup, hit | 36.3 | 38.6 | 0.94x |
+| 100K `String` | lookup, miss | 34.0 | 32.4 | 1.05x |
+| 100K `String` | iterate | 4.1 | 1.8 | 2.34x |
+| 100K `String` | remove | 39.3 | 46.7 | 0.84x |
+| 1M `String` | insert into a new map | 293.6 | 263.4 | 1.11x |
+| 1M `String` | lookup, hit | 108.6 | 124.6 | 0.87x |
+| 1M `String` | lookup, miss | 52.0 | 54.6 | 0.95x |
+| 1M `String` | iterate | 11.1 | 6.9 | 1.61x |
+| 1M `String` | remove | 115.4 | 136.4 | 0.85x |
+
+*Small maps* (five `i64` keys):
+
+| work | hasher | Codira ns | Rust ns |
+|---|---|---:|---:|
+| build a map of 5 (per insert, map creation included) | default (SipHash) | 42.5 | 28.5 |
+| look up in it (half hits) | default (SipHash) | 3.7 | 12.2 |
+| build a map of 5 (per insert, map creation included) | same unkeyed hash | 60.4 | 22.8 |
+| look up in it (half hits) | same unkeyed hash | 3.8 | 3.8 |
+
+- **Lookups and removals** run at Rust's speed or faster with the default
+  hasher (0.71x to 1.15x Rust's time across sizes and key types), and
+  within 0.95x to 1.54x with the same unkeyed hash. What is left: a probe
+  tests 8 control bytes per word where hashbrown tests 16 with SSE2, and
+  the table is reached through the map object and two arrays (each a
+  handle to its payload) where Rust's sits in registers.
+- **Insertion into a new map** takes 1.0x to 3.5x Rust's time, the most
+  for small maps grown from nothing: a map of 1,000 entries grows 8 times
+  and every table is a new GC allocation, where `malloc` reuses the last
+  one. Measured on the same build, outside the benchmark: 1,000 insertions
+  into a fresh unkeyed map take 29 ns each, 12 ns with the table reserved
+  first (`with_capacity`), and 15 ns per insert-and-remove into an
+  existing table.
+- **Iteration** is 1.5x to 3.8x slower: `next()` of an iterator object,
+  whose state lives in its heap object, per entry; Rust's iterator stays
+  in registers. `keys()`, `values()` and `entries()` copy at memory speed.
+- **Small maps**: looking up in a map of five integer keys is 3.3 times as
+  fast as Rust's with SipHash (the keys are compared, never hashed) and
+  the same with the unkeyed hash. Building one costs 1.5x to 2.6x Rust's:
+  the map object, its control word and its slot array are three GC
+  allocations, and a keyed map draws its key from the runtime.
+- Against the map this replaced (open addressing, a state byte, a key and
+  a value in three bounds-checked arrays; measured on this machine as
+  106.2 ms to insert 1M random `i64` keys and 48.1 ms to look them up,
+  1.6x Rust's with the same hash): 65.7 and 27.5 ms here, 1.03x and 1.08x
+  Rust's, with every hash inlined (`mix64` used to be a call through the
+  dispatch table) and, by default, DoS-resistant.
 
 - Pushing, sorting and the closure-based reductions run at Rust's speed;
   the sums are bound by memory bandwidth (80 MB). The `fold` with a closure
@@ -347,12 +530,6 @@ checksums.
   builds its array (10M and then 10M elements allocated, zeroed and
   written); fused into one `fold` it is on par, and so is the lazy
   pipeline `xs.iter().map(..).filter(..).sum()` (see "Lazy pipelines").
-- `Map` is 1.6 times slower than Rust's `HashMap` with the same hash
-  function: every probe goes through the map object and three arrays
-  (bounds-checked loads of the state byte, the key and the value) where
-  `hashbrown` probes 16 control bytes at once with SIMD. Against Rust's
-  default (DoS-resistant SipHash) map, lookups are faster and insertion
-  slower.
 - What growth cost existing loops: `for x in xs` now also tests the current
   length on every iteration. Measured against the old lowering written out
   by hand, a loop that only reads is unchanged (9.4 vs 9.4 ms over 10M
@@ -361,6 +538,64 @@ checksums.
   array is 6% slower (22.4 vs 21.2 ms) because the length is reloaded after
   each store; with `CODIRA_ARRAY_TBAA=1` that loop is unchanged (17.0 vs
   17.3 ms). Program: `examples/collections_loop_cost/src/mod.code`.
+
+### Hashing: `std.hashlib.hash`
+
+```codira
+import std.hashlib.hash.{Hashable, HashKey, SipHasher13, siphash13_str}
+
+let key = HashKey.random()                 // 128 bits, fresh on every call
+let h = "ada".hash_keyed(key)             // SipHash-1-3 of the bytes
+let same = siphash13_str(key, "ada") == h
+let fast = "ada".hash_value()             // FNV-1a: unkeyed, not DoS-resistant
+let mine = SipHasher13.new(key).write_u64(7).write_str("x").finish()
+```
+
+- **Two kinds of hash.** `hash_keyed(key)` is SipHash under a secret
+  128-bit key: what `Map`, `Set` and `Counter` use by default, each under
+  a key of its own. `hash_value()` is fixed: the MurmurHash3 finalizer for
+  integers, FNV-1a for `str` and `String`; anyone who chooses the keys can
+  make them collide, so it is for trusted data (`Map.unkeyed()`).
+- **Why SipHash-1-3.** SipHash (Aumasson and Bernstein, "SipHash: a fast
+  short-input PRF", INDOCRYPT 2012) was designed as the keyed hash for
+  hash tables: fast on short inputs, and its outputs cannot be predicted by
+  whoever does not hold the key, so colliding keys cannot be computed
+  offline. SipHash-2-4 is the variant its authors claim to be a PRF
+  (`siphash24_*` here); SipHash-1-3, with one compression and three
+  finalization rounds, is the default table hash of Rust's `HashMap` and of
+  Python since 3.11. It gives up part of the security margin for about
+  twice the speed, which suits a hash table, where an attacker sees at most
+  timing and iteration order, never a hash. The faster seeded hashes
+  (aHash, wyhash and the like) have no published analysis under a secret
+  key, and some of their kind (MurmurHash2 and 3, CityHash64) were shown by
+  SipHash's authors to have multicollisions that work for every seed.
+- **Keys.** `HashKey.random()` calls the runtime's entropy service: the
+  process draws a 128-bit secret from the operating system once
+  (`getrandom`), and key `n` is `(PRF(secret, 2n), PRF(secret, 2n + 1))`
+  with SipHash-2-4 as the PRF, so each map's key is independent of every
+  other's, and one map's iteration order tells nothing about another's
+  (copying a map into another in iteration order does not cluster it, as it
+  can with one shared hash). `HashKey.new(k0, k1)` is a fixed key, for
+  tests and reproducible orders.
+- **A type of your own** gets `hash_keyed` by default as SipHash of its
+  `hash_value`, which is only as collision-resistant as `hash_value` is
+  injective (a `combine_hash` of fields is not). Override it by writing the
+  fields to a `SipHasher13` (`write_u64`, `write_i64`, `write_str`,
+  `write_string`, `write_bytes`): SipHash-1-3 over an injective encoding
+  (a string's bytes in words, padded, then its length), so `("ab", "c")`
+  and `("a", "bc")` do not collide.
+- **Speed.** An integer's keyed hash is one SipHash block and the length
+  block, straight-line and inlined (the implementations are `@inline`, so a
+  map's probe loop has no call); a string's is a loop over 8-byte words
+  (`string_data` gives a `String`'s bytes without a call). Bytes are read
+  as little-endian words, on the little-endian targets Codira supports.
+- Tests: `std_siphash_matches_the_reference` (every length 0 to 40, random
+  keys, through every entry point) against a reference implementation
+  that `the_reference_siphash_is_siphash` checks against the paper's
+  vector, Rust's `SipHasher` (2-4) and Rust's `DefaultHasher` (1-3);
+  `keyed_maps_differ_between_maps_and_between_runs`;
+  `codira_runtime`'s `native_random` unit tests (the entropy service and
+  the key derivation against the authors' vector).
 
 ### Lazy pipelines: `xs.iter().map(f).filter(g).sum()`
 
@@ -613,7 +848,12 @@ There are two string types:
   `String`.
 - **`String`** is the owned string, always valid UTF-8. It is the one string
   type a program builds, stores, returns and passes around; there is no
-  separate borrowed type and no lifetime to write.
+  separate borrowed type and no lifetime to write. The intrinsic
+  `string_data(s: String) -> usize` (declared in `extern
+  "codira-intrinsic"`) is the address of a non-empty `String`'s first byte,
+  for reading its `s.len()` bytes with the `load_*` intrinsics, as
+  `std.hashlib.hash` and `std.cmp.cmp` do; an empty `String` may have no
+  buffer, so check the length first.
 
 #### The design, and why
 
@@ -1200,7 +1440,7 @@ that both texts are byte for byte the ones `serde_json` prints.
   tree (64 bytes per array element, 96 per object member, plus an object
   header per array and object) and the time for a large
   object whose keys an attacker chose to collide in FNV-1a, which is
-  unseeded (**not DoS-resistant**, like `Map`).
+  unseeded (**not DoS-resistant**, unlike `Map.new()`: see "Not done").
 - A string without escapes is a view of the input text (no copy): the
   value keeps the whole input buffer alive. Copy what you keep
   (`f"{s}"`) to let the input go.
@@ -1274,7 +1514,14 @@ GeoJSON polygons of 300,000 17-digit coordinate pairs (11.8 MB); `deep`,
 generic traits: a serialization framework comes next); a streaming or
 event parser; reading a number's exact text (an integer beyond `i64` is a
 float, a decimal is rounded to an `f64`); JSON Pointer and JSON Patch; a
-limit on input or tree size; a seeded or flooding-resistant key hash;
+limit on input or tree size; a seeded or flooding-resistant key hash (an
+object keeps its own index rather than a `std.collections.map`: its
+members stay in insertion order, which `Map` does not keep, the parser
+builds every object from one shared stack of members and allocates it
+once at its size, and an object of up to 8 members has no index at all;
+keying that index with SipHash costs a SipHash per key of every object
+above 8 members, which has not been measured against the `serde_json`
+numbers above);
 printing keys sorted; comments or trailing commas as an option.
 
 ### Integer arithmetic, shifts and casts
@@ -1339,9 +1586,11 @@ if unlikely(i >= limit) { .. }       // branch weights for the optimizer
 ```
 
 - `array_filled(v, n)` makes an array of `n` copies of `v` in one
-  allocation (an array of any element type can also grow with `push`, see
-  "Growable arrays and collections"). `v` is an integer, float or `bool`; the fill is a
-  counted loop that LLVM turns into a `memset` or vector stores. It allocates,
+  allocation. `v` is any value: a number (the fill is a counted loop that
+  LLVM turns into a `memset` or vector stores), a tuple, a value struct, a
+  string, or a class reference (`n` copies of the one reference). Generic
+  code uses it to allocate `n` elements of a type parameter at once
+  (`array_filled((key, value), n)` in `std.collections.map`). It allocates,
   so `@noalloc` rejects it.
 - `select(c, a, b)` takes integers, floats or `bool`s (it is a call; the
   channel statement `select { .. }` is a different construct, told apart by the
@@ -1718,7 +1967,17 @@ func first_word(bytes: [u8]) -> usize? {
 - What it costs: a tag test and a branch, the error moved into the
   caller's `Err` (and its wrapping variant). No allocation, no call, no
   unwinding. A converting `?` adds the conversion's call on the `Err` path
-  only (measured below).
+  only (measured below). The branch is weighted towards `Ok`
+  (`llvm.expect`): the error path is laid out of line, after the hot code,
+  and calls made only to build the error are not inlined into the success
+  path. When the fallible function is inlined -- one of the same library,
+  an instance of a generic one, or an `@inline` function of another
+  library, which the caller compiles a copy of -- the `Result` is never
+  built: its tag test folds into the callee's own branches. A `Result`
+  that is returned (a call that stays) comes back in two registers when
+  its layout is two words (`Result[i64, i64]`), through memory when it is
+  larger. `crates/codira/tests/error_propagation.rs` checks both on the
+  optimized IR.
 - An early return through `?` is a return, not a panic, for `@nopanic`
   and the other effect promises. The contract verifier checks
   `ensures` at every `?` as a return point; a postcondition about a
@@ -1839,20 +2098,41 @@ it does not keep it.
   a converting `?` is not `@noalloc`; a wrapping or same-type `?` still
   costs nothing.
 - **What it costs**, measured (`examples/error_bench/`: a `parse_i64` that
-  succeeds or fails, passed on by `?` from a function, 1M calls, the median
-  of 7 runs in each process and the median of 5 processes; the same machine
-  and release build as the format benchmark, load average 2.5 to 3.3):
+  succeeds or fails, passed on by `?` from a function, 1M calls; and
+  `examples/results`' loop -- `next_word`, `parse_i64` and `?` per word --
+  over 1M words in memory; the median of 7 runs in each process and the
+  median of 5 processes, nanoseconds per call or word). `error_rust.rs` is
+  the same work in Rust (the same algorithms, `From` for the wrapping, an
+  `AnyError` of the same shape built the same way), printing the same check
+  values. x86-64 VM, Intel Xeon @ 2.10 GHz, release builds of the compiler
+  from just before and just after the change, Rust 1.97 at `-C
+  opt-level=3`; load average about 4.8 on the 4 cores during the runs (a
+  later run of the final build, at load 1, gave the same `Ok` times within
+  0.3 ns):
 
-  | `?` passing on a `ParseError` | `Ok` | `Err` |
-  |---|---:|---:|
-  | wrapped in an enum variant (`Problem.Parse(e)`) | 5.1 ns | 5.4 ns |
-  | converted to an `AnyError` | 5.2 ns | 519 ns |
-  | `.context("parsing the answer")?` to an `AnyError` | 5.3 ns | 709 ns |
+  | `?` passing on a `ParseError` | before | now | Rust |
+  |---|---:|---:|---:|
+  | wrapped in an enum variant (`Problem.Parse(e)`), `Ok` | 5.78 | 3.98 | 2.96 |
+  | the same, `Err` | 5.58 | 3.56 | 2.75 |
+  | converted to an `AnyError`, `Ok` | 5.69 | 4.01 | 2.77 |
+  | `.context("parsing the answer")?`, `Ok` | 5.49 | 3.76 | 2.77 |
+  | `examples/results`' loop, per word | 21.5 | 17.4 | 19.0 |
 
-  The `Ok` path is the same in all three: a tag test. The `Err` path of a
-  conversion builds the message (`invalid digit at byte 2`, an `f".."`) and
-  an `AnyError` on the GC heap, and a context copies its literal and makes
-  the one-element context array; an error is expected to be rare.
+  A conversion's `Err` path, which this work leaves as it was, costs 252
+  ns (`converted`) and 318 ns (`.context`) against Rust's 65 and 89: it
+  builds the message (an `f".."`) and an `AnyError` in the GC heap.
+
+  The tight `?` loop was 1.95x Rust's time (`wrapped`, `Ok`) and is 1.34x.
+  The cause was not the `?`, which was already a tag test and a branch, but
+  what surrounded it: `parse_i64` lives in the standard library's own
+  library, so every call went through the dispatch table -- an indirect
+  call LLVM cannot inline -- and its 32-byte `Result` came back through
+  memory to be tested. Rust inlines the parser, and its `Result` never
+  exists. Now `std.text.ascii`'s functions are `@inline`, the program
+  compiles them in, and the `Result` folds away; the loop over words is
+  faster than Rust's. What remains on the `Ok` path is the array's
+  indirection (a handle to its payload, reloaded per call) and a bounds
+  check per byte. An error is expected to be rare.
 - Not done: keeping the original error inside an `AnyError` (that needs
   trait objects; only its message and type name are kept, so there is no
   downcasting), a backtrace, `source` returning an error rather than its
@@ -2622,9 +2902,13 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     within 7e-5 absolute, `fast_exp` 0.01 % relative, `fast_log` 5.4e-4
     absolute, `fast_sqrt`/`fast_rsqrt` 0.175 % relative; `fast_pow` and
     `fast_tan` have no stated bound).
-  - `std.hashlib.hash`: FNV-1a 64 over `[u8]`, integers, floats and bools,
-    hash combiners, and `hash[T: Hashable]`. **Not cryptographic**: for
-    hash tables and fingerprints of trusted data only.
+  - `std.hashlib.hash`: SipHash-1-3 and SipHash-2-4 under a `HashKey`
+    (`HashKey.random()` from the runtime's entropy service), `SipHasher13`,
+    and `Hashable` with `hash_keyed` (SipHash) beside `hash_value`; FNV-1a
+    64 over `[u8]`, integers, floats and bools, hash combiners, and
+    `hash[T: Hashable]`. SipHash under a secret key is DoS-resistant; FNV-1a
+    and `hash_value` are not, and nothing here is a cryptographic hash for
+    integrity (see "Hashing" below).
   - `std.base64.base64`: base64, base32 and base16 encode and decode over
     `[u8]` (encoded text is its ASCII bytes), standard alphabets with `=`
     padding; decoding is lenient: it skips bytes outside the alphabet,
@@ -2634,9 +2918,11 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     `QR==` both decode to `A`). Not for input that must be validated.
   - `std.random.rng`: xoshiro256** with the state in a `Rng` the caller
     holds, seeded by SplitMix64 (`rng_seeded(seed)`, `rng_next_u64`,
-    `rng_next_f64`, `rng_range_i64`, `rng_next_bool`). **Not
-    cryptographic**: predictable from its output, and seeded only by the
-    caller.
+    `rng_next_f64`, `rng_range_i64`, `rng_next_bool`), or from the system
+    (`rng_from_entropy()`). The generator is **not cryptographic**
+    (predictable from its output); `os_random_u64()` and
+    `os_random_bytes(n)` are the operating system's secure generator,
+    through the runtime's entropy service `codira_random_fill`.
   - `std.builtin.type_aliases` (`Never`).
   - `std.sys.terminate`: `panic` (writes `panic: <message>` to standard
     error and aborts), `exit`, `abort`, `assert`, `unreachable`, `todo`.
@@ -2647,8 +2933,9 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     `std.collections.counter` (`Counter[T]`), `std.collections.deque`
     (`Deque[T]`) and `std.collections.binary_heap` (`BinaryHeap[T]`), on
     growable arrays (see "Growable arrays and collections"). The hash
-    tables are **not DoS-resistant**. `std.hashlib.hash` gives every
-    integer and float type, `bool` and `str` a `Hashable` implementation.
+    tables are keyed with SipHash-1-3 by default (DoS-resistant), unkeyed
+    when asked. `std.hashlib.hash` gives every integer and float type,
+    `bool`, `str` and `String` a `Hashable` implementation.
   - What calls `panic`: `std.math.math` (libm-backed `sin`...`atan2`,
     rounding, `gcd`, `factorial`, classification; within 2 ulp of Rust's
     libm in the tests), `std.time.time` (durations, monotonic instants,
