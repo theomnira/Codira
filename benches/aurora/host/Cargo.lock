@@ -165,6 +165,7 @@ dependencies = [
  "libc",
  "libloading",
  "log",
+ "memchr",
  "notify",
  "once_cell",
  "parking_lot",

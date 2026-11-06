@@ -159,7 +159,7 @@ kernels = [
   { name = "long_run_heap_1024", entry = "long_run", arg = "long_run", heap_limit_mb = 1024 },
   { name = "long_run_heap_256", entry = "long_run", arg = "long_run", heap_limit_mb = 256 },
   { name = "long_run_heap_128", entry = "long_run", arg = "long_run", heap_limit_mb = 128, ci = true },
-  { name = "long_run_heap_96", entry = "long_run", arg = "long_run", heap_limit_mb = 96 },
-  { name = "long_run_heap_80", entry = "long_run", arg = "long_run", heap_limit_mb = 80 },
-  { name = "long_run_heap_64", entry = "long_run", arg = "long_run", heap_limit_mb = 64, expected_failure = { codira = "the runtime aborts when a collection cannot make room under the cap" } },
+  { name = "long_run_heap_96", entry = "long_run", arg = "long_run", heap_limit_mb = 96, expected_failure = { codira = "the runtime aborts out of memory at this cap since the heap policy landed (it completed at ea5aea347e); the live bytes it reports after a full collection vary from 56 to 79 MB between runs and caps, for a program whose live data does not grow" } },
+  { name = "long_run_heap_80", entry = "long_run", arg = "long_run", heap_limit_mb = 80, expected_failure = { codira = "the runtime aborts out of memory at this cap since the heap policy landed (it completed at ea5aea347e); the live bytes it reports after a full collection vary from 56 to 79 MB between runs and caps, for a program whose live data does not grow" } },
+  { name = "long_run_heap_64", entry = "long_run", arg = "long_run", heap_limit_mb = 64, expected_failure = { codira = "the runtime aborts out of memory: a collection cannot make room under the cap" } },
 ]

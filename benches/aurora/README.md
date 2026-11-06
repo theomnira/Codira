@@ -111,11 +111,15 @@ command, the machine) and `summary.md` (the tables).
   interval for the median (2,000 resamples). Ratios are Codira's median
   over the baseline's, with a bootstrap interval resampling both sides.
   Every kernel is reported on its own: there is no aggregate score.
-- **Memory.** The peak resident set of the process (`VmHWM` at exit, read
-  by the program or the host; the runner falls back to `wait4`). For
-  Codira, the host also reports the GC heap's bytes at the end. GC
-  collections and pause times are reported once the runtime exposes them;
-  until then the tables say "not reported".
+- **Memory and pauses.** The peak resident set of the process (`VmHWM` at
+  exit, read by the program or the host; the runner falls back to `wait4`).
+  For Codira, the host prints `Runtime::stats()` after the kernel: the
+  heap's peak, the live bytes after the last collection, bytes allocated,
+  collections by cause (paced or at the cap), the time the world was
+  stopped and the time to reach a safepoint, and the pause count, median,
+  99th percentile and maximum. The collector runs with the runtime's
+  default pacing (the next collection at 100% growth over the live data)
+  under the kernel's cap, as under `codira run`.
 - **Latency.** The `server` workload times each request and prints the
   p50, p95, p99, p99.9 and maximum; the tables give the median of each over
   the runs, with an interval.

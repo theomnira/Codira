@@ -566,8 +566,11 @@ def summarize(kernels, results, rng):
             res["ci_ns"] = bootstrap_median_ci(ns, rng)
             rss = [float(x["values"].get("rss_peak_kb") or x["rusage"]["maxrss_kb"]) for x in s]
             res["median_rss_kb"] = median(rss)
-            for key in ("gc_allocated_bytes", "p50_ns", "p95_ns", "p99_ns", "p999_ns", "max_ns",
-                        "gc_collections", "gc_pause_p50_ns", "gc_pause_p99_ns", "gc_pause_max_ns"):
+            for key in ("p50_ns", "p95_ns", "p99_ns", "p999_ns", "max_ns", "gc_heap_bytes",
+                        "gc_peak_heap_bytes", "gc_live_after_last_bytes", "gc_bytes_allocated",
+                        "gc_objects_allocated", "gc_collections", "gc_collections_paced",
+                        "gc_collections_at_limit", "gc_collection_time_ns", "gc_time_to_safepoint_ns",
+                        "gc_pause_count", "gc_pause_p50_ns", "gc_pause_p99_ns", "gc_pause_max_ns"):
                 vals = [float(x["values"][key]) for x in s if key in x["values"]]
                 if vals:
                     res["median_" + key] = median(vals)
@@ -744,19 +747,28 @@ def markdown(env, workloads, kernels, results, compile_info, gate_tests):
                             c += f" [{ci[0] / 1e3:.1f}, {ci[1] / 1e3:.1f}]"
                         cols.append(c)
                     L.append(f"| {k.name} | {v} | " + " | ".join(cols) + " |")
-        gcs = [k for k in ks if "median_gc_allocated_bytes" in results[k.id].get("codira", {})]
+        gcs = [k for k in ks if "median_gc_peak_heap_bytes" in results[k.id].get("codira", {})]
         if gcs:
-            L.append("\nCodira GC heap (from the runtime, at the end of the kernel):\n")
-            L.append("| kernel | heap limit (MiB) | GC heap bytes at end (MiB) | collections | pause p50 / p99 / max (µs) |")
-            L.append("|---|---:|---:|---:|---|")
+            L.append("\nCodira GC (`Runtime::stats()` at the end of the kernel's process; medians over "
+                     "the runs, pauses with a bootstrap 95% interval):\n")
+            L.append("| kernel | heap cap (MiB) | peak heap (MiB) | live after last GC (MiB) | allocated (MiB) "
+                     "| collections (paced / at cap) | stopped (ms) | to safepoint (ms) "
+                     "| pause p50 (µs) | pause p99 (µs) | pause max (µs) |")
+            L.append("|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|")
             for k in gcs:
                 res = results[k.id]["codira"]
-                col = res.get("median_gc_collections")
-                pauses = " / ".join(f"{res[f'median_gc_pause_{q}_ns'] / 1e3:.1f}"
-                                    for q in ("p50", "p99", "max") if f"median_gc_pause_{q}_ns" in res)
-                L.append(f"| {k.name} | {k.heap_limit_mb} | {res['median_gc_allocated_bytes'] / 2**20:.1f} | "
-                         f"{'not reported' if col is None else int(col)} | "
-                         f"{pauses or 'not reported by this runtime'} |")
+                g = lambda key: res.get("median_" + key, 0)
+
+                def pause(q):
+                    v, ci = res.get(f"median_gc_pause_{q}_ns"), res.get(f"ci_gc_pause_{q}_ns")
+                    if v is None:
+                        return "–"
+                    return f"{v / 1e3:.0f}" + (f" [{ci[0] / 1e3:.0f}, {ci[1] / 1e3:.0f}]" if ci and ci[0] is not None else "")
+                L.append(f"| {k.name} | {k.heap_limit_mb} | {g('gc_peak_heap_bytes') / 2**20:.1f} | "
+                         f"{g('gc_live_after_last_bytes') / 2**20:.1f} | {g('gc_bytes_allocated') / 2**20:.0f} | "
+                         f"{g('gc_collections'):.0f} ({g('gc_collections_paced'):.0f} / {g('gc_collections_at_limit'):.0f}) | "
+                         f"{g('gc_collection_time_ns') / 1e6:.1f} | {g('gc_time_to_safepoint_ns') / 1e6:.2f} | "
+                         f"{pause('p50')} | {pause('p99')} | {pause('max')} |")
         perf_rows = [k for k in ks if any(results[k.id].get(v, {}).get("median_perf") for v in VARIANTS)]
         if perf_rows:
             evs = [e for e in PERF_EVENTS if env["perf_events"].get(e) == "ok"]
