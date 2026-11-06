@@ -155,9 +155,9 @@
 //!   freed before the function returns). What a region object holds is
 //!   never in a frame slot a loop reuses (it is placed in the region too).
 //! * **The collector** sees the heap objects region objects refer to
-//!   because every chunk of an open region is a registered root range
-//!   (`codira_memory::gc::root_ranges`), scanned conservatively after the
-//!   parked stacks. With region checks on (debug builds of the runtime,
+//!   because every chunk of an open region is a registered root span
+//!   (`codira_memory::gc::root_region::RootSpan`), scanned conservatively
+//!   in place, with the parked stacks. With region checks on (debug builds of the runtime,
 //!   `CODIRA_CHECK_REGIONS=1`) closing a region stops the world and fails --
 //!   the process ends with a message -- if a heap object or another open
 //!   region still refers into its chunks.

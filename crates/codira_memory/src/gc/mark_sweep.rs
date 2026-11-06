@@ -175,9 +175,6 @@ pub(crate) struct Core<O> {
     accounting: Mutex<Accounting>,
     /// Collections started, ever. Written with the world stopped.
     started: AtomicU64,
-    /// Memory outside the heap scanned for roots (region chunks). See
-    /// `gc::root_ranges`.
-    pub(crate) root_ranges: super::root_ranges::RootRanges,
     /// What region arenas did. See `gc::region`.
     pub(crate) regions: super::region::RegionCounters,
 }
@@ -243,7 +240,6 @@ where
                 policy: Mutex::new(policy),
                 accounting: Mutex::new(Accounting::default()),
                 started: AtomicU64::new(0),
-                root_ranges: Default::default(),
                 regions: super::region::RegionCounters::new(),
             }),
             requests: Arc::new(Requests::default()),
@@ -763,8 +759,6 @@ where
             }
             self.started.fetch_add(1, Ordering::SeqCst);
             let mut words = world.stack_words();
-            // Region chunks are roots like stacks (see `gc::root_ranges`).
-            self.root_ranges.extend_words(&mut words);
             let swept = if words.is_empty() {
                 self.collect_impl(None)
             } else {

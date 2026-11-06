@@ -128,7 +128,7 @@ fn region_functions_return_what_plain_functions_return() {
             stats.closed, stats.opened,
             "a region was not closed: {stats:?}"
         );
-        assert_eq!(stats.live_ranges, 0, "{stats:?}");
+        assert_eq!(stats.live_chunks, 0, "{stats:?}");
         assert!(stats.objects_allocated >= 500, "{stats:?}");
         assert!(
             runtime.stats().collections.total() > 0,
@@ -151,5 +151,5 @@ fn region_objects_are_not_heap_allocations() {
     let stats = regions.runtime.region_stats();
     assert_eq!(stats.objects_allocated, 1000);
     // Each call's array was freed when it returned.
-    assert_eq!(stats.live_range_bytes, 0);
+    assert_eq!(stats.live_chunk_bytes, 0);
 }

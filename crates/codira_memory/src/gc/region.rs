@@ -6,8 +6,8 @@
 //! - Region arenas for `@region` functions: objects with the heap's layout
 //!   (a header whose first word points to the payload) bump-allocated in
 //!   chunks outside the GC heap, all freed together when the region closes.
-//! - Every chunk is a registered root range (`gc::root_ranges`) while the
-//!   region is open, so the GC references region objects hold keep their heap
+//! - Every chunk is a registered root span (`gc::root_region::RootSpan`)
+//!   while the region is open, so the GC references region objects hold keep their heap
 //!   objects alive.
 //! - An optional check at close ([`MarkSweep::set_region_checks`], on in
 //!   debug builds and with `CODIRA_CHECK_REGIONS=1`): with the world stopped,
@@ -22,9 +22,9 @@
 //! the region closes, its objects are unreachable from everything but the
 //! dead frame that made them, and freeing the chunks is safe. The collector
 //! never traces a region object (no heap object refers to one; a word in a
-//! stack or a root range that points into a chunk is not a heap address and
+//! stack or a root span that points into a chunk is not a heap address and
 //! is ignored), and the heap objects a region object refers to are roots
-//! through the chunk's root range.
+//! through the chunk's root span.
 //!
 //! A region object is never seen by the runtime: hot reload migrates the
 //! heap only while no Codira frame is live (so no region is open), and a heap
@@ -33,12 +33,14 @@
 use std::{
     alloc::{alloc_zeroed, dealloc, Layout},
     ptr::NonNull,
-    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
 };
 
 use crate::gc::{
-    heap::ObjectHeader, mark_sweep::for_each_reference, safepoint, Event, GcPtr, MarkSweep,
-    Observer,
+    heap::ObjectHeader,
+    mark_sweep::for_each_reference,
+    root_region::{self, RootSpan},
+    safepoint, Event, GcPtr, MarkSweep, Observer,
 };
 
 /// The size of a region's first chunk; each further chunk is twice the
@@ -89,6 +91,8 @@ struct Chunk {
 /// allocation goes.
 pub struct Region {
     chunks: Vec<Chunk>,
+    /// The root span of each chunk, unregistered at close.
+    spans: Vec<RootSpan>,
     /// The index in `chunks` of the ordinary chunk `cursor` is in.
     current: Option<usize>,
     /// The size of the next ordinary chunk.
@@ -112,10 +116,10 @@ pub struct RegionStats {
     /// from a closed region is not counted again).
     pub chunks_allocated: u64,
     pub chunk_bytes_allocated: u64,
-    /// Root ranges registered now (one per chunk of every open region), and
-    /// their bytes.
-    pub live_ranges: usize,
-    pub live_range_bytes: usize,
+    /// Chunks of this heap's open regions now (each a registered root span),
+    /// and their bytes.
+    pub live_chunks: usize,
+    pub live_chunk_bytes: usize,
 }
 
 /// The counters behind [`RegionStats`].
@@ -129,6 +133,8 @@ pub(crate) struct RegionCounters {
     chunk_bytes: AtomicU64,
     /// Whether closing a region checks that nothing refers into it.
     check: AtomicBool,
+    live_chunks: AtomicUsize,
+    live_chunk_bytes: AtomicUsize,
 }
 
 impl RegionCounters {
@@ -155,6 +161,7 @@ where
         self.core.regions.opened.fetch_add(1, Ordering::Relaxed);
         Box::new(Region {
             chunks: Vec::new(),
+            spans: Vec::new(),
             current: None,
             next_size: FIRST_CHUNK,
             cursor: 0,
@@ -211,7 +218,7 @@ where
         (header as crate::gc::RawGcPtr).into()
     }
 
-    /// A new zeroed chunk of `size` bytes, registered as a root range.
+    /// A new zeroed chunk of `size` bytes, registered as a root span.
     fn region_chunk(&self, region: &mut Region, size: usize, align: usize) -> NonNull<u8> {
         let layout =
             Layout::from_size_align(size, align.max(CHUNK_ALIGN)).expect("a region chunk's layout");
@@ -235,25 +242,29 @@ where
                 start
             }
         };
-        // Safety: the chunk stays allocated until `region_close`
-        // unregisters it.
-        unsafe {
-            self.core
-                .root_ranges
-                .register(start.as_ptr() as usize, start.as_ptr() as usize + size)
-        };
+        // Safety: the chunk stays allocated until `region_close` drops the
+        // span.
+        region
+            .spans
+            .push(unsafe { RootSpan::register(start.as_ptr(), size) });
         region.chunks.push(Chunk { start, layout });
+        let counters = &self.core.regions;
+        counters.live_chunks.fetch_add(1, Ordering::Relaxed);
+        counters.live_chunk_bytes.fetch_add(size, Ordering::Relaxed);
         start
     }
 
     /// Closes `region`: unregisters and frees every chunk. With region checks
     /// on, first stops the world and makes sure no heap object and no other
     /// open region refers into the chunks.
-    pub fn region_close(&self, region: Box<Region>) -> Result<(), RegionLeak> {
+    pub fn region_close(&self, mut region: Box<Region>) -> Result<(), RegionLeak> {
+        region.spans.clear();
+        let counters = &self.core.regions;
         for chunk in &region.chunks {
-            self.core
-                .root_ranges
-                .unregister(chunk.start.as_ptr() as usize);
+            counters.live_chunks.fetch_sub(1, Ordering::Relaxed);
+            counters
+                .live_chunk_bytes
+                .fetch_sub(chunk.layout.size(), Ordering::Relaxed);
         }
         let checked =
             if self.core.regions.check.load(Ordering::Relaxed) && !region.chunks.is_empty() {
@@ -314,7 +325,6 @@ where
     /// What regions did since the heap was created.
     pub fn region_stats(&self) -> RegionStats {
         let counters = &self.core.regions;
-        let (live_ranges, live_range_bytes) = self.core.root_ranges.totals();
         RegionStats {
             opened: counters.opened.load(Ordering::Relaxed),
             closed: counters.closed.load(Ordering::Relaxed),
@@ -322,15 +332,15 @@ where
             bytes_allocated: counters.bytes.load(Ordering::Relaxed),
             chunks_allocated: counters.chunks.load(Ordering::Relaxed),
             chunk_bytes_allocated: counters.chunk_bytes.load(Ordering::Relaxed),
-            live_ranges,
-            live_range_bytes,
+            live_chunks: counters.live_chunks.load(Ordering::Relaxed),
+            live_chunk_bytes: counters.live_chunk_bytes.load(Ordering::Relaxed),
         }
     }
 
     /// The check behind [`MarkSweep::region_close`]: every reference slot
     /// of every heap object (reachable or not: a heap object never holds a
     /// region reference, dead or alive), and every word of every other
-    /// registered root range, must point outside `region`'s chunks.
+    /// registered root span, must point outside `region`'s chunks.
     fn check_unreferenced(&self, region: &Region) -> Result<(), RegionLeak> {
         let chunks: Vec<(usize, usize)> = region
             .chunks
@@ -365,7 +375,7 @@ where
             drop(inner);
             if found.is_none() {
                 let mut words = Vec::new();
-                self.core.root_ranges.extend_words(&mut words);
+                root_region::span_words(&mut words);
                 if let Some(word) = words.into_iter().find(|&w| inside(w)) {
                     found = Some(format!("another open region holds the address {word:#x}"));
                 }
@@ -420,11 +430,11 @@ mod tests {
         }
         let stats = gc.region_stats();
         assert_eq!(stats.objects_allocated, 10_001);
-        assert!(stats.live_ranges >= 2);
+        assert!(stats.live_chunks >= 2);
         gc.region_close(region).unwrap();
         let stats = gc.region_stats();
         assert_eq!((stats.opened, stats.closed), (1, 1));
-        assert_eq!((stats.live_ranges, stats.live_range_bytes), (0, 0));
+        assert_eq!((stats.live_chunks, stats.live_chunk_bytes), (0, 0));
     }
 
     #[test]

@@ -12,7 +12,6 @@ mod ptr;
 mod region;
 mod root_ptr;
 pub mod root_region;
-mod root_ranges;
 pub mod safepoint;
 mod snapshot;
 mod stack_scan;

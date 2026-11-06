@@ -66,7 +66,7 @@ fn a_heap_object_held_only_by_a_region_object_survives() {
         "once the region is closed nothing refers to the object"
     );
     let stats = gc.region_stats();
-    assert_eq!((stats.opened, stats.closed, stats.live_ranges), (1, 1, 0));
+    assert_eq!((stats.opened, stats.closed, stats.live_chunks), (1, 1, 0));
 }
 
 #[test]

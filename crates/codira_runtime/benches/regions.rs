@@ -217,7 +217,7 @@ fn main() {
         stats.closed,
         stats.chunks_allocated,
         stats.chunk_bytes_allocated,
-        stats.live_ranges
+        stats.live_chunks
     );
     println!("({samples} samples of {calls} calls each, n = {n}; medians per call)");
 }
