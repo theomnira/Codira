@@ -20,7 +20,8 @@
 //!   stopped, the time to reach a safepoint, the pause count, median, 99th
 //!   percentile and maximum), the peak resident set (`VmHWM`), the limit,
 //!   and the time spent loading the library, so that the runner can report
-//!   them next to the kernel's time.
+//!   them next to the kernel's time. With relocation on (`CODIRA_GC_COMPACT=1`)
+//!   it adds what the last collection moved and could not move.
 
 use std::time::Instant;
 
@@ -81,6 +82,11 @@ fn main() {
         s.pauses.p99.as_nanos(),
         s.pauses.max.as_nanos(),
         peak_rss()
+    );
+    let moved = runtime.gc().last_relocation();
+    println!(
+        "@@ gc_last_moved={} gc_last_unmovable={}",
+        moved.moved, moved.pinned
     );
 }
 

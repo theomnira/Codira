@@ -578,7 +578,8 @@ def summarize(kernels, results, rng):
                         "gc_peak_heap_bytes", "gc_live_after_last_bytes", "gc_bytes_allocated",
                         "gc_objects_allocated", "gc_collections", "gc_collections_paced",
                         "gc_collections_at_limit", "gc_collection_time_ns", "gc_time_to_safepoint_ns",
-                        "gc_pause_count", "gc_pause_p50_ns", "gc_pause_p99_ns", "gc_pause_max_ns"):
+                        "gc_pause_count", "gc_pause_p50_ns", "gc_pause_p99_ns", "gc_pause_max_ns",
+                        "gc_last_moved", "gc_last_unmovable"):
                 vals = [float(x["values"][key]) for x in s if key in x["values"]]
                 if vals:
                     res["median_" + key] = median(vals)
