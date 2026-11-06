@@ -16,6 +16,13 @@ The first full run of the suite (`python3 scripts/bench.py`, see
 `baseline/ci.json` holds the samples of its CI kernels for the regression
 gate.
 
+**Since then.** The CI subset was rerun against that baseline after main
+moved to `16934da443` (task groups, and a scheduler whose channel
+operations try before they wait). No kernel regressed, and the heap floor
+is unchanged (64 MiB). One kernel moved: `channels.spsc` went from 13.2x to
+5.2x Rust's time (a 60% drop, 95% interval -70% to -53%). The tables below
+are still the `f8b145c6a1` run.
+
 **The machine.** Intel(R) Xeon(R) Processor @ 2.10GHz, 4 logical CPUs, 16 GB,
 Ubuntu 24.04.5 LTS, Linux 6.18.44-fc-v242: a **shared virtual machine** (a
 container in a VM; the CPUID hypervisor flag is set). No CPU pinning, no
