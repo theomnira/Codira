@@ -57,6 +57,8 @@ use crate::{
     IntoFunctionDefinition, Marshal, ReturnTypeReflection, Runtime,
 };
 
+mod format;
+
 /// The three words of a `String` value, as the compiler lays it out.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1156,6 +1158,9 @@ pub(crate) fn definitions() -> Vec<FunctionDefinition> {
             "codira.string_from_utf8",
         ),
     ]
+    .into_iter()
+    .chain(format::definitions())
+    .collect()
 }
 
 #[cfg(test)]
