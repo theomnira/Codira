@@ -64,6 +64,16 @@ export LLVM_SYS_221_PREFIX=/usr/lib/llvm-22 CARGO_INCREMENTAL=0 \
   random intervals, and by a heap limit. Graphs also run on worker threads
   (`spawn`), and through the host API (rooted handles, field reads, calls).
 - After each test, with nothing rooted, a collection must free every byte.
+- `relocation_with_regions_and_groups_keeps_graphs_intact`: relocation on
+  (as `CODIRA_GC_COMPACT=1` sets it), the graphs run as the tasks of a
+  `group`, and `@region` scratch functions (heap and region objects mixed)
+  called from the garbage bursts; the graphs must match the shadow model,
+  collections must have moved objects (measured: hundreds per run of a few
+  seconds) and regions must have closed. In debug builds every region close
+  also stops the world and checks that nothing refers into the region.
+- `host_threads_allocate_while_codira_code_collects`: three host threads
+  allocate through the host API, holding objects unrooted inside a mutator
+  guard or rooted, while Codira code on another thread collects by pacing.
 - `pacing_alone_keeps_codira_graphs_bounded`: no heap limit, no host
   thread, no collections from the program -- pacing must collect, and the
   peak heap must stay under 32 MiB (measured: a 5.4 MiB peak over 450 MB
@@ -78,6 +88,22 @@ garbage alive, and no oracle here tells the two apart), interleavings the
 scheduler never produces in the time given, and a peak between the paced
 bound and what a real program would need (the bound is fixed, not derived
 from the live data).
+
+### `gc-modes`: the same gates under every collector mode
+
+The runner runs `gc_stress`, `gc_threads`, `fault_injection`,
+`service_soak` and `string_fabric_threads` again with relocation on
+(`CODIRA_GC_COMPACT=1`), with conservative stack roots only
+(`CODIRA_GC_ROOTS=conservative`) and in GC stress mode
+(`CODIRA_GC_STRESS=200`, a collection at every 200th safepoint). In stress
+mode the tests that wait for the heap limit or pacing to collect are
+skipped: stress mode collects first, so their trigger assertions cannot
+hold; every shadow-model and content check still runs.
+
+Cannot catch: Cascade. It tracks only objects allocated through its own
+host-side `Mutator`, which Codira code does not use, so it cannot be
+combined with `@region` code or the graph programs; its own oracles are in
+`crates/codira_memory/tests/cascade.rs`.
 
 ### `faults`: every allocation fails once
 
@@ -185,8 +211,12 @@ TSAN_OPTIONS="suppressions=$PWD/scripts/sanitizers/tsan.supp" RUSTC_BOOTSTRAP=1 
 - The TSan gate runs `codira_memory`'s tests and the runtime's threaded GC
   tests (`gc_threads`, `gc_stress` but its heap-limit test, which runs too
   slowly under TSan to reach the limit, and `strings_host_gc`). Its
-  suppression file holds one documented issue (below) and nothing else;
-  with it, these tests report no race.
+  suppression file holds one documented issue (below) and nothing else.
+  With it, `codira_memory`'s tests report no race on the current code;
+  `gc_threads` and `gc_stress` reported none on this branch before its
+  last rebase onto main (the heap-policy and scheduler work), and
+  `strings_host_gc` has not finished a TSan run yet (it is very slow
+  under TSan).
 
 Cannot catch: anything in generated Codira code (it is compiled by the
 Codira compiler, not instrumented), the runtime's C sources, and the
@@ -256,7 +286,14 @@ the Cranelift heap-parity work lands.
   counting and cycle collection: the graph stress (cycles included) and the
   fault gate are written against the runtime's public behaviour and apply
   unchanged when these land; their own oracles come with them.
-- Memory bounds without a heap limit (see `gc-stress`).
+- Big-endian: the Swiss-table `Map`'s keyed SipHash reads words
+  little-endian, and every Codira target is little-endian (x86-64,
+  AArch64, RISC-V 64, wasm32, NVPTX); a big-endian target would need that
+  checked first.
+- Host code that allocates and then roots an object without a mutator
+  guard while another thread runs Codira code: the runtime documents that
+  the host must take a guard there; the stress tests follow that rule and
+  do not test what happens without it.
 
 ## Known issues found by the gates
 
@@ -297,6 +334,19 @@ the code.
   more than 512 MiB, with the program, and stops at 4 GiB instead of being
   killed.
 
+- **The compiled poll word can be cleared during a stop (found reading
+  the merge, not by a gate).** `frames::set_stress` calls
+  `refresh_poll_word` without the registry lock, while `set_stop` calls it
+  with the lock held. A `set_stress(0)` that reads the stop flag just
+  before a collector sets it, and stores the poll word just after the
+  collector's own refresh, leaves the poll word 0 while a stop is
+  requested: compiled code in a loop that neither allocates nor calls then
+  never parks, and the collector waits for it. It is a liveness issue and
+  only through the test-only stress hook. Taking the registry lock in
+  `set_stress` is not enough on its own: the lazy read of
+  `CODIRA_GC_STRESS` calls `set_stress` from inside `refresh_poll_word`,
+  which `set_stop` runs with the lock held.
+
 ## Bugs the gates found and fixed
 
 Each fix is its own commit with a regression test.
@@ -305,7 +355,7 @@ Each fix is its own commit with a regression test.
 |---|---|---|
 | fuzz-compiler | `5e` (exponent without digits) panicked lowering the literal | `fuzz_regressions::an_exponent_without_digits_is_an_invalid_literal` |
 | fuzz-compiler | `.` at the end of input lexed as an empty tuple index; `e.` panicked | lexer test `a_dot_at_the_end_of_the_input_is_not_an_index` |
-| fuzz-compiler | a `{` where a match arm starts looped until the parser's step limit | parser test `a_brace_where_a_match_arm_should_start_is_an_error` |
+| fuzz-compiler | a `{` where a match arm starts looped until the parser's step limit (fixed on main independently; the fuzzer's inputs are regression tests) | parser test `a_brace_where_a_match_arm_should_start_is_an_error` |
 | fuzz-compiler | type errors on compiler-made nodes (missing operand, `self` type, desugared `if let`) unwrapped missing syntax | `fuzz_regressions::diagnostics_without_syntax_are_reported_on_the_function` |
 | fuzz-compiler | unary `-` on an unsigned integer was `unimplemented!` in the LLVM backend (it wraps, as documented and as in Cranelift) | `functions::negating_an_unsigned_integer_wraps` |
 | fuzz-compiler | `func g() -> T;` outside an `extern` block was accepted and code generation panicked on the missing body | `fuzz_regressions::a_function_without_a_body_outside_an_extern_block` |

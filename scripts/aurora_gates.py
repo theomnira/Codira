@@ -90,10 +90,24 @@ def gates(budget, seed):
     asan = sanitizer_env("address")
     tsan = sanitizer_env("thread")
     gc_tests = ["--test", "gc_stress", "--test", "gc_threads", "--test", "strings_host_gc", "--test", "growable_arrays"]
+    mode_tests = ["--test", "gc_stress", "--test", "gc_threads", "--test", "fault_injection",
+                  "--test", "service_soak", "--test", "string_fabric_threads"]
     return [
         ("gc-stress",
          "seeded random graphs vs a shadow model; collections from Codira code, host threads and the heap limit",
          [cargo_test(["-p", "codira_runtime", *gc_tests, "--test", "heap_limit", "--test", "memory"], stress)]),
+        ("gc-modes",
+         "the GC gates again with relocation on, with conservative roots only, and in GC stress mode",
+         [cargo_test(["-p", "codira_runtime", *mode_tests], {**stress, "CODIRA_GC_COMPACT": "1"}),
+          cargo_test(["-p", "codira_runtime", *mode_tests], {**stress, "CODIRA_GC_ROOTS": "conservative"}),
+          # Stress mode collects first, so tests that wait for the heap
+          # limit or pacing to collect cannot hold; the rest must.
+          cargo_test(["-p", "codira_runtime", *mode_tests], {**stress, "CODIRA_GC_STRESS": "200"},
+                     ["--skip", "codira_graphs_survive_collections_at_a_heap_limit",
+                      "--skip", "pacing_alone_keeps_codira_graphs_bounded",
+                      "--skip", "host_threads_allocate_while_codira_code_collects",
+                      "--skip", "a_service_with_a_heap_limit",
+                      "--skip", "a_paced_service"])]),
         ("faults",
          "the Nth allocation fails, for every N: host API consistency and the out-of-memory exit of generated code",
          [cargo_test(["-p", "codira_memory", "--test", "tests"], {}, ["gc::faults"]),
