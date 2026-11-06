@@ -122,6 +122,44 @@
 //!
 //! Both are pure functions of the HIR: they do not depend on the target or
 //! on code generation options.
+//!
+//! # Regions: the design, and why they are not built yet
+//!
+//! A statically checked region would extend frame allocation to the objects
+//! it cannot take: arrays whose length is known only at run time
+//! (`array_filled`, `map`, `filter`, `copy`, slices), array literals longer
+//! than [`MAX_FRAME_ARRAY_LEN`], and objects allocated in a loop and kept
+//! past their iteration. The shape that fits the language as it is:
+//!
+//! * **Syntax**: an attribute on a function, `@region`, parsed like
+//!   `@noalloc` (attributes attach to items only; the grammar has no
+//!   attributed blocks, and adding one would change the shared grammar for
+//!   one feature). A block-scoped region is a nested function.
+//! * **Semantics**: every allocation the function's own body makes, other
+//!   than one that goes to the frame, comes from a bump arena created at
+//!   entry and freed on every exit (the code generator already undoes state
+//!   on each return for `--sanitize=memtag`). Callees allocate as usual.
+//! * **Check**: every allocation of the function whose [`Placement`] is an
+//!   escape is an error naming the escape, e.g. "`f` is `@region` but class
+//!   `Node` (line 12) escapes: returned from `f`", reported through the
+//!   same sink as the effect attributes. No new effect is needed: a region
+//!   restricts where the function's own objects may go, which is exactly
+//!   what this analysis computes; `@noalloc` keeps counting region
+//!   allocations as allocations.
+//!
+//! What blocks it is the collector, not the checker. A frame object is safe
+//! because its payload is on the stack, which the collector scans; an arena
+//! chunk is not, so a GC reference stored in a region object (a `String`
+//! field, a heap object's handle) would not keep its object alive. Making
+//! it safe needs one of two things the collector does not have: a way to
+//! register extra conservative root ranges for the duration of a call (the
+//! arena's chunks), or precise maps of the reference slots of region objects.
+//! Both belong to the collector's root-finding work (precise stack maps),
+//! not to this analysis. Without them, the only sound region is one whose
+//! objects hold no references to the heap at all -- numbers, and other
+//! region or frame objects -- which is too narrow to be worth its runtime
+//! interface (arena calls in the dispatch table, a growth path that
+//! allocates in the arena instead of calling the runtime's `array_grow`).
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 

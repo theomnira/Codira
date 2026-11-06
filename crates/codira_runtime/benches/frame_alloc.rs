@@ -24,6 +24,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use codira_memory::gc::GcRuntime;
 use codira_test::CompileAndRunTestDriver;
 
 const WORKLOADS: &str = r#"
