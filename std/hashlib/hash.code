@@ -293,6 +293,7 @@ extend HashKey {
     // operating system's random generator gave the process (see
     // `codira_runtime::native_random`). Panics if the system has no
     // entropy to give, as Rust's `RandomState::new` does.
+    @inline
     public func random() -> HashKey {
         let out = stack_alloc(16, 8);
         if !codira_random_hash_key(out) {
