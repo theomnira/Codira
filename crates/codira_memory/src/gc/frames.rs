@@ -320,7 +320,7 @@ impl ParkedStack {
                 break;
             }
         }
-        if mode == RootMode::Conservative || self.conservative || !cfg!(all(target_arch = "x86_64", not(windows))) {
+        if mode == RootMode::Conservative || self.conservative || !cfg!(all(target_arch = "x86_64", target_os = "linux")) {
             skip.clear();
         }
         skip.sort_unstable();

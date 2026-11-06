@@ -67,6 +67,7 @@ pub(crate) fn gen_prototype<'db, 'ink>(
     let value = module.add_function(&name, ir_ty, linkage);
     mark_noreturn(db, func, value);
     mark_inline(db, func, value);
+    mark_constant_time(db, func, value);
     value
 }
 
@@ -81,6 +82,24 @@ fn mark_inline<'ink>(db: &dyn HirDatabase, func: codira_hir::Function, value: Fu
         value.add_attribute(
             AttributeLoc::Function,
             context.create_enum_attribute(kind, 0),
+        );
+    }
+}
+
+/// Marks a `@constant_time` or `oblivious` function for the GC passes
+/// (`crate::gc_roots`): it gets neither a frame record nor polls, whose
+/// branches and indirect calls its constant-time guarantee rules out, and is
+/// scanned conservatively instead.
+fn mark_constant_time<'ink>(
+    db: &dyn HirDatabase,
+    func: codira_hir::Function,
+    value: FunctionValue<'ink>,
+) {
+    if codira_hir::verify::constant_time_signature(db, func).is_some() {
+        let context = value.get_type().get_context();
+        value.add_attribute(
+            AttributeLoc::Function,
+            context.create_string_attribute("codira-constant-time", ""),
         );
     }
 }

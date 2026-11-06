@@ -28,8 +28,10 @@
 //! On entry the function links the record into the calling thread's chain
 //! (whose head the runtime hands out through `codira.gc.chain_fn`), and on
 //! every return it unlinks it. Every value that may hold a GC reference and
-//! is live across a safepoint call is stored into a spill word when it is
-//! defined. A value "may hold a reference" unless it is provably the
+//! is live across a safepoint call, or is an argument of one, is stored
+//! into a spill word when it is defined (an argument passed on the stack
+//! lives in the caller's outgoing-argument area, inside the frame the
+//! collector skips, and the callee may hold it only there). A value "may hold a reference" unless it is provably the
 //! address of a stack slot, a global or a constant; integers only when
 //! `ptrtoint` made them from such a value. A stack slot is a region unless
 //! every use of it provably keeps references out of it.

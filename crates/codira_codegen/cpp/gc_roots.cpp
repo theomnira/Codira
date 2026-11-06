@@ -40,6 +40,9 @@
 #include <llvm/IR/Intrinsics.h>
 #include <llvm/IR/MDBuilder.h>
 #include <llvm/IR/Module.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/ErrorHandling.h>
+#include <llvm/Support/raw_ostream.h>
 #include <llvm/TargetParser/Triple.h>
 #include <llvm/Transforms/Utils/BasicBlockUtils.h>
 #include <llvm/Transforms/Utils/ModuleUtils.h>
@@ -62,6 +65,7 @@ constexpr const char *FRAME_ATTR = "codira-gc-frame";
 constexpr const char *CONSERVATIVE_ATTR = "codira-gc-conservative";
 constexpr const char *LEAF_ATTR = "codira-gc-leaf";
 constexpr const char *FOREIGN_ATTR = "codira-gc-foreign";
+constexpr const char *CONSTANT_TIME_ATTR = "codira-constant-time";
 
 // The frame record layout (all offsets in bytes).
 constexpr uint64_t REC_PREV = 0;
@@ -283,6 +287,13 @@ bool instrumentFunction(Function &function, const DataLayout &layout, bool knows
         function.hasFnAttribute(CONSERVATIVE_ATTR)) {
         return false;
     }
+    if (function.hasFnAttribute(CONSTANT_TIME_ATTR)) {
+        // No record (its indirect call) and no polls (their branches):
+        // scanned conservatively, and kept out of precise frames.
+        markConservative(function);
+        stats.conservative++;
+        return false;
+    }
 
     // Which calls are safepoints, and can this function be handled at all?
     std::vector<CallBase *> safepoints;
@@ -308,9 +319,26 @@ bool instrumentFunction(Function &function, const DataLayout &layout, bool knows
 
     References refs(function);
 
+    // The record is set up after the entry block's static allocas, and it
+    // names some of them: move every one of them to the top first (code
+    // generation emits some in the middle of the entry block).
+    BasicBlock &entry = function.getEntryBlock();
+    {
+        std::vector<AllocaInst *> allocas;
+        for (Instruction &inst : entry) {
+            if (auto *alloca = dyn_cast<AllocaInst>(&inst); alloca && alloca->isStaticAlloca()) {
+                allocas.push_back(alloca);
+            }
+        }
+        BasicBlock::iterator top = entry.getFirstInsertionPt();
+        for (AllocaInst *alloca : allocas) {
+            alloca->moveBefore(entry, top);
+            top = std::next(alloca->getIterator());
+        }
+    }
+
     // Stack slots that may hold a reference at a safepoint.
     std::vector<AllocaInst *> regions;
-    BasicBlock &entry = function.getEntryBlock();
     for (BasicBlock &block : function) {
         for (Instruction &inst : block) {
             auto *alloca = dyn_cast<AllocaInst>(&inst);
@@ -417,6 +445,15 @@ bool instrumentFunction(Function &function, const DataLayout &layout, bool knows
                 BitVector across = live;
                 if (self != index.end()) {
                     across.reset(self->second);
+                }
+                // The arguments too: one passed on the stack lives in this
+                // frame's outgoing-argument area, which the collector skips,
+                // and the callee may hold it only there while it runs.
+                for (Value *arg : call->args()) {
+                    auto found = index.find(arg);
+                    if (found != index.end()) {
+                        across.set(found->second);
+                    }
                 }
                 spill |= across;
             }
@@ -667,7 +704,11 @@ void codira_gc_insert_roots(LLVMModuleRef module_ref, CodiraGcRootStats *out) {
         functions.push_back(&function);
     }
     for (Function *function : functions) {
-        instrumentFunction(*function, layout, knowsFrameTop, stats);
+        if (instrumentFunction(*function, layout, knowsFrameTop, stats) &&
+            verifyFunction(*function, &errs())) {
+            report_fatal_error("codira_gc_insert_roots produced invalid IR in `" +
+                               function->getName() + "`");
+        }
     }
     defineHooks(module);
     if (out != nullptr) {
@@ -695,11 +736,20 @@ uint32_t codira_gc_insert_polls(LLVMModuleRef module_ref, uint32_t max_unpolled_
             function.getName() == SET_HOOKS_FN) {
             continue;
         }
+        if (function.hasFnAttribute(CONSTANT_TIME_ATTR)) {
+            continue;
+        }
+        // Calls to constant-time functions do not count: they have no polls
+        // to reach, and a poll here would put a branch next to their
+        // (possibly inlined) bodies.
         bool calls = false;
         for (BasicBlock &block : function) {
             for (Instruction &inst : block) {
                 if (auto *call = dyn_cast<CallBase>(&inst); call && isSafepointCall(*call)) {
-                    calls = true;
+                    const Function *callee = call->getCalledFunction();
+                    if (callee == nullptr || !callee->hasFnAttribute(CONSTANT_TIME_ATTR)) {
+                        calls = true;
+                    }
                 }
             }
         }

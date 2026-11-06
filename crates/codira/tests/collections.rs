@@ -439,9 +439,15 @@ public func through_value(xs: [i64], f: func(i64, i64) -> i64) -> i64 { xs.fold(
         !any.contains("call ") && !any.contains("fn_value"),
         "`any_big` calls something:\n{any}"
     );
-    // One allocation: the result array, not a function value.
+    // One allocation: the result array, not a function value. (The frame
+    // record's chain-head call and stack-pointer read are not allocations.)
     let map = function_ir(&ir, "doubled");
-    assert_eq!(map.matches("tail call ptr").count(), 1, "`doubled`:\n{map}");
+    let allocations = map
+        .lines()
+        .filter(|line| line.contains("tail call ptr"))
+        .filter(|line| !line.contains("%gc.") && !line.contains("@llvm."))
+        .count();
+    assert_eq!(allocations, 1, "`doubled`:\n{map}");
     assert!(!map.contains("fn_value"), "`doubled`:\n{map}");
     assert!(
         function_ir(&ir, "through_value").contains("fn_value.call"),

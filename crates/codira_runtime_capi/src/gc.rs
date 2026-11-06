@@ -117,6 +117,48 @@ pub unsafe extern "C" fn codira_gc_unroot(runtime: Runtime, obj: GcPtr) -> Error
     ErrorHandle::default()
 }
 
+/// Pins `obj`: until the matching [`codira_gc_unpin`] the object stays
+/// alive and never moves, so foreign code may keep its address and the
+/// address of its payload even when relocation is on. Pins nest; a pin is
+/// a root. If successful, returns a zero error handle.
+///
+/// If a non-zero error handle is returned, it must be manually destructed using
+/// [`codira_error_destroy`].
+///
+/// # Safety
+///
+/// This function receives raw pointers as parameters. If any of the arguments
+/// is a null pointer, an error will be returned. Passing pointers to invalid
+/// data, will lead to undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn codira_gc_pin(runtime: Runtime, obj: GcPtr) -> ErrorHandle {
+    let runtime = codira_error_try!(runtime
+        .inner()
+        .map_err(|e| format!("invalid argument 'runtime': {e}")));
+    runtime.gc().pin(obj);
+    ErrorHandle::default()
+}
+
+/// Ends one [`codira_gc_pin`] of `obj`. If successful, returns a zero error
+/// handle.
+///
+/// If a non-zero error handle is returned, it must be manually destructed using
+/// [`codira_error_destroy`].
+///
+/// # Safety
+///
+/// This function receives raw pointers as parameters. If any of the arguments
+/// is a null pointer, an error will be returned. Passing pointers to invalid
+/// data, will lead to undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn codira_gc_unpin(runtime: Runtime, obj: GcPtr) -> ErrorHandle {
+    let runtime = codira_error_try!(runtime
+        .inner()
+        .map_err(|e| format!("invalid argument 'runtime': {e}")));
+    runtime.gc().unpin(obj);
+    ErrorHandle::default()
+}
+
 /// Collects all memory that is no longer referenced by rooted objects. If
 /// successful, `reclaimed` is set, otherwise a non-zero error handle is
 /// returned. If `reclaimed` is `true`, memory was reclaimed, otherwise nothing
@@ -212,6 +254,8 @@ mod tests {
         gc_ptr_type(mem::zeroed::<GcPtr>(), ptr::null_mut()),
         gc_root(mem::zeroed::<GcPtr>()),
         gc_unroot(mem::zeroed::<GcPtr>()),
+        gc_pin(mem::zeroed::<GcPtr>()),
+        gc_unpin(mem::zeroed::<GcPtr>()),
         gc_collect(ptr::null_mut()),
         gc_request_collection(ptr::null_mut())
     );
@@ -347,6 +391,35 @@ mod tests {
         assert!(!reclaimed);
 
         assert!(unsafe { codira_gc_unroot(driver.runtime, obj) }.is_ok());
+
+        assert_getter1!(codira_gc_collect(driver.runtime, reclaimed));
+        assert!(reclaimed);
+    }
+
+    #[test]
+    fn test_gc_pinning() {
+        let driver = TestDriver::new(
+            r#"
+        public class Foo;
+    "#,
+        );
+
+        let type_name = CString::new("Foo").expect("Invalid type name.");
+        assert_getter2!(codira_runtime_get_type_info_by_name(
+            driver.runtime,
+            type_name.as_ptr(),
+            has_type,
+            ty,
+        ));
+        assert!(has_type);
+
+        assert_getter2!(codira_gc_alloc(driver.runtime, ty, obj));
+        assert!(unsafe { codira_gc_pin(driver.runtime, obj) }.is_ok());
+
+        assert_getter1!(codira_gc_collect(driver.runtime, reclaimed));
+        assert!(!reclaimed, "a pinned object was collected");
+
+        assert!(unsafe { codira_gc_unpin(driver.runtime, obj) }.is_ok());
 
         assert_getter1!(codira_gc_collect(driver.runtime, reclaimed));
         assert!(reclaimed);

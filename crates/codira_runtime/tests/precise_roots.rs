@@ -136,7 +136,7 @@ fn integers_that_look_like_pointers_do_not_retain_objects() {
         conservative, OBJECTS as i64,
         "the conservative scan should retain every object"
     );
-    if cfg!(all(target_arch = "x86_64", not(windows))) {
+    if cfg!(all(target_arch = "x86_64", target_os = "linux")) {
         assert!(
             precise <= 8,
             "precise roots retained {precise} of {OBJECTS} objects held only by integers"

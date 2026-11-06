@@ -14,6 +14,13 @@ use codira_test::CompileAndRunTestDriver;
 
 static GC: AtomicPtr<GarbageCollector> = AtomicPtr::new(std::ptr::null_mut());
 
+/// The tests share `GC`: one at a time.
+static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn serial() -> std::sync::MutexGuard<'static, ()> {
+    SERIAL.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn gc() -> &'static GarbageCollector {
     // Safety: set before Codira code runs; the runtime outlives the calls.
     unsafe { &*GC.load(Ordering::SeqCst) }
@@ -105,6 +112,7 @@ fn driver() -> CompileAndRunTestDriver {
 /// rewritten; the moved objects keep their contents.
 #[test]
 fn heap_references_follow_moved_objects() {
+    let _serial = serial();
     let driver = driver();
     let result: i64 = driver.runtime.invoke("relocate", (20_000i64,)).unwrap();
     let (moved, bad) = (result / 1000, result % 1000);
@@ -116,6 +124,7 @@ fn heap_references_follow_moved_objects() {
 /// same way.
 #[test]
 fn rooted_and_pinned_objects_do_not_move() {
+    let _serial = serial();
     let driver = driver();
     let gc = driver.runtime.gc();
     // Fill blocks with garbage around the two objects so their blocks are
@@ -232,7 +241,7 @@ fn fragment_driver(compaction: bool, limit: Option<usize>) -> CompileAndRunTestD
 /// holds far less memory, and the pause is reported for both.
 #[test]
 fn fragmentation_uses_less_memory_with_relocation() {
-    let _serial = FRAGMENT_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let _serial = serial();
     let mut results = Vec::new();
     for compaction in [false, true] {
         REPORTS.lock().unwrap().clear();
@@ -253,13 +262,12 @@ fn fragmentation_uses_less_memory_with_relocation() {
     );
 }
 
-static FRAGMENT_SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 /// Under a 16 MiB limit the workload completes with relocation; without
 /// it, phase 2 cannot get blocks of its size class and the process aborts
 /// (run in a child process).
 #[test]
 fn fragmentation_fits_a_heap_limit_only_with_relocation() {
+    let _serial = serial();
     if let Ok(mode) = std::env::var("CODIRA_FRAGMENT_CHILD") {
         let driver = fragment_driver(mode == "compaction", Some(LIMIT));
         let bad: i64 = driver.runtime.invoke("fragment", (SMALLS, WIDES)).unwrap();
