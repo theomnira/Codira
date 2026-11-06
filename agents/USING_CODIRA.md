@@ -2053,6 +2053,46 @@ func checked(n: i64) -> Result[i64, AnyError] {
   sibling should check `cancelled()` between waits, or use `select` with
   `default`.
 
+#### Measured
+
+x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores, 1 NUMA node (shared: load
+average about 1 to 1.8 during the runs); Codira at `-O 3` with a release
+build of the compiler and runtime, Rust 1.97 at `opt-level = 3` with rayon
+1.10 and crossbeam-channel 0.5, Go 1.24; median of 7 alternating runs,
+milliseconds, each a warm call. Programs:
+`examples/fabric_bench/` (`bench.py` builds and runs them); all three print
+the same check values.
+
+| workload | workers | Codira | Rust | Go |
+|---|---:|---:|---:|---:|
+| spawn/join: 100k tasks returning their index, joined, summed (`group`; `rayon::scope`; goroutines + `WaitGroup`) | 1 | 94.9 | 9.9 | 148.6 |
+| | 4 | 122.4 | 70.3 | 64.4 |
+| fan-out/fan-in map over 1M items in 64 tasks, gathered into one array (`group` + `append`; `par_iter().map().collect()`; goroutines writing slices) | 1 | 13.2 | 6.6 | 13.1 |
+| | 4 | 9.4 | 2.9 | 3.3 |
+| producer/consumer: 1M values over a channel of capacity 64 (`scope` + `channel`; crossbeam `bounded` + a thread; buffered `chan`) | 1 | 182.0 | 70.5 | 48.2 |
+| | 4 | 186.5 | 35.8 | 50.6 |
+| CPU-bound: 64 tasks of 4M xorshift steps | 1 | 491.3 | 485.8 | 493.9 |
+| | 4 | 126.4 | 127.4 | 125.9 |
+
+Speedup from 1 to 4 workers on the CPU-bound workload: Codira 3.89x, Rust
+3.81x, Go 3.92x. What the losses are:
+
+- **Spawn/join** costs Codira about 1 us per task on one worker, ten times
+  rayon's (not profiled further; each task makes a heap copy of its
+  arguments, allocates its record in the task tree and stores its result
+  under the group's lock), and 1.7-1.9x Rust and Go on four, where all
+  three spawn from one thread.
+- **Fan-out/fan-in**: the parallel map itself takes 1.8 ms of the 9.4 (5.2
+  ms on one worker, measured inside the program); gathering the 64 chunks
+  into one fresh 1M-element array -- one copy per chunk, on one thread,
+  first-touching 8 MB -- takes about 5.7 ms. rayon writes its result in
+  place, in parallel.
+- **Channels** are 2.6-5.2x slower than crossbeam's and 3.7x Go's: a
+  channel is a mutex-guarded queue with condition variables (the `select`
+  and GC protocols are built on it); a lock-free channel is not done. A
+  send or receive tries for a few microseconds before it sleeps (before
+  that change the pipeline took 534 ms and 400,000 futex calls; now 68).
+
 #### `select`: wait on several channel operations
 
 ```codira
