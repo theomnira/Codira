@@ -149,6 +149,22 @@ runtime_functions! {
     /// A new `String` of `a` followed by `b`.
     pub fn string_concat(a: *const u8, a_len: usize, b: *const u8, b_len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_concat";
 
+    /// The empty `String` at the fill of a new buffer with room for
+    /// `capacity` bytes: the start of a compiled format plan.
+    pub fn string_with_capacity(capacity: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_with_capacity";
+
+    /// `buf/start/len` with the decimal digits of an integer (two halves
+    /// and its signedness) appended, in place when it can be: the slow path
+    /// of `s += n.to_string()`.
+    pub fn string_append_int(buf: *const ffi::c_void, start: usize, len: usize, low: u64, high: u64, signed: u8, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_append_int";
+
+    /// `buf/start/len` with a float's `to_string()` appended, in place when
+    /// it can be.
+    pub fn string_append_float(buf: *const ffi::c_void, start: usize, len: usize, value: f64, is_f32: u8, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_append_float";
+
+    /// The offset of the first `byte` in `data[..len]`, or -1 (`memchr`).
+    pub fn string_find_byte(data: *const u8, len: usize, byte: u8) -> i64 = "codira.string_find_byte";
+
     /// 1 when the two strings' bytes are equal.
     pub fn string_eq(a: *const u8, a_len: usize, b: *const u8, b_len: usize) -> u8 = "codira.string_eq";
 
@@ -233,16 +249,19 @@ runtime_functions! {
     /// 1 and a new `String` at `out` when the `[u8]` holds valid UTF-8.
     pub fn string_from_utf8(array: *const ffi::c_void, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> u8 = "codira.string_from_utf8";
 
-    /// An integer (as two halves, its signedness and its size in bits)
-    /// written as a format spec says, as a new `String`. The spec is a fill
-    /// character, `FormatSpec::abi_flags`, a width and a precision.
-    pub fn string_format_int(low: u64, high: u64, signed: u8, bits: u32, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_format_int";
+    /// `buf/start/len` with an integer (as two halves, its signedness and
+    /// its size in bits) appended as a format spec says, in place when it
+    /// can be. The spec is a fill character, `FormatSpec::abi_flags`, a
+    /// width and a precision, constants of the compiled format plan.
+    pub fn string_append_format_int(buf: *const ffi::c_void, start: usize, len: usize, low: u64, high: u64, signed: u8, bits: u32, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_append_format_int";
 
-    /// A float (an `f32` widened when `is_f32` is set) written as a spec says.
-    pub fn string_format_float(value: f64, is_f32: u8, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_format_float";
+    /// `buf/start/len` with a float (an `f32` widened when `is_f32` is set)
+    /// appended as a spec says.
+    pub fn string_append_format_float(buf: *const ffi::c_void, start: usize, len: usize, value: f64, is_f32: u8, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_append_format_float";
 
-    /// Text padded and truncated as a spec says.
-    pub fn string_format_text(data: *const u8, len: usize, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_format_text";
+    /// `buf/start/len` with text appended padded and truncated as a spec
+    /// says.
+    pub fn string_append_format_text(buf: *const ffi::c_void, start: usize, len: usize, data: *const u8, data_len: usize, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_append_format_text";
 
     /// `buf/start/len` with `data` appended quoted, as a Codira literal.
     pub fn debug_quote(buf: *const ffi::c_void, start: usize, len: usize, data: *const u8, data_len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.debug_quote";
@@ -264,11 +283,15 @@ runtime_functions! {
 
 /// Every runtime function a `String` operation may need, collected together
 /// like [`print_functions`]: a module that uses strings at all gets them all.
-pub fn string_functions() -> [&'static dyn Intrinsic; 38] {
+pub fn string_functions() -> [&'static dyn Intrinsic; 42] {
     [
         &string_from_bytes,
         &string_append,
         &string_concat,
+        &string_with_capacity,
+        &string_append_int,
+        &string_append_float,
+        &string_find_byte,
         &string_eq,
         &string_cmp,
         &string_hash,
@@ -296,9 +319,9 @@ pub fn string_functions() -> [&'static dyn Intrinsic; 38] {
         &string_chars,
         &string_to_bytes,
         &string_from_utf8,
-        &string_format_int,
-        &string_format_float,
-        &string_format_text,
+        &string_append_format_int,
+        &string_append_format_float,
+        &string_append_format_text,
         &debug_quote,
         &debug_newline,
         &debug_enter,
@@ -346,5 +369,10 @@ runtime_functions! {
 /// Every runtime function the array methods lower to (`push`, `sort`, ...),
 /// collected together like [`print_functions`].
 pub fn array_functions() -> [&'static dyn Intrinsic; 4] {
-    [&array_grow, &array_sort, &array_binary_search, &array_reverse]
+    [
+        &array_grow,
+        &array_sort,
+        &array_binary_search,
+        &array_reverse,
+    ]
 }

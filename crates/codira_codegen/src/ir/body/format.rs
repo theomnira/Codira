@@ -8,13 +8,14 @@
 //!
 //! # Format specs
 //!
-//! A hole with a spec is one call to a runtime formatting function chosen
-//! by the value's type -- `codira.string_format_int`, `_float` or `_text`
-//! -- with the spec passed as four scalars (a fill character, the flags
-//! word of `FormatSpec::abi_flags`, a width and a precision, either a
-//! constant or the variable the spec names). Inference has already checked
-//! that the spec applies, so nothing is decided at run time but the digits
-//! and the padding.
+//! A hole with a spec is a piece of a format plan (see `fabric`): appended
+//! to the string being built by a runtime function chosen by the value's
+//! type -- `codira.string_append_format_int`, `_float` or `_text` -- with
+//! the spec passed as four scalars (a fill character, the flags word of
+//! `FormatSpec::abi_flags`, a width and a precision, either a constant or
+//! the variable the spec names), or inline when there is nothing to pad.
+//! Inference has already parsed the spec and checked that it applies, so
+//! nothing is decided at run time but the digits and the padding.
 //!
 //! # The debug form
 //!
@@ -46,7 +47,7 @@
 //! not nested) is written both times.
 
 use codira_hir::{
-    mono, ExprId, FormatSpec, HirDatabase, StructKind, StructMemoryKind, Ty, TyKind, VariantKind,
+    mono, ExprId, HirDatabase, StructKind, StructMemoryKind, Ty, TyKind, VariantKind,
 };
 use inkwell::{
     module::Linkage,
@@ -81,96 +82,15 @@ fn debug_symbol(db: &dyn HirDatabase, ty: &Ty, layout: Layout) -> String {
 }
 
 impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
-    /// Generates `{value:spec}`, whose `{w}` width and precision are the
-    /// expressions `width` and `precision`.
-    pub(super) fn gen_format(
-        &mut self,
-        value: ExprId,
-        spec: &FormatSpec,
-        width: Option<ExprId>,
-        precision: Option<ExprId>,
-    ) -> Option<BasicValueEnum<'ink>> {
-        let ty = self.infer[value].clone();
-        let value = self.gen_expr(value)?;
-        let width = self.gen_count(width, &spec.width)?;
-        let precision = self.gen_count(precision, &spec.precision)?;
-        let u32_type = self.context.i32_type();
-        let fill = u32_type.const_int(u64::from(u32::from(spec.fill)), false);
-        let flags = u32_type.const_int(u64::from(spec.abi_flags()), false);
-        let spec_args: [BasicMetadataValueEnum<'ink>; 4] =
-            [fill.into(), flags.into(), width.into(), precision.into()];
-
-        let numeric = matches!(ty.interned(), TyKind::Int(_) | TyKind::Float(_));
-        if spec.is_debug() && !numeric {
-            let text = self.gen_debug_string(&ty, value, spec.is_pretty());
-            if !spec.width.is_present() {
-                return Some(text);
-            }
-            return Some(self.gen_format_text(&TyKind::String.intern(), text, &spec_args));
-        }
-        Some(match ty.interned() {
-            TyKind::Int(_) => {
-                let value = value.into_int_value();
-                let bits = value.get_type().get_bit_width();
-                let signed = self.is_signed_ty(&ty);
-                let (low, high) = self.int_halves(value, signed);
-                let mut args: Vec<BasicMetadataValueEnum<'ink>> = vec![
-                    low.into(),
-                    high.into(),
-                    self.context
-                        .i8_type()
-                        .const_int(u64::from(signed), false)
-                        .into(),
-                    u32_type.const_int(u64::from(bits), false).into(),
-                ];
-                args.extend(spec_args);
-                self.string_making_call(&intrinsics::string_format_int, &args)
-            }
-            TyKind::Float(_) => {
-                let value = value.into_float_value();
-                let is_f32 = value.get_type() == self.context.f32_type();
-                let wide = if is_f32 {
-                    self.builder
-                        .build_float_ext(value, self.context.f64_type(), "wide")
-                        .expect("failed to widen a float")
-                } else {
-                    value
-                };
-                let mut args: Vec<BasicMetadataValueEnum<'ink>> = vec![
-                    wide.into(),
-                    self.context
-                        .i8_type()
-                        .const_int(u64::from(is_f32), false)
-                        .into(),
-                ];
-                args.extend(spec_args);
-                self.string_making_call(&intrinsics::string_format_float, &args)
-            }
-            TyKind::Bool => {
-                let text = self.gen_bool_text(value.into_int_value());
-                self.gen_format_text(&TyKind::Str.intern(), text, &spec_args)
-            }
-            TyKind::String | TyKind::Str => self.gen_format_text(&ty, value, &spec_args),
-            other => unreachable!("inference admits no spec `{}` on {other:?}", spec.text),
-        })
-    }
-
-    /// `text` (a `String` or `str`, as `ty` says) padded as the spec says.
-    fn gen_format_text(
-        &mut self,
-        ty: &Ty,
-        text: BasicValueEnum<'ink>,
-        spec_args: &[BasicMetadataValueEnum<'ink>; 4],
-    ) -> BasicValueEnum<'ink> {
-        let (data, len) = self.string_text_of(ty, text);
-        let mut args: Vec<BasicMetadataValueEnum<'ink>> = vec![data.into(), len.into()];
-        args.extend(spec_args.iter().copied());
-        self.string_making_call(&intrinsics::string_format_text, &args)
+    /// Generates `{value:spec}` (an `Expr::Format`) on its own: a plan of
+    /// one piece (see `fabric`).
+    pub(super) fn gen_format(&mut self, expr: ExprId) -> Option<BasicValueEnum<'ink>> {
+        self.gen_string_plan(expr)
     }
 
     /// A width or precision as the `i64` the runtime takes: the variable's
     /// value, the literal, or 0 when there is none (its flag says so).
-    fn gen_count(
+    pub(super) fn gen_count(
         &mut self,
         variable: Option<ExprId>,
         count: &codira_hir::FormatCount,
@@ -197,7 +117,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// Whether `ty` is a signed integer type.
-    fn is_signed_ty(&self, ty: &Ty) -> bool {
+    pub(super) fn is_signed_ty(&self, ty: &Ty) -> bool {
         matches!(
             ty.interned(),
             TyKind::Int(int_ty) if int_ty.signedness == codira_hir::Signedness::Signed
@@ -205,7 +125,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// An integer as two 64-bit halves of its value extended to 128 bits.
-    fn int_halves(&self, value: IntValue<'ink>, signed: bool) -> (IntValue<'ink>, IntValue<'ink>) {
+    pub(super) fn int_halves(
+        &self,
+        value: IntValue<'ink>,
+        signed: bool,
+    ) -> (IntValue<'ink>, IntValue<'ink>) {
         let i128_type = self.context.i128_type();
         let i64_type = self.context.i64_type();
         let wide = if value.get_type().get_bit_width() == 128 {
@@ -232,7 +156,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// `"true"` or `"false"`, as a `str`.
-    fn gen_bool_text(&mut self, value: IntValue<'ink>) -> BasicValueEnum<'ink> {
+    pub(super) fn gen_bool_text(&mut self, value: IntValue<'ink>) -> BasicValueEnum<'ink> {
         let yes = self.gen_string_literal("true");
         let no = self.gen_string_literal("false");
         self.builder
@@ -249,10 +173,26 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     ) -> BasicValueEnum<'ink> {
         let string_ty = self.hir_types.get_string_type();
         let slot = self.string_slot(string_ty.into(), "debug.out");
-        // The all-zero `String` is the empty one, with no buffer.
+        // A buffer of the size the text usually has, which it grows past.
+        let start = self.gen_string_with_capacity(super::fabric::debug_estimate(self.db, ty, 0));
         self.builder
-            .build_store(slot, string_ty.const_zero())
+            .build_store(slot, start)
             .expect("failed to start a debug string");
+        self.gen_debug_into(ty, value, pretty, slot);
+        self.builder
+            .build_load(string_ty, slot, "debug")
+            .expect("failed to load a debug string")
+    }
+
+    /// Appends the debug form of `value` (of type `ty`) to the `String` in
+    /// `slot`.
+    pub(super) fn gen_debug_into(
+        &mut self,
+        ty: &Ty,
+        value: BasicValueEnum<'ink>,
+        pretty: bool,
+        slot: PointerValue<'ink>,
+    ) {
         let layout = if pretty {
             Layout::Pretty
         } else {
@@ -265,9 +205,6 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             value,
             self.context.i64_type().const_zero(),
         );
-        self.builder
-            .build_load(string_ty, slot, "debug")
-            .expect("failed to load a debug string")
     }
 
     /// Calls the debug function of `ty`, appending `value`'s text at `depth`
@@ -345,7 +282,18 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     /// `slot`.
     fn debug_append(&mut self, slot: PointerValue<'ink>, ty: &Ty, text: BasicValueEnum<'ink>) {
         let (data, len) = self.string_text_of(ty, text);
-        self.debug_slot_call(&intrinsics::string_append, slot, &[data.into(), len.into()]);
+        let current = self.debug_so_far(slot);
+        let appended = self.append_bytes(current, data, len);
+        self.builder
+            .build_store(slot, appended)
+            .expect("failed to store a debug string");
+    }
+
+    /// The `String` in `slot`, being built.
+    fn debug_so_far(&self, slot: PointerValue<'ink>) -> BasicValueEnum<'ink> {
+        self.builder
+            .build_load(self.hir_types.get_string_type(), slot, "debug.so_far")
+            .expect("failed to load a debug string")
     }
 
     /// Calls a runtime function that takes the `String` in `slot` (as its
@@ -435,8 +383,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     ) {
         match ty.interned() {
             TyKind::Int(_) | TyKind::Float(_) => {
-                let text = self.gen_to_string_of(ty, value);
-                self.debug_append(slot, &TyKind::String.intern(), text);
+                // The digits go straight into the string being built.
+                let current = self.debug_so_far(slot);
+                let appended = self.append_number(current, ty, value);
+                self.builder
+                    .build_store(slot, appended)
+                    .expect("failed to store a debug string");
             }
             TyKind::Bool => {
                 let text = self.gen_bool_text(value.into_int_value());

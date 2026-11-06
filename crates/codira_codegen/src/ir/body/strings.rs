@@ -116,7 +116,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// A `String` value from its three words.
-    fn make_string(
+    pub(super) fn make_string(
         &self,
         buf: PointerValue<'ink>,
         start: IntValue<'ink>,
@@ -779,9 +779,12 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         Some(self.string_optional(&self.infer[expr].clone(), present, value))
     }
 
-    /// `+`, `+=` and the comparisons on `String`s and `str`s.
+    /// `+`, `+=` and the comparisons on `String`s and `str`s. Appending is
+    /// String Fabric's (`fabric`): `+=` appends the pieces of its right side
+    /// to the place's value, `+` is compiled as a format plan.
     pub(super) fn gen_string_binary_op(
         &mut self,
+        expr: ExprId,
         lhs: ExprId,
         rhs: ExprId,
         op: BinaryOp,
@@ -789,34 +792,8 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         match op {
             BinaryOp::Assignment {
                 op: Some(ArithOp::Add),
-            } => {
-                let rhs_value = self.gen_expr(rhs)?;
-                let place = self.gen_place_expr(lhs)?;
-                let string_ty = self.hir_types.get_string_type();
-                let current = self
-                    .builder
-                    .build_load(string_ty, place, "string")
-                    .expect("failed to load a string place");
-                let appended = self.gen_append(current, rhs, rhs_value);
-                self.builder
-                    .build_store(place, appended)
-                    .expect("failed to store a string");
-                Some(self.gen_empty())
-            }
-            BinaryOp::ArithOp(ArithOp::Add) => {
-                let lhs_value = self.gen_expr(lhs)?;
-                let rhs_value = self.gen_expr(rhs)?;
-                if matches!(self.infer[lhs].interned(), TyKind::String) {
-                    Some(self.gen_append(lhs_value, rhs, rhs_value))
-                } else {
-                    let (a, a_len) = self.string_text(lhs, lhs_value);
-                    let (b, b_len) = self.string_text(rhs, rhs_value);
-                    Some(self.string_making_call(
-                        &intrinsics::string_concat,
-                        &[a.into(), a_len.into(), b.into(), b_len.into()],
-                    ))
-                }
-            }
+            } => self.gen_append_assign(lhs, rhs),
+            BinaryOp::ArithOp(ArithOp::Add) => self.gen_string_plan(expr),
             BinaryOp::CmpOp(cmp) => {
                 let lhs_value = self.gen_expr(lhs)?;
                 let rhs_value = self.gen_expr(rhs)?;
@@ -869,27 +846,5 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             }
             _ => unreachable!("inference admits no other string operator"),
         }
-    }
-
-    /// `current + text`, for a `String` `current`: see the runtime's
-    /// `string_append`.
-    fn gen_append(
-        &mut self,
-        current: BasicValueEnum<'ink>,
-        rhs: ExprId,
-        rhs_value: BasicValueEnum<'ink>,
-    ) -> BasicValueEnum<'ink> {
-        let (buf, start, len) = self.string_fields(current.into_struct_value());
-        let (data, data_len) = self.string_text(rhs, rhs_value);
-        self.string_making_call(
-            &intrinsics::string_append,
-            &[
-                buf.into(),
-                start.into(),
-                len.into(),
-                data.into(),
-                data_len.into(),
-            ],
-        )
     }
 }

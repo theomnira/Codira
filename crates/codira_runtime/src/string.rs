@@ -21,13 +21,55 @@
 //!
 //! The bytes a value covers are never written again, so a `String` can be
 //! shared freely: `let b = a` copies three words and nothing can change `b`
-//! through `a`. Appending (`s + t`, `s += t`) writes in place only when `s`
-//! ends exactly at the fill and the buffer has room; it then raises the fill
-//! with a compare-and-swap, so two appends racing on one buffer cannot both
-//! win. Any other append copies into a new buffer, doubling the capacity
-//! when `s` was at the fill (it is being built up) and exact otherwise. A
-//! loop of `s += piece` is therefore amortized O(1) per byte, like Rust's
-//! `String::push_str`, without a separate builder type.
+//! through `a`. Appending (`s + t`, `s += t`) writes in place only past the
+//! end of every existing value: when `s` ends exactly at the fill and the
+//! buffer has room, the bytes go there and the fill rises. Any other append
+//! copies into a new buffer, doubling the capacity when `s` was at the fill
+//! (it is being built up) and exact otherwise. A loop of `s += piece` is
+//! therefore amortized O(1) per byte, like Rust's `String::push_str`,
+//! without a separate builder type.
+//!
+//! # Who may raise the fill: the owner word
+//!
+//! Two values on one buffer can both end at the fill (`let b = a`), and
+//! appending to both must not let both write the same bytes. Within one
+//! thread that cannot happen: appends run one after the other, the second
+//! sees the fill the first raised and copies. Across threads it could, so
+//! every buffer records, in its first [`OWNER_BYTES`] bytes, which thread
+//! may raise its fill (the *owner word*; a string's bytes start after it):
+//!
+//! - the thread that allocated the buffer, identified by its thread
+//!   pointer ([`thread_token`]: `fs:0` on x86-64 Linux, `TPIDR_EL0` on
+//!   AArch64 Linux), when the platform has one. Only that thread appends in
+//!   place, with plain (relaxed) loads and stores and no read-modify-write;
+//!   any other thread appending to a value on the buffer copies, so it
+//!   never writes the buffer at all;
+//! - [`SHARED`] (zero) where no thread pointer is known. Every thread then
+//!   raises the fill with a compare-and-swap, so two appends racing on one
+//!   buffer cannot both win.
+//!
+//! Why the non-atomic path is sound: (1) the owner word is written before
+//! the buffer is reachable by anything and never changes, so every thread
+//! reads the same owner; (2) no two live threads have the same thread
+//! pointer, so at most one thread at a time passes the owner check, and the
+//! fill and the bytes above it are written by that thread alone; (3) a
+//! thread pointer is reused only after its thread has exited, and a new
+//! thread starts after the old one's exit (the C library's thread cache
+//! hands the memory over under a lock), so the new owner sees every write
+//! the old one made; (4) other threads read only the bytes of values they
+//! were given, which are below the fill and never written again, and they
+//! received those values through whatever synchronisation handed them over
+//! (Codira tasks share nothing but channels of scalars, so that is the
+//! host). A buffer whose owner word is stale -- restored from a heap
+//! snapshot made by another process -- is still matched by at most one
+//! thread, which is all the argument needs. A thread that cannot prove
+//! ownership copies: the safe path.
+//!
+//! Compiled code makes the same check inline (`codira_codegen`'s
+//! `ir::body::fabric`): when the owner word is the calling thread's thread
+//! pointer, the value ends at the fill and the room suffices, an append is
+//! a copy of the bytes and a store of the new fill, with no call. Anything
+//! else calls [`string_append`] here.
 //!
 //! # UTF-8
 //!
@@ -85,6 +127,77 @@ const DATA_OFFSET: usize = std::mem::size_of::<BufHeader>();
 
 const _: () = assert!(DATA_OFFSET == 16);
 const _: () = assert!(std::mem::size_of::<RawString>() == 3 * std::mem::size_of::<usize>());
+
+/// The bytes at the start of every string buffer that hold its owner word
+/// (see the module docs). A string's bytes start at this offset or later.
+pub const OWNER_BYTES: usize = std::mem::size_of::<usize>();
+
+/// The owner word of a buffer any thread may append to in place, with a
+/// compare-and-swap of the fill.
+pub const SHARED: usize = 0;
+
+/// The calling thread's identity as the owner of string buffers: its thread
+/// pointer, which no other live thread has and which is never zero, or
+/// [`SHARED`] on a platform where it is not known. Compiled code reads the
+/// same register (`llvm.thread.pointer`), so the two agree; if they did not,
+/// the inline check would fail and the call here decide, which costs time
+/// and nothing else.
+#[inline(always)]
+pub fn thread_token() -> usize {
+    #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    {
+        let token: usize;
+        // Safety: on x86-64 Linux `fs:0` holds the thread control block's
+        // pointer to itself (the TLS ABI requires it); reading it has no
+        // side effect.
+        unsafe {
+            std::arch::asm!(
+                "mov {}, qword ptr fs:[0]",
+                out(reg) token,
+                options(nostack, preserves_flags, readonly, pure)
+            );
+        }
+        token
+    }
+    #[cfg(all(target_arch = "aarch64", target_os = "linux"))]
+    {
+        let token: usize;
+        // Safety: reading the thread pointer register has no side effect.
+        unsafe {
+            std::arch::asm!(
+                "mrs {}, tpidr_el0",
+                out(reg) token,
+                options(nomem, nostack, preserves_flags, pure)
+            );
+        }
+        token
+    }
+    #[cfg(not(any(
+        all(target_arch = "x86_64", target_os = "linux"),
+        all(target_arch = "aarch64", target_os = "linux")
+    )))]
+    {
+        SHARED
+    }
+}
+
+/// The owner word of the string buffer `buf`.
+///
+/// # Safety
+///
+/// `buf` must be a live string buffer.
+unsafe fn owner(buf: *const *mut u8) -> usize {
+    elements(buf).cast::<usize>().read()
+}
+
+/// The first byte of the string `s`.
+///
+/// # Safety
+///
+/// `s.buf` must be a live string buffer.
+unsafe fn data_of(s: RawString) -> *mut u8 {
+    elements(s.buf).add(s.start)
+}
 
 /// The header of the array object `buf`.
 ///
@@ -176,21 +289,44 @@ impl Alloc {
         raw.cast()
     }
 
+    /// A new string buffer owned by this thread, with room for `capacity`
+    /// bytes of text, and the value of its first `len` bytes (which the
+    /// caller writes before the value is used), ending at the fill.
+    fn buffer(&self, capacity: usize, len: usize) -> RawString {
+        let total = capacity
+            .max(len)
+            .checked_add(OWNER_BYTES)
+            .unwrap_or_else(|| report_capacity_overflow());
+        let buf = self.array(total, OWNER_BYTES + len);
+        // Safety: the array was made with room for the owner word, and is
+        // not reachable by anything else yet.
+        unsafe { elements(buf).cast::<usize>().write(thread_token()) };
+        RawString {
+            buf,
+            start: OWNER_BYTES,
+            len,
+        }
+    }
+
     /// A new string buffer holding `parts` one after another, with room for
     /// `capacity` bytes (at least their total).
     fn string(&self, parts: &[&[u8]], capacity: usize) -> RawString {
         let len: usize = parts.iter().map(|p| p.len()).sum();
-        let buf = self.array(capacity.max(len), len);
+        let value = self.buffer(capacity, len);
         let mut offset = 0;
         for part in parts {
             // Safety: the new buffer has room for `len` bytes, and no part
             // can overlap it (it did not exist when they were made).
             unsafe {
-                std::ptr::copy_nonoverlapping(part.as_ptr(), elements(buf).add(offset), part.len());
+                std::ptr::copy_nonoverlapping(
+                    part.as_ptr(),
+                    data_of(value).add(offset),
+                    part.len(),
+                );
             }
             offset += part.len();
         }
-        RawString { buf, start: 0, len }
+        value
     }
 }
 
@@ -258,42 +394,230 @@ unsafe fn append(
     if extra.is_empty() {
         return current;
     }
-    let mut at_fill = false;
-    if !buf.is_null() {
-        let header = header(buf);
-        let end = start + len;
+    let value = reserve(current, extra.len(), ty, alloc);
+    // The reserved bytes belong to no other value; `extra` is below some
+    // value's end, so it cannot overlap them.
+    std::ptr::copy_nonoverlapping(extra.as_ptr(), data_of(value).add(len), extra.len());
+    value
+}
+
+/// Where an append can put its bytes.
+enum Room {
+    /// In place: the fill was raised over the bytes after the value.
+    Claimed,
+    /// Not in place; `bool` says whether the value ends at the fill (it is
+    /// being built up, so a new buffer should double).
+    Copy(bool),
+}
+
+/// Claims `extra` bytes right after `s` in its buffer, by the rule of the
+/// module docs: as the buffer's owner thread with a plain store of the fill,
+/// on a [`SHARED`] buffer with a compare-and-swap, and never on a buffer
+/// another thread owns.
+///
+/// # Safety
+///
+/// `s` must be a live string with a buffer.
+unsafe fn claim(s: RawString, extra: usize) -> Room {
+    let header = header(s.buf);
+    let end = s.start + s.len;
+    let owner = owner(s.buf);
+    if owner == SHARED {
         let fill = header.length.load(Ordering::Acquire);
-        at_fill = fill == end;
+        let at_fill = fill == end;
         if at_fill
-            && header.capacity - end >= extra.len()
+            && header.capacity - end >= extra
             && header
                 .length
-                .compare_exchange(end, end + extra.len(), Ordering::AcqRel, Ordering::Acquire)
+                .compare_exchange(end, end + extra, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
         {
-            // The bytes past `end` belonged to no value, and the swap made
-            // them this one's alone.
-            std::ptr::copy_nonoverlapping(extra.as_ptr(), elements(buf).add(end), extra.len());
-            return RawString {
-                buf,
-                start,
-                len: len + extra.len(),
-            };
+            return Room::Claimed;
         }
+        Room::Copy(at_fill)
+    } else {
+        // Only the owner ever stores the fill of an owned buffer; another
+        // thread reads it only to choose a capacity.
+        let fill = header.length.load(Ordering::Relaxed);
+        let at_fill = fill == end;
+        if owner == thread_token() && at_fill && header.capacity - end >= extra {
+            header.length.store(end + extra, Ordering::Relaxed);
+            return Room::Claimed;
+        }
+        Room::Copy(at_fill)
     }
-    let needed = len
-        .checked_add(extra.len())
+}
+
+/// `s` extended by `extra` bytes that belong to no other value and that the
+/// caller writes (at `data_of(result) + s.len`) before the value is used:
+/// in `s`'s buffer when [`claim`] allows, otherwise in a new buffer holding
+/// a copy of `s`, of double the size when `s` was being built up.
+///
+/// # Safety
+///
+/// `s` must be a live string; `ty`/`alloc` the `[u8]` handles.
+unsafe fn reserve(s: RawString, extra: usize, ty: *const c_void, alloc: *mut c_void) -> RawString {
+    let at_fill = if s.buf.is_null() {
+        false
+    } else {
+        match claim(s, extra) {
+            Room::Claimed => {
+                return RawString {
+                    len: s.len + extra,
+                    ..s
+                }
+            }
+            Room::Copy(at_fill) => at_fill,
+        }
+    };
+    let needed = s
+        .len
+        .checked_add(extra)
         .unwrap_or_else(|| report_capacity_overflow());
     let capacity = if at_fill {
-        needed.max(len.saturating_mul(2)).max(32)
+        needed.max(s.len.saturating_mul(2)).max(32)
     } else {
         needed
     };
     let alloc = Alloc::new(ty, alloc);
-    // `string_bytes` is read after the allocation: the old buffer is kept
-    // alive by `buf`, which is still in use here.
-    let old = string_bytes(buf, start, len);
-    alloc.string(&[old, extra], capacity)
+    let value = alloc.buffer(capacity, needed);
+    // Read after the allocation: the old buffer is kept alive by `s.buf`,
+    // which is still in use here.
+    let old = string_bytes(s.buf, s.start, s.len);
+    std::ptr::copy_nonoverlapping(old.as_ptr(), data_of(value), old.len());
+    value
+}
+
+/// `String.with_capacity`: the empty string at the fill of a new buffer
+/// with room for `capacity` bytes, which the appends after it fill in place.
+/// A compiled format plan starts with one, sized for the whole result.
+extern "C" fn string_with_capacity(
+    capacity: usize,
+    ty: *const c_void,
+    alloc: *mut c_void,
+    out: *mut u8,
+) {
+    // Safety: generated code passes its handles and a `String` slot.
+    unsafe {
+        let alloc = Alloc::new(ty, alloc);
+        write(out, alloc.buffer(capacity, 0));
+    }
+}
+
+/// The decimal digits of `value` at the end of `buffer`; returns where they
+/// start. Two digits at a time, as Rust's own formatter does.
+pub(crate) fn decimal_u128(buffer: &mut [u8; 40], mut value: u128) -> usize {
+    const PAIRS: &[u8; 200] = b"0001020304050607080910111213141516171819\
+        2021222324252627282930313233343536373839\
+        4041424344454647484950515253545556575859\
+        6061626364656667686970717273747576777879\
+        8081828384858687888990919293949596979899";
+    let mut at = buffer.len();
+    while value > u128::from(u64::MAX) {
+        let rest = value % 10_000_000_000_000_000_000;
+        value /= 10_000_000_000_000_000_000;
+        let mut low = rest as u64;
+        for _ in 0..19 {
+            at -= 1;
+            buffer[at] = b'0' + (low % 10) as u8;
+            low /= 10;
+        }
+    }
+    let mut value = value as u64;
+    while value >= 100 {
+        let pair = (value % 100) as usize * 2;
+        value /= 100;
+        at -= 2;
+        buffer[at..at + 2].copy_from_slice(&PAIRS[pair..pair + 2]);
+    }
+    if value >= 10 {
+        let pair = value as usize * 2;
+        at -= 2;
+        buffer[at..at + 2].copy_from_slice(&PAIRS[pair..pair + 2]);
+    } else {
+        at -= 1;
+        buffer[at] = b'0' + value as u8;
+    }
+    at
+}
+
+/// An integer as its two 64-bit halves (sign- or zero-extended to 128 bits)
+/// and its signedness, written in decimal at the end of `buffer`.
+fn integer_text(buffer: &mut [u8; 40], low: u64, high: u64, signed: u8) -> &[u8] {
+    let bits = (u128::from(high) << 64) | u128::from(low);
+    let negative = signed != 0 && (bits as i128) < 0;
+    let magnitude = if negative {
+        (bits as i128).unsigned_abs()
+    } else {
+        bits
+    };
+    let mut at = decimal_u128(buffer, magnitude);
+    if negative {
+        at -= 1;
+        buffer[at] = b'-';
+    }
+    &buffer[at..]
+}
+
+/// `s += n.to_string()` for an integer `n`, without the temporary string:
+/// the digits are written into `s`'s buffer (or the new one it grows into).
+/// Compiled code writes them inline when the room is there and calls this
+/// otherwise.
+#[allow(clippy::too_many_arguments)]
+extern "C" fn string_append_int(
+    buf: *const c_void,
+    start: usize,
+    len: usize,
+    low: u64,
+    high: u64,
+    signed: u8,
+    ty: *const c_void,
+    alloc: *mut c_void,
+    out: *mut u8,
+) {
+    let mut digits = [0u8; 40];
+    let text = integer_text(&mut digits, low, high, signed);
+    // Safety: generated code passes a live `String` and its handles.
+    unsafe { write(out, append(buf.cast(), start, len, text, ty, alloc)) }
+}
+
+/// `s += x.to_string()` for a float `x` (an `f32` widened when `is_f32` is
+/// set): the shortest digits that read back, Rust's `{:?}`, written into
+/// `s`'s buffer with no temporary string.
+#[allow(clippy::too_many_arguments)]
+extern "C" fn string_append_float(
+    buf: *const c_void,
+    start: usize,
+    len: usize,
+    value: f64,
+    is_f32: u8,
+    ty: *const c_void,
+    alloc: *mut c_void,
+    out: *mut u8,
+) {
+    let mut text = format::Small::new();
+    if is_f32 != 0 {
+        std::fmt::Write::write_fmt(&mut text, format_args!("{:?}", value as f32))
+    } else {
+        std::fmt::Write::write_fmt(&mut text, format_args!("{value:?}"))
+    }
+    .expect("writing to memory cannot fail");
+    // Safety: as for `string_append_int`.
+    unsafe {
+        write(
+            out,
+            append(buf.cast(), start, len, text.as_bytes(), ty, alloc),
+        );
+    }
+}
+
+/// The offset of the first `byte` in `data[..len]`, or -1: the scan behind
+/// `lines()` and a `split` on one ASCII byte, used lazily (a pipeline or a
+/// `for` loop over the pieces) as well as by the array-making versions.
+extern "C" fn string_find_byte(data: *const u8, len: usize, byte: u8) -> i64 {
+    // Safety: generated code passes a string's bytes.
+    let hay = unsafe { bytes_at(data, len) };
+    memchr::memchr(byte, hay).map_or(-1, |at| at as i64)
 }
 
 #[cold]
@@ -406,17 +730,75 @@ unsafe fn string_array(
     ty: *const c_void,
     alloc: *mut c_void,
 ) -> *const *mut u8 {
+    string_array_with(
+        s,
+        pieces.len(),
+        |piece| pieces.iter().copied().for_each(piece),
+        ty,
+        alloc,
+    )
+}
+
+/// Makes a `[String]` of `count` pieces of `s`, whose byte ranges `pieces`
+/// gives one after another (to the callback it is passed), all sharing `s`'s
+/// buffer. `pieces` runs after the allocation, so it must read `s` afresh.
+///
+/// # Safety
+///
+/// As for [`string_array`]; `pieces` must give exactly `count` ranges.
+unsafe fn string_array_with(
+    s: RawString,
+    count: usize,
+    pieces: impl FnOnce(&mut dyn FnMut((usize, usize))),
+    ty: *const c_void,
+    alloc: *mut c_void,
+) -> *const *mut u8 {
     let alloc = Alloc::new(ty, alloc);
-    let array = alloc.array(pieces.len(), pieces.len());
+    let array = alloc.array(count, count);
     let slots = elements(array).cast::<RawString>();
-    for (index, &(offset, len)) in pieces.iter().enumerate() {
+    let mut index = 0;
+    pieces(&mut |(offset, len)| {
+        assert!(index < count, "more pieces than were counted");
         slots.add(index).write(RawString {
             buf: s.buf,
             start: s.start + offset,
             len,
         });
-    }
+        index += 1;
+    });
+    assert_eq!(index, count, "fewer pieces than were counted");
     array
+}
+
+/// The byte ranges of the pieces of `bytes.split(sep)` for a one-byte
+/// separator, as Rust's `str::split` gives them, found with `memchr`. (A
+/// one-byte UTF-8 string is ASCII, so a match is always a whole character.)
+fn split_on_byte(bytes: &[u8], sep: u8, piece: &mut dyn FnMut((usize, usize))) {
+    let mut start = 0;
+    for at in memchr::memchr_iter(sep, bytes) {
+        piece((start, at - start));
+        start = at + 1;
+    }
+    piece((start, bytes.len() - start));
+}
+
+/// The byte ranges of the lines of `bytes`, as Rust's `str::lines` gives
+/// them: split at `\n`, a `\r` right before it dropped, and no empty piece
+/// after a final line break.
+fn lines_of(bytes: &[u8], piece: &mut dyn FnMut((usize, usize))) {
+    let mut start = 0;
+    for at in memchr::memchr_iter(b'\n', bytes) {
+        let end = if at > start && bytes[at - 1] == b'\r' {
+            at - 1
+        } else {
+            at
+        };
+        piece((start, end - start));
+        start = at + 1;
+    }
+    if start < bytes.len() {
+        piece((start, bytes.len() - start));
+    }
 }
 
 /// The byte range of `piece`, a subslice of `whole`.
@@ -456,10 +838,21 @@ extern "C" fn string_split(
                 column,
             );
         }
+        let value = RawString { buf, start, len };
+        if sep_len == 1 {
+            // One ASCII byte: count the pieces, then make them, with no
+            // list in between.
+            let byte = *sep;
+            let count = memchr::memchr_iter(byte, string_bytes(buf, start, len)).count() + 1;
+            let pieces = |piece: &mut dyn FnMut((usize, usize))| {
+                split_on_byte(string_bytes(buf, start, len), byte, piece);
+            };
+            return string_array_with(value, count, pieces, ty, alloc).cast();
+        }
         let whole = text(string_bytes(buf, start, len));
         let sep = text(bytes_at(sep, sep_len));
         let pieces: Vec<(usize, usize)> = whole.split(sep).map(|p| range_in(whole, p)).collect();
-        string_array(RawString { buf, start, len }, &pieces, ty, alloc).cast()
+        string_array(value, &pieces, ty, alloc).cast()
     }
 }
 
@@ -475,9 +868,13 @@ extern "C" fn string_lines(
     let buf = buf.cast::<*mut u8>();
     // Safety: as for `string_split`.
     unsafe {
-        let whole = text(string_bytes(buf, start, len));
-        let pieces: Vec<(usize, usize)> = whole.lines().map(|p| range_in(whole, p)).collect();
-        string_array(RawString { buf, start, len }, &pieces, ty, alloc).cast()
+        // Counted first, then made, with no list in between.
+        let mut count = 0;
+        lines_of(string_bytes(buf, start, len), &mut |_| count += 1);
+        let pieces = |piece: &mut dyn FnMut((usize, usize))| {
+            lines_of(string_bytes(buf, start, len), piece);
+        };
+        string_array_with(RawString { buf, start, len }, count, pieces, ty, alloc).cast()
     }
 }
 
@@ -517,7 +914,7 @@ extern "C" fn string_change_case(
     unsafe {
         let alloc = Alloc::new(ty, alloc);
         let value = alloc.string(&[bytes_at(data, len)], len);
-        let bytes = std::slice::from_raw_parts_mut(elements(value.buf), len);
+        let bytes = std::slice::from_raw_parts_mut(data_of(value), len);
         if upper != 0 {
             bytes.make_ascii_uppercase();
         } else {
@@ -569,24 +966,19 @@ extern "C" fn string_repeat(
     };
     // Safety: generated code passes a valid `String` and its handles.
     unsafe {
-        let bytes = bytes_at(data, len);
         let total = len
             .checked_mul(count)
             .unwrap_or_else(|| report_capacity_overflow());
         let alloc = Alloc::new(ty, alloc);
-        let value = alloc.string(&[], total);
-        let target = elements(value.buf);
+        // The source is read after the allocation: `data` points into a
+        // buffer the caller's `String` keeps alive.
+        let value = alloc.buffer(total, total);
+        let bytes = bytes_at(data, len);
+        let target = data_of(value);
         for index in 0..count {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), target.add(index * len), len);
         }
-        header(value.buf).length.store(total, Ordering::Release);
-        write(
-            out,
-            RawString {
-                len: total,
-                ..value
-            },
-        );
+        write(out, value);
     }
 }
 
@@ -872,21 +1264,29 @@ impl<'r> StringRef<'r> {
     /// or why the heap could not provide the memory.
     pub fn try_new(runtime: &'r Runtime, text: &str) -> Result<Self, AllocError> {
         let ty = <u8 as HasStaticType>::type_info().array_type();
-        let mut handle = runtime.gc.try_alloc_array(&ty, text.len())?;
+        let total = text
+            .len()
+            .checked_add(OWNER_BYTES)
+            .unwrap_or_else(|| report_capacity_overflow());
+        let mut handle = runtime.gc.try_alloc_array(&ty, total)?;
         // Safety: every element is written right below.
-        unsafe { handle.set_length(text.len()) };
+        unsafe { handle.set_length(total) };
         let raw: RawGcPtr = handle.as_raw().into();
         let buf = raw.cast::<*mut u8>();
-        // Safety: the array was made with room for `text.len()` bytes.
+        let value = RawString {
+            buf,
+            start: OWNER_BYTES,
+            len: text.len(),
+        };
+        // Safety: the array was made with room for the owner word and
+        // `text.len()` bytes. The host thread that makes the string owns
+        // its buffer, as Codira code's thread owns the ones it makes.
         unsafe {
-            std::ptr::copy_nonoverlapping(text.as_ptr(), elements(buf), text.len());
+            elements(buf).cast::<usize>().write(thread_token());
+            std::ptr::copy_nonoverlapping(text.as_ptr(), data_of(value), text.len());
         }
         Ok(Self {
-            raw: RawString {
-                buf,
-                start: 0,
-                len: text.len(),
-            },
+            raw: value,
             runtime,
         })
     }
@@ -1049,6 +1449,22 @@ pub(crate) fn definitions() -> Vec<FunctionDefinition> {
         IntoFunctionDefinition::into(
             string_concat as extern "C" fn(P, usize, P, usize, T, A, O),
             "codira.string_concat",
+        ),
+        IntoFunctionDefinition::into(
+            string_with_capacity as extern "C" fn(usize, T, A, O),
+            "codira.string_with_capacity",
+        ),
+        IntoFunctionDefinition::into(
+            string_append_int as extern "C" fn(H, usize, usize, u64, u64, u8, T, A, O),
+            "codira.string_append_int",
+        ),
+        IntoFunctionDefinition::into(
+            string_append_float as extern "C" fn(H, usize, usize, f64, u8, T, A, O),
+            "codira.string_append_float",
+        ),
+        IntoFunctionDefinition::into(
+            string_find_byte as extern "C" fn(P, usize, u8) -> i64,
+            "codira.string_find_byte",
         ),
         IntoFunctionDefinition::into(
             string_eq as extern "C" fn(P, usize, P, usize) -> u8,
@@ -1330,10 +1746,58 @@ mod tests {
         }
 
         fn byte_array(&self, bytes: &[u8]) -> *const c_void {
-            // A string buffer is a `[u8]`; fill one with arbitrary bytes.
+            // A program's `[u8]`, of exactly these bytes.
             // Safety: the type handle is `[u8]`.
             let alloc = unsafe { Alloc::new(self.bytes, self.alloc()) };
-            alloc.string(&[bytes], bytes.len()).buf.cast()
+            let array = alloc.array(bytes.len(), bytes.len());
+            // Safety: the array has room for the bytes.
+            unsafe {
+                std::ptr::copy_nonoverlapping(bytes.as_ptr(), elements(array), bytes.len());
+            }
+            array.cast()
+        }
+
+        /// `s` with `extra` appended the way compiled code's slow path
+        /// appends, through the given runtime function.
+        fn append_int(&self, value: RawString, n: i128) -> RawString {
+            let bits = n as u128;
+            let mut out = std::mem::MaybeUninit::<RawString>::uninit();
+            string_append_int(
+                value.buf.cast(),
+                value.start,
+                value.len,
+                bits as u64,
+                (bits >> 64) as u64,
+                1,
+                self.bytes,
+                self.alloc(),
+                out.as_mut_ptr().cast(),
+            );
+            // Safety: the function wrote the slot.
+            unsafe { out.assume_init() }
+        }
+
+        fn append_float(&self, value: RawString, x: f64) -> RawString {
+            let mut out = std::mem::MaybeUninit::<RawString>::uninit();
+            string_append_float(
+                value.buf.cast(),
+                value.start,
+                value.len,
+                x,
+                0,
+                self.bytes,
+                self.alloc(),
+                out.as_mut_ptr().cast(),
+            );
+            // Safety: the function wrote the slot.
+            unsafe { out.assume_init() }
+        }
+
+        fn with_capacity(&self, capacity: usize) -> RawString {
+            let mut out = std::mem::MaybeUninit::<RawString>::uninit();
+            string_with_capacity(capacity, self.bytes, self.alloc(), out.as_mut_ptr().cast());
+            // Safety: the function wrote the slot.
+            unsafe { out.assume_init() }
         }
 
         /// The strings of a `[String]` array the runtime made.
@@ -1720,5 +2184,367 @@ mod tests {
         assert_eq!(string_find(heap.data(grown), 1, std::ptr::null(), 0), 0);
         let unchanged = heap.append(grown, "");
         assert_eq!(unchanged, grown);
+    }
+
+    /// Marks `value`'s buffer as one any thread may append to (with a
+    /// compare-and-swap), as a platform without a known thread pointer
+    /// makes every buffer.
+    fn make_shared(value: RawString) {
+        // Safety: a live buffer the test made; nothing else uses it yet.
+        unsafe { elements(value.buf).cast::<usize>().write(SHARED) };
+    }
+
+    /// The fill of `value`'s buffer.
+    fn fill_of(value: RawString) -> usize {
+        // Safety: a live buffer the test made.
+        unsafe { header(value.buf).length.load(Ordering::Acquire) }
+    }
+
+    /// No existing value ever changes, under random sequences of every way
+    /// to make a value from another: appends of text, integers and floats,
+    /// formatted holes, aliases (a copy of the three words), views in the
+    /// middle or at the end of a buffer, buffers pre-sized for a format
+    /// plan, and buffers marked shared. Each value is checked against a Rust
+    /// `String` built the same way, after every step.
+    #[test]
+    fn no_value_changes_under_random_appends_and_aliases() {
+        let heap = Heap::new();
+        let mut rng = Rng(0x5eed_0007);
+        for round in 0..40 {
+            let mut values = vec![(heap.string(""), String::new())];
+            let mut in_place = 0;
+            for step in 0..600 {
+                let from = rng.below(values.len() as u64) as usize;
+                let (value, model) = values[from].clone();
+                let (made, expected) = match rng.below(9) {
+                    0 | 1 => {
+                        let extra = rng.string(4);
+                        (heap.append(value, &extra), model.clone() + &extra)
+                    }
+                    2 => {
+                        let n = (rng.next() as i64 >> rng.below(64)) as i128;
+                        (heap.append_int(value, n), format!("{model}{n}"))
+                    }
+                    3 => {
+                        let x = f64::from_bits(rng.next());
+                        (heap.append_float(value, x), format!("{model}{x:?}"))
+                    }
+                    4 => {
+                        // An alias: the same three words.
+                        (value, model.clone())
+                    }
+                    5 => {
+                        // A view: a char-aligned range of the value.
+                        let bounds: Vec<usize> = model
+                            .char_indices()
+                            .map(|(at, _)| at)
+                            .chain([model.len()])
+                            .collect();
+                        let a = bounds[rng.below(bounds.len() as u64) as usize];
+                        let b = bounds[rng.below(bounds.len() as u64) as usize];
+                        let (a, b) = (a.min(b), a.max(b));
+                        let view = RawString {
+                            start: value.start + a,
+                            len: b - a,
+                            ..value
+                        };
+                        (view, model[a..b].to_owned())
+                    }
+                    6 => {
+                        // A format plan's buffer, then the value appended.
+                        let fresh = heap.with_capacity(rng.below(48) as usize);
+                        (heap.append(fresh, &model), model.clone())
+                    }
+                    7 => {
+                        // A formatted hole appended.
+                        let n = rng.next() as i64;
+                        let w = rng.below(24) as i64;
+                        let mut out = std::mem::MaybeUninit::<RawString>::uninit();
+                        format::tests_support::append_format_int(
+                            value,
+                            n,
+                            w,
+                            heap.bytes,
+                            heap.alloc(),
+                            out.as_mut_ptr().cast(),
+                        );
+                        // Safety: the function wrote the slot.
+                        let made = unsafe { out.assume_init() };
+                        (made, format!("{model}{n:0w$}", w = w as usize))
+                    }
+                    _ => {
+                        // A fresh buffer any thread may append to.
+                        let extra = rng.string(3);
+                        let fresh = heap.string(&extra);
+                        make_shared(fresh);
+                        (fresh, extra)
+                    }
+                };
+                if !value.buf.is_null() && made.buf == value.buf && made.len > value.len {
+                    in_place += 1;
+                }
+                assert_eq!(heap.read(made), expected, "round {round} step {step}");
+                values.push((made, expected));
+                for (index, (value, model)) in values.iter().enumerate() {
+                    assert_eq!(
+                        heap.read(*value),
+                        model,
+                        "value {index} changed at round {round} step {step}"
+                    );
+                }
+            }
+            assert!(in_place > 50, "only {in_place} appends were in place");
+        }
+    }
+
+    /// A value that can be sent to another thread in a test.
+    #[derive(Clone, Copy)]
+    struct Sent(RawString);
+    // Safety: the test hands values to threads the way a host would; the
+    // runtime's rules make that safe, which is what the test checks.
+    unsafe impl Send for Sent {}
+
+    /// Two threads append at the same time to values that end at their
+    /// buffer's fill and have room, each value raced by both: values the
+    /// main thread made (neither of the two owns the buffer), values one of
+    /// the two made and sent to the other (it owns the buffer, the other
+    /// does not), and values on shared buffers (both compare-and-swap).
+    /// Each thread checks every value it made right away; at the end every
+    /// value of both, and every base, is checked again. No append changed a
+    /// value, and no two appends claimed the same bytes.
+    #[test]
+    fn two_threads_appending_on_one_buffer_change_no_value() {
+        const BASES: usize = 1500;
+        let heap = Heap::new();
+        let (bytes, alloc) = (heap.bytes as usize, heap.alloc() as usize);
+        let append = move |value: RawString, extra: &str| -> RawString {
+            let mut out = std::mem::MaybeUninit::<RawString>::uninit();
+            string_append(
+                value.buf.cast(),
+                value.start,
+                value.len,
+                extra.as_ptr(),
+                extra.len(),
+                bytes as *const c_void,
+                alloc as *mut c_void,
+                out.as_mut_ptr().cast(),
+            );
+            // Safety: the function wrote the slot.
+            unsafe { out.assume_init() }
+        };
+        let read = |value: RawString| -> String {
+            // Safety: every value the test makes is live and valid.
+            unsafe { text(string_bytes(value.buf, value.start, value.len)).to_owned() }
+        };
+        // Bases at their buffer's fill with room for both threads' appends.
+        let fresh_base = |shared: bool| {
+            let value = heap.append(heap.with_capacity(64), "base");
+            if shared {
+                make_shared(value);
+            }
+            Sent(value)
+        };
+        let main_bases: Vec<Sent> = (0..BASES).map(|_| fresh_base(false)).collect();
+        let shared_bases: Vec<Sent> = (0..BASES).map(|_| fresh_base(true)).collect();
+        let fills: Vec<usize> = main_bases.iter().map(|b| fill_of(b.0)).collect();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let (send_own, receive_own) = std::sync::mpsc::channel::<Vec<Sent>>();
+        let worker = |name: char,
+                      own: Option<std::sync::mpsc::Sender<Vec<Sent>>>,
+                      theirs: Option<std::sync::mpsc::Receiver<Vec<Sent>>>,
+                      barrier: Arc<std::sync::Barrier>,
+                      main_bases: Vec<Sent>,
+                      shared_bases: Vec<Sent>| {
+            move || {
+                // Thread `a` makes bases on buffers it owns and hands them
+                // to `b`, as a host would.
+                let owned: Vec<Sent> = match (own, theirs) {
+                    (Some(own), _) => {
+                        let owned: Vec<Sent> = (0..BASES)
+                            .map(|_| {
+                                let empty = RawString {
+                                    buf: std::ptr::null(),
+                                    start: 0,
+                                    len: 0,
+                                };
+                                Sent(append(empty, "base"))
+                            })
+                            .collect();
+                        own.send(owned.clone()).unwrap();
+                        owned
+                    }
+                    (None, Some(theirs)) => theirs.recv().unwrap(),
+                    (None, None) => Vec::new(),
+                };
+                barrier.wait();
+                let mut made = Vec::new();
+                for index in 0..BASES {
+                    for base in [main_bases[index], shared_bases[index], owned[index]] {
+                        let extra = format!("{name}{index},");
+                        let expected = format!("base{extra}");
+                        let value = append(base.0, &extra);
+                        assert_eq!(read(value), expected);
+                        // And a chain built up from it.
+                        let longer = append(value, &extra);
+                        assert_eq!(read(longer), format!("{expected}{extra}"));
+                        made.push((Sent(value), expected.clone()));
+                        made.push((Sent(longer), format!("{expected}{extra}")));
+                    }
+                }
+                for (value, expected) in &made {
+                    assert_eq!(read(value.0), *expected);
+                }
+                (made, owned)
+            }
+        };
+        let a = std::thread::spawn(worker(
+            'a',
+            Some(send_own),
+            None,
+            barrier.clone(),
+            main_bases.clone(),
+            shared_bases.clone(),
+        ));
+        let b = std::thread::spawn(worker(
+            'b',
+            None,
+            Some(receive_own),
+            barrier,
+            main_bases.clone(),
+            shared_bases.clone(),
+        ));
+        let (mut all, owned) = a.join().unwrap();
+        all.extend(b.join().unwrap().0);
+        for (value, expected) in &all {
+            assert_eq!(read(value.0), *expected);
+        }
+        let mut shared_in_place = 0;
+        for index in 0..BASES {
+            assert_eq!(read(main_bases[index].0), "base");
+            assert_eq!(read(shared_bases[index].0), "base");
+            assert_eq!(read(owned[index].0), "base");
+            // Neither thread owns the main thread's buffers, so neither
+            // wrote them.
+            assert_eq!(fill_of(main_bases[index].0), fills[index]);
+            // One append to each shared base won the swap.
+            shared_in_place += all
+                .iter()
+                .filter(|(value, _)| {
+                    value.0.buf == shared_bases[index].0.buf
+                        && value.0.start == shared_bases[index].0.start
+                        && value.0.len == 4 + 2 + index.to_string().len()
+                })
+                .count();
+        }
+        assert_eq!(
+            shared_in_place, BASES,
+            "every shared base is appended to in place once"
+        );
+    }
+
+    #[test]
+    fn a_buffer_is_owned_by_the_thread_that_made_it() {
+        let heap = Heap::new();
+        let here = thread_token();
+        let there = std::thread::spawn(thread_token).join().unwrap();
+        if cfg!(all(
+            any(target_arch = "x86_64", target_arch = "aarch64"),
+            target_os = "linux"
+        )) {
+            assert_ne!(here, SHARED);
+            assert_ne!(there, SHARED);
+            assert_ne!(here, there, "two live threads share a thread pointer");
+        }
+        let value = heap.append(heap.with_capacity(64), "abc");
+        // Safety: a live buffer.
+        assert_eq!(unsafe { owner(value.buf) }, here);
+        // The owner appends in place; a copy made elsewhere is a new buffer
+        // owned by the thread that made it.
+        let more = heap.append(value, "def");
+        assert_eq!(more.buf, value.buf);
+        let sent = Sent(more);
+        let (bytes, alloc) = (heap.bytes as usize, heap.alloc() as usize);
+        let elsewhere = std::thread::spawn(move || {
+            let sent = sent;
+            let value = sent.0;
+            let mut out = std::mem::MaybeUninit::<RawString>::uninit();
+            string_append(
+                value.buf.cast(),
+                value.start,
+                value.len,
+                "ghi".as_ptr(),
+                3,
+                bytes as *const c_void,
+                alloc as *mut c_void,
+                out.as_mut_ptr().cast(),
+            );
+            // Safety: the function wrote the slot.
+            let made = unsafe { out.assume_init() };
+            // Safety: a live buffer.
+            (Sent(made), unsafe { owner(made.buf) }, thread_token())
+        });
+        let (made, made_owner, that_thread) = elsewhere.join().unwrap();
+        assert_ne!(made.0.buf, more.buf, "another thread's buffer was written");
+        assert_eq!(made_owner, that_thread);
+        assert_eq!(heap.read(made.0), "abcdefghi");
+        // The owner still appends in place.
+        assert_eq!(heap.append(more, "!").buf, more.buf);
+    }
+
+    #[test]
+    fn numbers_append_as_to_string_writes_them() {
+        let heap = Heap::new();
+        let mut rng = Rng(0x5eed_0008);
+        let mut value = heap.string("");
+        let mut model = String::new();
+        for _ in 0..5_000 {
+            let n: i128 = match rng.below(4) {
+                0 => (rng.next() as i64) as i128,
+                1 => rng.next() as i128,
+                2 => ((rng.next() as u128) << 64 | rng.next() as u128) as i128,
+                _ => [0, -1, i64::MIN as i128, i128::MIN, i128::MAX][rng.below(5) as usize],
+            };
+            value = heap.append_int(value, n);
+            model.push_str(&n.to_string());
+            let x = f64::from_bits(rng.next());
+            value = heap.append_float(value, x);
+            model.push_str(&format!("{x:?}"));
+        }
+        assert_eq!(heap.read(value), model);
+        let mut buffer = [0u8; 40];
+        for n in [
+            0u128,
+            9,
+            10,
+            99,
+            100,
+            u64::MAX as u128,
+            u64::MAX as u128 + 1,
+            u128::MAX,
+        ] {
+            let at = decimal_u128(&mut buffer, n);
+            assert_eq!(std::str::from_utf8(&buffer[at..]).unwrap(), n.to_string());
+        }
+    }
+
+    #[test]
+    fn the_byte_scan_agrees_with_rust() {
+        let mut rng = Rng(0x5eed_0009);
+        for _ in 0..5_000 {
+            let s = rng.string(40);
+            let byte = [b'\n', b',', b'a', b' '][rng.below(4) as usize];
+            let found = string_find_byte(s.as_ptr(), s.len(), byte);
+            let expected = s.bytes().position(|b| b == byte);
+            assert_eq!((found >= 0).then_some(found as usize), expected);
+            let mut lines = Vec::new();
+            lines_of(s.as_bytes(), &mut |(at, len)| lines.push(&s[at..at + len]));
+            assert_eq!(lines, s.lines().collect::<Vec<_>>(), "{s:?}");
+            let mut pieces = Vec::new();
+            split_on_byte(s.as_bytes(), byte, &mut |(at, len)| {
+                pieces.push(&s[at..at + len]);
+            });
+            let sep = char::from(byte).to_string();
+            assert_eq!(pieces, s.split(&*sep).collect::<Vec<_>>(), "{s:?}");
+        }
     }
 }

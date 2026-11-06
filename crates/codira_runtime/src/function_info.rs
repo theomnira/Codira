@@ -156,6 +156,8 @@ into_function_info_impl! {
     extern "C" fn(A, B, C, D, E, F, G, H, I, J) -> R;
     extern "C" fn(A, B, C, D, E, F, G, H, I, J, K) -> R;
     extern "C" fn(A, B, C, D, E, F, G, H, I, J, K, L) -> R;
+    extern "C" fn(A, B, C, D, E, F, G, H, I, J, K, L, M) -> R;
+    extern "C" fn(A, B, C, D, E, F, G, H, I, J, K, L, M, N) -> R;
 }
 
 /// A helper struct to ergonomically build functions.

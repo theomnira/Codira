@@ -33,6 +33,8 @@ sha2 = { workspace = true }
 blake3 = { workspace = true }
 # Shortest round-trip float formatting for `std.json` (`native_json`).
 ryu = { workspace = true }
+# The byte scan of `lines()` and of `split` on one ASCII byte.
+memchr = { workspace = true }
 # The database services (`native_db`) and tensor services (`native_ai`).
 codira_db = { version = "0.6.0-dev", path = "../codira_db" }
 codira_ai = { version = "0.6.0-dev", path = "../codira_ai" }

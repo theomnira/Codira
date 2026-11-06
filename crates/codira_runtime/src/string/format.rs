@@ -10,9 +10,14 @@
 //!
 //! # Format specs
 //!
-//! The compiler checks a spec against the value's type and passes it as a
-//! fill character, a flags word, a width and a precision (the layout is
-//! `codira_hir::FormatSpec::abi_flags`'s). What the spec means is what it
+//! The compiler parses and checks a spec against the value's type, and a
+//! hole becomes a call of the entry point for that type, with the spec as
+//! four constant scalars: a fill character, a flags word, a width and a
+//! precision (the layout is `codira_hir::FormatSpec::abi_flags`'s). Nothing
+//! here parses a format string. The formatted text is appended to the
+//! `String` being built -- in its buffer when it has room, as `+=` does --
+//! so a hole makes no string of its own: the digits are made on the stack
+//! ([`Small`]) and copied once, into the destination. What the spec means is what it
 //! means in Rust's `std::fmt`, and the digits are Rust's own: a float's
 //! `{:.3}` is `format!("{:.3}")` of its magnitude, so rounding is Rust's
 //! (correctly rounded, ties to even on the exact binary value). The sign,
@@ -32,7 +37,81 @@
 
 use std::{cell::RefCell, ffi::c_void, fmt::Write as _};
 
-use super::{append, bytes_at, text, write};
+use super::{append, bytes_at, decimal_u128, text, write};
+
+/// Where formatted text goes: a Rust `String` (the tests) or a [`Small`].
+pub(super) trait Out: std::fmt::Write {
+    fn put(&mut self, text: &str);
+
+    fn put_char(&mut self, c: char) {
+        let mut buffer = [0; 4];
+        self.put(c.encode_utf8(&mut buffer));
+    }
+}
+
+impl Out for String {
+    fn put(&mut self, text: &str) {
+        self.push_str(text);
+    }
+
+    fn put_char(&mut self, c: char) {
+        self.push(c);
+    }
+}
+
+/// Text being formatted, on the stack while it fits -- every number does --
+/// and on the heap beyond (a long padded string, a float with a precision
+/// of hundreds of digits).
+pub(super) struct Small {
+    stack: [u8; 128],
+    len: usize,
+    heap: Option<String>,
+}
+
+impl Small {
+    pub(super) fn new() -> Self {
+        Small {
+            stack: [0; 128],
+            len: 0,
+            heap: None,
+        }
+    }
+
+    pub(super) fn as_bytes(&self) -> &[u8] {
+        match &self.heap {
+            Some(heap) => heap.as_bytes(),
+            None => &self.stack[..self.len],
+        }
+    }
+
+    fn as_str(&self) -> &str {
+        // Only whole `str`s are ever written.
+        std::str::from_utf8(self.as_bytes()).expect("formatted text is UTF-8")
+    }
+}
+
+impl std::fmt::Write for Small {
+    fn write_str(&mut self, text: &str) -> std::fmt::Result {
+        self.put(text);
+        Ok(())
+    }
+}
+
+impl Out for Small {
+    fn put(&mut self, text: &str) {
+        if let Some(heap) = &mut self.heap {
+            heap.push_str(text);
+        } else if self.len + text.len() <= self.stack.len() {
+            self.stack[self.len..self.len + text.len()].copy_from_slice(text.as_bytes());
+            self.len += text.len();
+        } else {
+            let mut heap = String::with_capacity(2 * (self.len + text.len()));
+            heap.push_str(std::str::from_utf8(&self.stack[..self.len]).expect("UTF-8"));
+            heap.push_str(text);
+            self.heap = Some(heap);
+        }
+    }
+}
 
 /// Where a padded value sits within its width.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,17 +181,37 @@ impl Spec {
 }
 
 /// Writes `count` fill characters.
-fn fill(out: &mut String, fill: char, count: usize) {
-    out.extend(std::iter::repeat_n(fill, count));
+fn fill(out: &mut impl Out, fill: char, count: usize) {
+    if fill.is_ascii() {
+        const SPACES: &str = "                                ";
+        const ZEROS: &str = "00000000000000000000000000000000";
+        let run = match fill {
+            ' ' => Some(SPACES),
+            '0' => Some(ZEROS),
+            _ => None,
+        };
+        if let Some(run) = run {
+            let mut left = count;
+            while left > 0 {
+                let n = left.min(run.len());
+                out.put(&run[..n]);
+                left -= n;
+            }
+            return;
+        }
+    }
+    for _ in 0..count {
+        out.put_char(fill);
+    }
 }
 
 /// Writes `body` (of `len` characters) padded to the spec's width, aligned
 /// as the spec says or as `default` when it says nothing: Rust's
 /// `Formatter::padding`.
-fn padded(out: &mut String, body: &str, len: usize, spec: &Spec, default: Align) {
+fn padded(out: &mut impl Out, body: &str, len: usize, spec: &Spec, default: Align) {
     let width = spec.width.unwrap_or(0);
     if len >= width {
-        out.push_str(body);
+        out.put(body);
         return;
     }
     let padding = width - len;
@@ -122,7 +221,7 @@ fn padded(out: &mut String, body: &str, len: usize, spec: &Spec, default: Align)
         Align::Center => (padding / 2, padding.div_ceil(2)),
     };
     fill(out, spec.fill, before);
-    out.push_str(body);
+    out.put(body);
     fill(out, spec.fill, after);
 }
 
@@ -130,21 +229,32 @@ fn padded(out: &mut String, body: &str, len: usize, spec: &Spec, default: Align)
 /// Rust's `pad_integral` and `pad_formatted_parts` pad: with `0`, zeros go
 /// between the sign and prefix and the digits, whatever the fill and the
 /// alignment say.
-fn number(out: &mut String, sign: &str, prefix: &str, digits: &str, spec: &Spec) {
+fn number(out: &mut impl Out, sign: &str, prefix: &str, digits: &str, spec: &Spec) {
     let len = sign.len() + prefix.len() + digits.len();
     match spec.width {
         Some(width) if spec.zero && len < width => {
-            out.push_str(sign);
-            out.push_str(prefix);
+            out.put(sign);
+            out.put(prefix);
             fill(out, '0', width - len);
-            out.push_str(digits);
+            out.put(digits);
+        }
+        Some(width) if len < width => {
+            let padding = width - len;
+            let (before, after) = match spec.align.unwrap_or(Align::Right) {
+                Align::Left => (0, padding),
+                Align::Right => (padding, 0),
+                Align::Center => (padding / 2, padding.div_ceil(2)),
+            };
+            fill(out, spec.fill, before);
+            out.put(sign);
+            out.put(prefix);
+            out.put(digits);
+            fill(out, spec.fill, after);
         }
         _ => {
-            let mut body = String::with_capacity(len);
-            body.push_str(sign);
-            body.push_str(prefix);
-            body.push_str(digits);
-            padded(out, &body, len, spec, Align::Right);
+            out.put(sign);
+            out.put(prefix);
+            out.put(digits);
         }
     }
 }
@@ -152,7 +262,7 @@ fn number(out: &mut String, sign: &str, prefix: &str, digits: &str, spec: &Spec)
 /// An integer: `bits` is its value as 128 bits (sign- or zero-extended),
 /// `width` its type's size in bits, which the radix forms of a negative
 /// value print the two's complement of, as Rust does.
-fn format_int(out: &mut String, bits: u128, signed: bool, width: u32, spec: &Spec) {
+fn format_int(out: &mut impl Out, bits: u128, signed: bool, width: u32, spec: &Spec) {
     let negative = signed && (bits as i128) < 0;
     let magnitude = if negative {
         (bits as i128).unsigned_abs()
@@ -165,7 +275,8 @@ fn format_int(out: &mut String, bits: u128, signed: bool, width: u32, spec: &Spe
         (1u128 << width) - 1
     };
     let raw = bits & mask;
-    let mut digits = String::new();
+    let mut digits = Small::new();
+    let mut decimal = [0u8; 40];
     let (radix, prefix) = match spec.kind {
         Kind::LowerHex => (write!(digits, "{raw:x}"), "0x"),
         Kind::UpperHex => (write!(digits, "{raw:X}"), "0x"),
@@ -173,7 +284,12 @@ fn format_int(out: &mut String, bits: u128, signed: bool, width: u32, spec: &Spe
         Kind::Binary => (write!(digits, "{raw:b}"), "0b"),
         Kind::LowerExp => (exponent(&mut digits, magnitude, spec, false), ""),
         Kind::UpperExp => (exponent(&mut digits, magnitude, spec, true), ""),
-        Kind::Display | Kind::Debug => (write!(digits, "{magnitude}"), ""),
+        Kind::Display | Kind::Debug => {
+            let at = decimal_u128(&mut decimal, magnitude);
+            let text = std::str::from_utf8(&decimal[at..]).expect("digits are ASCII");
+            digits.put(text);
+            (Ok(()), "")
+        }
     };
     radix.expect("writing to a String cannot fail");
     let is_radix = !prefix.is_empty();
@@ -190,11 +306,11 @@ fn format_int(out: &mut String, bits: u128, signed: bool, width: u32, spec: &Spe
     } else {
         ""
     };
-    number(out, sign, prefix, &digits, spec);
+    number(out, sign, prefix, digits.as_str(), spec);
 }
 
 /// The exponent form of an integer's magnitude.
-fn exponent(digits: &mut String, magnitude: u128, spec: &Spec, upper: bool) -> std::fmt::Result {
+fn exponent(digits: &mut Small, magnitude: u128, spec: &Spec, upper: bool) -> std::fmt::Result {
     match (spec.precision, upper) {
         (Some(p), false) => write!(digits, "{magnitude:.p$e}"),
         (Some(p), true) => write!(digits, "{magnitude:.p$E}"),
@@ -207,11 +323,11 @@ fn exponent(digits: &mut String, magnitude: u128, spec: &Spec, upper: bool) -> s
 /// writes (Rust's `{:?}`: the shortest that reads back, with a `.0` on a
 /// whole number); with one, Rust's `{:.p}`. `f32` values are written as
 /// `f32`s, which have fewer digits.
-fn format_float(out: &mut String, value: f64, is_f32: bool, spec: &Spec) {
+fn format_float(out: &mut impl Out, value: f64, is_f32: bool, spec: &Spec) {
     // NaN has no sign, as in Rust; negative zero has one.
     let negative = value.is_sign_negative() && !value.is_nan();
     let magnitude = value.abs();
-    let mut digits = String::new();
+    let mut digits = Small::new();
     macro_rules! digits {
         ($v:expr) => {{
             let v = $v;
@@ -238,12 +354,12 @@ fn format_float(out: &mut String, value: f64, is_f32: bool, spec: &Spec) {
     } else {
         ""
     };
-    number(out, sign, "", &digits, spec);
+    number(out, sign, "", digits.as_str(), spec);
 }
 
 /// Text: at most `precision` characters of it, padded (left by default):
 /// Rust's `Formatter::pad`.
-fn format_text(out: &mut String, text: &str, spec: &Spec) {
+fn format_text(out: &mut impl Out, text: &str, spec: &Spec) {
     let text = match spec.precision {
         Some(max) => match text.char_indices().nth(max) {
             Some((end, _)) => &text[..end],
@@ -258,77 +374,57 @@ fn format_text(out: &mut String, text: &str, spec: &Spec) {
 /// `\r`, `\t` and `\0` by name, any other ASCII control character as
 /// `\xNN`. Every other character is written as it is (Codira literals have
 /// no `\u{..}` escape), so the result reads back as the same string.
-fn quote(out: &mut String, text: &str) {
-    out.push('"');
+fn quote(out: &mut impl Out, text: &str) {
+    out.put_char('"');
     for c in text.chars() {
         match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\0' => out.push_str("\\0"),
+            '"' => out.put("\\\""),
+            '\\' => out.put("\\\\"),
+            '\n' => out.put("\\n"),
+            '\r' => out.put("\\r"),
+            '\t' => out.put("\\t"),
+            '\0' => out.put("\\0"),
             c if c.is_ascii_control() => {
-                write!(out, "\\x{:02x}", c as u32).expect("writing to a String cannot fail");
+                write!(out, "\\x{:02x}", c as u32).expect("writing to memory cannot fail");
             }
-            c => out.push(c),
+            c => out.put_char(c),
         }
     }
-    out.push('"');
-}
-
-/// Writes `formatted` as a new `String` to `out`.
-///
-/// # Safety
-///
-/// `ty`, `alloc` and `out` must be the handles and the `String` slot
-/// generated code passes.
-unsafe fn make(formatted: &str, ty: *const c_void, alloc: *mut c_void, out: *mut u8) {
-    let alloc = super::Alloc::new(ty, alloc);
-    write(out, alloc.string(&[formatted.as_bytes()], formatted.len()));
+    out.put_char('"');
 }
 
 thread_local! {
-    /// What this thread's code is formatting into, reused so that
-    /// formatting a number allocates nothing but its `String`.
-    static SCRATCH: RefCell<String> = const { RefCell::new(String::new()) };
-
     /// The class instances whose debug form this thread is in the middle of
     /// writing (their GC handles), innermost last.
     static IN_PROGRESS: RefCell<Vec<usize>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Runs `f` on the thread's scratch buffer, emptied first, then writes what
-/// it wrote as a new `String` to `out`.
+/// Appends `formatted` to the `String` `buf/start/len` (in its buffer when
+/// it has room) and writes the result to `out`.
 ///
 /// # Safety
 ///
-/// As for [`make`].
-unsafe fn with_scratch(
-    f: impl FnOnce(&mut String),
+/// Generated code's `String`, handles and slot.
+unsafe fn append_out(
+    buf: *const c_void,
+    start: usize,
+    len: usize,
+    formatted: &[u8],
     ty: *const c_void,
     alloc: *mut c_void,
     out: *mut u8,
 ) {
-    SCRATCH.with(|scratch| {
-        // A nested use (none exists) would get a fresh buffer rather than
-        // a borrow error.
-        let mut own = String::new();
-        let mut guard = scratch.try_borrow_mut();
-        let buffer = match guard.as_deref_mut() {
-            Ok(buffer) => buffer,
-            Err(_) => &mut own,
-        };
-        buffer.clear();
-        f(buffer);
-        make(buffer, ty, alloc, out);
-    });
+    write(out, append(buf.cast(), start, len, formatted, ty, alloc));
 }
 
 /// `{x:spec}` for an integer, passed as its two 64-bit halves (sign- or
-/// zero-extended to 128 bits), its signedness and its size in bits.
+/// zero-extended to 128 bits), its signedness and its size in bits,
+/// appended to the `String` `buf/start/len`.
 #[allow(clippy::too_many_arguments)]
-extern "C" fn string_format_int(
+extern "C" fn string_append_format_int(
+    buf: *const c_void,
+    start: usize,
+    len: usize,
     low: u64,
     high: u64,
     signed: u8,
@@ -343,21 +439,19 @@ extern "C" fn string_format_int(
 ) {
     let spec = Spec::decode(fill, flags, width, precision);
     let value = (u128::from(high) << 64) | u128::from(low);
-    // Safety: generated code passes its handles and a `String` slot.
-    unsafe {
-        with_scratch(
-            |buffer| format_int(buffer, value, signed != 0, bits, &spec),
-            ty,
-            alloc,
-            out,
-        );
-    }
+    let mut text = Small::new();
+    format_int(&mut text, value, signed != 0, bits, &spec);
+    // Safety: generated code passes a live `String`, its handles and a slot.
+    unsafe { append_out(buf, start, len, text.as_bytes(), ty, alloc, out) }
 }
 
 /// `{x:spec}` for a float (an `f32` widened to `f64` when `is_f32` is set,
-/// which narrows back exactly).
+/// which narrows back exactly), appended to the `String` `buf/start/len`.
 #[allow(clippy::too_many_arguments)]
-extern "C" fn string_format_float(
+extern "C" fn string_append_format_float(
+    buf: *const c_void,
+    start: usize,
+    len: usize,
     value: f64,
     is_f32: u8,
     fill: u32,
@@ -369,23 +463,21 @@ extern "C" fn string_format_float(
     out: *mut u8,
 ) {
     let spec = Spec::decode(fill, flags, width, precision);
-    // Safety: generated code passes its handles and a `String` slot.
-    unsafe {
-        with_scratch(
-            |buffer| format_float(buffer, value, is_f32 != 0, &spec),
-            ty,
-            alloc,
-            out,
-        );
-    }
+    let mut text = Small::new();
+    format_float(&mut text, value, is_f32 != 0, &spec);
+    // Safety: as for `string_append_format_int`.
+    unsafe { append_out(buf, start, len, text.as_bytes(), ty, alloc, out) }
 }
 
-/// `{x:spec}` for text: a `String`, a `str`, a `bool`'s `true`/`false`, or
-/// a value's debug form.
+/// `{x:spec}` for text -- a `String`, a `str`, a `bool`'s `true`/`false`,
+/// or a value's debug form -- appended to the `String` `buf/start/len`.
 #[allow(clippy::too_many_arguments)]
-extern "C" fn string_format_text(
-    data: *const u8,
+extern "C" fn string_append_format_text(
+    buf: *const c_void,
+    start: usize,
     len: usize,
+    data: *const u8,
+    data_len: usize,
     fill: u32,
     flags: u32,
     width: i64,
@@ -395,17 +487,20 @@ extern "C" fn string_format_text(
     out: *mut u8,
 ) {
     let spec = Spec::decode(fill, flags, width, precision);
-    // Safety: generated code passes valid UTF-8, its handles and a slot.
+    // Safety: generated code passes valid UTF-8, a live `String`, its
+    // handles and a slot.
     unsafe {
-        let source = text(bytes_at(data, len));
-        // Text that needs no padding or truncating is copied as it is.
+        let source = text(bytes_at(data, data_len));
+        // Text that needs no padding or truncating is appended as it is.
         if spec.width.is_none_or(|w| w == 0) && spec.precision.is_none() {
-            make(source, ty, alloc, out);
+            append_out(buf, start, len, source.as_bytes(), ty, alloc, out);
             return;
         }
-        // `source` may point into a GC buffer: it is read before the
-        // allocation, into the scratch buffer.
-        with_scratch(|buffer| format_text(buffer, source, &spec), ty, alloc, out);
+        // `source` may point into a GC buffer: it is read into `text`
+        // before anything is allocated.
+        let mut formatted = Small::new();
+        format_text(&mut formatted, source, &spec);
+        append_out(buf, start, len, formatted.as_bytes(), ty, alloc, out);
     }
 }
 
@@ -422,13 +517,12 @@ extern "C" fn debug_quote(
     alloc: *mut c_void,
     out: *mut u8,
 ) {
-    let mut quoted = String::with_capacity(data_len + 2);
+    let mut quoted = Small::new();
     // Safety: generated code passes a live `String`, valid UTF-8 and its
     // handles; the quoted copy is made before anything is allocated.
     unsafe {
         quote(&mut quoted, text(bytes_at(data, data_len)));
-        let value = append(buf.cast(), start, len, quoted.as_bytes(), ty, alloc);
-        write(out, value);
+        append_out(buf, start, len, quoted.as_bytes(), ty, alloc, out);
     }
 }
 
@@ -444,13 +538,12 @@ extern "C" fn debug_newline(
     out: *mut u8,
 ) {
     let depth = usize::try_from(depth).unwrap_or(0);
-    let mut line = String::with_capacity(1 + 4 * depth);
-    line.push('\n');
+    let mut line = Small::new();
+    line.put("\n");
     fill(&mut line, ' ', 4 * depth);
     // Safety: generated code passes a live `String` and its handles.
     unsafe {
-        let value = append(buf.cast(), start, len, line.as_bytes(), ty, alloc);
-        write(out, value);
+        append_out(buf, start, len, line.as_bytes(), ty, alloc, out);
     }
 }
 
@@ -502,16 +595,19 @@ pub(super) fn definitions() -> Vec<crate::FunctionDefinition> {
     type O = *mut u8;
     vec![
         IntoFunctionDefinition::into(
-            string_format_int as extern "C" fn(u64, u64, u8, u32, u32, u32, i64, i64, T, A, O),
-            "codira.string_format_int",
+            string_append_format_int
+                as extern "C" fn(H, usize, usize, u64, u64, u8, u32, u32, u32, i64, i64, T, A, O),
+            "codira.string_append_format_int",
         ),
         IntoFunctionDefinition::into(
-            string_format_float as extern "C" fn(f64, u8, u32, u32, i64, i64, T, A, O),
-            "codira.string_format_float",
+            string_append_format_float
+                as extern "C" fn(H, usize, usize, f64, u8, u32, u32, i64, i64, T, A, O),
+            "codira.string_append_format_float",
         ),
         IntoFunctionDefinition::into(
-            string_format_text as extern "C" fn(P, usize, u32, u32, i64, i64, T, A, O),
-            "codira.string_format_text",
+            string_append_format_text
+                as extern "C" fn(H, usize, usize, P, usize, u32, u32, i64, i64, T, A, O),
+            "codira.string_append_format_text",
         ),
         IntoFunctionDefinition::into(
             debug_quote as extern "C" fn(H, usize, usize, P, usize, T, A, O),
@@ -528,6 +624,43 @@ pub(super) fn definitions() -> Vec<crate::FunctionDefinition> {
             "codira.exit_with_error",
         ),
     ]
+}
+
+#[cfg(test)]
+pub(super) mod tests_support {
+    //! Entry points of this module for the tests of `string`.
+    use std::ffi::c_void;
+
+    use super::super::RawString;
+
+    /// Appends `{n:0w}` (zero-padded to `width`) to `value`, as compiled
+    /// code does.
+    pub(in crate::string) fn append_format_int(
+        value: RawString,
+        n: i64,
+        width: i64,
+        ty: *const c_void,
+        alloc: *mut c_void,
+        out: *mut u8,
+    ) {
+        let zero_and_width = (1 << 4) | (1 << 5);
+        super::string_append_format_int(
+            value.buf.cast(),
+            value.start,
+            value.len,
+            n as u64,
+            (n >> 63) as u64,
+            1,
+            64,
+            u32::from(' '),
+            zero_and_width,
+            width,
+            0,
+            ty,
+            alloc,
+            out,
+        );
+    }
 }
 
 #[cfg(test)]

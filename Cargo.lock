@@ -1050,6 +1050,7 @@ dependencies = [
  "libc",
  "libloading",
  "log",
+ "memchr",
  "notify",
  "once_cell",
  "parking_lot 0.12.3",

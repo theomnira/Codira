@@ -41,6 +41,7 @@ use crate::{
 mod arrays;
 mod closures;
 mod effects;
+mod fabric;
 mod format;
 mod merge;
 mod pipelines;
@@ -571,12 +572,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             Expr::Match { expr: scrutinee, arms, .. } => self.gen_match(expr, *scrutinee, arms),
             Expr::Unwrap { expr: inner } => self.gen_unwrap(expr, *inner),
             Expr::Propagate { expr: inner } => self.gen_propagate(expr, *inner),
-            Expr::Format {
-                value,
-                spec,
-                width,
-                precision,
-            } => self.gen_format(*value, spec, *width, *precision),
+            Expr::Format { .. } => self.gen_format(expr),
             Expr::Range { .. } => unreachable!(
                 "inference rejects a range anywhere but a `for` loop's iterable, which `gen_for` lowers itself"
             ),
@@ -1938,7 +1934,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 BinaryOp::Assignment { op: None },
             ) => return self.gen_plain_assignment(lhs, rhs),
             (TyKind::String | TyKind::Str, _) => {
-                return self.gen_string_binary_op(lhs, rhs, op);
+                return self.gen_string_binary_op(tgt_expr, lhs, rhs, op);
             }
             (TyKind::Enum(..), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
                 return self.gen_enum_eq(lhs, rhs, &lhs_type.clone(), negated)
