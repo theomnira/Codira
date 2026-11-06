@@ -1118,6 +1118,36 @@ public func main() {
     assert_eq!(stdout, "42\n2\nnot found\n");
 }
 
+/// A program whose enum holds a standard-library type it only names --
+/// nothing of `std.text.ascii` is called -- loads: the library declaring
+/// the type is a dependency of the program's. It used to fail at load
+/// time with "Failed to load type with id `unknown TypeId ...`", because
+/// only modules whose functions a library calls were loaded with it.
+#[test]
+fn a_type_named_from_a_std_module_loads_its_library() {
+    let (_dir, stdout) = run_ok(&[(
+        "mod.code",
+        r#"
+import std.text.ascii.{ParseError}
+
+enum Problem { Parse(ParseError), Other(i64) }
+
+struct Wrapped { why: ParseError }
+
+public func main() {
+    let p = Problem.Other(3)
+    match p {
+        Problem.Other(n) -> println(n),
+        Problem.Parse(_) -> println("parse"),
+    }
+    let w = Wrapped { why: ParseError.InvalidDigit(4) }
+    if let ParseError.InvalidDigit(at) = w.why { println(at) }
+}
+"#,
+    )]);
+    assert_eq!(stdout, "3\n4\n");
+}
+
 /// `Map`, `Set`, `Deque`, `BinaryHeap` and `Counter` from `std.collections`,
 /// on the growable arrays, against values worked out by hand.
 #[test]

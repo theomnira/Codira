@@ -175,6 +175,76 @@ pub(crate) fn instance_struct_types(
     found
 }
 
+/// The modules that declare a struct or enum the group's types name: in the
+/// types of its code units, in the fields and payload slots of its own
+/// types and of the instances it defines (`instance_types`), at any depth.
+///
+/// The runtime resolves every type the group's type information mentions
+/// against the libraries loaded with it, and it loads only a group's
+/// dependencies. A type of another module that the group only *names* -- a
+/// payload `ParseError` in `enum Problem { Parse(ParseError) }`, with
+/// nothing of `ParseError`'s module called -- must still bring that
+/// module's library, or loading fails with "Failed to load type with id
+/// ...". So these modules are dependencies as much as those the group
+/// calls into.
+pub(crate) fn type_dependency_modules(
+    db: &dyn HirDatabase,
+    module_group: &ModuleGroup,
+    units: &[CodeUnit],
+    instance_types: &[Ty],
+) -> FxHashSet<codira_hir::Module> {
+    let mut roots: Vec<Ty> = instance_types.to_vec();
+    for unit in units {
+        let sig = unit.instance.sig(db);
+        roots.extend(sig.params().iter().cloned());
+        roots.push(sig.ret().clone());
+        roots.extend(unit.instance.self_param_ty(db));
+        roots.extend(unit.infer.types().cloned());
+    }
+    for def in module_group
+        .iter()
+        .flat_map(|module| module.declarations(db))
+    {
+        match def {
+            ModuleDef::Struct(s) if !s.is_generic(db) => roots.push(s.ty(db)),
+            ModuleDef::Enum(e) if !e.is_generic(db) => roots.push(e.ty(db)),
+            _ => {}
+        }
+    }
+
+    let mut modules = FxHashSet::default();
+    let mut seen: FxHashSet<Ty> = FxHashSet::default();
+    while let Some(ty) = roots.pop() {
+        let mut adts = Vec::new();
+        ty.walk(&mut |inner| {
+            if matches!(inner.interned(), TyKind::Struct(..) | TyKind::Enum(..))
+                && !mono::contains_type_param(inner)
+                && seen.insert(inner.clone())
+            {
+                adts.push(inner.clone());
+            }
+        });
+        for adt in adts {
+            match adt.interned() {
+                TyKind::Struct(s, _) => {
+                    modules.insert(s.module(db));
+                    roots.extend(mono::struct_field_types(db, &adt));
+                }
+                TyKind::Enum(e, _) => {
+                    modules.insert(e.module(db));
+                    if let Some(layout) = mono::enum_layout(db, &adt) {
+                        roots.extend(layout.slots.iter().map(|slot| slot.ty.clone()));
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    // The group's own types are its own: a library does not depend on itself.
+    modules.retain(|module| !module_group.contains(*module));
+    modules
+}
+
 /// Generates IR that is shared among the group's files.
 pub(crate) fn gen_file_group_ir<'ink>(
     code_gen: &CodeGenContext<'_, 'ink>,
@@ -282,7 +352,13 @@ pub(crate) fn gen_file_group_ir<'ink>(
     }
 
     dispatch_table_builder.collect_fn_values(fn_values);
-    let (dispatch_table, referenced_modules) = dispatch_table_builder.build();
+    let (dispatch_table, mut referenced_modules) = dispatch_table_builder.build();
+    referenced_modules.extend(type_dependency_modules(
+        code_gen.db,
+        module_group,
+        &units,
+        &instance_types,
+    ));
 
     let target_data = code_gen.target_machine.get_target_data();
     let type_context = IrTypeContext {
