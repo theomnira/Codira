@@ -278,6 +278,8 @@ class Kernel:
         self.ci = spec.get("ci", False)
         self.entry = spec.get("entry", self.name)
         self.arg = spec.get("arg", self.name)
+        # Integers passed to the Codira entry (kernels sharing one function).
+        self.args = [str(a) for a in spec.get("args", [])]
         self.heap_limit_mb = spec.get("heap_limit_mb", workload.spec.get("heap_limit_mb",
                                       defaults.get("heap_limit_mb", 1024)))
         self.note = spec.get("note", "")
@@ -513,7 +515,7 @@ def run_suite(args, kernels, binaries, host, perf, rng):
                 results[k.id][v] = {"unavailable": why}
                 continue
             if v == "codira":
-                cmd = [host, b, k.entry]
+                cmd = [host, b, k.entry] + k.args
                 env = dict(os.environ, AURORA_HEAP_LIMIT_MB=str(k.heap_limit_mb))
             else:
                 cmd = [b, k.arg]

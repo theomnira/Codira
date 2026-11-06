@@ -47,20 +47,20 @@ The workloads:
 | `strings` | append, concatenation, splitting (into arrays and lazily), search, parsing | 9 |
 | `format` | integers and floats to text, format specs, the debug form | 5 |
 | `json` | parse, print, pretty-print three inputs (`gen_inputs.py`) | 9 |
-| `hashmap` | insert, lookup, churn with Codira's hash in all three; Rust's default SipHash separately | 10 |
-| `result` | `?` wrapping, converting to `AnyError`, with context, eight frames deep | 5 |
+| `hashmap` | insert, hit, miss, iterate, remove at 1K/100K/1M keys, small maps, churn: Codira's unkeyed hash in all three, and the default keyed SipHash-1-3 (Codira, Rust) separately | 66 |
+| `result` | `?` wrapping, converting to `AnyError`, with context (Ok and Err paths), a parse loop, eight frames deep | 8 |
 | `collections` | push, sum, sort, eager and lazy pipelines over 10M elements | 13 |
 | `loops` | numeric loops, field stores, copies, recursion, sieve, float and branchy loops | 9 |
 | `graph` | allocation-heavy binary trees, cyclic graphs, a doubly linked list | 3 |
 | `channels` | producers and consumers over bounded channels | 3 |
-| `server` | request handling with high churn, per-request latency; long runs under GC heap caps of 1024 down to 64 MiB | 7 |
+| `server` | request handling with high churn, per-request latency; long runs under GC heap caps of 1024 down to 48 MiB | 8 |
 
 and, for every workload, compile time and binary size.
 
 They replace the benchmarks that were scattered over the repository
-(`examples/collections_bench`, `collections_loop_cost`, `pipelines_bench`,
-`format_bench`, `error_bench`, `json_bench` and `benches/strings`), whose
-programs became kernels here. `benches/benches` (criterion: the compiler
+(`examples/collections_bench` with `scripts/collections_bench.py`,
+`collections_loop_cost`, `pipelines_bench`, `format_bench`, `error_bench`,
+`json_bench` and `benches/strings`), whose programs became kernels here. `benches/benches` (criterion: the compiler
 and runtime against Lua and Wasm, `scripts/bench.sh`) and `codira bench`
 (a package's own `@bench` functions) are separate tools and stay.
 
@@ -91,8 +91,9 @@ command, the machine) and `summary.md` (the tables).
   a mismatch. A known, explained difference is declared in `suite.toml`
   (`check_differs`) and reported. Where a Codira feature a kernel needs does
   not exist yet, the kernel is in the suite with its baselines and the
-  Codira variant marked as not yet possible, with the reason (the
-  `*_secure` hash map kernels: `Map` has no seeded hasher). A kernel known
+  Codira variant marked as not yet possible, with the reason (none today;
+  the C++ variants of the `secure` hash map kernels are marked because the
+  C++ standard library has no seeded hasher). A kernel known
   not to complete today is declared (`expected_failure`) and reported as
   such; the runner says so when it starts to complete.
 - **What is timed.** Each kernel times its own work with a monotonic clock
@@ -198,7 +199,8 @@ with any later run; it is small (a few hundred kilobytes).
 ## Adding a workload
 
 Add a directory with `codira.toml`, `src/mod.code` (one `public func
-<kernel>()` per kernel, each printing `@@ ns=.. check=..` as the others
+<kernel>()` per kernel, or one function taking up to three `i64`
+arguments shared by several kernels (`entry` and `args` in `suite.toml`), each printing `@@ ns=.. check=..` as the others
 do), `<name>.rs` and `<name>.cpp` (taking the kernel name as their first
 argument), and a `[[workload]]` entry in `suite.toml`. Make the check value
 depend on all the work, generate inputs with the shared xorshift

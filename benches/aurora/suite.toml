@@ -8,6 +8,9 @@
 # Kernel keys (besides those below, `check_differs = { cpp = "why" }`
 # declares a variant whose check value differs for a known reason):
 #   name           the function / argument
+#   entry, args    the Codira function to call instead of `name`, and up
+#                  to three `i64`s to pass it (kernels sharing a function)
+#   arg            the baselines' argument instead of `name`
 #   ci = true      part of the CI subset (`--suite ci`)
 #   heap_limit_mb  the Codira GC heap cap for this kernel (default below)
 #   codira | rust | cpp = "reason"   that variant does not exist, and why
@@ -52,8 +55,11 @@ title = "Result propagation with `?`"
 kernels = [
   { name = "wrapped_ok", ci = true },
   { name = "wrapped_err", ci = true },
+  { name = "converted_ok" },
   { name = "converted_err" },
+  { name = "context_ok" },
   { name = "context_err" },
+  { name = "sum_words", ci = true },
   { name = "propagate_depth8", ci = true },
 ]
 
@@ -91,23 +97,81 @@ kernels = [
   { name = "collatz_1m" },
 ]
 
-# The same hash function in all three (Codira's), then Rust's default
-# seeded SipHash on its own rows: Codira's `Map` has no seeded hasher and
-# the C++ standard library has none.
+# Every map operation at 1K, 100K and 1M keys, under two hashers that are
+# compared separately: `fast`, Codira's unkeyed hash in all three
+# (`Map.unkeyed()`), and `secure`, each language's default keyed SipHash-1-3
+# (`Map.new()`, Rust's `HashMap::new()`; C++ has none). 1K and 100K repeat
+# the operation 1000 and 10 times.
 [[workload]]
 name = "hashmap"
-title = "Hash maps: the same hash function, and the default secure hasher"
+title = "Hash maps: the same unkeyed hash, and the default keyed (secure) hash, separately"
 kernels = [
-  { name = "insert_i64", ci = true },
-  { name = "lookup_i64", ci = true },
-  { name = "insert_string" },
-  { name = "lookup_string", ci = true },
-  { name = "churn_i64", ci = true },
-  { name = "insert_i64_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
-  { name = "lookup_i64_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
-  { name = "insert_string_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
-  { name = "lookup_string_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
-  { name = "churn_i64_secure", codira = "not yet possible: `Map` has no seeded, flooding-resistant hasher", cpp = "the C++ standard library has no seeded hasher" },
+  { name = "insert_i64_fast_1k", entry = "map_int", args = [0, 0, 1000] },
+  { name = "hit_i64_fast_1k", entry = "map_int", args = [1, 0, 1000] },
+  { name = "miss_i64_fast_1k", entry = "map_int", args = [2, 0, 1000] },
+  { name = "iter_i64_fast_1k", entry = "map_int", args = [3, 0, 1000] },
+  { name = "remove_i64_fast_1k", entry = "map_int", args = [4, 0, 1000] },
+  { name = "insert_i64_fast_100k", entry = "map_int", args = [0, 0, 100000] },
+  { name = "hit_i64_fast_100k", entry = "map_int", args = [1, 0, 100000] },
+  { name = "miss_i64_fast_100k", entry = "map_int", args = [2, 0, 100000] },
+  { name = "iter_i64_fast_100k", entry = "map_int", args = [3, 0, 100000] },
+  { name = "remove_i64_fast_100k", entry = "map_int", args = [4, 0, 100000], ci = true },
+  { name = "insert_i64_fast_1m", entry = "map_int", args = [0, 0, 1000000], ci = true },
+  { name = "hit_i64_fast_1m", entry = "map_int", args = [1, 0, 1000000], ci = true },
+  { name = "miss_i64_fast_1m", entry = "map_int", args = [2, 0, 1000000], ci = true },
+  { name = "iter_i64_fast_1m", entry = "map_int", args = [3, 0, 1000000] },
+  { name = "remove_i64_fast_1m", entry = "map_int", args = [4, 0, 1000000] },
+  { name = "insert_string_fast_1k", entry = "map_string", args = [0, 0, 1000] },
+  { name = "hit_string_fast_1k", entry = "map_string", args = [1, 0, 1000] },
+  { name = "miss_string_fast_1k", entry = "map_string", args = [2, 0, 1000] },
+  { name = "iter_string_fast_1k", entry = "map_string", args = [3, 0, 1000] },
+  { name = "remove_string_fast_1k", entry = "map_string", args = [4, 0, 1000] },
+  { name = "insert_string_fast_100k", entry = "map_string", args = [0, 0, 100000] },
+  { name = "hit_string_fast_100k", entry = "map_string", args = [1, 0, 100000], ci = true },
+  { name = "miss_string_fast_100k", entry = "map_string", args = [2, 0, 100000] },
+  { name = "iter_string_fast_100k", entry = "map_string", args = [3, 0, 100000] },
+  { name = "remove_string_fast_100k", entry = "map_string", args = [4, 0, 100000] },
+  { name = "insert_string_fast_1m", entry = "map_string", args = [0, 0, 1000000] },
+  { name = "hit_string_fast_1m", entry = "map_string", args = [1, 0, 1000000] },
+  { name = "miss_string_fast_1m", entry = "map_string", args = [2, 0, 1000000] },
+  { name = "iter_string_fast_1m", entry = "map_string", args = [3, 0, 1000000] },
+  { name = "remove_string_fast_1m", entry = "map_string", args = [4, 0, 1000000] },
+  { name = "small_build_fast", entry = "small", args = [0, 0] },
+  { name = "small_get_fast", entry = "small", args = [1, 0] },
+  { name = "churn_fast", entry = "churn", args = [0], ci = true },
+  { name = "insert_i64_secure_1k", entry = "map_int", args = [0, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "hit_i64_secure_1k", entry = "map_int", args = [1, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "miss_i64_secure_1k", entry = "map_int", args = [2, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "iter_i64_secure_1k", entry = "map_int", args = [3, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "remove_i64_secure_1k", entry = "map_int", args = [4, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "insert_i64_secure_100k", entry = "map_int", args = [0, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "hit_i64_secure_100k", entry = "map_int", args = [1, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "miss_i64_secure_100k", entry = "map_int", args = [2, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "iter_i64_secure_100k", entry = "map_int", args = [3, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "remove_i64_secure_100k", entry = "map_int", args = [4, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "insert_i64_secure_1m", entry = "map_int", args = [0, 1, 1000000], ci = true, cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "hit_i64_secure_1m", entry = "map_int", args = [1, 1, 1000000], ci = true, cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "miss_i64_secure_1m", entry = "map_int", args = [2, 1, 1000000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "iter_i64_secure_1m", entry = "map_int", args = [3, 1, 1000000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "remove_i64_secure_1m", entry = "map_int", args = [4, 1, 1000000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "insert_string_secure_1k", entry = "map_string", args = [0, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "hit_string_secure_1k", entry = "map_string", args = [1, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "miss_string_secure_1k", entry = "map_string", args = [2, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "iter_string_secure_1k", entry = "map_string", args = [3, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "remove_string_secure_1k", entry = "map_string", args = [4, 1, 1000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "insert_string_secure_100k", entry = "map_string", args = [0, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "hit_string_secure_100k", entry = "map_string", args = [1, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "miss_string_secure_100k", entry = "map_string", args = [2, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "iter_string_secure_100k", entry = "map_string", args = [3, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "remove_string_secure_100k", entry = "map_string", args = [4, 1, 100000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "insert_string_secure_1m", entry = "map_string", args = [0, 1, 1000000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "hit_string_secure_1m", entry = "map_string", args = [1, 1, 1000000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "miss_string_secure_1m", entry = "map_string", args = [2, 1, 1000000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "iter_string_secure_1m", entry = "map_string", args = [3, 1, 1000000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "remove_string_secure_1m", entry = "map_string", args = [4, 1, 1000000], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "small_build_secure", entry = "small", args = [0, 1], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "small_get_secure", entry = "small", args = [1, 1], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
+  { name = "churn_secure", entry = "churn", args = [1], cpp = "the C++ standard library has no seeded, flooding-resistant hasher" },
 ]
 
 [[workload]]
@@ -159,7 +223,8 @@ kernels = [
   { name = "long_run_heap_1024", entry = "long_run", arg = "long_run", heap_limit_mb = 1024 },
   { name = "long_run_heap_256", entry = "long_run", arg = "long_run", heap_limit_mb = 256 },
   { name = "long_run_heap_128", entry = "long_run", arg = "long_run", heap_limit_mb = 128, ci = true },
-  { name = "long_run_heap_96", entry = "long_run", arg = "long_run", heap_limit_mb = 96, expected_failure = { codira = "the runtime aborts out of memory at this cap since the heap policy landed (it completed at ea5aea347e); the live bytes it reports after a full collection vary from 56 to 79 MB between runs and caps, for a program whose live data does not grow" } },
-  { name = "long_run_heap_80", entry = "long_run", arg = "long_run", heap_limit_mb = 80, expected_failure = { codira = "the runtime aborts out of memory at this cap since the heap policy landed (it completed at ea5aea347e); the live bytes it reports after a full collection vary from 56 to 79 MB between runs and caps, for a program whose live data does not grow" } },
-  { name = "long_run_heap_64", entry = "long_run", arg = "long_run", heap_limit_mb = 64, expected_failure = { codira = "the runtime aborts out of memory: a collection cannot make room under the cap" } },
+  { name = "long_run_heap_96", entry = "long_run", arg = "long_run", heap_limit_mb = 96 },
+  { name = "long_run_heap_80", entry = "long_run", arg = "long_run", heap_limit_mb = 80 },
+  { name = "long_run_heap_64", entry = "long_run", arg = "long_run", heap_limit_mb = 64 },
+  { name = "long_run_heap_48", entry = "long_run", arg = "long_run", heap_limit_mb = 48, expected_failure = { codira = "the runtime ends the program out of memory: about 51 MB are live after a full collection, and a collection cannot make room under the cap" } },
 ]

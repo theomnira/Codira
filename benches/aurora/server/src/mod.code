@@ -6,8 +6,8 @@
 // Every request is timed on its own, so the percentiles show what a stop
 // of the world does to a request that meets it. `server.rs` (`HashMap`,
 // `String`) and `server.cpp` (`std::unordered_map`, `std::string`) do the
-// same per request, with Codira's hash function, and print the same check
-// values.
+// same per request, with Codira's unkeyed hash function (`Map.unkeyed()`),
+// and print the same check values.
 //
 // `requests` handles 200k requests over at most 20k live sessions;
 // `long_run` handles 1M over 50k, and the suite runs it under shrinking
@@ -43,7 +43,7 @@ func at(lat: [u64], q: usize) -> u64 {
 
 func serve(requests: i64, live: usize, users: u64) {
     let r = Rng { s: 0x9E3779B97F4A7C15 }
-    let sessions: Map[i64, Session] = Map.new()
+    let sessions: Map[i64, Session] = Map.unkeyed()
     let ring = array_filled(-1i64, live)
     var ring_at: usize = 0
     let lat = array_filled(0u64, requests as usize)

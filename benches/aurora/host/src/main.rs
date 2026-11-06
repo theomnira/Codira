@@ -6,7 +6,8 @@
 //! - Runs one kernel of an AURORA benchmark: loads the `.codiralib` named
 //!   first on the command line and invokes the public function named second
 //!   (it takes nothing and returns `()`; it prints its own `@@ ns=.. check=..`
-//!   line), with the runtime compiled in release mode.
+//!   line), with the runtime compiled in release mode. Up to three more
+//!   arguments are passed to it as `i64`s, for kernels that share a function.
 //! - Caps the GC heap at `AURORA_HEAP_LIMIT_MB` mebibytes (1024 by default,
 //!   `0` for no cap): without a cap the collector never runs.
 //! - The collector paces itself with the runtime's default policy (the next
@@ -26,9 +27,12 @@ use std::time::Instant;
 fn main() {
     let mut args = std::env::args().skip(1);
     let (Some(lib), Some(entry)) = (args.next(), args.next()) else {
-        eprintln!("usage: aurora_host <library> <kernel function>");
+        eprintln!("usage: aurora_host <library> <kernel function> [i64 arguments...]");
         std::process::exit(2);
     };
+    let ints: Vec<i64> = args
+        .map(|a| a.parse().unwrap_or_else(|_| panic!("`{a}` is not an i64 argument")))
+        .collect();
     let limit_mb: usize = std::env::var("AURORA_HEAP_LIMIT_MB")
         .ok()
         .and_then(|value| value.parse().ok())
@@ -43,9 +47,15 @@ fn main() {
     let runtime = unsafe { builder.finish() }.expect("failed to load the library");
     let load_ns = load_start.elapsed().as_nanos();
 
-    let () = runtime
-        .invoke(entry.as_str(), ())
-        .unwrap_or_else(|e| panic!("failed to run `{entry}`: {e:?}"));
+    let name = entry.as_str();
+    let ran = match *ints.as_slice() {
+        [] => runtime.invoke(name, ()).map_err(|e| format!("{e:?}")),
+        [a] => runtime.invoke(name, (a,)).map_err(|e| format!("{e:?}")),
+        [a, b] => runtime.invoke(name, (a, b)).map_err(|e| format!("{e:?}")),
+        [a, b, c] => runtime.invoke(name, (a, b, c)).map_err(|e| format!("{e:?}")),
+        _ => panic!("at most three arguments"),
+    };
+    let () = ran.unwrap_or_else(|e| panic!("failed to run `{entry}`: {e}"));
 
     let s = runtime.stats();
     let c = &s.collections;

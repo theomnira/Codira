@@ -46,6 +46,31 @@ static std::expected<int64_t, ParseError> parse_i64(const std::vector<uint8_t>& 
 
 struct Problem { ParseError parse; };
 
+static bool is_space(uint8_t b) { return b == 32 || (b >= 9 && b <= 13); }
+
+// std.text.ascii's next_word: false when only whitespace is left.
+static bool next_word(const std::vector<uint8_t>& bytes, size_t from, size_t& start, size_t& end) {
+    size_t n = bytes.size();
+    start = from;
+    while (start < n && is_space(bytes[start])) start++;
+    if (start >= n) return false;
+    end = start;
+    while (end < n && !is_space(bytes[end])) end++;
+    return true;
+}
+
+static std::expected<int64_t, Problem> sum_words_of(const std::vector<uint8_t>& bytes) {
+    int64_t total = 0;
+    size_t at = 0, start, end;
+    while (next_word(bytes, at, start, end)) {
+        auto v = parse_i64(bytes, start, end);
+        if (!v) return std::unexpected(Problem{v.error()});
+        total = (int64_t)((uint64_t)total + (uint64_t)*v);
+        at = end;
+    }
+    return total;
+}
+
 struct AnyError {
     std::string cause;
     std::vector<std::string> contexts;
@@ -53,19 +78,19 @@ struct AnyError {
     static AnyError from(const ParseError& e) { return AnyError{e.message(), {}, "ParseError"}; }
 };
 
-[[gnu::noinline]] static std::expected<int64_t, Problem> wrapped(const std::vector<uint8_t>& b, size_t end) {
+static std::expected<int64_t, Problem> wrapped(const std::vector<uint8_t>& b, size_t end) {
     auto v = parse_i64(b, 0, end);
     if (!v) return std::unexpected(Problem{v.error()});
     return *v + 1;
 }
 
-[[gnu::noinline]] static std::expected<int64_t, AnyError> converted(const std::vector<uint8_t>& b, size_t end) {
+static std::expected<int64_t, AnyError> converted(const std::vector<uint8_t>& b, size_t end) {
     auto v = parse_i64(b, 0, end);
     if (!v) return std::unexpected(AnyError::from(v.error()));
     return *v + 1;
 }
 
-[[gnu::noinline]] static std::expected<int64_t, AnyError> with_context(const std::vector<uint8_t>& b, size_t end) {
+static std::expected<int64_t, AnyError> with_context(const std::vector<uint8_t>& b, size_t end) {
     auto v = parse_i64(b, 0, end);
     if (!v) {
         AnyError e = AnyError::from(v.error());
@@ -93,6 +118,7 @@ static void run_wrapped(size_t end) {
     uint64_t check = 0;
     for (int i = 0; i < 10000000; i++) {
         keep(end);
+        bytes[1] = (uint8_t)('0' + i % 10);
         auto r = wrapped(bytes, end);
         if (r) check += (uint64_t)*r; else check += 1;
     }
@@ -105,23 +131,42 @@ int main(int argc, char** argv) {
     std::vector<uint8_t> bytes{'4', '2', 'x'};
     if (k == "wrapped_ok") run_wrapped(2);
     else if (k == "wrapped_err") run_wrapped(3);
-    else if (k == "converted_err") {
+    else if (k == "converted_ok" || k == "converted_err") {
+        size_t end = k == "converted_ok" ? 2 : 3;
+        keep(end);
         auto start = now();
         uint64_t check = 0;
         for (int i = 0; i < 1000000; i++) {
-            auto r = converted(bytes, 3);
+            bytes[1] = (uint8_t)('0' + i % 10);
+            auto r = converted(bytes, end);
             if (r) check += (uint64_t)*r; else check += r.error().cause.size();
         }
         report(start, check);
-    } else if (k == "context_err") {
+    } else if (k == "context_ok" || k == "context_err") {
+        size_t end = k == "context_ok" ? 2 : 3;
+        keep(end);
         auto start = now();
         uint64_t check = 0;
         for (int i = 0; i < 1000000; i++) {
-            auto r = with_context(bytes, 3);
+            bytes[1] = (uint8_t)('0' + i % 10);
+            auto r = with_context(bytes, end);
             if (r) check += (uint64_t)*r;
             else check += r.error().cause.size() + r.error().contexts.size() + 1;
         }
         report(start, check);
+    } else if (k == "sum_words") {
+        std::vector<uint8_t> text;
+        uint64_t x = 88172645463325252ull;
+        for (int i = 0; i < 1000000; i++) {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            std::string w = std::to_string((int64_t)(x % 1000000) - 500000) + " ";
+            text.insert(text.end(), w.begin(), w.end());
+        }
+        auto start = now();
+        auto r = sum_words_of(text);
+        report(start, r ? (uint64_t)*r : 1);
     } else if (k == "propagate_depth8") {
         auto start = now();
         uint64_t check = 0;
