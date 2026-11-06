@@ -620,6 +620,21 @@ points.
 - **Not measured on other platforms.** Everything was run on x86-64 Linux
   only (Section 11). `loom` does not model weak memory beyond C11, and
   nothing was run on AArch64.
+- **Compaction is off while Cascade is attached.** The experimental
+  compaction (`CODIRA_GC_COMPACT=1`, `MarkSweep::set_compaction`) evacuates
+  sparse blocks and rewrites heap slots. Cascade's thread-local logs, root
+  snapshots, standing roots, retire list, candidate queue, pending cycle
+  set and local holds all store raw header addresses, and evacuation would
+  not update them. The collector therefore compacts only when no Cascade
+  engine is attached (`compaction && cascade.is_none()` in `collect_impl`).
+  Making the two work together needs one of two designs:
+  - the resynchronisation already runs inside the stop and visits every
+    surviving tracked object, so it could rewrite those addresses through
+    the forwarding table, which every queue would have to be reachable from
+    (today the packets in the inbox and the thread-local structures are);
+  - or Cascade could pin every block that holds an object it names.
+
+  Neither is built.
 - **Not built:** user-visible destructors (deliberately), cross-thread
   borrows, unpublication, compiled-code self stack scans for snapshots,
   coalescing of the logs (Levanoni–Petrank style: one entry per object per
