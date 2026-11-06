@@ -34,6 +34,10 @@ paste = { workspace = true }
 name = "gc"
 harness = false
 
+[[bench]]
+name = "cascade"
+harness = false
+
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"
 

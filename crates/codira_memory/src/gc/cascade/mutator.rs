@@ -53,6 +53,8 @@ pub struct Mutator {
     state: Arc<ThreadState>,
     slot: super::sync::Arc<Slot>,
     quiescent_before: bool,
+    /// Reused buffer of objects reclaimed by the current operation.
+    freed: Vec<usize>,
     _guard: MutatorGuard,
 }
 
@@ -76,6 +78,7 @@ impl Mutator {
             state,
             slot,
             quiescent_before: false,
+            freed: Vec::new(),
             _guard: guard,
         }
     }
@@ -424,14 +427,17 @@ impl Mutator {
             return false;
         }
         self.local().holds.remove(&a);
-        let mut freed = Vec::new();
+        let mut freed = std::mem::take(&mut self.freed);
         self.free_local(a, &mut freed, None);
         self.cascade
             .counters
             .unique_reclaimed
             .fetch_add(1, Ordering::Relaxed);
-        self.drain_zct(&mut freed);
-        self.release(freed);
+        if !self.local().zct.is_empty() {
+            self.drain_zct(&mut freed);
+        }
+        self.release(&mut freed);
+        self.freed = freed;
         true
     }
 
@@ -496,11 +502,12 @@ impl Mutator {
 
     /// Reclaims this thread's dead unpublished objects now.
     pub fn reclaim_local(&mut self) {
-        let mut freed = Vec::new();
+        let mut freed = std::mem::take(&mut self.freed);
         self.drain_zct(&mut freed);
         self.local_cycles(&mut freed);
         self.drain_zct(&mut freed);
-        self.release(freed);
+        self.release(&mut freed);
+        self.freed = freed;
     }
 
     fn drain_zct(&mut self, freed: &mut Vec<usize>) {
@@ -542,9 +549,20 @@ impl Mutator {
         if word.is(BUFFERED) {
             self.local().candidates.remove(&object);
         }
-        let mut children = Vec::new();
-        unsafe { children_of(object, &mut |child| children.push(child)) };
-        for child in children {
+        let mut children: [usize; 8] = [0; 8];
+        let mut more = Vec::new();
+        let mut count = 0;
+        unsafe {
+            children_of(object, &mut |child| {
+                if count < children.len() {
+                    children[count] = child;
+                } else {
+                    more.push(child);
+                }
+                count += 1;
+            })
+        };
+        for child in children[..count.min(8)].iter().copied().chain(more) {
             if except.is_some_and(|set| set.contains(&child)) {
                 continue;
             }
@@ -595,13 +613,13 @@ impl Mutator {
             .fetch_add(white.len() as u64, Ordering::Relaxed);
     }
 
-    fn release(&mut self, mut freed: Vec<usize>) {
+    fn release(&mut self, freed: &mut Vec<usize>) {
         if freed.is_empty() {
             return;
         }
         let bytes = {
             let mut inner = self.cascade.heap.inner.write();
-            self.cascade.release_to_heap(&mut inner, &mut freed)
+            self.cascade.release_to_heap(&mut inner, freed)
         };
         self.cascade
             .counters

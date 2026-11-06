@@ -228,9 +228,10 @@ knowing that every other thread has dropped it.
 For published objects, Cascade uses the epoch-based concurrent reference
 counting of Bacon, Attanasio, Lee, Rajan and Smith, "Java without the
 Coffee Breaks: A Nonintrusive Multiprocessor Garbage Collector" (PLDI 2001),
-the *Recycler*. It adds coalesced handoff, and the hand-off structure of
-Levanoni and Petrank, "An On-the-fly Reference Counting Garbage Collector
-for Java" (OOPSLA 2001).
+the *Recycler*: mutators log, the collector applies at epoch boundaries.
+The logs are not coalesced. Coalescing them in the manner of Levanoni and
+Petrank, "An On-the-fly Reference Counting Garbage Collector for Java"
+(OOPSLA 2001), is listed under future work in Section 10.
 
 **Mutator side.**
 
@@ -315,7 +316,12 @@ run.
 
 **Candidates.** When a decrement leaves a count *non-zero*, the object may
 be the last external entry into a garbage cycle. It is marked `BUFFERED`
-and queued, at most once. Published candidates go to the collector's
+and queued, at most once. Three other events count as such a decrement,
+because each removes a reference that the pass would treat as external:
+- dropping the last local reference to a counted, unpublished object;
+- a queued zero count found positive again when it is re-examined (it was
+  stored again while queued, possibly into a cycle through itself);
+- the collector's check of a publication root. Published candidates go to the collector's
 candidate queue, and unpublished ones to the owner's local queue. A
 candidate is the root of a possible garbage cycle, not a member of one.
 Objects that are never decremented to a non-zero value never become
@@ -361,9 +367,14 @@ validated before it is acted on:
    locals at the cut of the last boundary. By invariant 1 and the Recycler
    argument, `G` is garbage.
 4. *Reclaim* every member, and decrement the published children that are
-   outside `G`. A rejected set is simply released: its members lose `CYCLE`.
-   They become candidates again the next time a decrement leaves their
-   count non-zero.
+   outside `G`. When a set is rejected, its members lose `CYCLE`. One
+   live member rejects the whole set, but the set can also contain
+   independent garbage cycles that no later decrement would ever queue
+   again. So members that passed both tests on their own become candidates
+   again, and the next pass separates them: a live one turns black. A member
+   whose count reached zero while its set was pending is flagged `ZCT`, but
+   is not queued for retirement until its set is released. Validation never
+   accepts it, so it is queued exactly once.
 
 **Why validation is sound when fields change during the pass.** Suppose `G`
 is in fact reachable at the cut. Then either:
@@ -413,8 +424,10 @@ the budget runs out:
 
 A boundary in progress keeps the epoch from advancing, so the increments
 and decrements of one boundary are never interleaved with another's, even
-across steps. Section 11 reports the measured step latency at several
-budgets.
+across steps. A step completes at most two boundaries, because an idle
+boundary costs no work units. Children that a cycle reclamation releases
+are retired in the same step. Section 11 reports the measured step latency
+at several budgets.
 
 ## 8. The tracing collector as the backstop
 
@@ -431,14 +444,33 @@ is stopped and the heap's write lock is held:
      per reference field of every live tracked object;
    - drops every logged operation and every pending delayed decrement, all
      of which describe changes already present in the heap;
-   - drops the pending root decrements (their increments are gone) and the
-     retire, candidate and local queues;
-   - drops any pending cycle set;
-   - turns every published survivor with a zero count into a check for the
-     next boundary.
+   - drops the pending root decrements (their increments are gone).
 
-   Unpublished survivors with a zero count are found again when their
-   owner drops its last local reference.
+   The recount applies every decrement at once, including the ones that
+   Section 5 deliberately delays. That delay covered a thread which loaded
+   an object after its last snapshot, and the cover is now gone. The
+   resynchronisation restores it with its own root snapshot of every
+   thread's exact local references, available because the world is
+   stopped. The snapshot is applied immediately, and its decrements wait
+   one boundary longer than a normal snapshot's: until after the first
+   boundary whose snapshots were all taken after this point.
+
+   It then rebuilds the queues from survivors only. The sweep may have
+   freed what they name, so only addresses are compared, and nothing is
+   dereferenced:
+   - root snapshots that were handed over but not yet applied are kept,
+     filtered to survivors;
+   - standing snapshots are filtered too;
+   - the owners' zero-count and candidate queues keep their surviving
+     entries;
+   - every surviving published object that some dropped piece of work
+     named (a decrement, a check, a retire or candidate entry, a pending
+     cycle set), and every published survivor with a zero count, becomes a
+     check for the next boundary.
+
+   Without the last step, garbage that the conservative stack scan
+   retained, or a cycle whose candidate-making decrement was dropped, would
+   fall out of every queue.
 
 So the tracing collector reclaims every garbage cycle, including cycles
 that an abandoned pass or an obstinate mutator left behind. It also
@@ -504,7 +536,32 @@ points.
   root snapshots, publication and resynchronisation. The adaptations were
   checked by randomized testing against a reachability oracle, and the
   epoch announcement and publication protocols were model-checked with
-  `loom` at small bounds. There is no mechanised proof of the whole scheme.
+  `loom` at small bounds (preemption bound 3). Two mutations of the
+  protocol were checked to make the models fail: announcing before pushing
+  the packet, and storing the field before publishing the word. `loom`'s
+  model of relaxed atomics is incomplete, and it did *not* catch
+  weakening the announcement store from release to relaxed. The models
+  therefore establish the interleaving properties, not the weakest
+  orderings that would suffice. There is no mechanised proof of the whole
+  scheme.
+- **Testing found five bugs, which are fixed.** The randomized oracle and
+  the concurrent stress test found, in order:
+  1. a resynchronisation dropped the delayed-decrement cover (use after
+     reclaim);
+  2. a resynchronisation re-queued snapshots that named freed objects
+     (double free);
+  3. a rejected cycle set leaked the garbage cycles it shared with live
+     objects;
+  4. a cycle-set member that reached zero was queued twice (double free);
+  5. a queued zero count that rose again lost its candidacy (leak).
+
+  Each test now passes repeatedly, but the coverage is that of randomized
+  testing.
+- **Tests share the safepoint registry.** The conservative scan sees every
+  parked thread in the process, including threads of unrelated tests. The
+  Cascade tests therefore live in their own test binary
+  (`tests/cascade.rs`), so their many threads do not add false retentions
+  to the heap tests' exact accounting.
 - **Liveness.** Reclamation of published objects depends on every mutator
   handshaking or being quiescent. One stuck thread stops RC reclamation, and
   only the pressure valve then reclaims, through tracing.

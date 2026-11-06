@@ -55,6 +55,9 @@ use crate::{
     r#type::Type,
 };
 
+/// The most candidates that seed one trial-deletion pass.
+const MAX_CYCLE_BATCH: usize = 4096;
+
 /// The most epoch boundaries one step completes.
 const MAX_BOUNDARIES_PER_STEP: usize = 2;
 
@@ -193,8 +196,11 @@ pub struct StepReport {
     pub pressure: bool,
     /// Whether the step ran the tracing collector.
     pub traced: bool,
-    /// Wall-clock time of the step, excluding a tracing collection.
+    /// Wall-clock time the step did its work, holding the heap lock
+    /// (excluding the wait for the lock and a tracing collection).
     pub nanos: u64,
+    /// Time spent waiting for the heap lock and the collector lock.
+    pub wait_nanos: u64,
 }
 
 /// One handshake's hand-over to the collector (`CASCADE.md` section 5).
@@ -259,12 +265,77 @@ impl ThreadState {
     }
 }
 
+/// One list of objects to apply a count change to: a packet's log, or a
+/// root snapshot shared between its increments and its later decrements.
+enum List {
+    Owned(Vec<usize>),
+    /// A shared list and the number of entries not yet taken.
+    Shared(Arc<Vec<usize>>, usize),
+}
+
+/// A list of lists, consumed one object at a time. Starting a boundary
+/// moves whole lists, never their entries, so it costs time proportional
+/// to the number of packets, not of logged operations.
+#[derive(Default)]
+struct Lists(Vec<List>);
+
+impl Lists {
+    fn push_owned(&mut self, list: Vec<usize>) {
+        if !list.is_empty() {
+            self.0.push(List::Owned(list));
+        }
+    }
+
+    fn push_shared(&mut self, list: &Arc<Vec<usize>>) {
+        if !list.is_empty() {
+            self.0.push(List::Shared(list.clone(), list.len()));
+        }
+    }
+
+    fn append(&mut self, other: &mut Lists) {
+        self.0.append(&mut other.0);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn pop(&mut self) -> Option<usize> {
+        let last = self.0.last_mut()?;
+        let (object, exhausted) = match last {
+            List::Owned(list) => {
+                let object = list.pop().expect("lists are never empty");
+                (object, list.is_empty())
+            }
+            List::Shared(list, left) => {
+                *left -= 1;
+                (list[*left], *left == 0)
+            }
+        };
+        if exhausted {
+            self.0.pop();
+        }
+        Some(object)
+    }
+
+    /// Moves every remaining entry into `out` (used while the world is
+    /// stopped).
+    fn drain_into(&mut self, out: &mut Vec<usize>) {
+        for list in self.0.drain(..) {
+            match list {
+                List::Owned(list) => out.extend(list),
+                List::Shared(list, left) => out.extend_from_slice(&list[..left]),
+            }
+        }
+    }
+}
+
 enum Phase {
     Idle,
     Boundary {
         boundary: u64,
-        incs: Vec<usize>,
-        decs: Vec<usize>,
+        incs: Lists,
+        decs: Lists,
         checks: Vec<usize>,
     },
 }
@@ -282,20 +353,24 @@ struct Collector {
     /// Packets drained in a boundary whose operations belong to the next.
     held: Vec<Packet>,
     /// Operation decrements to apply at the next boundary.
-    delayed_decs: Vec<usize>,
+    delayed_decs: Lists,
     /// Root-snapshot decrements to apply at the next boundary.
-    root_decs: Vec<usize>,
+    root_decs: Lists,
     /// Decrements of the snapshot a resynchronisation took, applied one
     /// boundary later than `root_decs`.
     resync_root_decs: Vec<usize>,
     /// Root snapshots of quiescent threads.
-    standing: FxHashMap<u64, Vec<usize>>,
+    standing: FxHashMap<u64, Arc<Vec<usize>>>,
     /// Checks to make at the next boundary (after a resynchronisation).
     pending_checks: Vec<usize>,
     retire: Vec<usize>,
     candidates: FxHashSet<usize>,
     pending_cycle: Option<PendingCycle>,
+    /// Reused buffer for the children of a reclaimed object.
+    scratch: Vec<usize>,
     completed: u64,
+    /// The number of candidates that seed one trial-deletion pass.
+    batch: usize,
     pressure_steps: usize,
     retiring_bytes: usize,
     candidate_bytes: usize,
@@ -405,15 +480,17 @@ impl Cascade {
             collector: Mutex::new(Collector {
                 phase: Phase::Idle,
                 held: Vec::new(),
-                delayed_decs: Vec::new(),
-                root_decs: Vec::new(),
+                delayed_decs: Lists::default(),
+                root_decs: Lists::default(),
                 resync_root_decs: Vec::new(),
                 standing: FxHashMap::default(),
                 pending_checks: Vec::new(),
                 retire: Vec::new(),
                 candidates: FxHashSet::default(),
                 pending_cycle: None,
+                scratch: Vec::new(),
                 completed: 0,
+                batch: MAX_CYCLE_BATCH,
                 pressure_steps: 0,
                 retiring_bytes: 0,
                 candidate_bytes: 0,
@@ -478,15 +555,14 @@ impl Cascade {
         if objects.is_empty() {
             return 0;
         }
-        let headers: Vec<NonNull<ObjectHeader>> = objects
-            .iter()
-            .map(|&o| unsafe { NonNull::new_unchecked(o as *mut ObjectHeader) })
-            .collect();
-        for &object in objects.iter() {
-            self.report_reclaim(object);
+        if self.config.on_reclaim.is_some() {
+            for &object in objects.iter() {
+                self.report_reclaim(object);
+            }
         }
+        let bytes = unsafe { inner.reclaim_objects(objects) };
         objects.clear();
-        unsafe { inner.reclaim_objects(&headers) }
+        bytes
     }
 
     /// Does up to `budget` units of collector work (`CASCADE.md` section
@@ -497,9 +573,11 @@ impl Cascade {
     pub fn step(&self, host: &dyn CascadeHost, budget: usize) -> StepReport {
         let start = Instant::now();
         let mut report = StepReport::default();
+        let locked;
         let trace = {
             let mut inner = self.heap.inner.write();
             let mut collector = self.collector.lock();
+            locked = Instant::now();
             let pressure = {
                 let deferred = collector.retiring_bytes + collector.candidate_bytes;
                 let heap_tight = inner
@@ -551,7 +629,8 @@ impl Cascade {
             }
             trace
         };
-        report.nanos = start.elapsed().as_nanos() as u64;
+        report.nanos = locked.elapsed().as_nanos() as u64;
+        report.wait_nanos = (locked - start).as_nanos() as u64;
         if trace {
             // Both locks are released: the collection's resynchronisation
             // takes them itself.
@@ -632,18 +711,19 @@ impl Cascade {
     }
 
     fn begin_boundary(&self, collector: &mut Collector, boundary: u64, packets: Vec<Packet>) {
-        let mut incs = Vec::new();
+        let mut incs = Lists::default();
         let mut decs = std::mem::take(&mut collector.delayed_decs);
         decs.append(&mut collector.root_decs);
         let mut checks = std::mem::take(&mut collector.pending_checks);
-        let mut next_delayed = Vec::new();
-        let mut roots = Vec::new();
+        let mut next_delayed = Lists::default();
+        let mut next_root_decs = Lists::default();
 
         let mut current: Vec<Packet> = std::mem::take(&mut collector.held);
         for mut packet in packets {
             // Snapshots and standing changes act now; operations of the
             // current segment wait for the next boundary.
             if let Some(snapshot) = packet.roots.take() {
+                let snapshot = Arc::new(snapshot);
                 match packet.standing {
                     Standing::Set => {
                         collector.standing.insert(packet.thread, snapshot.clone());
@@ -653,7 +733,8 @@ impl Cascade {
                     }
                     Standing::Keep => {}
                 }
-                roots.extend(snapshot);
+                incs.push_shared(&snapshot);
+                next_root_decs.push_shared(&snapshot);
             } else if packet.standing == Standing::Clear {
                 collector.standing.remove(&packet.thread);
             }
@@ -663,20 +744,22 @@ impl Cascade {
                 current.push(packet);
             }
         }
-        for packet in &mut current {
-            incs.append(&mut packet.incs);
-            next_delayed.append(&mut packet.decs);
-            checks.append(&mut packet.checks);
+        for packet in current {
+            incs.push_owned(packet.incs);
+            next_delayed.push_owned(packet.decs);
+            if checks.is_empty() {
+                checks = packet.checks;
+            } else {
+                checks.extend(packet.checks);
+            }
         }
         for snapshot in collector.standing.values() {
-            roots.extend_from_slice(snapshot);
+            incs.push_shared(snapshot);
+            next_root_decs.push_shared(snapshot);
         }
+        next_root_decs.push_owned(std::mem::take(&mut collector.resync_root_decs));
         collector.delayed_decs = next_delayed;
-        collector.root_decs = roots.clone();
-        collector.root_decs.append(&mut collector.resync_root_decs);
-        incs.extend(roots);
-        // `incs` and `decs` are popped from the end; order within each
-        // does not matter.
+        collector.root_decs = next_root_decs;
         collector.phase = Phase::Boundary {
             boundary,
             incs,
@@ -809,9 +892,10 @@ impl Cascade {
             collector.candidate_bytes -= unsafe { payload_size(object) };
         }
         let mut work = 0;
-        let mut children = Vec::new();
+        let mut children = std::mem::take(&mut collector.scratch);
+        children.clear();
         unsafe { children_of(object, &mut |child| children.push(child)) };
-        for child in children {
+        for &child in &children {
             work += 1;
             if except.is_some_and(|set| set.contains(&child)) {
                 continue;
@@ -828,6 +912,7 @@ impl Cascade {
             unsafe { set_word(child, child_word) };
             self.after_dec(collector, child, child_word);
         }
+        collector.scratch = children;
         unsafe { set_word(object, Word::UNTRACKED.with_state(OwnershipState::Reclaimed)) };
         freed.push(object);
         work
@@ -857,7 +942,12 @@ impl Cascade {
         }
         let pass_budget = (budget - *work).min(self.config.max_cycle_pass);
         // Take candidates as roots.
-        let take = collector.candidates.len().min(pass_budget.max(1));
+        // Seed the pass with a batch of candidates sized to fit the budget:
+        // halved whenever a pass overflows, grown again when one fits.
+        let take = collector
+            .candidates
+            .len()
+            .min(collector.batch.min(pass_budget / 4).max(1));
         let picked: Vec<usize> = collector.candidates.iter().take(take).copied().collect();
         let mut roots = Vec::with_capacity(picked.len());
         for object in picked {
@@ -877,6 +967,7 @@ impl Cascade {
         match trial_deletion(&view, &roots, pass_budget, &mut used) {
             Ok(white) => {
                 *work += used;
+                collector.batch = (collector.batch * 2).min(MAX_CYCLE_BATCH);
                 if white.is_empty() {
                     return;
                 }
@@ -891,10 +982,13 @@ impl Cascade {
             }
             Err(PassError::OverBudget) => {
                 *work += used;
-                if pass_budget >= self.config.max_cycle_pass {
+                collector.batch = (roots.len() / 2).max(1);
+                if roots.len() == 1 && pass_budget >= self.config.max_cycle_pass {
+                    // A single candidate's graph exceeds the largest pass:
+                    // left to the tracing collector.
                     collector.stats.abandoned_passes += 1;
                 } else {
-                    // Retry with a fuller budget.
+                    // Retry with a smaller batch or a fuller budget.
                     for object in roots {
                         let word = unsafe { word_of(object) };
                         if !word.is(BUFFERED) {
@@ -1031,18 +1125,18 @@ impl Cascade {
         }
         if let Phase::Boundary {
             boundary,
-            decs,
+            mut decs,
             checks,
             ..
         } = std::mem::replace(&mut collector.phase, Phase::Idle)
         {
-            recheck.extend(decs);
+            decs.drain_into(&mut recheck);
             recheck.extend(checks);
             collector.completed = boundary;
             self.epochs.finish_boundary(boundary);
         }
-        recheck.append(&mut collector.delayed_decs);
-        recheck.append(&mut collector.root_decs);
+        collector.delayed_decs.drain_into(&mut recheck);
+        collector.root_decs.drain_into(&mut recheck);
         recheck.append(&mut collector.pending_checks);
         recheck.append(&mut collector.retire);
         recheck.extend(collector.candidates.drain());
@@ -1120,7 +1214,7 @@ impl Cascade {
             self.epochs.push(packet);
         }
         for roots in collector.standing.values_mut() {
-            roots.retain(|o| survivors.contains(o));
+            *roots = Arc::new(roots.iter().copied().filter(|o| survivors.contains(o)).collect());
         }
 
         // The owners' queues keep their surviving unpublished entries, with

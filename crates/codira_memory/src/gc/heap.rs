@@ -1117,21 +1117,26 @@ impl HeapInner {
     ///
     /// # Safety
     ///
-    /// Every header must be an allocated object of this heap that no thread
-    /// can still legally access, listed once.
-    pub(crate) unsafe fn reclaim_objects(&mut self, headers: &[NonNull<ObjectHeader>]) -> usize {
+    /// Every header address must be an allocated object of this heap that no
+    /// thread can still legally access, listed once.
+    pub(crate) unsafe fn reclaim_objects(&mut self, headers: &[usize]) -> usize {
         if headers.is_empty() {
             return 0;
         }
-        let mut leased: Vec<(usize, usize, usize)> = self
-            .leases
-            .iter()
-            .map(|(&start, lease)| (start, lease.end, start))
-            .collect();
-        leased.sort_unstable();
+        // Few cells (the common case of a single release): scan the leases;
+        // many: sort them once and search.
+        let sorted: Option<Vec<(usize, usize)>> = (headers.len() > 8).then(|| {
+            let mut leased: Vec<(usize, usize)> = self
+                .leases
+                .iter()
+                .map(|(&start, lease)| (start, lease.end))
+                .collect();
+            leased.sort_unstable();
+            leased
+        });
         let mut released = 0usize;
-        for &header in headers {
-            let hdr = header.as_ptr();
+        for &cell in headers {
+            let hdr = cell as *mut ObjectHeader;
             debug_assert_eq!(
                 (*hdr).state.load(Ordering::Relaxed),
                 STATE_ALLOCATED,
@@ -1139,20 +1144,28 @@ impl HeapInner {
             );
             released += (*hdr).payload_size();
             let class = (*hdr).class;
-            self.free_object(header);
+            self.free_object(NonNull::new_unchecked(hdr));
             if class == LARGE_CLASS {
                 continue;
             }
-            let cell = hdr as usize;
-            let index = leased.partition_point(|&(start, _, _)| start <= cell);
-            let lease_key = index
-                .checked_sub(1)
-                .map(|i| leased[i])
-                .filter(|&(_, end, _)| cell < end)
-                .map(|(_, _, key)| key);
-            match lease_key {
-                Some(key) => {
-                    if let Some(lease) = self.leases.get_mut(&key) {
+            let lease_start = match &sorted {
+                Some(leased) => {
+                    let index = leased.partition_point(|&(start, _)| start <= cell);
+                    index
+                        .checked_sub(1)
+                        .map(|i| leased[i])
+                        .filter(|&(_, end)| cell < end)
+                        .map(|(start, _)| start)
+                }
+                None => self
+                    .leases
+                    .iter()
+                    .find(|(&start, lease)| start <= cell && cell < lease.end)
+                    .map(|(&start, _)| start),
+            };
+            match lease_start {
+                Some(start) => {
+                    if let Some(lease) = self.leases.get_mut(&start) {
                         // Never equal to a real sweep count.
                         lease.sweeps = u64::MAX;
                     }
