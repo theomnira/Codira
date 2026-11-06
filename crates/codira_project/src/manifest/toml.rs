@@ -6,7 +6,10 @@
 //! - Part of the Codira compiler and runtime toolchain.
 use serde_derive::{Deserialize, Serialize};
 
-use super::{EidosSettings, EnvelopeTable, Manifest, ManifestMetadata, NativeSources, PackageId};
+use super::{
+    EidosSettings, EnvelopeTable, Manifest, ManifestMetadata, NativeSources, PackageId,
+    RuntimeSettings,
+};
 
 /// A manifest as specified in a codira.toml file.
 #[derive(Debug, Deserialize, Serialize)]
@@ -19,6 +22,41 @@ pub struct TomlManifest {
     /// The package's semantic envelope; see [`EnvelopeTable`].
     #[serde(default)]
     envelope: Option<::toml::value::Table>,
+    /// How the runtime runs the package; see [`RuntimeSettings`].
+    #[serde(default)]
+    runtime: Option<TomlRuntime>,
+}
+
+/// The `[runtime]` table. Unknown keys are an error: a misspelt
+/// `heap-limit` would otherwise run the program under the default limit.
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct TomlRuntime {
+    heap_limit: Option<::toml::Value>,
+    gc_growth: Option<::toml::Value>,
+}
+
+impl TomlRuntime {
+    /// Keeps each value as text (an integer is written out); what it means
+    /// is decided where it is used (`codira run` and the other commands that
+    /// start a runtime), with the same rules as their flags.
+    fn into_settings(self) -> Result<RuntimeSettings, anyhow::Error> {
+        fn text(key: &str, value: Option<::toml::Value>) -> Result<Option<String>, anyhow::Error> {
+            match value {
+                None => Ok(None),
+                Some(::toml::Value::String(text)) => Ok(Some(text)),
+                Some(::toml::Value::Integer(n)) => Ok(Some(n.to_string())),
+                Some(other) => anyhow::bail!(
+                    "[runtime] {key} must be a string or an integer, not {}",
+                    other.type_str()
+                ),
+            }
+        }
+        Ok(RuntimeSettings {
+            heap_limit: text("heap-limit", self.heap_limit)?,
+            gc_growth: text("gc-growth", self.gc_growth)?,
+        })
+    }
 }
 
 /// Reads the `[envelope]` table. Every value must be a string or a boolean
@@ -69,6 +107,11 @@ pub struct TomlProject {
     name: String,
     version: semver::Version,
     authors: Option<Vec<String>>,
+    /// An SPDX license expression, e.g. `"Apache-2.0 OR MIT"`.
+    license: Option<String>,
+    /// A license text shipped with the package, relative to the manifest.
+    #[serde(rename = "license-file")]
+    license_file: Option<String>,
 }
 
 /// The `[eidos]` table: bounds on the mid-level optimizer.
@@ -162,6 +205,8 @@ impl TomlManifest {
             },
             metadata: ManifestMetadata {
                 authors: self.package.authors.unwrap_or_default(),
+                license: self.package.license,
+                license_file: self.package.license_file.map(Into::into),
             },
             eidos: self.eidos.unwrap_or_default().into_settings()?,
             native: self
@@ -175,6 +220,11 @@ impl TomlManifest {
                 })
                 .unwrap_or_default(),
             envelope: self.envelope.map(envelope_table).transpose()?,
+            runtime: self
+                .runtime
+                .map(TomlRuntime::into_settings)
+                .transpose()?
+                .unwrap_or_default(),
         })
     }
 }

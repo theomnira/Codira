@@ -13,6 +13,7 @@ mod resolve;
 
 use std::{fmt, iter::FromIterator, mem, ops::Deref, sync::Arc};
 
+pub use infer::{error_conversions, group_shape, main_result, result_variants, GroupShape, MainResult};
 pub(crate) use infer::{infer_query, substitute_type_params};
 pub use infer::{ClosureInfo, InferenceResult};
 pub use lower::TypableDef;
@@ -46,9 +47,10 @@ pub enum TyKind {
     Struct(Struct, Substitution),
 
     /// An `enum` type. A value type, laid out as a tag and payload slots
-    /// (see `code_model::EnumLayout`). The substitution is always empty:
-    /// generic enums are reported as unsupported, and the field is there so
-    /// that instantiating one later needs no new variant.
+    /// (see `code_model::EnumLayout`). The substitution holds the generic
+    /// arguments, as for a struct: `Result[i64, str]` and `Result[f64,
+    /// str]` are different types with different layouts. It is empty for
+    /// a non-generic enum.
     Enum(crate::Enum, Substitution),
 
     /// The primitive floating point type. Written as `float`.
@@ -67,6 +69,17 @@ pub enum TyKind {
     /// by a terminator so that taking a length is not a scan, and so that a
     /// literal containing a NUL byte is still one string.
     Str,
+
+    /// The owned, growable, always valid UTF-8 string type. Written as
+    /// `String`.
+    ///
+    /// A value of three words -- a reference to a GC-heap byte buffer (a
+    /// `[u8]` array object), the offset of the string's first byte in it and
+    /// its byte length -- so that a slice, a `trim` and the pieces of a
+    /// `split` share the buffer instead of copying it. The bytes a value
+    /// covers are never changed once written; appending writes only past
+    /// the end of every value (see `codira_runtime`'s `string` module).
+    String,
 
     /// A tuple type. For example `(f32, f64, bool)`.
     Tuple(usize, Substitution),
@@ -109,6 +122,12 @@ pub enum TyKind {
 
     /// An dynamically sized array type
     Array(Ty),
+
+    /// `Iter[T]`: a lazy pipeline yielding `T`s (`xs.iter().map(f)`). It
+    /// has no run-time representation -- code generation compiles the whole
+    /// chain into one loop -- so it never outlives the expression that
+    /// makes it (see `builtin::PipelineOp`).
+    Iter(Ty),
 
     /// `Channel[T]`: a bounded, blocking channel of `T` values between
     /// tasks (see `expr::validator::tasks`). A runtime handle; its lifetime
@@ -190,6 +209,11 @@ impl Ty {
 }
 
 impl Ty {
+    /// Whether this is `String`.
+    pub fn is_string(&self) -> bool {
+        matches!(self.interned(), TyKind::String)
+    }
+
     /// Constructs an instance of the unit type `()`
     pub fn unit() -> Self {
         TyKind::Tuple(0, Substitution::empty()).intern()
@@ -290,7 +314,46 @@ impl Ty {
     /// Returns the type's name as a string, if one exists.
     ///
     /// This name needs to be unique as it is used to generate a type's `Guid`.
+    ///
+    /// An enum's or a value struct's name spells out its layout, and a GC
+    /// struct's spells out its type arguments, so a type that reaches itself
+    /// -- `enum Json { Object(Map[String, Json]) }` -- would be spelled out
+    /// forever. Inside its own expansion such a type is written by name only
+    /// (`enum Json`), which is still unique and leaves every type that does
+    /// not reach itself named exactly as before.
     pub fn guid_string(&self, db: &dyn HirDatabase) -> Option<String> {
+        thread_local! {
+            static EXPANDING: std::cell::RefCell<Vec<Ty>> = const { std::cell::RefCell::new(Vec::new()) };
+        }
+        struct Pop;
+        impl Drop for Pop {
+            fn drop(&mut self) {
+                EXPANDING.with(|stack| stack.borrow_mut().pop());
+            }
+        }
+        let spelled_out = match self.interned() {
+            TyKind::Enum(..) => true,
+            TyKind::Struct(s, _) => s.data(db).memory_kind != StructMemoryKind::Gc,
+            _ => false,
+        };
+        if !spelled_out {
+            return self.guid_string_expanded(db);
+        }
+        if EXPANDING.with(|stack| stack.borrow().contains(self)) {
+            return Some(match self.interned() {
+                TyKind::Enum(e, args) => format!("enum {}", crate::mono::enum_name(db, *e, args)),
+                TyKind::Struct(s, _) => format!("struct {}", s.name(db)),
+                _ => unreachable!("only enums and value structs are spelled out"),
+            });
+        }
+        EXPANDING.with(|stack| stack.borrow_mut().push(self.clone()));
+        let _pop = Pop;
+        self.guid_string_expanded(db)
+    }
+
+    /// [`Ty::guid_string`] without the guard against a type that reaches
+    /// itself.
+    fn guid_string_expanded(&self, db: &dyn HirDatabase) -> Option<String> {
         match self.interned() {
             TyKind::Struct(s, args) => {
                 let s = *s;
@@ -332,16 +395,16 @@ impl Ty {
             // the tag and every payload slot -- so that the GUID changes
             // when the enum changes shape, which is what hot reloading keys
             // a re-layout on.
-            &TyKind::Enum(e, _) => {
+            TyKind::Enum(e, args) => {
                 let slots = e
-                    .layout(db)
+                    .layout_at(db, args)
                     .slots
                     .iter()
                     .map(|slot| Some(format!("{}: {}", slot.name, slot.ty.guid_string(db)?)))
                     .collect::<Option<Vec<_>>>()?;
                 Some(format!(
                     "enum {}{{tag: core::u32{}}}",
-                    e.full_name(db),
+                    crate::mono::enum_name(db, *e, args),
                     slots
                         .iter()
                         .map(|slot| format!(",{slot}"))
@@ -354,10 +417,14 @@ impl Ty {
             // compiler rather than by a declaration site, so the name is a
             // constant.
             TyKind::Str => Some("core::str".to_string()),
+            // Structural for the same reason: one `String`, laid out by the
+            // compiler.
+            TyKind::String => Some("core::String".to_string()),
             TyKind::Float(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Int(ty) => Some(format!("core::{}", ty.as_str())),
             TyKind::Array(ty) => Some(format!("[{}]", ty.display(db))),
             TyKind::Channel(ty) => Some(format!("core::Channel[{}]", ty.guid_string(db)?)),
+            TyKind::Iter(ty) => Some(format!("core::Iter[{}]", ty.guid_string(db)?)),
             TyKind::Session(session, dual) => Some(format!(
                 "{}session {}::{}",
                 if *dual { "dual " } else { "" },
@@ -454,6 +521,7 @@ impl Ty {
             (TyKind::Tuple(arity1, _), TyKind::Tuple(arity2, _)) => arity1 == arity2,
             (TyKind::Array(_), TyKind::Array(_))
             | (TyKind::Channel(_), TyKind::Channel(_))
+            | (TyKind::Iter(_), TyKind::Iter(_))
             | (TyKind::Optional(_), TyKind::Optional(_))
             | (TyKind::Bool, TyKind::Bool) => true,
             (TyKind::Session(s1, d1), TyKind::Session(s2, d2)) => s1 == s2 && d1 == d2,
@@ -552,6 +620,10 @@ impl FnSig {
 
     pub fn marshallable(&self, db: &dyn HirDatabase) -> bool {
         for ty in self.params_and_return.iter() {
+            // A `String` crosses boxed, like a value struct.
+            if ty.is_string() {
+                return false;
+            }
             if let Some(s) = ty.as_struct() {
                 if s.data(db).memory_kind == StructMemoryKind::Value {
                     return false;
@@ -579,11 +651,21 @@ impl HirDisplay for Ty {
                 }
                 write!(f, "]")
             }
-            TyKind::Enum(e, _) => write!(f, "{}", e.name(f.db)),
+            TyKind::Enum(e, substitution) => {
+                write!(f, "{}", e.name(f.db))?;
+                if substitution.is_empty() {
+                    return Ok(());
+                }
+                write!(f, "[")?;
+                f.write_joined(substitution.iter(), ", ")?;
+                write!(f, "]")
+            }
+
             TyKind::Float(ty) => write!(f, "{ty}"),
             TyKind::Int(ty) => write!(f, "{ty}"),
             TyKind::Bool => write!(f, "bool"),
             TyKind::Str => write!(f, "str"),
+            TyKind::String => write!(f, "String"),
             // The parameter's written name is what the reader needs; the
             // (owner, index) identity is an implementation detail.
             TyKind::TypeParam(_, name) => write!(f, "{name}"),
@@ -633,6 +715,7 @@ impl HirDisplay for Ty {
             }
             TyKind::Array(elem_ty) => write!(f, "[{}]", elem_ty.display(f.db)),
             TyKind::Channel(elem_ty) => write!(f, "Channel[{}]", elem_ty.display(f.db)),
+            TyKind::Iter(elem_ty) => write!(f, "Iter[{}]", elem_ty.display(f.db)),
             TyKind::Session(session, dual) => {
                 let prefix = if *dual { "dual " } else { "" };
                 write!(f, "{prefix}{}", session.name(f.db))
@@ -677,7 +760,10 @@ impl TypeWalk for Ty {
         match self.interned() {
             // Recurse, not just visit: an element type can itself contain
             // types (`[(T, U)]`), which a resolution pass must reach too.
-            TyKind::Array(elem_ty) | TyKind::Channel(elem_ty) | TyKind::Optional(elem_ty) => {
+            TyKind::Array(elem_ty)
+            | TyKind::Channel(elem_ty)
+            | TyKind::Iter(elem_ty)
+            | TyKind::Optional(elem_ty) => {
                 elem_ty.walk(f);
             }
             _ => {
@@ -691,7 +777,10 @@ impl TypeWalk for Ty {
 
     fn walk_mut(&mut self, f: &mut impl FnMut(&mut Ty)) {
         match self.interned_mut() {
-            TyKind::Array(elem_ty) | TyKind::Channel(elem_ty) | TyKind::Optional(elem_ty) => {
+            TyKind::Array(elem_ty)
+            | TyKind::Channel(elem_ty)
+            | TyKind::Iter(elem_ty)
+            | TyKind::Optional(elem_ty) => {
                 elem_ty.walk_mut(f);
             }
             _ => {

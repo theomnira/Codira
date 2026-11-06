@@ -28,7 +28,10 @@ import root.builtin.swap.*;
 // `cmp` is the comparator function.
 //
 //   let data = Array[i32].from(5, 3, 1, 4, 2);
-//   sort(data.as_mut_slice(), func(a: i32, b: i32) -> i32 { return a - b; });
+//   sort(data.as_mut_slice(), func(a: i32, b: i32) -> i32 {
+//       if a < b { -1 } else if a > b { 1 } else { 0 }
+//   });
+//   // (not `a - b`: subtraction wraps, so it orders large values wrongly)
 //   // data is now [1, 2, 3, 4, 5]
 public func sort[T](data: Slice[T], cmp: func(T, T) -> i32) {
     let n = data.len();
@@ -71,7 +74,9 @@ func _introsort_impl[T](data: Slice[T], cmp: func(T, T) -> i32, depth: usize) {
     _introsort_impl(right, cmp, depth - 1);
 }
 
-// Lomuto partition scheme with median-of-three pivot selection.
+// Hoare-style partition (Sedgewick's variant, with the median-of-three
+// candidates as sentinels) with median-of-three pivot selection. Needs at
+// least three elements: `last - 1` and `j - 1` underflow below that.
 func _partition[T](data: Slice[T], cmp: func(T, T) -> i32) -> usize {
     let n = data.len();
     let mid = n / 2;
@@ -230,7 +235,7 @@ func _merge[T](
 
 // Rearrange `data` so that the first `k` elements are the k smallest in
 // sorted order.  The remaining elements are in unspecified order.
-// Time: O(n + k log n) via heapselect.
+// Time: O(n log k + k log k) via heapselect.
 public func partial_sort[T](data: Slice[T], k: usize, cmp: func(T, T) -> i32) {
     let n = data.len();
     if k == 0 | n <= 1 {
@@ -364,7 +369,8 @@ public func is_sorted[T: Comparable](data: Slice[T]) -> bool {
 
 // Rearrange `data` so that the element at `k` is the element that would
 // be there if the slice were fully sorted.  Elements before `k` are <=,
-// elements after are >=.  Average O(n).
+// elements after are >=.  Average O(n). (As written, the partition it
+// calls fails on a range of fewer than three elements; see std/STATUS.md.)
 public func nth_element[T](data: Slice[T], k: usize, cmp: func(T, T) -> i32) {
     var lo: usize = 0;
     var hi: usize = data.len();

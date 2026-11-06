@@ -94,6 +94,6 @@ fn a_saved_heap_is_restored_into_a_fresh_runtime() {
     assert_eq!(enemy_handles[1], unsafe { boss.into_raw().get_ptr() });
 
     // The restored root keeps everything alive through a collection
-    driver.runtime.gc_collect();
+    driver.runtime.collect_blocking().unwrap();
     assert_eq!(level.get::<i64>("seed").unwrap(), 42);
 }

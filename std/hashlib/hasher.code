@@ -32,10 +32,11 @@ public trait Hasher {
 // ===========================================================================
 // AHasher
 // ===========================================================================
-// A fast, non-cryptographic hasher inspired by aHash. Uses a simple
-// multiply-xorshift mixing strategy with two 64-bit state words.
-// Suitable for hash maps, hash sets, and other data structures where
-// speed matters more than cryptographic strength.
+// A fast, non-cryptographic hasher named after aHash but not aHash: a
+// simple multiply-xorshift mixing step over two 64-bit state words. Unlike
+// aHash it is NOT DoS-resistant: `ahasher_new` uses fixed seeds, so
+// colliding keys can be computed offline. For tables of trusted keys only,
+// or with seeds the caller draws from a secret random source.
 // ---------------------------------------------------------------------------
 public struct AHasher {
     state0: u64,

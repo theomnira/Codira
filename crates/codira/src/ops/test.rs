@@ -36,6 +36,7 @@ use crate::{
     ops::{
         build::{display_colors, locate_manifest, UseColor},
         counterexample,
+        heap::{HeapArgs, HeapSettings},
     },
     ExitStatus,
 };
@@ -66,6 +67,21 @@ pub struct Args {
     /// Internal: the test function `--run-one` calls
     #[clap(long, hide = true)]
     entry: Option<String>,
+
+    #[clap(flatten)]
+    heap: HeapArgs,
+}
+
+/// Reads the heap settings for the package at `manifest_path`, if there is
+/// one.
+fn heap_settings(heap: &HeapArgs, manifest_path: Option<&Path>) -> anyhow::Result<HeapSettings> {
+    match manifest_path {
+        Some(path) => {
+            let package = codira_project::Package::from_file(path)?;
+            HeapSettings::resolve(heap, Some((package.manifest().runtime(), path)))
+        }
+        None => HeapSettings::resolve(heap, None),
+    }
 }
 
 /// The line a `--run-one` child prints so the parent can tell a failed
@@ -74,11 +90,19 @@ const OUTCOME_PREFIX: &str = "codira-test-outcome:";
 
 pub fn test(args: Args) -> anyhow::Result<ExitStatus> {
     if let (Some(library), Some(entry)) = (&args.run_one, &args.entry) {
-        return run_one(library, entry);
+        let heap = heap_settings(&args.heap, args.manifest_path.as_deref())?;
+        return run_one(library, entry, &heap);
     }
 
     let manifest_path = locate_manifest(args.manifest_path.as_deref())?;
     let package = codira_project::Package::from_file(&manifest_path)?;
+    // Each test resolves the settings again in its process; reading them here
+    // reports a bad value once, before the build, and warns once.
+    let heap = HeapSettings::resolve(
+        &args.heap,
+        Some((package.manifest().runtime(), &manifest_path)),
+    )?;
+    heap.warn_if_unlimited();
     let colors = display_colors(args.color);
     let root = package.root().to_path_buf();
 
@@ -165,6 +189,9 @@ pub fn test(args: Args) -> anyhow::Result<ExitStatus> {
             .arg(library)
             .arg("--entry")
             .arg(name)
+            .arg("--manifest-path")
+            .arg(&manifest_path)
+            .args(args.heap.forward())
             .output()?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let outcome = stdout
@@ -200,8 +227,13 @@ pub fn test(args: Args) -> anyhow::Result<ExitStatus> {
     Ok(ExitStatus::from(failed.is_empty()))
 }
 
+/// The line of a crashed test's standard error that says why: the runtime's
+/// `fatal:` line (running out of memory, which has details after it), or
+/// else the last line.
 fn last_line(text: &str) -> Option<&str> {
-    text.lines().rev().find(|l| !l.trim().is_empty())
+    text.lines()
+        .find(|l| l.starts_with("fatal: "))
+        .or_else(|| text.lines().rev().find(|l| !l.trim().is_empty()))
 }
 
 fn display_relative(root: &Path, path: &Path) -> String {
@@ -298,10 +330,10 @@ fn collect_code_files(dir: &Path, out: &mut Vec<PathBuf>) -> anyhow::Result<()> 
 
 /// The child side of the runner: load the library, call the test under the
 /// fault guard, and print the outcome.
-fn run_one(library: &Path, entry: &str) -> anyhow::Result<ExitStatus> {
+fn run_one(library: &Path, entry: &str, heap: &HeapSettings) -> anyhow::Result<ExitStatus> {
     codira_healing::trap::install();
     // Safety: the library was just compiled by the parent `codira test`.
-    let runtime = unsafe { Runtime::builder(library).finish() }?;
+    let runtime = unsafe { heap.apply(Runtime::builder(library)).finish() }?;
     let definition = runtime
         .get_function_definition(entry)
         .ok_or_else(|| anyhow!("test `{entry}` is not in '{}'", library.display()))?;

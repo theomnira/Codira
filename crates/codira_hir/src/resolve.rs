@@ -586,7 +586,9 @@ impl HasResolver for SessionId {
 
 impl HasResolver for EnumId {
     fn resolver(self, db: &dyn DefDatabase) -> Resolver {
-        self.module(db).resolver(db)
+        self.module(db)
+            .resolver(db)
+            .push_generic_param_scope(self.into())
     }
 }
 
@@ -657,6 +659,19 @@ fn generic_param(db: &dyn DefDatabase, owner: GenericDefId, name: &Name) -> Opti
         GenericDefId::ImplId(id) => return impl_generic_param(db, id, name),
         // A trait's only parameter is `Self`, which `Scope::Trait` resolves.
         GenericDefId::TraitId(_) => return None,
+        // An enum records its parameters' names only (it rejects bounds).
+        GenericDefId::EnumId(id) => {
+            let loc = id.lookup(db);
+            let item_tree = db.item_tree(loc.id.file_id);
+            return item_tree[loc.id.value]
+                .generic_params
+                .iter()
+                .position(|param| param == name)
+                .map(|index| TypeParamId {
+                    owner,
+                    index: index as u32,
+                });
+        }
     };
 
     params
@@ -715,6 +730,7 @@ pub(crate) fn impl_generic_param(
         .and_then(|path| module_resolver.resolve_path_as_type_fully(db, &path))
         .and_then(|(type_ns, _)| match type_ns {
             TypeNs::StructId(struct_id) => Some(GenericDefId::StructId(struct_id)),
+            TypeNs::EnumId(enum_id) => Some(GenericDefId::EnumId(enum_id)),
             _ => None,
         })?;
 

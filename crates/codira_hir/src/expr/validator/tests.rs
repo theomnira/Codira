@@ -233,8 +233,8 @@ fn test_for_range_and_continue_errors() {
     }
     "#,
     ), @"
-    38..43: a range can only be used as the iterable of a `for` loop for now; there is no range value type yet
-    57..58: cannot iterate over a value of type `i32`: a `for` loop iterates over a range (`a..b`, `a..=b`) or an array
+    38..43: a range can only be used as the iterable of a `for` loop or as the source of a pipeline (`(0..n).map(f).sum()`) for now; there is no range value type yet
+    57..58: cannot iterate over a value of type `i32`: a `for` loop iterates over a range (`a..b`, `a..=b`), an array, a pipeline (`xs.iter().map(f)`) or an object of a class with a method `next(self) -> T?`
     79..80: mismatched type
     76..77: a range's bounds must be integers, found `bool`
     93..94: a `for` loop's pattern must always match: use a name, `_` or a tuple of those
@@ -504,13 +504,118 @@ fn test_enum_typing_and_exhaustiveness() {
     ");
 }
 
-/// Declarations an enum cannot have yet, or ever: type parameters, braced
-/// variants, a variant name used twice, and containing itself by value.
+/// A generic enum is instantiated at every use: construction learns its
+/// arguments from the payload and the expected type, a pattern reads the
+/// payload types through the matched value's arguments, and `match` over
+/// an instantiation must cover every variant.
+#[test]
+fn test_generic_enum_typing_and_exhaustiveness() {
+    insta::assert_snapshot!(diagnostics(
+        r#"
+    enum Result[T, E] { Ok(T), Err(E) }
+    enum Maybe[T] { Just(T), Nothing }
+    struct P { x: i64 }
+
+    func ok() -> Result[i64, bool] { Result.Ok(1) }
+    func err() -> Result[i64, bool] { Result.Err(true) }
+    func wrong() -> Result[i64, bool] { Result.Err(1) }
+    func nested() -> Maybe[Maybe[i64]] { Maybe.Just(Maybe.Nothing) }
+    func f(r: Result[i64, bool], m: Maybe[P]) -> i64 {
+        let a: i64 = match r { Result.Ok(v) -> v, Result.Err(_) -> 0 };
+        let b: i64 = match r { Result.Ok(v) -> v };
+        let c: bool = match r { Result.Ok(v) -> v, Result.Err(e) -> e };
+        let d = match m { Maybe.Just(p) -> p.x, Maybe.Nothing -> 0 };
+        let e = Result.Ok(1) == Result.Err(2);
+        let g = m == m;
+        let h: Result[i64, bool] = Maybe.Nothing;
+        if let Result.Err(flag) = r { let k: bool = flag; }
+        a + b + d
+    }
+    "#,
+    ), @"
+    240..241: mismatched type
+    446..475: `match` is not exhaustive: `Result.Err(_)` is not covered; add an arm for it, or a `_ ->` arm
+    521..522: mismatched type
+    541..542: `match` arms have incompatible types: `i64` and `bool`
+    495..544: mismatched type
+    667..673: `==` compares only enums whose payloads are all numbers or `bool`s, and `Maybe` has others; `match` on it instead
+    706..719: mismatched type
+    ");
+}
+
+/// `x?` on a `Result` is its `Ok` payload and needs the enclosing function
+/// to return a `Result` of the same declaration with the same error type;
+/// on an optional it is the payload and needs an optional result. Anything
+/// else is an error that says which rule is broken.
+#[test]
+fn test_propagate_typing() {
+    insta::assert_snapshot!(diagnostics(
+        r#"
+    enum Result[T, E] { Ok(T), Err(E) }
+    enum Other[T, E] { Ok(T), Err(E) }
+    func get() -> Result[i64, bool] { Result.Ok(1) }
+    func opt() -> i64? { 1 }
+
+    func fine() -> Result[str, bool] { let n: i64 = get()?; Result.Ok("x") }
+    func fine_opt() -> f64? { let n: i64 = opt()?; 2.0 }
+    func closure() -> i64 {
+        let f = func() -> Result[i64, bool] { Result.Ok(get()? + 1) };
+        0
+    }
+    func wrong_error() -> Result[i64, str] { Result.Ok(get()?) }
+    func not_result() -> i64 { get()? }
+    func not_optional() -> i64 { opt()? }
+    func other() -> Other[i64, bool] { Other.Ok(get()?) }
+    func on_int(x: i64) -> i64? { x? }
+    func on_other(o: Other[i64, bool]) -> Other[i64, bool] { o? ; o }
+    "#,
+    ), @"
+    422..428: `?` would return this `Err(bool)` from a function that returns `Result[i64, str]`: the error types must be the same
+    459..465: `?` on a `Result[i64, bool]` returns its `Err` early, so the enclosing function must return a `Result[_, bool]`, but it returns `i64`
+    497..503: `?` on an optional returns `nil` early, so the enclosing function must return an optional, but it returns `i64`; unwrap with `!`, or test with `if let`
+    550..556: `?` on a `Result[i64, bool]` returns its `Err` early, so the enclosing function must return a `Result[_, bool]`, but it returns `Other[i64, bool]`
+    590..592: `?` applies to a `Result[T, E]` or an optional `T?`, but this is `i64`
+    652..654: `?` applies to a `Result[T, E]` (an enum `Result` with variants `Ok(T)` and `Err(E)`) or an optional `T?`, but this is `Other[i64, bool]`
+    ");
+}
+
+/// `x?` wraps `x`'s error in the variant of the function's error enum that
+/// holds exactly that type; none or two such variants are errors.
+#[test]
+fn test_propagate_wraps_errors() {
+    insta::assert_snapshot!(diagnostics(
+        r#"
+    enum Result[T, E] { Ok(T), Err(E) }
+    enum IoError { Missing, Denied }
+    enum Problem { Io(IoError), Parse(i64), Other }
+    enum Twice { A(i64), B(i64) }
+    func read() -> Result[i64, IoError] { Result.Err(IoError.Missing) }
+    func parse() -> Result[i64, i64] { Result.Err(3) }
+
+    func both() -> Result[i64, Problem] { Result.Ok(read()? + parse()?) }
+    func twice() -> Result[i64, Twice] { Result.Ok(parse()?) }
+    func none() -> Result[i64, Problem] { let b: Result[i64, bool] = Result.Ok(1); Result.Ok(b?) }
+    "#,
+    ), @"
+    384..392: `?` cannot tell which variant of `Twice` to wrap this `i64` error in: `Twice.A`, `Twice.B` all hold one; `match` and build the error
+    485..487: `?` would return this `Err(bool)` from a function that returns `Result[i64, Problem]`: the error types must be the same, or `Problem` must have exactly one variant holding a `bool`, which `?` wraps the error in
+    ");
+}
+
+/// Declarations an enum cannot have yet, or ever: bounds on its
+/// parameters, a generic type without its arguments in a payload, braced
+/// variants, a variant name used twice, and containing itself by value --
+/// a generic one included.
 #[test]
 fn test_enum_declaration_errors() {
     insta::assert_snapshot!(diagnostics(
         r#"
     enum Option[T] { Some(T), Nothing }
+    enum Bounded[T: Shape] { One(T) }
+    trait Shape { func area(self) -> i64; }
+    enum Bare { One(Option) }
+    enum Tree[T] { Leaf, Node(Tree[T], T, Tree[T]) }
+    enum Forest[T] { Leaf(T), Node([Forest[T]]) }
     enum Dup { A, B, A }
     enum Braced { A { x: i32 } }
     enum List { Empty, More(i32, List) }
@@ -518,10 +623,12 @@ fn test_enum_declaration_errors() {
     class Holder { list: Fine }
     "#,
     ), @"
-    0..35: generic enums are not supported yet: `Option` cannot take type parameters (generic functions, structs and classes can)
-    53..54: `Dup` already has a variant called `A`
-    71..83: a variant with braced fields is not supported yet; write `A(label: Type, ..)` instead
-    86..122: `List` contains itself by value, so it would have no finite size; hold the recursive part through a `class`
+    52..57: bounds on an enum's own parameters are not supported; bound the `extend` block that needs them instead (`extend Bounded[T: Trait]`)
+    110..135: the payload type `Option[T]` mentions the generic parameter `T`, which `Bare` does not declare: a generic type needs its arguments written out, e.g. `Box[i32]` rather than `Box`
+    136..184: `Tree` contains itself by value, so it would have no finite size; hold the recursive part through a `class` or an array
+    248..249: `Dup` already has a variant called `A`
+    266..278: a variant with braced fields is not supported yet; write `A(label: Type, ..)` instead
+    281..317: `List` contains itself by value, so it would have no finite size; hold the recursive part through a `class` or an array
     ");
 }
 

@@ -1,0 +1,80 @@
+name: AURORA gates
+
+# The memory and runtime correctness gates (TESTING.md): GC stress,
+# fault injection, sanitizers, loom, fuzzing, the service soak and the
+# backend differential run. Nightly and on demand only; the per-change CI
+# runs each gate's short default form through `cargo test`.
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+    inputs:
+      profile:
+        description: "quick, ci or long"
+        default: "ci"
+        required: true
+      only:
+        description: "comma-separated gates (empty: all)"
+        default: ""
+        required: false
+      hours:
+        description: "total hours for the long profile"
+        default: "4"
+        required: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+jobs:
+  gates:
+    name: Gates
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install libasound2-dev libudev-dev
+
+      # rust-src: the ThreadSanitizer gate rebuilds std instrumented.
+      - name: Install Rust (stable)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          override: true
+          components: rust-src
+
+      - name: Install LLVM
+        uses: ./.github/actions/install-llvm
+
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run the gates
+        env:
+          PROFILE: ${{ github.event.inputs.profile || 'ci' }}
+          HOURS: ${{ github.event.inputs.hours || '4' }}
+          ONLY: ${{ github.event.inputs.only }}
+        run: |
+          if [ -n "$ONLY" ]; then
+            python3 scripts/aurora_gates.py --profile "$PROFILE" --hours "$HOURS" --only "$ONLY"
+          else
+            python3 scripts/aurora_gates.py --profile "$PROFILE" --hours "$HOURS"
+          fi
+
+      - name: Keep crashing programs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes
+          path: target/tmp/fuzz/
+          if-no-files-found: ignore

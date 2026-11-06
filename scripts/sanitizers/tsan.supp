@@ -1,0 +1,10 @@
+# ThreadSanitizer suppressions for the AURORA sanitizer gate
+# (scripts/aurora_gates.py). Every entry is a known, documented issue; see
+# "Known issues found by the gates" in TESTING.md. Do not add an entry
+# without documenting it there.
+
+# The conservative stack scan reads a parked thread's whole stack block as
+# glibc reports it, which includes the thread's static TLS block at the
+# top; the parked thread keeps writing its own TLS (parking_lot's
+# per-thread data while it waits). TESTING.md, issue "stack scan reads TLS".
+race:*World*stack_words*

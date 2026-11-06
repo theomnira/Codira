@@ -1,0 +1,120 @@
+// =============================================================================
+// std/fs/file.code — Reading a whole file, with errors as values
+// =============================================================================
+//
+// The `Result` layer over std/fs/fs.code: `read_file(path)` is the file's
+// bytes, or a `FileError` saying why not. Nothing panics, and every error
+// reaches the caller, where `?` passes it on:
+//
+//     enum Problem { Io(FileError), Parse(ParseError) }
+//
+//     func load(path: str) -> Result[[u8], Problem] {
+//         Result.Ok(read_file(path)?)     // a FileError leaves as Problem.Io
+//     }
+//
+// `FileError` implements `std.error.error`'s `Error`, so in a function
+// returning `Result[_, AnyError]`, `read_file(path)?` passes it on too, and
+// `read_file(path).context(f"reading {path}")` says which file.
+//
+// Use std/fs/fs.code directly for writing, seeking, durability and the raw
+// FS_ERR_* codes.
+// =============================================================================
+
+import root.error.error.{Error};
+import root.fs.fs.{fs_open, fs_read, fs_size, fs_close, FS_READ, FS_ERR_NOT_FOUND,
+                   FS_ERR_PERMISSION_DENIED, FS_ERR_IS_A_DIRECTORY};
+import root.result.result.{Result};
+
+extern "codira-intrinsic" {
+    func stack_alloc(size: usize, align: usize) -> usize;
+    func load_u8(addr: usize) -> u8;
+}
+
+// Why a file could not be read.
+public enum FileError {
+    NotFound
+    PermissionDenied
+    IsADirectory
+    // Any other FS_ERR_* code (see std/fs/fs.code).
+    Other(i64)
+}
+
+extend FileError: Error {
+    // "file not found", "permission denied", "is a directory", or "I/O
+    // error <code>".
+    func message(self) -> String {
+        match self {
+            FileError.NotFound -> "file not found".to_string(),
+            FileError.PermissionDenied -> "permission denied".to_string(),
+            FileError.IsADirectory -> "is a directory".to_string(),
+            FileError.Other(code) -> f"I/O error {code}",
+        }
+    }
+}
+
+// The `FileError` for a negative FS_ERR_* code.
+public func file_error(code: i64) -> FileError {
+    if code == FS_ERR_NOT_FOUND() {
+        FileError.NotFound
+    } else if code == FS_ERR_PERMISSION_DENIED() {
+        FileError.PermissionDenied
+    } else if code == FS_ERR_IS_A_DIRECTORY() {
+        FileError.IsADirectory
+    } else {
+        FileError.Other(code)
+    }
+}
+
+// A result of std/fs/fs.code (a value, or a negative FS_ERR_* code) as a
+// `Result`.
+public func fs_result(code: i64) -> Result[i64, FileError] {
+    if code >= 0 {
+        Result.Ok(code)
+    } else {
+        Result.Err(file_error(code))
+    }
+}
+
+// The bytes of the file at `path`.
+public func read_file(path: str) -> Result[[u8], FileError] {
+    let fd = fs_result(fs_open(path, FS_READ()))?
+    let bytes = read_open(fd)
+    fs_close(fd)
+    bytes
+}
+
+// Reads the rest of the open file `fd`, in chunks through a buffer on the
+// stack.
+func read_open(fd: i64) -> Result[[u8], FileError] {
+    let size = fs_result(fs_size(fd))? as usize
+    let bytes = array_filled(0 as u8, size)
+    let chunk: usize = 4096
+    let buf = stack_alloc(chunk, 8)
+    var done: usize = 0
+    while done < size {
+        let want = if size - done < chunk { size - done } else { chunk }
+        let got = fs_result(fs_read(fd, buf, want))? as usize
+        // The file shrank while it was read: what is there is the file.
+        if got == 0 {
+            return Result.Ok(copy_prefix(bytes, done))
+        }
+        var i: usize = 0
+        while i < got {
+            bytes[done + i] = load_u8(buf + i)
+            i += 1
+        }
+        done += got
+    }
+    Result.Ok(bytes)
+}
+
+// The first `n` bytes of `bytes`, as a new array.
+func copy_prefix(bytes: [u8], n: usize) -> [u8] {
+    let out = array_filled(0 as u8, n)
+    var i: usize = 0
+    while i < n {
+        out[i] = bytes[i]
+        i += 1
+    }
+    out
+}

@@ -75,7 +75,7 @@ fn noalloc_rejects_every_allocation_source() {
     @noalloc
     func tasks() {
         scope {
-            let ch = channel(4)
+            let ch: Channel[i64] = channel(4)
         }
     }
     @noalloc
@@ -257,6 +257,42 @@ fn noblock_rejects_channels_scopes_and_printing() {
         "{diags}"
     );
     assert_eq!(count("`fine`"), 0, "{diags}");
+}
+
+/// Waiting on a group is blocking, directly or through a call, so
+/// `@noblock` and `@realtime` code cannot do it; `cancelled()` is a load and
+/// allowed anywhere.
+#[test]
+fn noblock_and_realtime_reject_waiting_on_a_group() {
+    let diags = diagnostics(
+        r#"
+    func square(x: i64) -> i64 { x * x }
+    func fan(n: i64) -> [i64] { group { spawn square(n); } }
+    @noblock
+    func waits(n: i64) -> i64 { let xs = group { spawn square(n); }; xs[0] }
+    @realtime
+    func via_call(n: i64) -> usize { fan(n).len() }
+    @realtime
+    func polls() -> bool { cancelled() }
+    "#,
+    );
+    let count = |needle: &str| diags.matches(needle).count();
+    assert_eq!(
+        count("`waits` is `@noblock` but may block here: `group` waits for its tasks at the end"),
+        1,
+        "{diags}"
+    );
+    assert!(
+        diags.contains("`via_call` is `@realtime` but calls `fan`")
+            && diags.contains("`group` waits for its tasks at the end"),
+        "{diags}"
+    );
+    assert_eq!(count("`polls`"), 0, "{diags}");
+    let effects = effects_of(
+        "func square(x: i64) -> i64 { x * x }\nfunc f() -> [i64] { group { spawn square(2); } }",
+        "f",
+    );
+    assert!(effects.contains(Effect::Block) && effects.contains(Effect::Spawn));
 }
 
 /// `select` (even with `default`, which still locks its channels) and every
@@ -1019,4 +1055,133 @@ fn envelope_values_and_their_direction_of_change() {
         compare_values(&[("allocation", "any")], &[("allocation", "some")]),
         vec![("allocation", Movement::Widened)]
     );
+}
+
+#[test]
+fn appends_count_as_allocating_even_where_the_room_is_there() {
+    // Every append has an inline path that allocates nothing when the
+    // buffer has room; that is decided at run time, so each still counts
+    // as allocating, whatever its right side (text, a number written in
+    // place, an interpolated literal written piece by piece).
+    let source = r#"
+    func text(s: String) -> String { var t = s; t += "x"; t }
+    func number(s: String, n: i64) -> String { var t = s; t += n.to_string(); t }
+    func plan(s: String, n: i64, x: f64) -> String { var t = s; t += f"[{n}:{x:>8.2}]"; t }
+    func fresh(n: i64) -> String { f"{n:08}" }
+    func each_line(s: String) -> usize {
+        var n: usize = 0
+        for line in s.lines() { n += line.len() }
+        n
+    }
+    func pieces(s: String) -> usize { s.split(",").map(func(p) { p.len() }).count() }
+    "#;
+    let alloc = set(&[Effect::Alloc, Effect::Block, Effect::Panic]);
+    for name in ["text", "number", "plan", "fresh", "each_line", "pieces"] {
+        assert_eq!(effects_of(source, name), alloc, "{name}");
+    }
+    let diags = diagnostics(
+        r#"
+    @noalloc
+    func grow(s: String) -> String { var t = s; t += "x"; t }
+    "#,
+    );
+    assert!(
+        diags.contains(
+            "`grow` is `@noalloc` but allocates here: string concatenation allocates (or grows) a buffer"
+        ),
+        "{diags}"
+    );
+}
+
+#[test]
+fn string_operations_count_as_allocating_or_panicking() {
+    let source = r#"
+    func make(n: i64) -> String { n.to_string() }
+    func join(a: String, b: String) -> String { a + b }
+    func grow(s: String) -> String { var t = s; t += "x"; t }
+    func measure(s: String) -> usize { s.len() + s.char_count() }
+    func compare(a: String, b: String) -> bool { a == b && a < "z" && s_find(a) }
+    func s_find(a: String) -> bool { a.find("q") == nil && a.starts_with("p") }
+    func view(s: String) -> String { s.trim() }
+    func cut(s: String) -> String { s.slice(0, 1) }
+    func byte(s: String) -> u8 { s.byte_at(0) }
+    func pieces(s: String) -> [String] { s.split(",") }
+    func literal_method() -> bool { "abc".contains("b") }
+    "#;
+    let alloc = set(&[Effect::Alloc, Effect::Block, Effect::Panic]);
+    assert_eq!(effects_of(source, "make"), alloc);
+    assert_eq!(effects_of(source, "join"), alloc);
+    assert_eq!(effects_of(source, "grow"), alloc);
+    assert_eq!(effects_of(source, "pieces"), alloc);
+    // A method of a `str` copies it into a `String` first.
+    assert_eq!(effects_of(source, "literal_method"), alloc);
+    assert_eq!(effects_of(source, "measure"), EffectSet::NONE);
+    assert_eq!(effects_of(source, "compare"), EffectSet::NONE);
+    assert_eq!(effects_of(source, "view"), EffectSet::NONE);
+    assert_eq!(effects_of(source, "cut"), set(&[Effect::Panic]));
+    assert_eq!(effects_of(source, "byte"), set(&[Effect::Panic]));
+
+    let diags = diagnostics(
+        r#"
+    @noalloc
+    func label(n: i64) -> String { n.to_string() }
+    @nopanic
+    func first(s: String) -> String { s.slice(0, 1) }
+    @noalloc @nopanic
+    func fine(s: String) -> bool { s.len() > 2 && s.trim() == "a" }
+    "#,
+    );
+    assert!(
+        diags.contains(
+            "`label` is `@noalloc` but allocates here: `to_string` allocates a new string or array"
+        ),
+        "{diags}"
+    );
+    assert!(
+        diags.contains(
+            "`first` is `@nopanic` but may panic here: `slice` panics on a range out of bounds"
+        ),
+        "{diags}"
+    );
+    assert!(!diags.contains("`fine`"), "{diags}");
+}
+
+/// The effects of the runtime functions constructs lower to come from the
+/// runtime function catalogue: a GC allocation allocates, can wait for the
+/// heap (or a collection) and can abort; a panic only panics; a byte
+/// comparison does nothing at all; spawning starts tasks.
+#[test]
+fn runtime_function_effects_come_from_the_catalogue() {
+    use codira_abi::runtime_functions as rt;
+
+    use super::{runtime_function_effects as effects, Effect, EffectSet};
+
+    let gc = EffectSet::of(&[Effect::Alloc, Effect::Block, Effect::Panic]);
+    assert_eq!(effects(&rt::NEW), gc);
+    assert_eq!(effects(&rt::ARRAY_GROW), gc);
+    assert_eq!(effects(&rt::PRINT_I64), gc);
+    assert_eq!(effects(&rt::PANIC), EffectSet::of(&[Effect::Panic]));
+    assert_eq!(
+        effects(&rt::PANIC_INDEX_OUT_OF_BOUNDS),
+        EffectSet::of(&[Effect::Panic])
+    );
+    assert_eq!(
+        effects(&rt::STRING_CHECK_SLICE),
+        EffectSet::of(&[Effect::Panic])
+    );
+    assert_eq!(
+        effects(&rt::CHANNEL_RECEIVE),
+        EffectSet::of(&[Effect::Block])
+    );
+    assert!(effects(&rt::SCOPE_SPAWN).contains(Effect::Spawn));
+    // Closing a region returns (it ends the process only when region checks
+    // find a reference into it), and can stop the world first.
+    assert_eq!(
+        effects(&rt::REGION_CLOSE),
+        EffectSet::of(&[Effect::Block, Effect::Panic])
+    );
+    assert!(effects(&rt::GROUP_RESULT).contains(Effect::Panic));
+    for f in rt::CATALOGUE.iter().filter(|f| f.realtime_safe) {
+        assert_eq!(effects(f), EffectSet::NONE, "`{}`", f.symbol);
+    }
 }

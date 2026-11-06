@@ -3,18 +3,13 @@
 // =============================================================================
 // All values are f64 (double precision IEEE 754) unless noted otherwise.
 //
-// Migration note (2026-08-20): rewritten from `public let NAME: TYPE =
-// VALUE;` module-level bindings to `public func NAME() -> TYPE { VALUE }`
-// niladic functions, called as `PI()` rather than referenced as `PI`. This
-// is not a style preference -- verified empirically (via
-// codira_syntax::SourceFile::parse) that there is no top-level `let`/const
-// *item* in the current grammar at all: `codira_hir::item_tree::ModItem`
-// only has `Function`/`Struct`/`TypeAlias`/`Import`/`Impl` variants, and a
-// bare top-level `public let PI: f64 = ...;` fails to parse with "expected
-// a declaration" (`let`/`var` only exist as function-body statements, per
-// USING_CODIRA.md's "Bindings" section). A niladic function is the closest
-// honest equivalent -- it is a real, callable, constant-folding-
-// eligible function today, not a value binding.
+// Each constant is a niladic function, called as `PI()` rather than named
+// as `PI`. That is not a style preference: a module-level `public let PI:
+// f64 = ...;` parses, but the compiler rejects it ("module-level `let` is
+// not supported yet"), so no name could refer to it. A niladic function is
+// the closest honest equivalent: callable today, and folded to its value by
+// the optimiser. When module-level constants are supported these become
+// `public let` bindings.
 // =============================================================================
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -173,7 +168,8 @@ public func NAN() -> f64 {
 // Machine epsilon and limits
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Smallest positive f64 such that  1.0 + EPSILON != 1.0.
+// The difference between 1.0 and the next larger f64 (2^-52). Not the
+// smallest x with 1.0 + x != 1.0, which is about half of it.
 public func F64_EPSILON() -> f64 {
     2.2204460492503131e-16
 }
@@ -188,7 +184,7 @@ public func F64_MAX() -> f64 {
     1.7976931348623157e+308
 }
 
-// Smallest positive f32 such that 1.0 + EPSILON != 1.0.
+// The difference between 1.0 and the next larger f32 (2^-23).
 public func F32_EPSILON() -> f32 {
     1.1920929e-7
 }

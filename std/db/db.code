@@ -67,7 +67,6 @@
 // is made.
 // =============================================================================
 
-import root.builtin.types.*;
 
 extern "C" {
     func codira_db_open(path_addr: usize, path_len: usize, fsync: u32, checkpoint_wal_bytes: i64) -> i64;

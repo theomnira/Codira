@@ -151,6 +151,24 @@ fn scopes_spawns_and_channels() {
 }
 
 #[test]
+fn task_groups() {
+    insta::assert_snapshot!(SourceFile::parse(
+        r#"
+        func run(n: i64) -> [i64] {
+            let xs = group {
+                spawn work(1)
+                spawn work(2)
+            }
+            if group { 1 }
+            let group = 3
+            group { spawn work(group) }
+        }
+        "#,
+    )
+    .debug_dump());
+}
+
+#[test]
 fn select_arms() {
     insta::assert_snapshot!(SourceFile::parse(
         r#"
@@ -1849,4 +1867,105 @@ fn trait_bounds_in_every_position() {
             ("U".to_owned(), vec![])
         ]
     );
+}
+
+// --------------------------------------------------------------------------
+// Postfix `?`: error propagation
+// --------------------------------------------------------------------------
+
+/// The kinds of the nodes of `src`'s one `let` initializer, outermost first,
+/// down its first-child chain.
+fn spine(src: &str) -> Vec<SyntaxKind> {
+    let mut kinds = Vec::new();
+    let mut node = Some(only_initializer(src).syntax().clone());
+    while let Some(current) = node {
+        kinds.push(current.kind());
+        node = current.first_child();
+    }
+    kinds
+}
+
+/// `x?` is postfix and chains with calls, fields and `!` like any other
+/// postfix operator; `x??` is `(x?)?`, since a `??` hole is an atom and
+/// can never directly follow an expression.
+#[test]
+fn propagate_expr_is_postfix() {
+    use SyntaxKind::{
+        BIN_EXPR, CALL_EXPR, METHOD_CALL_EXPR, NAME_REF, PATH, PATH_EXPR, PATH_SEGMENT,
+        PROPAGATE_EXPR, TRY_EXPR,
+    };
+    assert_eq!(spine("f(x)?")[..2], [PROPAGATE_EXPR, CALL_EXPR]);
+    assert_eq!(
+        spine("f(x)?.g()")[..3],
+        [METHOD_CALL_EXPR, PROPAGATE_EXPR, CALL_EXPR]
+    );
+    assert_eq!(
+        spine("x??")[..3],
+        [PROPAGATE_EXPR, PROPAGATE_EXPR, PATH_EXPR]
+    );
+    assert_eq!(spine("x?!")[..2], [TRY_EXPR, PROPAGATE_EXPR]);
+    assert_eq!(spine("a? + b?")[..2], [BIN_EXPR, PROPAGATE_EXPR]);
+    assert_eq!(spine("x?")[1..], [PATH_EXPR, PATH, PATH_SEGMENT, NAME_REF]);
+}
+
+/// `??` is still a hole where an expression starts -- after `=`, as an
+/// argument, and on a line of its own -- and `T?` is still an optional
+/// type.
+#[test]
+fn propagate_expr_leaves_holes_and_optional_types_alone() {
+    use SyntaxKind::{HOLE_EXPR, OPTIONAL_TYPE};
+    assert_eq!(spine("??"), [HOLE_EXPR]);
+    let file = SourceFile::parse("func f(a: i32?) -> i32? {\n    let x: i32? = g(??)\n    ??\n}");
+    assert!(file.errors().is_empty(), "{:?}", file.errors());
+    let kinds: Vec<SyntaxKind> = file.syntax_node().descendants().map(|n| n.kind()).collect();
+    assert_eq!(kinds.iter().filter(|k| **k == HOLE_EXPR).count(), 2);
+    assert_eq!(kinds.iter().filter(|k| **k == OPTIONAL_TYPE).count(), 3);
+    assert!(!kinds.contains(&SyntaxKind::PROPAGATE_EXPR));
+}
+
+/// A `match` arm written with `=>` (as in Rust) is reported, once, and the
+/// arm's value is still parsed -- before, an arm whose value was a block
+/// made the parser loop forever ("the parser seems stuck").
+#[test]
+fn a_match_arm_with_a_fat_arrow_is_reported_not_a_hang() {
+    let block = SourceFile::parse("func b(r: R) { match r { x => { 1 } } }");
+    let dump = block.debug_dump();
+    assert!(
+        dump.contains("a `match` arm is `pattern -> value`, not `pattern => value`"),
+        "{dump}"
+    );
+    assert!(dump.contains("BLOCK_EXPR"), "{dump}");
+    let plain = SourceFile::parse("func b(r: R) -> i64 { match r { R.Ok(x) => x, _ => { 0 } } }");
+    let dump = plain.debug_dump();
+    assert_eq!(dump.matches("not `pattern => value`").count(), 2, "{dump}");
+    // Anything else that cannot follow a pattern still makes progress.
+    let other = SourceFile::parse("func b(r: R) { match r { x { 1 } { 2 } } }").debug_dump();
+    assert!(other.contains("expected THIN_ARROW"), "{other}");
+}
+
+/// A `{` where a match arm should start: pattern recovery does not consume
+/// it, so the arm loop ran until the parser's step limit panicked ("the
+/// parser seems stuck"). Found by the compiler fuzzer.
+#[test]
+fn a_brace_where_a_match_arm_should_start_is_an_error() {
+    for text in ["{match s{{", "func f() { match x { { } } }", "func g() { match a { {{{ 1 -> 2 } }"] {
+        let parse = SourceFile::parse(text);
+        assert!(!parse.errors().is_empty(), "{text}");
+        assert!(
+            parse.errors().iter().any(|e| e.to_string().contains("expected pattern")),
+            "{text}: {:?}",
+            parse.errors()
+        );
+    }
+}
+
+/// A `{` where an imported name should be: recovery left it in place and
+/// the list loop retried it until the step limit panicked. Found by the
+/// compiler fuzzer.
+#[test]
+fn a_brace_inside_an_import_list_is_an_error() {
+    for text in ["import x.{{", "import a.b.{c, {d}, e}\nfunc f() {}"] {
+        let parse = SourceFile::parse(text);
+        assert!(!parse.errors().is_empty(), "{text}");
+    }
 }

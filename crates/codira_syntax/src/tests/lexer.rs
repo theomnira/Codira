@@ -443,3 +443,11 @@ fn binary_cmp() {
     WHITESPACE 5 "\n    "
     "#);
 }
+
+/// A `.` at the end of the input is a dot, not a tuple index without
+/// digits (which made lowering `e.` panic parsing an empty field number).
+#[test]
+fn a_dot_at_the_end_of_the_input_is_not_an_index() {
+    assert_eq!(dump_text_tokens("e."), "IDENT 1 \"e\"\nDOT 1 \".\"\n");
+    assert_eq!(dump_text_tokens("e.0"), "IDENT 1 \"e\"\nINDEX 2 \".0\"\n");
+}

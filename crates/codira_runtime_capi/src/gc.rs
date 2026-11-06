@@ -117,6 +117,48 @@ pub unsafe extern "C" fn codira_gc_unroot(runtime: Runtime, obj: GcPtr) -> Error
     ErrorHandle::default()
 }
 
+/// Pins `obj`: until the matching [`codira_gc_unpin`] the object stays
+/// alive and never moves, so foreign code may keep its address and the
+/// address of its payload even when relocation is on. Pins nest; a pin is
+/// a root. If successful, returns a zero error handle.
+///
+/// If a non-zero error handle is returned, it must be manually destructed using
+/// [`codira_error_destroy`].
+///
+/// # Safety
+///
+/// This function receives raw pointers as parameters. If any of the arguments
+/// is a null pointer, an error will be returned. Passing pointers to invalid
+/// data, will lead to undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn codira_gc_pin(runtime: Runtime, obj: GcPtr) -> ErrorHandle {
+    let runtime = codira_error_try!(runtime
+        .inner()
+        .map_err(|e| format!("invalid argument 'runtime': {e}")));
+    runtime.gc().pin(obj);
+    ErrorHandle::default()
+}
+
+/// Ends one [`codira_gc_pin`] of `obj`. If successful, returns a zero error
+/// handle.
+///
+/// If a non-zero error handle is returned, it must be manually destructed using
+/// [`codira_error_destroy`].
+///
+/// # Safety
+///
+/// This function receives raw pointers as parameters. If any of the arguments
+/// is a null pointer, an error will be returned. Passing pointers to invalid
+/// data, will lead to undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn codira_gc_unpin(runtime: Runtime, obj: GcPtr) -> ErrorHandle {
+    let runtime = codira_error_try!(runtime
+        .inner()
+        .map_err(|e| format!("invalid argument 'runtime': {e}")));
+    runtime.gc().unpin(obj);
+    ErrorHandle::default()
+}
+
 /// Collects all memory that is no longer referenced by rooted objects. If
 /// successful, `reclaimed` is set, otherwise a non-zero error handle is
 /// returned. If `reclaimed` is `true`, memory was reclaimed, otherwise nothing
@@ -127,6 +169,14 @@ pub unsafe extern "C" fn codira_gc_unroot(runtime: Runtime, obj: GcPtr) -> Error
 /// stack. Threads that call Codira functions through raw function pointers
 /// are registered only between `codira_thread_enter` and
 /// `codira_thread_leave`.
+///
+/// This call blocks until the collection is done. While another thread runs
+/// Codira code it first waits until that code has run for the collector's
+/// mutator window since the previous collection (1 ms, or four times the
+/// previous pause, by default), so calling it in a loop cannot starve Codira
+/// threads. `codira_gc_request_collection` asks without waiting. When the
+/// collection cannot run (a thread's stack cannot be scanned on this
+/// platform), `reclaimed` is set to `false`.
 ///
 /// If a non-zero error handle is returned, it must be manually destructed using
 /// [`codira_error_destroy`].
@@ -142,7 +192,39 @@ pub unsafe extern "C" fn codira_gc_collect(runtime: Runtime, reclaimed: *mut boo
         .inner()
         .map_err(|e| format!("invalid argument 'runtime': {e}")));
     let reclaimed = try_deref_mut!(reclaimed);
-    *reclaimed = runtime.gc_collect();
+    *reclaimed = runtime
+        .collect_blocking()
+        .is_ok_and(|report| report.reclaimed_anything());
+    ErrorHandle::default()
+}
+
+/// Asks for a collection without waiting for it. If successful, `queued` is
+/// set to `true` if this call queued a request and to `false` if one was
+/// already pending (requests are coalesced into one collection); otherwise
+/// a non-zero error handle is returned.
+///
+/// The collection runs on a thread of the collector's own, once Codira code
+/// has run for the collector's mutator window since the previous
+/// collection.
+///
+/// If a non-zero error handle is returned, it must be manually destructed using
+/// [`codira_error_destroy`].
+///
+/// # Safety
+///
+/// This function receives raw pointers as parameters. If any of the arguments
+/// is a null pointer, an error will be returned. Passing pointers to invalid
+/// data, will lead to undefined behavior.
+#[no_mangle]
+pub unsafe extern "C" fn codira_gc_request_collection(
+    runtime: Runtime,
+    queued: *mut bool,
+) -> ErrorHandle {
+    let runtime = codira_error_try!(runtime
+        .inner()
+        .map_err(|e| format!("invalid argument 'runtime': {e}")));
+    let queued = try_deref_mut!(queued);
+    *queued = runtime.request_collection();
     ErrorHandle::default()
 }
 
@@ -172,7 +254,10 @@ mod tests {
         gc_ptr_type(mem::zeroed::<GcPtr>(), ptr::null_mut()),
         gc_root(mem::zeroed::<GcPtr>()),
         gc_unroot(mem::zeroed::<GcPtr>()),
-        gc_collect(ptr::null_mut())
+        gc_pin(mem::zeroed::<GcPtr>()),
+        gc_unpin(mem::zeroed::<GcPtr>()),
+        gc_collect(ptr::null_mut()),
+        gc_request_collection(ptr::null_mut())
     );
 
     #[test]
@@ -312,6 +397,35 @@ mod tests {
     }
 
     #[test]
+    fn test_gc_pinning() {
+        let driver = TestDriver::new(
+            r#"
+        public class Foo;
+    "#,
+        );
+
+        let type_name = CString::new("Foo").expect("Invalid type name.");
+        assert_getter2!(codira_runtime_get_type_info_by_name(
+            driver.runtime,
+            type_name.as_ptr(),
+            has_type,
+            ty,
+        ));
+        assert!(has_type);
+
+        assert_getter2!(codira_gc_alloc(driver.runtime, ty, obj));
+        assert!(unsafe { codira_gc_pin(driver.runtime, obj) }.is_ok());
+
+        assert_getter1!(codira_gc_collect(driver.runtime, reclaimed));
+        assert!(!reclaimed, "a pinned object was collected");
+
+        assert!(unsafe { codira_gc_unpin(driver.runtime, obj) }.is_ok());
+
+        assert_getter1!(codira_gc_collect(driver.runtime, reclaimed));
+        assert!(reclaimed);
+    }
+
+    #[test]
     fn test_gc_ptr_collect_invalid_reclaimed() {
         let driver = TestDriver::new(
             r#"
@@ -324,6 +438,43 @@ mod tests {
         assert_error_snapshot!(
             unsafe { codira_gc_collect(driver.runtime, ptr::null_mut()) },
             @r#""invalid argument \'reclaimed\': null pointer""#
+        );
+    }
+
+    #[test]
+    fn test_gc_request_collection() {
+        let driver = TestDriver::new(
+            r#"
+        public class Foo;
+    "#,
+        );
+
+        let type_name = CString::new("Foo").expect("Invalid type name.");
+        assert_getter2!(codira_runtime_get_type_info_by_name(
+            driver.runtime,
+            type_name.as_ptr(),
+            has_type,
+            ty,
+        ));
+        assert!(has_type);
+        assert_getter2!(codira_gc_alloc(driver.runtime, ty, obj));
+        assert_ne!(unsafe { obj.deref::<u8>() }, ptr::null());
+
+        assert_getter1!(codira_gc_request_collection(driver.runtime, queued));
+        assert!(queued);
+
+        // The request is served on the collector's own thread.
+        let runtime = unsafe { driver.runtime.inner() }.unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while runtime.stats().collections.requested == 0 {
+            assert!(std::time::Instant::now() < deadline, "never served");
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        assert!(runtime.stats().objects_reclaimed >= 1);
+
+        assert_error_snapshot!(
+            unsafe { codira_gc_request_collection(driver.runtime, ptr::null_mut()) },
+            @r#""invalid argument \'queued\': null pointer""#
         );
     }
 }

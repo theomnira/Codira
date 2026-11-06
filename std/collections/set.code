@@ -1,341 +1,131 @@
 // std/collections/set.code
-// Hash set — an unordered collection of unique elements.
-// Implemented as a thin wrapper around Dict[T, bool].
+// Set[T]: a hash set, on `Map[T, bool]` (std.collections.map).
+//
+//     import std.collections.set.{Set}
+//
+//     let seen: Set[i64] = Set.new()
+//     if seen.insert(7) { println("new") }
+//     println(seen.contains(7))
+//
+// Elements need `Hashable` (std.hashlib.hash) and `Eq` (std.cmp.cmp); every
+// integer and float type, `bool`, `str` and `String` have both. Expected
+// O(1) insertion, lookup and removal.
+//
+// Hashed as `Map` hashes (it is one): SipHash-1-3 under a secret key of its
+// own by default, so whoever chooses the elements cannot make them collide
+// on purpose. `Set.unkeyed()` hashes with the fast unkeyed `hash_value`
+// instead, which is NOT DoS-resistant; `Set.with_key(key)` with a key you
+// give.
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SetEntry — internal bucket for the hash set.
-// ─────────────────────────────────────────────────────────────────────────────
-
-public struct SetEntry[T] {
-    value: T,
-    hash:  u64,
-    state: u8,   // 0 = empty, 1 = occupied, 2 = tombstone
-}
-
-let SET_EMPTY:     u8 = 0;
-let SET_OCCUPIED:  u8 = 1;
-let SET_TOMBSTONE: u8 = 2;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Set[T] — generic hash set.
-// ─────────────────────────────────────────────────────────────────────────────
+import root.hashlib.hash.{Hashable, HashKey};
+import root.cmp.cmp.{Eq};
+import root.collections.map.{Map};
 
 public class Set[T] {
-    buckets:    Pointer[SetEntry[T]],
-    num_buckets: usize,
-    len:         usize,
-    load_max:    f64,
+    entries: Map[T, bool],
 }
 
-// ── Construction ─────────────────────────────────────────────────────────────
-
-/// Creates an empty set with a default initial capacity of 16.
-public func set_new[T]() -> Set[T] {
-    return set_with_capacity(16);
-}
-
-/// Creates an empty set pre-allocated for at least `cap` elements.
-public func set_with_capacity[T](cap: usize) -> Set[T] {
-    let num = next_power_of_two(cap);
-    let buckets = heap_alloc(num);
-    var i: usize = 0;
-    while i < num {
-        raw_store(buckets, i, SetEntry[T] { value: zero_value(), hash: 0, state: SET_EMPTY });
-        i = i + 1;
+extend Set[T: Hashable + Eq] {
+    // An empty set (SipHash-1-3 under a key of its own).
+    public func new() -> Set[T] {
+        Set { entries: Map.new() }
     }
-    return Set[T] { buckets: buckets, num_buckets: num, len: 0, load_max: 0.75 };
-}
 
-/// Creates a set from a list of elements.
-public func set_from_list[T](items: List[T]) -> Set[T] {
-    var s = set_with_capacity(items.len);
-    var i: usize = 0;
-    while i < items.len {
-        s = add(s, get(items, i));
-        i = i + 1;
+    // An empty set with room for `n` elements before it grows.
+    public func with_capacity(n: usize) -> Set[T] {
+        Set { entries: Map.with_capacity(n) }
     }
-    return s;
-}
 
-// ── Internal ─────────────────────────────────────────────────────────────────
-
-func set_rehash[T](this: Set[T]) -> Set[T] {
-    let new_num = this.num_buckets * 2;
-    let new_buckets = heap_alloc(new_num);
-    var i: usize = 0;
-    while i < new_num {
-        raw_store(new_buckets, i, SetEntry[T] { value: zero_value(), hash: 0, state: SET_EMPTY });
-        i = i + 1;
+    // An empty set hashing with SipHash-1-3 under `key`.
+    public func with_key(key: HashKey) -> Set[T] {
+        Set { entries: Map.with_key(key) }
     }
-    i = 0;
-    while i < this.num_buckets {
-        let e = raw_load(this.buckets, i);
-        if e.state == SET_OCCUPIED {
-            var idx = (e.hash as usize) & (new_num - 1);
-            while raw_load(new_buckets, idx).state == SET_OCCUPIED {
-                idx = (idx + 1) & (new_num - 1);
-            }
-            raw_store(new_buckets, idx, e);
+
+    // An empty set hashing with the elements' `hash_value()`. NOT
+    // DoS-RESISTANT: for trusted elements only.
+    public func unkeyed() -> Set[T] {
+        Set { entries: Map.unkeyed() }
+    }
+
+    // A set of the elements of `items`.
+    public func from_array(items: [T]) -> Set[T] {
+        let set: Set[T] = Set.new()
+        for item in items {
+            set.entries.insert(item, true);
         }
-        i = i + 1;
+        set
     }
-    heap_free(this.buckets);
-    return Set[T] { buckets: new_buckets, num_buckets: new_num, len: this.len, load_max: this.load_max };
-}
 
-// ── Core API ─────────────────────────────────────────────────────────────────
-
-/// Number of elements in the set.
-public func len[T](this: Set[T]) -> usize {
-    return this.len;
-}
-
-/// Returns true if the set has no elements.
-public func is_empty[T](this: Set[T]) -> bool {
-    return this.len == 0;
-}
-
-/// Adds `value` to the set. No-op if already present.
-public func add[T](this: Set[T], value: T) -> Set[T] {
-    var out = this;
-    let load = (out.len + 1) as f64 / out.num_buckets as f64;
-    if load > out.load_max {
-        out = set_rehash(out);
+    // The number of elements.
+    public func len(self) -> usize {
+        self.entries.len()
     }
-    let h = hash_of(value);
-    var idx = (h as usize) & (out.num_buckets - 1);
-    while true {
-        let e = raw_load(out.buckets, idx);
-        if e.state == SET_EMPTY || e.state == SET_TOMBSTONE {
-            raw_store(out.buckets, idx, SetEntry[T] { value: value, hash: h, state: SET_OCCUPIED });
-            out.len = out.len + 1;
-            return out;
-        }
-        if e.state == SET_OCCUPIED && e.hash == h && e.value == value {
-            return out; // already present
-        }
-        idx = (idx + 1) & (out.num_buckets - 1);
-    }
-    return out;
-}
 
-/// Removes `value` from the set. Returns (set, true) if it was present.
-public func remove[T](this: Set[T], value: T) -> (Set[T], bool) {
-    let h = hash_of(value);
-    var idx = (h as usize) & (this.num_buckets - 1);
-    while true {
-        let e = raw_load(this.buckets, idx);
-        if e.state == SET_EMPTY {
-            return (this, false);
-        }
-        if e.state == SET_OCCUPIED && e.hash == h && e.value == value {
-            raw_store(this.buckets, idx, SetEntry[T] { value: e.value, hash: 0, state: SET_TOMBSTONE });
-            var out = this;
-            out.len = out.len - 1;
-            return (out, true);
-        }
-        idx = (idx + 1) & (this.num_buckets - 1);
+    public func is_empty(self) -> bool {
+        self.entries.len() == 0
     }
-    return (this, false);
-}
 
-/// Returns true if `value` is in the set.
-public func contains[T](this: Set[T], value: T) -> bool {
-    let h = hash_of(value);
-    var idx = (h as usize) & (this.num_buckets - 1);
-    while true {
-        let e = raw_load(this.buckets, idx);
-        if e.state == SET_EMPTY {
-            return false;
-        }
-        if e.state == SET_OCCUPIED && e.hash == h && e.value == value {
-            return true;
-        }
-        idx = (idx + 1) & (this.num_buckets - 1);
+    // Adds `value`; returns whether it was not in the set yet.
+    public func insert(self, value: T) -> bool {
+        self.entries.insert(value, true) == nil
     }
-    return false;
-}
 
-/// Removes all elements.
-public func clear[T](this: Set[T]) -> Set[T] {
-    var i: usize = 0;
-    while i < this.num_buckets {
-        raw_store(this.buckets, i, SetEntry[T] { value: zero_value(), hash: 0, state: SET_EMPTY });
-        i = i + 1;
+    public func contains(self, value: T) -> bool {
+        self.entries.contains_key(value)
     }
-    var out = this;
-    out.len = 0;
-    return out;
-}
 
-// ── Set operations ───────────────────────────────────────────────────────────
+    // Removes `value`; returns whether it was in the set.
+    public func remove(self, value: T) -> bool {
+        self.entries.remove(value) != nil
+    }
 
-/// Returns a new set containing all elements in either `a` or `b`.
-public func union[T](a: Set[T], b: Set[T]) -> Set[T] {
-    var out = set_with_capacity(a.len + b.len);
-    var i: usize = 0;
-    while i < a.num_buckets {
-        let e = raw_load(a.buckets, i);
-        if e.state == SET_OCCUPIED {
-            out = add(out, e.value);
+    public func clear(self) {
+        self.entries.clear()
+    }
+
+    // Makes room for `additional` more elements without growing.
+    public func reserve(self, additional: usize) {
+        self.entries.reserve(additional)
+    }
+
+    // Every element, in table order (which is not insertion order).
+    public func to_array(self) -> [T] {
+        self.entries.keys()
+    }
+
+    // The elements in `self`, in `other`, or in both.
+    public func union(self, other: Set[T]) -> Set[T] {
+        let out = Set.from_array(self.to_array())
+        for value in other.to_array() {
+            out.entries.insert(value, true);
         }
-        i = i + 1;
+        out
     }
-    i = 0;
-    while i < b.num_buckets {
-        let e = raw_load(b.buckets, i);
-        if e.state == SET_OCCUPIED {
-            out = add(out, e.value);
-        }
-        i = i + 1;
-    }
-    return out;
-}
 
-/// Returns a new set containing only elements in both `a` and `b`.
-public func intersection[T](a: Set[T], b: Set[T]) -> Set[T] {
-    var out = set_new();
-    // Iterate over the smaller set for efficiency
-    var i: usize = 0;
-    while i < a.num_buckets {
-        let e = raw_load(a.buckets, i);
-        if e.state == SET_OCCUPIED {
-            if contains(b, e.value) {
-                out = add(out, e.value);
+    // The elements in both `self` and `other`.
+    public func intersection(self, other: Set[T]) -> Set[T] {
+        let out: Set[T] = Set.new()
+        for value in self.to_array() {
+            if other.contains(value) {
+                out.entries.insert(value, true);
             }
         }
-        i = i + 1;
+        out
     }
-    return out;
-}
 
-/// Returns a new set containing elements in `a` but not in `b`.
-public func difference[T](a: Set[T], b: Set[T]) -> Set[T] {
-    var out = set_new();
-    var i: usize = 0;
-    while i < a.num_buckets {
-        let e = raw_load(a.buckets, i);
-        if e.state == SET_OCCUPIED {
-            if !contains(b, e.value) {
-                out = add(out, e.value);
+    // The elements in `self` but not in `other`.
+    public func difference(self, other: Set[T]) -> Set[T] {
+        let out: Set[T] = Set.new()
+        for value in self.to_array() {
+            if !other.contains(value) {
+                out.entries.insert(value, true);
             }
         }
-        i = i + 1;
+        out
     }
-    return out;
-}
 
-/// Returns elements in either `a` or `b` but not both.
-public func symmetric_difference[T](a: Set[T], b: Set[T]) -> Set[T] {
-    var out = set_new();
-    var i: usize = 0;
-    while i < a.num_buckets {
-        let e = raw_load(a.buckets, i);
-        if e.state == SET_OCCUPIED {
-            if !contains(b, e.value) {
-                out = add(out, e.value);
-            }
-        }
-        i = i + 1;
-    }
-    i = 0;
-    while i < b.num_buckets {
-        let e = raw_load(b.buckets, i);
-        if e.state == SET_OCCUPIED {
-            if !contains(a, e.value) {
-                out = add(out, e.value);
-            }
-        }
-        i = i + 1;
-    }
-    return out;
-}
-
-/// Returns true if every element of `a` is also in `b`.
-public func is_subset[T](a: Set[T], b: Set[T]) -> bool {
-    if a.len > b.len {
-        return false;
-    }
-    var i: usize = 0;
-    while i < a.num_buckets {
-        let e = raw_load(a.buckets, i);
-        if e.state == SET_OCCUPIED {
-            if !contains(b, e.value) {
-                return false;
-            }
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
-/// Returns true if every element of `b` is also in `a`.
-public func is_superset[T](a: Set[T], b: Set[T]) -> bool {
-    return is_subset(b, a);
-}
-
-/// Returns true if `a` and `b` share no elements.
-public func is_disjoint[T](a: Set[T], b: Set[T]) -> bool {
-    var i: usize = 0;
-    while i < a.num_buckets {
-        let e = raw_load(a.buckets, i);
-        if e.state == SET_OCCUPIED {
-            if contains(b, e.value) {
-                return false;
-            }
-        }
-        i = i + 1;
-    }
-    return true;
-}
-
-// ── Conversion ───────────────────────────────────────────────────────────────
-
-/// Returns a List of all elements in the set (unordered).
-public func to_list[T](this: Set[T]) -> List[T] {
-    var out = list_with_capacity(this.len);
-    var i: usize = 0;
-    while i < this.num_buckets {
-        let e = raw_load(this.buckets, i);
-        if e.state == SET_OCCUPIED {
-            out = push(out, e.value);
-        }
-        i = i + 1;
-    }
-    return out;
-}
-
-// ── Iteration ────────────────────────────────────────────────────────────────
-
-public struct SetIter[T] {
-    set: Set[T],
-    pos: usize,
-}
-
-/// Returns an iterator over the set elements.
-public func iter[T](this: Set[T]) -> SetIter[T] {
-    return SetIter[T] { set: this, pos: 0 };
-}
-
-/// Advances the iterator.
-public func iter_next[T](it: SetIter[T]) -> (SetIter[T], Optional[T]) {
-    var pos = it.pos;
-    while pos < it.set.num_buckets {
-        let e = raw_load(it.set.buckets, pos);
-        if e.state == SET_OCCUPIED {
-            let next = SetIter[T] { set: it.set, pos: pos + 1 };
-            return (next, some(e.value));
-        }
-        pos = pos + 1;
-    }
-    let done = SetIter[T] { set: it.set, pos: pos };
-    return (done, none());
-}
-
-// ── Cleanup ──────────────────────────────────────────────────────────────────
-
-public func drop[T](this: Set[T]) {
-    if this.num_buckets > 0 {
-        heap_free(this.buckets);
+    // Whether every element of `self` is in `other`.
+    public func is_subset(self, other: Set[T]) -> bool {
+        self.to_array().all(func(value) { other.contains(value) })
     }
 }

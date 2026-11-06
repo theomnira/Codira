@@ -1,0 +1,344 @@
+//! Copyright (c) 2026 Omnira CJSC
+//! Author: Tunjay Akbarli
+//! Date: November 5, 2026
+//!
+//! Functionality:
+//! - The builtin operations of `String`: its methods, `to_string()` on the
+//!   primitive types and `string_from_utf8`. Inference checks a call against
+//!   the signature here; the code generator lowers each to inline IR or to
+//!   one `codira.string_*` runtime function (see `codira_runtime`'s `string`
+//!   module).
+//!
+//! The operators (`+`, `+=`, `==`, `<`, ...) are not listed here: they are
+//! binary expressions, typed by `ty::infer` and lowered by the code
+//! generator by their operand types.
+
+use crate::{ty::TyKind, FloatTy, IntTy, Ty};
+
+/// One builtin operation on strings. See the module documentation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StringOp {
+    /// `s.len()`: the length in bytes, as `usize`.
+    Len,
+    /// `s.is_empty()`.
+    IsEmpty,
+    /// `s.char_count()`: the number of code points (one pass over the bytes).
+    CharCount,
+    /// `s.chars()`: the code points, as a new `[u32]`.
+    Chars,
+    /// `s.bytes()`: a copy of the UTF-8 bytes, as a new `[u8]`.
+    Bytes,
+    /// `s.byte_at(i)`: the byte at `i`, bounds-checked.
+    ByteAt,
+    /// `s.find(p)`: the byte offset of the first occurrence of `p`, or `nil`.
+    Find,
+    /// `s.rfind(p)`: the byte offset of the last occurrence of `p`, or `nil`.
+    RFind,
+    /// `s.contains(p)`.
+    Contains,
+    /// `s.starts_with(p)`.
+    StartsWith,
+    /// `s.ends_with(p)`.
+    EndsWith,
+    /// `s.split(sep)`: the pieces between occurrences of a non-empty `sep`,
+    /// as a new `[String]` whose elements share `s`'s buffer.
+    Split,
+    /// `s.lines()`: the lines, split at `\n` with a trailing `\r` removed and
+    /// no empty last line, as Rust's `str::lines`.
+    Lines,
+    /// `s.trim()`: `s` without leading and trailing Unicode white space. A
+    /// view: nothing is copied.
+    Trim,
+    /// `s.trim_start()`.
+    TrimStart,
+    /// `s.trim_end()`.
+    TrimEnd,
+    /// `s.to_upper()`: ASCII letters upper-cased, every other byte kept.
+    ToUpper,
+    /// `s.to_lower()`: ASCII letters lower-cased, every other byte kept.
+    ToLower,
+    /// `s.replace(from, to)`: every occurrence of `from` replaced by `to`.
+    Replace,
+    /// `s.repeat(n)`: `n` copies of `s`.
+    Repeat,
+    /// `s.slice(start, end)`: the bytes `start..end`, which must be in range
+    /// and on character boundaries (or the program panics). A view.
+    Slice,
+    /// `s.parse_i64()`: the decimal integer `s` spells, or `nil`.
+    ParseI64,
+    /// `s.parse_f64()`: the float `s` spells, or `nil`.
+    ParseF64,
+    /// `s.hash()`: FNV-1a 64 of the bytes. Not resistant to hash flooding.
+    Hash,
+    /// `s.find_json_escape(from)`: the offset of the first byte at or after
+    /// `from` that a JSON string cannot hold as it is -- `"`, `\\` or a
+    /// control character U+0000..U+001F -- or `len()` when there is none
+    /// (`from` is clamped to `0..=len()`). Inline: 16 bytes per step with
+    /// vector compares, then byte by byte. The string-end and escape search
+    /// of a JSON parser and printer.
+    FindJsonEscape,
+    /// `x.to_string()` on a `String`, `str`, integer, float or `bool`.
+    ToString,
+    /// `x.debug_string()` on a value of any type: its debug form, what
+    /// `f"{x:?}"` writes (see `builtin::format`). A method only when the
+    /// type declares no `debug_string` of its own.
+    DebugString,
+    /// `x.type_name()` on a value of any type: the name of its type as the
+    /// source writes it (`FileError`, `Box[i64]`, `[u8]`), a `str` constant
+    /// chosen per instantiation. A method only when the type declares no
+    /// `type_name` of its own.
+    TypeName,
+    /// `string_from_utf8(bytes)`: a copy of `bytes` as a `String` if they are
+    /// valid UTF-8, otherwise `nil`. A free function.
+    FromUtf8,
+    /// `string_take_utf8(bytes)`: the bytes as a `String` if they are valid
+    /// UTF-8 (and `bytes` is left empty), otherwise `nil` (and `bytes` is
+    /// unchanged). Once the array has grown, the string takes over its
+    /// buffer (the bytes moved up in place for the owner word); a small
+    /// array is copied. Rust's
+    /// `String::from_utf8(vec)`. A free function.
+    TakeUtf8,
+}
+
+/// What an argument of a [`StringOp`] accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StringArg {
+    /// A `String` or a `str`.
+    Text,
+    /// Any integer type (an index or a count; negative values are out of
+    /// range).
+    Integer,
+    /// A `[u8]`.
+    Bytes,
+}
+
+impl StringOp {
+    /// The method `name` of a receiver of type `receiver`, if it is a
+    /// builtin string operation.
+    pub fn method(receiver: &TyKind, name: &str) -> Option<StringOp> {
+        use StringOp::*;
+        if name == "debug_string" {
+            return Some(DebugString);
+        }
+        if name == "type_name" {
+            return Some(TypeName);
+        }
+        if name == "to_string" {
+            return matches!(
+                receiver,
+                TyKind::String | TyKind::Str | TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool
+            )
+            .then_some(ToString);
+        }
+        // A `str` has the methods too: the literal is copied into a `String`
+        // first (its own `len` is the `str` builtin, which copies nothing).
+        match receiver {
+            TyKind::String => {}
+            TyKind::Str if name != "len" => {}
+            _ => return None,
+        }
+        Some(match name {
+            "len" => Len,
+            "is_empty" => IsEmpty,
+            "char_count" => CharCount,
+            "chars" => Chars,
+            "bytes" => Bytes,
+            "byte_at" => ByteAt,
+            "find" => Find,
+            "rfind" => RFind,
+            "contains" => Contains,
+            "starts_with" => StartsWith,
+            "ends_with" => EndsWith,
+            "split" => Split,
+            "lines" => Lines,
+            "trim" => Trim,
+            "trim_start" => TrimStart,
+            "trim_end" => TrimEnd,
+            "to_upper" => ToUpper,
+            "to_lower" => ToLower,
+            "replace" => Replace,
+            "repeat" => Repeat,
+            "slice" => Slice,
+            "parse_i64" => ParseI64,
+            "parse_f64" => ParseF64,
+            "hash" => Hash,
+            "find_json_escape" => FindJsonEscape,
+            _ => return None,
+        })
+    }
+
+    /// The name a program calls this operation by.
+    pub fn name(self) -> &'static str {
+        use StringOp::*;
+        match self {
+            Len => "len",
+            IsEmpty => "is_empty",
+            CharCount => "char_count",
+            Chars => "chars",
+            Bytes => "bytes",
+            ByteAt => "byte_at",
+            Find => "find",
+            RFind => "rfind",
+            Contains => "contains",
+            StartsWith => "starts_with",
+            EndsWith => "ends_with",
+            Split => "split",
+            Lines => "lines",
+            Trim => "trim",
+            TrimStart => "trim_start",
+            TrimEnd => "trim_end",
+            ToUpper => "to_upper",
+            ToLower => "to_lower",
+            Replace => "replace",
+            Repeat => "repeat",
+            Slice => "slice",
+            ParseI64 => "parse_i64",
+            ParseF64 => "parse_f64",
+            Hash => "hash",
+            FindJsonEscape => "find_json_escape",
+            ToString => "to_string",
+            DebugString => "debug_string",
+            TypeName => "type_name",
+            FromUtf8 => "string_from_utf8",
+            TakeUtf8 => "string_take_utf8",
+        }
+    }
+
+    /// The arguments the operation takes after its receiver (for
+    /// [`StringOp::FromUtf8`], all of them).
+    pub fn args(self) -> &'static [StringArg] {
+        use StringOp::*;
+        match self {
+            Len | IsEmpty | CharCount | Chars | Bytes | Lines | Trim | TrimStart | TrimEnd
+            | ToUpper | ToLower | ParseI64 | ParseF64 | Hash | ToString | DebugString
+            | TypeName => &[],
+            ByteAt | Repeat | FindJsonEscape => &[StringArg::Integer],
+            Find | RFind | Contains | StartsWith | EndsWith | Split => &[StringArg::Text],
+            Replace => &[StringArg::Text, StringArg::Text],
+            Slice => &[StringArg::Integer, StringArg::Integer],
+            FromUtf8 | TakeUtf8 => &[StringArg::Bytes],
+        }
+    }
+
+    /// The type of the operation's result.
+    pub fn result(self) -> Ty {
+        use StringOp::*;
+        let usize_ty = || TyKind::Int(IntTy::usize()).intern();
+        match self {
+            Len | CharCount | FindJsonEscape => usize_ty(),
+            IsEmpty | Contains | StartsWith | EndsWith => TyKind::Bool.intern(),
+            Chars => TyKind::Array(TyKind::Int(IntTy::u32()).intern()).intern(),
+            Bytes => TyKind::Array(TyKind::Int(IntTy::u8()).intern()).intern(),
+            ByteAt => TyKind::Int(IntTy::u8()).intern(),
+            Find | RFind => TyKind::Optional(usize_ty()).intern(),
+            Split | Lines => TyKind::Array(TyKind::String.intern()).intern(),
+            Trim | TrimStart | TrimEnd | ToUpper | ToLower | Replace | Repeat | Slice
+            | ToString | DebugString => TyKind::String.intern(),
+            ParseI64 => TyKind::Optional(TyKind::Int(IntTy::i64()).intern()).intern(),
+            ParseF64 => TyKind::Optional(TyKind::Float(FloatTy::f64()).intern()).intern(),
+            Hash => TyKind::Int(IntTy::u64()).intern(),
+            TypeName => TyKind::Str.intern(),
+            FromUtf8 | TakeUtf8 => TyKind::Optional(TyKind::String.intern()).intern(),
+        }
+    }
+
+    /// Whether the operation allocates on the GC heap (for the effect
+    /// analysis). `to_string()` on a `String` returns it unchanged; the views
+    /// (`trim`, `slice`) share the receiver's buffer; every method of a
+    /// `str` copies it into a `String` first.
+    pub fn allocates(self, receiver: Option<&TyKind>) -> bool {
+        use StringOp::*;
+        match self {
+            Chars | Bytes | Split | Lines | ToUpper | ToLower | Replace | Repeat | FromUtf8
+            | TakeUtf8 | DebugString => true,
+            ToString => !matches!(receiver, Some(TyKind::String)),
+            TypeName => false,
+            _ => matches!(receiver, Some(TyKind::Str)),
+        }
+    }
+
+    /// Whether the operation can panic other than by running out of memory:
+    /// an out-of-range index, a slice off a character boundary, or an empty
+    /// `split` separator.
+    pub fn panics(self) -> bool {
+        matches!(self, StringOp::ByteAt | StringOp::Slice | StringOp::Split)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::utils::tests::diagnostics;
+
+    #[test]
+    fn string_programs_type_check() {
+        let diags = diagnostics(
+            r#"
+    struct Named { name: String, n: i64 }
+    func f(s: String, t: String) -> String {
+        var out = s + t + "lit" + 3.to_string() + 2.5.to_string() + true.to_string()
+        out += "x"
+        out += t
+        let parts: [String] = out.split(",")
+        let first: usize? = out.find("x")
+        let n: i64? = parts[0].parse_i64()
+        let x: f64? = parts[0].parse_f64()
+        let cs: [u32] = out.chars()
+        let bs: [u8] = out.bytes()
+        let b: u8 = out.byte_at(0)
+        let h: u64 = out.hash()
+        let ok: bool = out == t && out != "a" && out < t && "a" <= out && out.is_empty()
+        let v: String? = string_from_utf8(bs)
+        let taken: String? = string_take_utf8(bs)
+        let at: usize = out.find_json_escape(0) + out.find_json_escape(b)
+        let named = Named { name: out.trim().to_upper(), n: 1 }
+        let lit: String = "a,b".split(",")[0] + "x".repeat(2)
+        named.name.slice(0, 1).replace("a", t)
+    }
+    "#,
+        );
+        assert_eq!(diags, "", "{diags}");
+    }
+
+    #[test]
+    fn misuse_of_strings_is_reported() {
+        let diags = diagnostics(
+            r#"
+    func f(s: String) {
+        let a = s + 1
+        let b = s.find(3)
+        let c = s.split()
+        let d = s.slice(1)
+        let e = string_from_utf8(s)
+        let g = s - s
+        let h = [1].to_string()
+        let i: String = 5
+        let j: String = "converted"
+    }
+    "#,
+        );
+        let count = |needle: &str| diags.matches(needle).count();
+        assert_eq!(count("cannot apply binary operator"), 2, "{diags}");
+        assert_eq!(
+            count("`find` takes a `String` or a `str`, not `"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("takes 1 parameters but 0 parameters was supplied"),
+            1,
+            "{diags}"
+        );
+        assert_eq!(
+            count("takes 2 parameters but 1 parameters was supplied"),
+            1,
+            "{diags}"
+        );
+        assert!(
+            diags.contains("method `to_string` does not exist"),
+            "{diags}"
+        );
+        // `string_from_utf8(s)` and `let i: String = 5`; the `str` assigned
+        // to a `String` converts.
+        assert_eq!(count("mismatched type"), 2, "{diags}");
+    }
+}

@@ -17,8 +17,9 @@
 //
 //   2. `extern "C"` into libm -- for the operations LLVM has no intrinsic
 //      for. There is no hardware instruction to lose, and libm's versions
-//      are correctly rounded and well tested, which a hand-written series
-//      expansion here would not be.
+//      are accurate (within a few ulp; they are not correctly rounded) and
+//      well tested, which a hand-written series expansion here would not
+//      be.
 //
 //   3. Ordinary Codira, built from the above -- `tan` from `sin`/`cos`,
 //      `isinf` from a comparison against `inf()`.
@@ -53,9 +54,10 @@ extern "codira-intrinsic" {
     public func __intrinsic_log10_f64(x: f64) -> f64;
     public func __intrinsic_log10_f32(x: f32) -> f32;
 
-    // Rounding and sign. `round` rounds halfway cases away from zero, which
-    // is what `round` means everywhere that ships one -- `rint` would
-    // follow the current rounding mode instead.
+    // Rounding and sign. `round` rounds halfway cases away from zero, as C's
+    // `round` and Rust's `f64::round` do (Python's `round` and Julia's
+    // default `round` round them to even instead); `rint` would follow the
+    // current rounding mode.
     public func __intrinsic_floor_f64(x: f64) -> f64;
     public func __intrinsic_floor_f32(x: f32) -> f32;
     public func __intrinsic_ceil_f64(x: f64) -> f64;
@@ -117,7 +119,9 @@ extern "C" {
     public func log1p(x: f64) -> f64;
     /// `sqrt(x*x + y*y)` without the intermediate overflow.
     public func hypot(x: f64, y: f64) -> f64;
-    /// IEEE remainder: `x - round(x/y) * y`.
+    /// IEEE remainder: `x - n * y`, where `n` is `x / y` rounded to the
+    /// nearest integer with halfway cases to even (not this module's
+    /// `round`, which rounds them away from zero).
     public func remainder(x: f64, y: f64) -> f64;
     /// Multiplies `x` by 2^exp, exactly.
     public func ldexp(x: f64, exp: i32) -> f64;
@@ -336,7 +340,8 @@ public func abs_f32(x: f32) -> f32 {
     return x;
 }
 
-/// Absolute value (i32).
+/// Absolute value (i32). `abs_i32` of the minimum i32 is that minimum:
+/// the negation wraps.
 public func abs_i32(x: i32) -> i32 {
     if x < 0 {
         return -x;
@@ -344,7 +349,8 @@ public func abs_i32(x: i32) -> i32 {
     return x;
 }
 
-/// Absolute value (i64).
+/// Absolute value (i64). `abs_i64` of the minimum i64 is that minimum:
+/// the negation wraps.
 public func abs_i64(x: i64) -> i64 {
     if x < 0 {
         return -x;
@@ -599,7 +605,9 @@ public func lcm(a: i64, b: i64) -> i64 {
     return abs_i64(a / gcd(a, b) * b);
 }
 
-/// Factorial of n (n!). Panics on negative input or overflow.
+/// Factorial of n (n!). Panics on negative input. Does not detect overflow:
+/// for n > 20 the product wraps (integer arithmetic wraps) and the result
+/// is wrong.
 public func factorial(n: i64) -> i64 {
     if n < 0 {
         panic("factorial: negative input");
@@ -614,6 +622,7 @@ public func factorial(n: i64) -> i64 {
 }
 
 /// Integer power: base^exp for non-negative exp. Uses fast exponentiation.
+/// Does not detect overflow: a result outside i64 wraps.
 public func ipow(base: i64, exp: u64) -> i64 {
     var result: i64 = 1;
     var b = base;

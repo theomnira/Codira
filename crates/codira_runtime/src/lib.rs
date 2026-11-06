@@ -17,22 +17,29 @@ mod garbage_collector;
 mod adt;
 mod array;
 mod builtins;
+#[cfg(test)]
+mod catalogue_tests;
 mod dispatch_table;
 mod fn_cells;
 mod fuel;
 mod function_info;
+pub mod heap_policy;
 mod marshal;
 pub mod memtag;
 pub mod native_ai;
+mod native_array;
 pub mod native_db;
 pub mod native_fs;
 mod native_handles;
 pub mod native_hash;
+pub mod native_json;
 pub mod native_memory;
 mod native_process;
+pub mod native_random;
 pub mod native_time;
 mod reflection;
-mod tasks;
+pub mod string;
+pub mod tasks;
 mod utils;
 
 use std::{
@@ -59,14 +66,22 @@ use codira_memory::{
 // Re-export some useful types so crates dont have to depend on codira_memory as well.
 pub use codira_memory::{
     gc::{
+        format_bytes, format_duration,
         safepoint::{self, blocking, MutatorGuard},
-        CollectRefused,
+        AllocError, CollectRefused, CollectionCounts, CollectionReport, GcPolicy, PauseSummary,
     },
     Field, FieldData, HasStaticType, PointerType, StructType, Type,
 };
+
+/// Statistics of a runtime's garbage-collected heap, from
+/// [`Runtime::stats`]: its size now and at its peak, allocation totals,
+/// collections by cause, what they reclaimed, time with the world stopped,
+/// and the pause distribution. Its `Display` is the report `codira run
+/// --runtime-stats` prints.
+pub type RuntimeStats = gc::GcStats;
 use codira_project::LOCKFILE_NAME;
 use dispatch_table::DispatchTable;
-use garbage_collector::GarbageCollector;
+pub use garbage_collector::GarbageCollector;
 use log::{debug, error, info};
 use notify::{
     event::{ModifyKind, RenameMode},
@@ -84,6 +99,7 @@ pub use crate::{
     },
     marshal::Marshal,
     reflection::{ArgumentReflection, ReturnTypeReflection},
+    string::{RootedString, StringRef},
 };
 
 /// Registers the current thread as running Codira code until the guard is
@@ -114,10 +130,30 @@ pub struct RuntimeOptions {
     /// The most bytes the garbage-collected heap may hold from the system, or
     /// `None` for no limit. See [`RuntimeBuilder::heap_limit`].
     pub heap_limit: Option<usize>,
+    /// Where the heap limit came from, for the diagnostic of a failed
+    /// allocation. See [`RuntimeBuilder::heap_limit_note`].
+    pub heap_limit_note: Option<String>,
+    /// When the collector runs besides at the heap limit. See
+    /// [`RuntimeBuilder::gc_policy`].
+    pub gc_policy: GcPolicy,
+    /// Whether collections relocate objects out of sparse blocks
+    /// (experimental). See [`RuntimeBuilder::compaction`].
+    pub compaction: bool,
     /// The fuel budget of fuel-instrumented code, or `None` for no limit. See
     /// [`RuntimeBuilder::fuel`].
     pub fuel: Option<u64>,
+    /// Test-only: the GC allocation that fails, counted from 1 once the
+    /// library is loaded. See [`RuntimeBuilder::fail_nth_allocation`].
+    pub fail_nth_allocation: Option<u64>,
 }
+
+/// Environment variable that arms test-only allocation fault injection in
+/// every [`Runtime`] the process builds: set to `N`, the `N`th GC allocation
+/// after the library is loaded fails (see
+/// [`RuntimeBuilder::fail_nth_allocation`]). For fault-injection harnesses
+/// that run whole programs (`codira run`, `codira start`, standalone
+/// executables); never set it in production.
+pub const FAIL_NTH_ALLOCATION_ENV: &str = "CODIRA_TEST_FAIL_NTH_ALLOCATION";
 
 /// Retrieve the allocator using the provided handle.
 ///
@@ -157,23 +193,121 @@ extern "C" fn new(
     // `ptr::null()`.
     match allocator.as_ref().try_alloc(&type_info) {
         Ok(handle) => handle.into(),
-        Err(err) => out_of_memory(&type_info, &err),
+        Err(err) => heap_exhausted(
+            &allocator,
+            &type_info,
+            Some(type_info.value_layout().size()),
+            &err,
+        ),
     }
 }
 
-/// Ends the process when generated code cannot get memory for an object.
+/// The exit status of a program the runtime ends because it ran out of
+/// memory: an allocation would exceed the heap limit even after a full
+/// collection, or the system could not provide the memory. It sits next to
+/// a panic's 101, so a script can tell the two apart.
+pub const HEAP_EXHAUSTED_EXIT_STATUS: i32 = 102;
+
+/// Memory set aside when the first runtime starts and given back to the
+/// system allocator when one runs out of memory, so that reporting it and
+/// shutting down (formatting the diagnostic, flushing standard output,
+/// at-exit handlers) still has some even if the failure was the system
+/// allocator's. Its pages are written once, so they are really held.
+static EMERGENCY_RESERVE: parking_lot::Mutex<Option<Box<[u8]>>> = parking_lot::const_mutex(None);
+
+/// The size of [`EMERGENCY_RESERVE`].
+const EMERGENCY_RESERVE_BYTES: usize = 256 * 1024;
+
+fn ensure_emergency_reserve() {
+    let mut reserve = EMERGENCY_RESERVE.lock();
+    if reserve.is_none() {
+        let mut memory = vec![0u8; EMERGENCY_RESERVE_BYTES].into_boxed_slice();
+        for page in memory.chunks_mut(4096) {
+            // Volatile, so the writes that make the pages resident stay.
+            unsafe { std::ptr::write_volatile(page.as_mut_ptr(), 1) };
+        }
+        *reserve = Some(memory);
+    }
+}
+
+/// Formats the diagnostic of an allocation the runtime cannot satisfy.
+/// `bytes` is the size of the object, when known.
+pub(crate) fn exhaustion_message(
+    type_name: &str,
+    bytes: Option<usize>,
+    err: &gc::AllocError,
+    note: Option<&str>,
+) -> String {
+    let what = match bytes {
+        Some(bytes) => format!("`{type_name}` ({bytes} bytes)"),
+        None => format!("`{type_name}`"),
+    };
+    match err {
+        gc::AllocError::LimitExceeded {
+            limit,
+            committed,
+            requested,
+            live,
+        } => {
+            let mut message = format!(
+                "fatal: out of memory: cannot allocate {what}\n  heap limit: {limit} bytes \
+                 ({})\n  committed:  {committed} bytes; the allocation needed {requested} more\n  \
+                 live:       {live} bytes after a full collection",
+                gc::format_bytes(*limit as u64),
+            );
+            match note {
+                Some(note) => {
+                    for line in note.lines() {
+                        message.push_str("\n  ");
+                        message.push_str(line);
+                    }
+                }
+                None => {
+                    message.push_str("\n  the host set the limit with `RuntimeBuilder::heap_limit`")
+                }
+            }
+            message
+        }
+        gc::AllocError::SystemOutOfMemory { requested } => format!(
+            "fatal: out of memory: cannot allocate {what}: the system allocator could not \
+             provide {requested} bytes"
+        ),
+        gc::AllocError::TooLarge => {
+            format!("fatal: cannot allocate {what}: the object is too large to describe")
+        }
+        gc::AllocError::Injected => format!(
+            "fatal: out of memory: cannot allocate {what}: injected allocation failure \
+             ({FAIL_NTH_ALLOCATION_ENV} or `fail_nth_allocation`, test-only)"
+        ),
+    }
+}
+
+/// Ends the process when Codira code cannot get memory for an object.
 ///
 /// Generated code has no way to observe a failed allocation (it would
 /// dereference the null handle), and unwinding out of an `extern "C"`
-/// function through Codira frames is not defined, so exhaustion of a capped
-/// heap is a deterministic abort with a message that says why.
+/// function through Codira frames is not defined, so a running program
+/// that runs out of memory ends like a panic: what was printed so far is
+/// flushed, the diagnostic names the type, the size, the limit and what was
+/// live after the collection the allocation ran, and the process exits with
+/// [`HEAP_EXHAUSTED_EXIT_STATUS`]. Memory is never handed out past the
+/// limit, and the failed allocation never returns.
 #[cold]
-fn out_of_memory(ty: &Type, err: &gc::AllocError) -> ! {
+pub(crate) fn heap_exhausted(
+    gc: &GarbageCollector,
+    ty: &Type,
+    bytes: Option<usize>,
+    err: &gc::AllocError,
+) -> ! {
+    drop(EMERGENCY_RESERVE.lock().take());
+    use std::io::Write;
+    let _ignored = std::io::stdout().flush();
+    let note = gc.heap_limit_note();
     eprintln!(
-        "codira runtime: cannot allocate `{}`: {err}. Aborting.",
-        ty.name()
+        "{}",
+        exhaustion_message(&ty.name(), bytes, err, note.as_deref())
     );
-    std::process::abort()
+    std::process::exit(HEAP_EXHAUSTED_EXIT_STATUS)
 }
 
 extern "C" fn new_array(
@@ -193,8 +327,136 @@ extern "C" fn new_array(
 
     match allocator.as_ref().try_alloc_array(&type_info, length) {
         Ok(handle) => handle.as_raw().into(),
-        Err(err) => out_of_memory(&type_info, &err),
+        Err(err) => heap_exhausted(&allocator, &type_info, None, &err),
     }
+}
+
+/// Opens a region arena for a `@region` function.
+extern "C" fn region_open(alloc_handle: *mut ffi::c_void) -> *mut ffi::c_void {
+    // Safety: see `new`.
+    let allocator = ManuallyDrop::new(unsafe { get_allocator(alloc_handle) });
+    Box::into_raw(allocator.region_open()).cast()
+}
+
+/// Allocates an object with a zeroed `size`-byte payload in `region`.
+extern "C" fn region_alloc(
+    region: *mut ffi::c_void,
+    size: usize,
+    align: usize,
+    alloc_handle: *mut ffi::c_void,
+) -> *const *mut ffi::c_void {
+    // Safety: see `new`; `region` came from `region_open` and is open.
+    let allocator = ManuallyDrop::new(unsafe { get_allocator(alloc_handle) });
+    let region = unsafe { &mut *region.cast::<gc::Region>() };
+    let layout = std::alloc::Layout::from_size_align(size, align.max(1))
+        .expect("generated code passes a valid layout");
+    allocator.region_alloc(region, layout).into()
+}
+
+/// Closes `region`. With region checks on, ends the process if anything
+/// still refers into it: that would be a compiler bug, and the memory is
+/// about to be freed.
+extern "C" fn region_close(region: *mut ffi::c_void, alloc_handle: *mut ffi::c_void) {
+    // Safety: see `new`; `region` came from `region_open`, and generated
+    // code closes it exactly once.
+    let allocator = ManuallyDrop::new(unsafe { get_allocator(alloc_handle) });
+    let region = unsafe { Box::from_raw(region.cast::<gc::Region>()) };
+    if let Err(leak) = allocator.region_close(region) {
+        use std::io::Write;
+        let _ignored = std::io::stdout().flush();
+        eprintln!("fatal: {leak}");
+        std::process::abort()
+    }
+}
+
+/// Every function generated code calls on its own: `new`, `new_array` and
+/// the `codira.*` functions of `codira_abi::runtime_functions::CATALOGUE`,
+/// which lists exactly these (see `catalogue_matches_registration`). A
+/// runtime registers them in its dispatch table; the Cranelift backend
+/// resolves its imports to the same functions.
+pub fn generated_code_functions() -> Vec<FunctionDefinition> {
+    let mut functions = vec![
+        IntoFunctionDefinition::into(
+            new as extern "C" fn(*const ffi::c_void, *mut ffi::c_void) -> *const *mut ffi::c_void,
+            "new",
+        ),
+        IntoFunctionDefinition::into(
+            new_array
+                as extern "C" fn(
+                    *const ffi::c_void,
+                    usize,
+                    *mut ffi::c_void,
+                ) -> *const *mut ffi::c_void,
+            "new_array",
+        ),
+    ];
+    // The functions compiled `print`/`println` calls lower to.
+    functions.extend(builtins::definitions());
+    // Growing arrays, and the array operations generated code delegates.
+    functions.extend(native_array::functions());
+    // The functions compiled `String` operations lower to.
+    functions.extend(string::definitions());
+    // What fuel-instrumented code calls when its budget runs out
+    functions.push(IntoFunctionDefinition::into(
+        fuel::fuel_exhausted as extern "C" fn(),
+        abi::FUEL_EXHAUSTED_FN_NAME,
+    ));
+    // `scope`, `spawn` and channels.
+    functions.extend(tasks::functions());
+    // `@region` arenas.
+    functions.push(IntoFunctionDefinition::into(
+        region_open as extern "C" fn(*mut ffi::c_void) -> *mut ffi::c_void,
+        "codira.region_open",
+    ));
+    functions.push(IntoFunctionDefinition::into(
+        region_alloc
+            as extern "C" fn(
+                *mut ffi::c_void,
+                usize,
+                usize,
+                *mut ffi::c_void,
+            ) -> *const *mut ffi::c_void,
+        "codira.region_alloc",
+    ));
+    functions.push(IntoFunctionDefinition::into(
+        region_close as extern "C" fn(*mut ffi::c_void, *mut ffi::c_void),
+        "codira.region_close",
+    ));
+    // Foreign transitions around calls to `@noalloc` extern functions
+    functions.push(IntoFunctionDefinition::into(
+        gc::safepoint::codira_gc_foreign_enter as extern "C" fn(*const u8),
+        "codira.gc.foreign_enter",
+    ));
+    functions.push(IntoFunctionDefinition::into(
+        gc::safepoint::codira_gc_foreign_leave as extern "C" fn(),
+        "codira.gc.foreign_leave",
+    ));
+    functions
+}
+
+/// The native services the standard library reaches through `extern`
+/// declarations (`std/fs/fs.code`, `std/time/time.code`, ...).
+fn native_services() -> Vec<FunctionDefinition> {
+    let mut functions = Vec::new();
+    // Raw memory services for `std/memory/{region,page}.code`
+    functions.extend(native_memory::functions());
+    // File services for `std/fs/fs.code`, hashing for `std/crypto/hash.code`
+    functions.extend(native_fs::functions());
+    functions.extend(native_hash::functions());
+    // Entropy for `std/random/rng.code` and hash-table keys for
+    // `std/hashlib/hash.code`
+    functions.extend(native_random::functions());
+    // Float formatting for `std/json/json.code`
+    functions.extend(native_json::functions());
+    // Termination for `std/sys/terminate.code`, clocks and sleeping for
+    // `std/time/time.code`
+    functions.extend(native_process::functions());
+    functions.extend(native_time::functions());
+    // The storage engine for `std/db/db.code`, tensors for
+    // `std/ai/runtime.code`
+    functions.extend(native_db::functions());
+    functions.extend(native_ai::functions());
+    functions
 }
 
 /// A builder for the [`Runtime`].
@@ -212,7 +474,11 @@ impl RuntimeBuilder {
                 type_table: TypeTable::default(),
                 user_functions: Vec::default(),
                 heap_limit: None,
+                heap_limit_note: None,
+                gc_policy: GcPolicy::default(),
+                compaction: false,
                 fuel: None,
+                fail_nth_allocation: None,
             },
         }
     }
@@ -229,20 +495,70 @@ impl RuntimeBuilder {
     }
 
     /// Caps the bytes the garbage-collected heap may hold from the system.
+    /// Without a call there is no cap (`codira run` and the other commands
+    /// of the `codira` tool always set one; see [`heap_policy`]).
     ///
     /// When an allocation would exceed the cap, the collector runs first and
     /// the allocation is retried. That collection stops the world like
-    /// [`Runtime::gc_collect`]: every thread running Codira code parks at a
-    /// safepoint and its stack is scanned conservatively (generated code has
-    /// no stack maps), the allocating thread's included. If the memory still
-    /// is not there, the process aborts with a message naming the type and
-    /// the limit.
+    /// [`Runtime::collect_blocking`]: every thread running Codira code parks
+    /// at a safepoint and its stack is scanned conservatively (generated code
+    /// has no stack maps), the allocating thread's included. If the memory
+    /// still is not there, an allocation by Codira code ends the process with
+    /// a diagnostic and exit status [`HEAP_EXHAUSTED_EXIT_STATUS`]; one made
+    /// through the collector's `try_alloc` API returns
+    /// [`AllocError::LimitExceeded`].
     ///
     /// This is a cap on the GC heap only, not a memory quota for the program:
     /// raw allocations (`codira_alloc`, region arenas, OS pages) and the
     /// runtime's own bookkeeping are not counted.
     pub fn heap_limit(mut self, bytes: usize) -> Self {
         self.options.heap_limit = Some(bytes);
+        self
+    }
+
+    /// Says where the heap limit came from and how to change it, in words
+    /// for the user of the program. It is printed, one line per line, with
+    /// the diagnostic of an allocation that fails at the limit.
+    pub fn heap_limit_note(mut self, note: impl Into<String>) -> Self {
+        self.options.heap_limit_note = Some(note.into());
+        self
+    }
+
+    /// Sets when the collector runs besides at the heap limit (pacing), and
+    /// how collections requested from outside share time with Codira code.
+    /// The default paces at 100% growth over the live data, from 4 MiB; see
+    /// [`GcPolicy`].
+    pub fn gc_policy(mut self, policy: GcPolicy) -> Self {
+        self.options.gc_policy = policy;
+        self
+    }
+
+    /// Sets pacing's growth percentage (see [`GcPolicy::growth_percent`]),
+    /// keeping the rest of the policy; `None` collects only at the heap
+    /// limit and on request.
+    pub fn gc_growth(mut self, percent: Option<u32>) -> Self {
+        self.options.gc_policy.growth_percent = percent;
+        self
+    }
+
+    /// **Test-only fault injection.** Makes the `n`th GC allocation after
+    /// the library is loaded fail, as if the heap had no memory left (`n`
+    /// counts from 1; see `MarkSweep::fail_nth_allocation` for what counts).
+    /// Generated code then takes the runtime's out-of-memory exit, exactly as
+    /// for an exhausted heap limit; the host API returns or reports the
+    /// error. Overrides [`FAIL_NTH_ALLOCATION_ENV`].
+    pub fn fail_nth_allocation(mut self, n: u64) -> Self {
+        self.options.fail_nth_allocation = Some(n);
+        self
+    }
+
+    /// Turns on relocation (experimental, also `CODIRA_GC_COMPACT=1`): a
+    /// collection moves the live objects out of size-class blocks that are
+    /// at most a quarter full and releases the blocks. Objects a stack, a
+    /// root or a pin refers to never move. See
+    /// `codira_memory::gc::MarkSweep::set_compaction`.
+    pub fn compaction(mut self, on: bool) -> Self {
+        self.options.compaction = on;
         self
     }
 
@@ -347,50 +663,10 @@ impl Runtime {
         let mut dispatch_table = DispatchTable::default();
         let type_table = options.type_table;
 
-        // Add internal functions
-        options.user_functions.push(IntoFunctionDefinition::into(
-            new as extern "C" fn(*const ffi::c_void, *mut ffi::c_void) -> *const *mut ffi::c_void,
-            "new",
-        ));
-
-        options.user_functions.push(IntoFunctionDefinition::into(
-            new_array
-                as extern "C" fn(
-                    *const ffi::c_void,
-                    usize,
-                    *mut ffi::c_void,
-                ) -> *const *mut ffi::c_void,
-            "new_array",
-        ));
-
-        // The functions compiled `print`/`println` calls lower to.
-        options.user_functions.extend(builtins::definitions());
-
-        // Raw memory services for `std/memory/{region,page}.code`
-        options.user_functions.extend(native_memory::functions());
-
-        // File services for `std/fs/fs.code`, hashing for `std/crypto/hash.code`
-        options.user_functions.extend(native_fs::functions());
-        options.user_functions.extend(native_hash::functions());
-
-        // Termination for `std/sys/terminate.code`, clocks and sleeping for
-        // `std/time/time.code`
-        options.user_functions.extend(native_process::functions());
-        options.user_functions.extend(native_time::functions());
-
-        // The storage engine for `std/db/db.code`, tensors for
-        // `std/ai/runtime.code`
-        options.user_functions.extend(native_db::functions());
-        options.user_functions.extend(native_ai::functions());
-
-        // What fuel-instrumented code calls when its budget runs out
-        options.user_functions.push(IntoFunctionDefinition::into(
-            fuel::fuel_exhausted as extern "C" fn(),
-            abi::FUEL_EXHAUSTED_FN_NAME,
-        ));
-
-        // `scope`, `spawn` and channels.
-        options.user_functions.extend(tasks::functions());
+        // What generated code calls, then the native services the standard
+        // library declares `extern`.
+        options.user_functions.extend(generated_code_functions());
+        options.user_functions.extend(native_services());
 
         options.user_functions.into_iter().for_each(|fn_def| {
             dispatch_table.insert_fn(fn_def.prototype.name.clone(), Arc::new(fn_def));
@@ -421,8 +697,35 @@ impl Runtime {
             fn_cells: fn_cells::FnCells::default(),
         };
         runtime.gc.set_heap_limit(options.heap_limit);
+        runtime.gc.set_heap_limit_note(options.heap_limit_note);
+        runtime.gc.set_policy(options.gc_policy);
+        ensure_emergency_reserve();
+        if options.compaction {
+            runtime.gc.set_compaction(true);
+        }
+        if gc::frames::stress() {
+            // Stress mode: polls of compiled code collect too.
+            let collector = Arc::downgrade(&runtime.gc);
+            gc::frames::add_stress_collector(Arc::new(move |collect| {
+                collector.upgrade().is_some_and(|collector| {
+                    if collect {
+                        collector.stress_collect();
+                    }
+                    true
+                })
+            }));
+        }
 
         runtime.add_assembly(&options.library_path)?;
+
+        let fail_nth_allocation = options.fail_nth_allocation.or_else(|| {
+            std::env::var(FAIL_NTH_ALLOCATION_ENV)
+                .ok()
+                .and_then(|value| value.trim().parse().ok())
+        });
+        if fail_nth_allocation.is_some() {
+            runtime.gc.fail_nth_allocation(fail_nth_allocation);
+        }
         Ok(runtime)
     }
 
@@ -681,9 +984,16 @@ impl Runtime {
         self.gc.as_ref()
     }
 
+    /// What the region arenas of `@region` functions did: regions opened
+    /// and closed, the objects and bytes allocated in them, and the chunks
+    /// registered with the collector now.
+    pub fn region_stats(&self) -> gc::RegionStats {
+        self.gc.region_stats()
+    }
+
     /// Collects all memory that is no longer referenced by rooted objects or
-    /// by a thread running Codira code. Returns `true` if memory was
-    /// reclaimed, `false` otherwise.
+    /// by a thread running Codira code, and returns what was reclaimed once
+    /// the collection is done.
     ///
     /// Safe to call from any thread, including while other threads run
     /// Codira code: the collection asks every such thread to stop at its
@@ -693,8 +1003,35 @@ impl Runtime {
     /// longest stretch of Codira code that neither allocates nor blocks.
     /// Called from a host function that Codira code called, it scans the
     /// calling thread's Codira frames too.
-    pub fn gc_collect(&self) -> bool {
-        self.gc.collect()
+    ///
+    /// It is fair to Codira code: when another thread is inside Codira code,
+    /// it first waits (parked) until that code has run for the
+    /// [`GcPolicy`]'s mutator window since the previous collection, so a host
+    /// thread calling it in a loop cannot starve Codira threads; and a call
+    /// is folded into a collection another thread starts after it.
+    /// [`Runtime::request_collection`] asks without waiting.
+    pub fn collect_blocking(&self) -> Result<CollectionReport, CollectRefused> {
+        self.gc.collect_blocking()
+    }
+
+    /// Asks for a collection and returns at once: `true` if this call queued
+    /// a request, `false` if one was already pending (requests coalesce).
+    /// The collection runs on a thread of the collector's own once Codira
+    /// code has had its mutator window (see
+    /// [`Runtime::collect_blocking`]); [`RuntimeStats::collections`] counts
+    /// the requests served.
+    pub fn request_collection(&self) -> bool {
+        self.gc.request_collection()
+    }
+
+    /// Returns the statistics of the garbage-collected heap: its size now
+    /// and at its peak, the bytes and objects allocated, collections by
+    /// cause, what they reclaimed, the time spent with the world stopped and
+    /// the pause distribution. Counting is always on; it costs two
+    /// thread-local counter updates per allocation and a few clock readings
+    /// per collection.
+    pub fn stats(&self) -> RuntimeStats {
+        self.gc.heap_stats()
     }
 
     /// Returns the fuel left for fuel-instrumented code, or `None` if it is

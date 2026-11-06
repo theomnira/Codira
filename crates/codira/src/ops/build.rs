@@ -99,6 +99,21 @@ pub struct Args {
     #[clap(long, conflicts_with_all = ["watch", "daemon"])]
     no_hot_reload: bool,
 
+    /// EXPERIMENTAL: place class instances and array literals of at most 16
+    /// elements that the escape analysis proves never outlive their call in
+    /// the stack frame instead of the GC heap. `--explain-alloc` shows which
+    /// ones and why the others stay on the heap.
+    #[clap(long, conflicts_with_all = ["watch", "daemon"])]
+    frame_alloc: bool,
+
+    /// Print every allocation site of the package with its source location
+    /// and where its object lives: moved to the stack (with
+    /// `--frame-alloc`), or on the heap and why (`escapes: returned from
+    /// `make``, `escapes: stored into field `items` of a heap object`, ..).
+    /// From the escape analysis, not an estimate.
+    #[clap(long, conflicts_with_all = ["watch", "daemon"])]
+    explain_alloc: bool,
+
     /// Write a proof certificate next to every library
     /// (`<library>.cert.json`): each function's verified obligations as
     /// SMT-LIB2 queries, with hashes of its source and machine code.
@@ -301,6 +316,10 @@ pub fn build(args: Args) -> Result<ExitStatus, anyhow::Error> {
             driver.set_check_constant_time(args.check_constant_time);
             driver.set_superoptimize(args.superoptimize);
             driver.set_hardware_safety(safety);
+            driver.set_frame_allocation(args.frame_alloc);
+            if args.explain_alloc {
+                print!("{}", driver.allocation_report());
+            }
         },
     )? {
         return Ok(ExitStatus::Error);

@@ -70,13 +70,13 @@ fn trace_collect() {
     }
 
     // Collect garbage, bar should not be collected
-    runtime.collect();
+    runtime.collect_blocking().unwrap();
 
     // Drop foo
     let foo_instance = foo_ptr.unroot();
 
     // Collect garbage, both foo and bar should be collected
-    runtime.collect();
+    runtime.collect_blocking().unwrap();
 
     let mut events = runtime.observer().take_all().into_iter();
     assert_eq!(events.next(), Some(Event::Allocation(foo_instance)));
@@ -109,13 +109,13 @@ fn trace_cycle() {
     }
 
     // Collect garbage, nothing should be collected since foo is rooted
-    runtime.collect();
+    runtime.collect_blocking().unwrap();
 
     // Drop foo
     let unrooted_foo = foo_ptr.unroot();
 
     // Collect garbage, foo should be collected
-    runtime.collect();
+    runtime.collect_blocking().unwrap();
 
     let mut events = runtime.observer().take_all().into_iter();
     assert_eq!(events.next(), Some(Event::Allocation(unrooted_foo)));

@@ -325,7 +325,7 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
         // If this expression is a call, store it in the dispatch table. A
         // builtin call has no callee definition: its runtime functions are
         // intrinsics, collected by `ir::intrinsics`.
-        if infer.builtin_call(expr_id).is_some() {
+        if infer.builtin_call(expr_id).is_some() || infer.is_field_call(expr_id) {
         } else if let Expr::Call { callee, .. } = expr {
             match infer[*callee].as_callable_def() {
                 Some(codira_hir::CallableDef::Function(def)) => {
@@ -365,10 +365,36 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
                 None if infer.is_indirect_call(expr_id) => (),
                 None => panic!("expected a callable expression"),
             }
+        } else if let Expr::MethodCall { .. } = expr {
+            // A method or an associated function of another module's type is
+            // linked like a free function: `p.describe()`, `Point.origin()`.
+            if let Some(def) = infer
+                .method_resolution(expr_id)
+                .map(codira_hir::Function::from)
+            {
+                self.collect_callee(def);
+            }
         }
 
         // Recurse further
         expr.walk_child_exprs(|expr_id| self.collect_expr(expr_id, body, infer));
+    }
+
+    /// Adds a slot for `def`, a function generated code calls, when it is
+    /// called through the table: not an intrinsic, an `@asm` function, a
+    /// generic one (instantiated here) or a copy this group emits.
+    pub fn collect_callee(&mut self, def: codira_hir::Function) {
+        let local = def.is_intrinsic(self.db)
+            || def.is_inline_asm(self.db)
+            || def.is_generic(self.db)
+            || self.local_copies.contains(&def);
+        if !local && self.module_group.should_runtime_link_fn(self.db, def) {
+            let fn_module = def.module(self.db);
+            if !def.is_extern(self.db) && !self.module_group.contains(fn_module) {
+                self.referenced_modules.insert(fn_module);
+            }
+            self.collect_fn_def(def);
+        }
     }
 
     /// Adds the two entries of every function-value target (see
@@ -457,7 +483,7 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
             let name = if function.is_extern(self.db) {
                 function.name(self.db).to_string()
             } else {
-                function.full_name(self.db)
+                function.link_name(self.db)
             };
             let hir_type = function.ty(self.db);
             let sig = hir_type.callable_sig(self.db).unwrap();
@@ -506,6 +532,20 @@ impl<'db, 'ink, 't> DispatchTableBuilder<'db, 'ink, 't> {
     /// type inference result.
     pub fn collect_body(&mut self, body: &Arc<Body>, infer: &InferenceResult) {
         self.collect_expr(body.body_expr(), body, infer);
+        // A loop over an iterator object calls its `next` (see
+        // `body::pipelines`), like a call written out would.
+        for (_, next) in infer.iterator_nexts() {
+            if next.is_generic(self.db) || self.local_copies.contains(&next) {
+                continue;
+            }
+            if self.module_group.should_runtime_link_fn(self.db, next) {
+                let fn_module = next.module(self.db);
+                if !self.module_group.contains(fn_module) {
+                    self.referenced_modules.insert(fn_module);
+                }
+                self.collect_fn_def(next);
+            }
+        }
     }
 
     /// Records the functions of other modules this group emits a copy of,

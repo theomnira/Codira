@@ -1,0 +1,142 @@
+// AURORA: object graphs. Many small objects allocated and dropped: binary
+// trees built and walked (most die young, one lives throughout), and
+// graphs whose edges form cycles, built, searched and dropped again and
+// again. Codira collects them; `graph.rs` uses `Box` for the trees and
+// `Rc` nodes (a `Cell` mark, a `RefCell` edge list) for the graphs (whose cycles it breaks by hand before
+// dropping, or they would leak); `graph.cpp` uses `std::unique_ptr` for the
+// trees and individually allocated nodes owned by a vector, edges as plain
+// pointers, for the graphs. The same shapes, the same check values.
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+class Rng { s: u64 }
+
+func next(r: Rng) -> u64 {
+    var x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+class Tree { left: Tree?, right: Tree? }
+
+func bottom_up(depth: i64) -> Tree {
+    if depth > 0 {
+        Tree { left: bottom_up(depth - 1), right: bottom_up(depth - 1) }
+    } else {
+        Tree { left: nil, right: nil }
+    }
+}
+
+func count(t: Tree) -> i64 {
+    if let l = t.left {
+        if let r = t.right { return 1 + count(l) + count(r) }
+    }
+    1
+}
+
+// The binary-trees shape at depth 16: a long-lived tree, and for each
+// depth 4, 6, .., 16, 2^(20 - depth) trees built, counted and dropped.
+public func binary_trees() {
+    let max_depth: i64 = 16
+    let start = now()
+    let long_lived = bottom_up(max_depth)
+    var check: i64 = 0
+    var depth: i64 = 4
+    while depth <= max_depth {
+        let iterations = 1 << (max_depth - depth + 4)
+        var i = 0
+        while i < iterations {
+            check += count(bottom_up(depth))
+            i += 1
+        }
+        depth += 2
+    }
+    check += count(long_lived)
+    report(start, check as u64)
+}
+
+class Node { id: i64, mark: i64, edges: [Node] }
+
+// 40 rounds: a graph of 20,000 nodes with 4 random out-edges each (so
+// full of cycles) is built, searched depth-first from node 0, and dropped.
+public func cyclic_graph() {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let n: usize = 20000
+    let start = now()
+    var check: u64 = 0
+    var round: i64 = 0
+    while round < 40 {
+        let nodes: [Node] = []
+        var i: usize = 0
+        while i < n {
+            nodes.push(Node { id: i as i64, mark: -1, edges: [] })
+            i += 1
+        }
+        for node in nodes {
+            var e = 0
+            while e < 4 {
+                node.edges.push(nodes[(next(r) % (n as u64)) as usize])
+                e += 1
+            }
+        }
+        let stack: [Node] = [nodes[0]]
+        nodes[0].mark = round
+        var visited: u64 = 0
+        var sum: u64 = 0
+        while let top = stack.pop() {
+            visited += 1
+            sum += top.id as u64
+            for next_node in top.edges {
+                if next_node.mark != round {
+                    next_node.mark = round
+                    stack.push(next_node)
+                }
+            }
+        }
+        check += visited * 1000000 + sum % 1000000
+        round += 1
+    }
+    report(start, check)
+}
+
+// A doubly linked list of 1M nodes (each node a cycle with its
+// neighbours), walked both ways, 10 times over.
+class Link { value: i64, prev: Link?, next: Link? }
+
+public func linked_list() {
+    let start = now()
+    var check: u64 = 0
+    var round = 0
+    while round < 10 {
+        let head = Link { value: 0, prev: nil, next: nil }
+        var tail = head
+        var i: i64 = 1
+        while i < 1000000 {
+            let node = Link { value: i, prev: tail, next: nil }
+            tail.next = node
+            tail = node
+            i += 1
+        }
+        var forward: u64 = 0
+        var at: Link? = head
+        while let node = at { forward += node.value as u64; at = node.next }
+        var backward: u64 = 0
+        at = tail
+        while let node = at { backward += (node.value as u64) & 255; at = node.prev }
+        check += forward + backward
+        round += 1
+    }
+    report(start, check)
+}

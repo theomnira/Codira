@@ -155,7 +155,11 @@ pub trait HirDatabase: DefDatabase {
     fn lower_enum(&self, def: crate::code_model::Enum) -> Arc<LowerTyMap>;
 
     #[salsa::invoke(crate::code_model::EnumLayout::enum_layout_query)]
-    fn enum_layout(&self, def: crate::code_model::Enum) -> Arc<crate::code_model::EnumLayout>;
+    fn enum_layout(
+        &self,
+        def: crate::code_model::Enum,
+        args: crate::ty::Substitution,
+    ) -> Arc<crate::code_model::EnumLayout>;
 
     #[salsa::invoke(crate::ty::callable_item_sig)]
     fn callable_sig(&self, def: CallableDef) -> FnSig;
@@ -207,6 +211,27 @@ pub trait HirDatabase: DefDatabase {
     /// with the chain of calls that explains each. See `crate::realtime`.
     #[salsa::invoke(crate::realtime::effect_summary_query)]
     fn effect_summary(&self, func: Function) -> Arc<crate::realtime::EffectSummary>;
+
+    /// The functions whose escape summaries the escape analysis of `func`
+    /// reads (its named callees in the same module). See `crate::escape`.
+    #[salsa::invoke(crate::escape::escape_callees_query)]
+    fn escape_callees(&self, func: Function) -> Arc<Vec<Function>>;
+
+    /// What a call to `func` does with each argument -- keeps it, returns
+    /// it, or neither -- through everything it calls, recursion included.
+    /// See `crate::escape`.
+    #[salsa::invoke(crate::escape::escape_summary_query)]
+    fn escape_summary(&self, func: Function) -> Arc<crate::escape::EscapeSummary>;
+
+    /// Every allocation of `func`'s body, whether it may live in the
+    /// function's stack frame, and why not. See `crate::escape`.
+    #[salsa::invoke(crate::escape::escape_analysis_query)]
+    fn escape_analysis(&self, func: Function) -> Arc<crate::escape::FunctionEscapes>;
+
+    /// Where the `String` values of `func`'s body go: which may be kept
+    /// past the call. See `crate::string_escape`.
+    #[salsa::invoke(crate::string_escape::string_flows_query)]
+    fn string_flows(&self, func: Function) -> Arc<crate::string_escape::StringFlows>;
 
     #[salsa::invoke(crate::mir_lower::mir_generator_query)]
     fn mir_generator(&self, func: Function) -> Option<Arc<codira_mir::Generator>>;

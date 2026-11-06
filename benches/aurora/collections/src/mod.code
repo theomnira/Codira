@@ -1,0 +1,152 @@
+// AURORA: arrays and pipelines. Pushing, summing and sorting growable
+// arrays, and eager and lazy pipelines over 10M elements, against
+// `collections.rs` (`Vec`, iterators) and `collections.cpp` (`std::vector`,
+// `std::ranges` views). Folds in `examples/collections_bench` (the array
+// part; maps are the `hashmap` workload) and `examples/pipelines_bench`.
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+class Rng { s: u64 }
+
+func next(r: Rng) -> u64 {
+    var x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+func N() -> i64 { 10000000 }
+
+// 0, 1, .., N - 1
+func iota() -> [i64] {
+    let xs: [i64] = []
+    xs.reserve(N() as usize)
+    for i in 0..N() { xs.push(i) }
+    xs
+}
+
+// N random values below 1000.
+func randoms() -> [i64] {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let rs: [i64] = []
+    for _ in 0..N() { rs.push((next(r) % 1000) as i64) }
+    rs
+}
+
+// N random floats in [0, 1).
+func floats(seed: u64) -> [f64] {
+    let r = Rng { s: seed }
+    let fs: [f64] = []
+    for _ in 0..N() { fs.push((next(r) >> 11) as f64 / 9007199254740992.0) }
+    fs
+}
+
+// 10M pushes onto an empty array (no `reserve`).
+public func push_10m() {
+    let start = now()
+    let xs: [i64] = []
+    for i in 0..N() { xs.push(i) }
+    report(start, xs.len() as u64)
+}
+
+public func sum_for() {
+    let xs = iota()
+    let start = now()
+    var s: i64 = 0
+    for x in xs { s += x }
+    report(start, s as u64)
+}
+
+// 1M random `i64`, sorted in place (unstable).
+public func sort_1m() {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let ys: [i64] = []
+    for _ in 0..1000000 { ys.push((next(r) >> 1) as i64) }
+    let start = now()
+    ys.sort()
+    report(start, ys[500000] as u64)
+}
+
+public func map_filter_sum_eager() {
+    let xs = iota()
+    let start = now()
+    let s = xs.map(func(x) { x * 2 }).filter(func(x) { x % 3 == 0 }).sum()
+    report(start, s as u64)
+}
+
+public func map_filter_sum_lazy() {
+    let xs = iota()
+    let start = now()
+    let s = xs.iter().map(func(x) { x * 2 }).filter(func(x) { x % 3 == 0 }).sum()
+    report(start, s as u64)
+}
+
+public func map_filter_sum_fold() {
+    let xs = iota()
+    let start = now()
+    let s = xs.fold(0, func(acc, x) { if (x * 2) % 3 == 0 { acc + x * 2 } else { acc } })
+    report(start, s as u64)
+}
+
+public func enumerate_filter_count() {
+    let rs = randoms()
+    let start = now()
+    let c = rs.iter().enumerate().filter(func(p) { (p.0 as i64 + p.1) % 5 == 0 }).count()
+    report(start, c as u64)
+}
+
+public func zip_fold_dot() {
+    let fs = floats(0x9E3779B97F4A7C15)
+    let gs = floats(0x2545F4914F6CDD1D)
+    let start = now()
+    let c = fs.iter().zip(gs).fold(0.0, func(acc, p) { acc + p.0 * p.1 })
+    report(start, (c * 1000.0) as u64)
+}
+
+public func take_while_sum() {
+    let xs = iota()
+    let n = N()
+    let start = now()
+    let d = xs.iter().take_while(func(x) { x < n - 1000 }).sum()
+    report(start, d as u64)
+}
+
+public func map_collect() {
+    let xs = iota()
+    let start = now()
+    let e = xs.iter().map(func(x) { x * 3 + 1 }).collect()
+    report(start, (e[e.len() / 2] + e.len() as i64) as u64)
+}
+
+public func filter_collect() {
+    let rs = randoms()
+    let start = now()
+    let f = rs.iter().filter(func(x) { x % 3 == 0 }).collect()
+    report(start, (f[f.len() / 2] + f.len() as i64) as u64)
+}
+
+public func range_filter_map_sum() {
+    let n = N()
+    let start = now()
+    let g = (0..n).filter(func(i) { i % 3 == 0 }).map(func(i) { i ^ (i >> 3) }).sum()
+    report(start, g as u64)
+}
+
+public func chain_filter_count() {
+    let xs = iota()
+    let rs = randoms()
+    let start = now()
+    let h = xs.iter().chain(rs).filter(func(x) { x % 7 == 1 }).count()
+    report(start, h as u64)
+}

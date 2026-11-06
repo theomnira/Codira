@@ -1,0 +1,98 @@
+# The AURORA benchmark regression gate: the CI subset of the suite
+# (`benches/aurora/suite.toml`, kernels marked `ci = true`) compared with the
+# stored baseline by `scripts/bench.py`, which fails on a statistically
+# significant regression (see "The regression gate" in
+# benches/aurora/README.md). Opt-in and weekly, so that the main CI does not
+# slow down: run it from the Actions tab, or wait for Sunday.
+#
+# `save_baseline` writes a fresh baseline from this run instead of gating,
+# and uploads it with the results; commit it as
+# benches/aurora/baseline/ci.json to adopt it. A baseline from another
+# machine class is not compared: the step ends with a warning ("no
+# comparable baseline") instead of a pass or a fail.
+
+name: AURORA benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "ci (the gate's subset, a few minutes) or full"
+        default: ci
+        type: choice
+        options: [ci, full]
+      save_baseline:
+        description: "Write a new baseline from this run instead of gating"
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 3 * * 0"
+
+concurrency:
+  group: aurora-bench
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_RELEASE_DEBUG: 0
+
+jobs:
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust (stable)
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          override: true
+
+      - name: Install LLVM
+        uses: ./.github/actions/install-llvm
+
+      - name: Install Z3
+        uses: ./.github/actions/install-z3
+
+      - name: Install clang 22, RapidJSON and perf
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
+          echo "deb http://apt.llvm.org/noble/ llvm-toolchain-noble-22 main" | sudo tee /etc/apt/sources.list.d/llvm-22.list
+          sudo apt-get update
+          sudo apt-get install -y clang-22 rapidjson-dev linux-tools-common linux-tools-generic
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build codira (release)
+        run: cargo build --release -p codira
+
+      - name: Run the suite
+        run: |
+          args=(--suite "${{ inputs.suite || 'ci' }}" --out bench-out --cxx clang++-22)
+          if [ "${{ inputs.save_baseline }}" = "true" ]; then
+            args+=(--save-baseline bench-out/ci.json)
+          else
+            args+=(--baseline benches/aurora/baseline/ci.json)
+          fi
+          status=0
+          python3 scripts/bench.py "${args[@]}" || status=$?
+          if [ "$status" -eq 4 ]; then
+            # The stored baseline is from another machine class: nothing was
+            # compared, which is neither a pass nor a fail.
+            echo "::warning title=AURORA gate::No comparable baseline for this runner's machine class; run with save_baseline to make one."
+            exit 0
+          fi
+          exit "$status"
+
+      - name: Summary
+        if: always()
+        run: cat bench-out/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aurora-bench-${{ github.run_id }}
+          path: bench-out/

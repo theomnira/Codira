@@ -5,51 +5,20 @@
 // Represents either a present value (Some) or absence (None). Eliminates
 // null-pointer errors by making absence explicit in the type system.
 //
-// Migration note (2026-08-20): rewritten from the pre-redesign syntax
-// (`struct Optional[T]`) to the current grammar
-// (spec/LANGUAGE_SPEC.md) -- verified to parse cleanly via
-// codira_syntax::SourceFile::parse (zero SyntaxErrors). Three things
-// changed versus a naive re-spelling of the original file, each found by
-// actually running the parser rather than assumed:
+// Prefer the language's own optional types (`T?`, `nil`, `if let`, postfix
+// `!`): they need no import, allocate nothing and are checked exhaustive in
+// `match`. This module is a library spelling of the same idea, from before
+// `T?` existed, and will be retired once generic enums give `Option[T]` a
+// proper definition (see std/ARCHITECTURE.md).
 //
-// 1. Every higher-order method (`map`, `and_then`, `or_else`, `filter_opt`,
-//    `map_or`, `map_or_else`, `unwrap_or_else`) took a `func(T) -> U`-typed
-//    parameter. Codira has no first-class function-value/closure type at
-//    all (agents/RUST_TO_CODIRA_MIGRATION.md §7: "No evidence of closures,
-//    Fn/FnMut/FnOnce... was found anywhere in the grammar"), so there is no
-//    honest current-syntax spelling for these -- they are omitted rather
-//    than translated to something that only looks like it works.
-// 2. All functions take `opt` (not `self`) as an ordinary first parameter.
-//    `self: Type` with an explicit type ascription is NOT valid outside a
-//    method-receiver position -- the grammar's self-param production has no
-//    `: Type` form for a plain top-level function (confirmed empirically:
-//    `func f(self: T) -> T` fails to parse with "expected value parameter"
-//    even though `func f(x: T) -> T` parses fine). This corrects a mistake
-//    in this file's first migration pass this session.
-// 3. Struct-literal construction of a generic type must omit the explicit
-//    `[T]` argument list -- `Optional[T] { value: v, has_value: true }`
-//    does not parse ("expected expression" right after `Optional[T]`), but
-//    `Optional { value: v, has_value: true }` (relying on inference) does.
-//    Explicit generic type arguments are only legal in type position, not
-//    at a construction call site (consistent with USING_CODIRA.md §8's "no
-//    turbofish" rule, just not spelled out for record literals specifically
-//    until this was checked directly).
-//
-// `struct Optional[T]` is `struct` by default (value type) in the current
-// grammar -- the old `struct(value)`/`struct(gc)` memory-kind annotation no
-// longer exists (agents/RUST_TO_CODIRA_MIGRATION.md §1). Generics (`[T]`)
-// are parser-verified only, not yet codegen-verified end to end -- see
-// spec/KGEN_SUPERSET_ARCHITECTURE.md for the work in progress to close that
-// gap, and spec/KGEN_SUPERSET_STATUS.md for this session's overall status.
-// Associated/instance-call syntax (`opt.unwrap()`) is not confirmed to
-// resolve for free functions outside `extend` either, so callers should use
-// ordinary call syntax, e.g. `unwrap(my_optional)`.
-//
-// The language now has optional types of its own (`T?`, `nil`, `if let`),
-// which are what new code should use; this module is the library spelling.
-// `unwrap` and `expect` call `panic`, and `std.sys.terminate` cannot be
-// built until the code generator compiles functions returning `Never`, so
-// until then this module checks when imported but does not build.
+// What it is and is not, today:
+// - Free functions taking the optional as their first parameter
+//   (`unwrap(opt)`), not methods.
+// - `none` takes a placeholder payload (`none(0)`): a struct always holds a
+//   `T`, and there is no way to make a zero value of an arbitrary `T`.
+// - No combinators taking a function (`map`, `and_then`, `unwrap_or_else`):
+//   closures exist and would work here, and these are simply not written.
+// - `unwrap` and `expect` call `panic` (std.sys.terminate).
 // =============================================================================
 
 // No standard-library module relies on the prelude; each imports what it
@@ -155,10 +124,26 @@ public func flatten[T](opt: Optional[Optional[T]], default: T) -> Optional[T] {
     }
 }
 
-// `replace`/`take` (returning both the updated Optional and the old one)
-// are omitted: they need a 2-tuple return type, and there is no anonymous
-// tuple *type* syntax in the current grammar to spell `(Optional[T],
-// Optional[T])` as a return type -- confirmed empirically (checked with
-// codira_syntax::SourceFile::parse: "expected type" right after the `->`).
-// `std/builtin/tuple.code` has a `Tuple` value type, but wiring a
-// two-result API through it is future work, not a same-session rename.
+// `replace`/`take` (returning both the updated Optional and the old one,
+// as a tuple `(Optional[T], Optional[T])`, which the language supports) are
+// not written.
+
+// ── To and from the language's optionals ───────────────────────────────────
+
+// The value as a `T?`: `nil` when none is present.
+public func to_native[T](opt: Optional[T]) -> T? {
+    if opt.has_value {
+        opt.value
+    } else {
+        nil
+    }
+}
+
+// A `T?` as an Optional (`default` stands in for the unused payload, see
+// `none[T]` above).
+public func from_native[T](value: T?, default: T) -> Optional[T] {
+    match value {
+        nil -> none(default),
+        present -> some(present),
+    }
+}

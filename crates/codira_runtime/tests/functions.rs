@@ -127,3 +127,21 @@ fn multiple_match_exists_function() {
         )
     );
 }
+
+/// Unary `-` wraps at the type's width on unsigned integers too, as the
+/// language reference says and the Cranelift backend did; the LLVM backend
+/// stopped with "not implemented". Found by the compiler fuzzer.
+#[test]
+fn negating_an_unsigned_integer_wraps() {
+    let driver = CompileAndRunTestDriver::new(
+        r"
+    public func neg8(x: u8) -> u8 { -x }
+    public func neg64(x: u64) -> u64 { -x }
+    ",
+        |builder| builder,
+    )
+    .expect("Failed to build test driver");
+    assert_invoke_eq!(u8, 253, driver, "neg8", 3u8);
+    assert_invoke_eq!(u8, 0, driver, "neg8", 0u8);
+    assert_invoke_eq!(u64, u64::MAX, driver, "neg64", 1u64);
+}

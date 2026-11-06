@@ -1,0 +1,150 @@
+// std/cmp/cmp.code
+// Equality and ordering as traits, for generic code: `Eq` (`a.eq(b)`) and
+// `Ord` (`a.lt(b)`), implemented here for every integer and float type,
+// `bool` and `str`.
+//
+// Operators are not resolved through traits (`a == b` on a type parameter
+// is a type error), so generic code calls these methods instead: a function
+// `func find[T: Eq](xs: [T], x: T)` calls `x.eq(xs[i])`. Every call is
+// resolved per instantiation, so `i64.eq` compiles to one compare.
+//
+// Floats follow IEEE 754: `nan.eq(nan)` is false and `nan.lt(x)` is false
+// for every `x`, so a float key that is NaN is never found again in a
+// `Map` or `Set`.
+//
+// A struct, class or enum implements them in its own package:
+// `extend Point: Eq { func eq(self, other: Point) -> bool { .. } }`.
+
+extern "codira-intrinsic" {
+    func str_data(s: str) -> usize;
+    func str_len(s: str) -> usize;
+    func load_u8(addr: usize) -> u8;
+    func load_u64(addr: usize) -> u64;
+    func stack_alloc(size: usize, align: usize) -> usize;
+    func memcpy(dst: usize, src: usize, len: usize);
+    func string_data(s: String) -> usize;
+}
+
+// Whether the `len` bytes at `a` and at `b` are the same, compared eight at
+// a time (each word copied to an aligned slot, which LLVM turns into one
+// unaligned load). Private, so that the `Eq` implementations below, which
+// are compiled into the module that uses them, inline it rather than call
+// into this library.
+@inline
+func same_bytes(a: usize, b: usize, len: usize) -> bool {
+    if a == b {
+        return true
+    }
+    let wa = stack_alloc(8, 8)
+    let wb = stack_alloc(8, 8)
+    var i: usize = 0
+    while i + 8 <= len {
+        memcpy(wa, a + i, 8)
+        memcpy(wb, b + i, 8)
+        if load_u64(wa) != load_u64(wb) {
+            return false
+        }
+        i += 8
+    }
+    while i < len {
+        if load_u8(a + i) != load_u8(b + i) {
+            return false
+        }
+        i += 1
+    }
+    true
+}
+
+public trait Eq {
+    // Whether `self` and `other` are equal.
+    func eq(self, other: Self) -> bool;
+}
+
+public trait Ord: Eq {
+    // Whether `self` sorts before `other`.
+    func lt(self, other: Self) -> bool;
+}
+
+extend i8: Eq { func eq(self, other: i8) -> bool { self == other } }
+extend i16: Eq { func eq(self, other: i16) -> bool { self == other } }
+extend i32: Eq { func eq(self, other: i32) -> bool { self == other } }
+extend i64: Eq { func eq(self, other: i64) -> bool { self == other } }
+extend isize: Eq { func eq(self, other: isize) -> bool { self == other } }
+extend u8: Eq { func eq(self, other: u8) -> bool { self == other } }
+extend u16: Eq { func eq(self, other: u16) -> bool { self == other } }
+extend u32: Eq { func eq(self, other: u32) -> bool { self == other } }
+extend u64: Eq { func eq(self, other: u64) -> bool { self == other } }
+extend usize: Eq { func eq(self, other: usize) -> bool { self == other } }
+extend f32: Eq { func eq(self, other: f32) -> bool { self == other } }
+extend f64: Eq { func eq(self, other: f64) -> bool { self == other } }
+extend bool: Eq { func eq(self, other: bool) -> bool { self == other } }
+// `str` and `String` compare their bytes, inline: the lengths first, then
+// eight bytes at a time.
+extend str: Eq {
+    @inline
+    func eq(self, other: str) -> bool {
+        let n = str_len(self)
+        n == str_len(other) && same_bytes(str_data(self), str_data(other), n)
+    }
+}
+extend String: Eq {
+    @inline
+    func eq(self, other: String) -> bool {
+        let n = self.len()
+        if n != other.len() {
+            return false
+        }
+        n == 0 || same_bytes(string_data(self), string_data(other), n)
+    }
+}
+
+extend i8: Ord { func lt(self, other: i8) -> bool { self < other } }
+extend i16: Ord { func lt(self, other: i16) -> bool { self < other } }
+extend i32: Ord { func lt(self, other: i32) -> bool { self < other } }
+extend i64: Ord { func lt(self, other: i64) -> bool { self < other } }
+extend isize: Ord { func lt(self, other: isize) -> bool { self < other } }
+extend u8: Ord { func lt(self, other: u8) -> bool { self < other } }
+extend u16: Ord { func lt(self, other: u16) -> bool { self < other } }
+extend u32: Ord { func lt(self, other: u32) -> bool { self < other } }
+extend u64: Ord { func lt(self, other: u64) -> bool { self < other } }
+extend usize: Ord { func lt(self, other: usize) -> bool { self < other } }
+extend f32: Ord { func lt(self, other: f32) -> bool { self < other } }
+extend f64: Ord { func lt(self, other: f64) -> bool { self < other } }
+extend bool: Ord { func lt(self, other: bool) -> bool { !self && other } }
+extend str: Ord { func lt(self, other: str) -> bool { str_compare(self, other) < 0 } }
+extend String: Ord { func lt(self, other: String) -> bool { self < other } }
+
+// Whether `a` and `b` hold the same bytes.
+public func str_equal(a: str, b: str) -> bool {
+    str_compare(a, b) == 0
+}
+
+// Compares the bytes of `a` and `b` lexicographically: negative when `a`
+// sorts first, zero when they are equal, positive when `b` sorts first.
+public func str_compare(a: str, b: str) -> i32 {
+    let a_len = str_len(a)
+    let b_len = str_len(b)
+    let n = if a_len < b_len { a_len } else { b_len }
+    let pa = str_data(a)
+    let pb = str_data(b)
+    var i: usize = 0
+    while i < n {
+        let x = load_u8(pa + i)
+        let y = load_u8(pb + i)
+        if x != y {
+            return if x < y { -1 } else { 1 }
+        }
+        i += 1
+    }
+    if a_len < b_len { -1 } else if a_len > b_len { 1 } else { 0 }
+}
+
+// The smaller of `a` and `b` (`a` when they are equal).
+public func min_of[T: Ord](a: T, b: T) -> T {
+    if b.lt(a) { b } else { a }
+}
+
+// The larger of `a` and `b` (`a` when they are equal).
+public func max_of[T: Ord](a: T, b: T) -> T {
+    if a.lt(b) { b } else { a }
+}

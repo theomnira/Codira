@@ -1,22 +1,16 @@
 // std/complex/complex_string.code
 // The text form of a complex number: `complex_to_string`.
 //
-// Not importable yet: it returns a `String`, and `std.collections.string`
-// does not check; `float_to_string`, which it is written against, is not
-// provided by the runtime. Kept apart from `std.complex.complex` so that
-// the arithmetic can be imported meanwhile.
+// Kept apart from `std.complex.complex` so that the arithmetic does not pull
+// in strings.
 
 import root.complex.complex.{Complex};
-import root.collections.string.*;
 
-// ---------------------------------------------------------------------------
-// String representation
-// ---------------------------------------------------------------------------
+// `a+bi` or `a-bi`, each part as `print` writes a float (`1.0+2.5i`,
+// `0.0-1.0i`).
 public func complex_to_string(z: Complex) -> String {
     if z.imag >= 0.0 {
-        return float_to_string(z.real) + "+" + float_to_string(z.imag) + "i";
+        return f"{z.real}+{z.imag}i";
     }
-    return float_to_string(z.real) + float_to_string(z.imag) + "i";
+    return f"{z.real}{z.imag}i";
 }
-
-extern func float_to_string(x: f64) -> String;

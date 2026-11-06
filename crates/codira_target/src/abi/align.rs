@@ -43,10 +43,10 @@ impl Align {
         Ok(Align { pow2 })
     }
 
-    // pub fn bytes(self) -> u64 {
-    //     1 << self.pow2
-    // }
-    //
+    pub fn bytes(self) -> u64 {
+        1 << self.pow2
+    }
+
     // pub fn bits(self) -> u64 {
     //     self.bytes() * 8
     // }

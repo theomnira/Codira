@@ -9,13 +9,13 @@ use super::{
     types, BlockLike, CompletedMarker, Marker, Parser, SyntaxKind, TokenSet, ARG_LIST, ARRAY_EXPR,
     BIN_EXPR, BLOCK_EXPR, BREAK_EXPR, CALL_EXPR, CAST_EXPR, CHANNEL_RECV_EXPR, CHANNEL_SEND_EXPR,
     CHOOSE_EXPR, CLOSURE_EXPR, COMPTIME_EXPR, CONDITION, CONTINUE_EXPR, DECREASES_CLAUSE, EOF,
-    ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER, FOR_EXPR, HANDLER_ARM, HANDLER_ARM_LIST,
-    HANDLE_EXPR, HOLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER, INVARIANT_CLAUSE,
-    LET_STMT, LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR, OFFER_EXPR, PARAM,
-    PARAM_LIST, PAREN_EXPR, PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR, RANGE_EXPR,
-    RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT, RETURN_EXPR, RET_TYPE, SCOPE_EXPR, SELECT_ARM,
-    SELECT_ARM_LIST, SELECT_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR, TRY_EXPR, TUPLE_EXPR,
-    WHILE_EXPR,
+    ERROR, EXPR_STMT, FIELD_EXPR, FLOAT_NUMBER, FOR_EXPR, GROUP_EXPR, HANDLER_ARM,
+    HANDLER_ARM_LIST, HANDLE_EXPR, HOLE_EXPR, IDENT, IF_EXPR, INDEX, INDEX_EXPR, INT_NUMBER,
+    INVARIANT_CLAUSE, LET_STMT, LITERAL, LOOP_EXPR, MATCH_ARM, MATCH_ARM_LIST, MATCH_EXPR,
+    OFFER_EXPR, PARAM, PARAM_LIST, PAREN_EXPR, PATH_EXPR, PATH_TYPE, PERFORM_EXPR, PREFIX_EXPR,
+    PROPAGATE_EXPR, RANGE_EXPR, RECORD_FIELD, RECORD_FIELD_LIST, RECORD_LIT, RETURN_EXPR, RET_TYPE,
+    SCOPE_EXPR, SELECT_ARM, SELECT_ARM_LIST, SELECT_EXPR, SPAWN_EXPR, STRING, TRANSFER_EXPR,
+    TRY_EXPR, TUPLE_EXPR, WHILE_EXPR,
 };
 use crate::{parsing::grammar::paths::PATH_FIRST, SyntaxKind::METHOD_CALL_EXPR};
 
@@ -372,6 +372,10 @@ fn postfix_expr(
             T![.] if !p.at(T![..]) => postfix_dot_expr(p, lhs),
             INDEX => field_expr(p, lhs),
             T![!] if !p.at(T![!=]) => force_unwrap_expr(p, lhs),
+            // Postfix `x?` propagates an error (see `propagate_expr`). Only
+            // on the line of `x`: a `?` that begins a line is a new
+            // statement, which can only be a `??` hole.
+            T![?] if continues_line => propagate_expr(p, lhs),
             // Postfix `x^` transfers the value. Disambiguated from binary XOR
             // (`a ^ b`) by lookahead: a postfix transfer only fires when the
             // `^` is NOT followed by another expression-start token (and is
@@ -412,6 +416,23 @@ fn force_unwrap_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarke
     let m = lhs.precede(p);
     p.bump(T![!]);
     m.complete(p, TRY_EXPR)
+}
+
+/// `expr?` -- error propagation. On a `Result` it is the `Ok` payload, or
+/// an early `return Err(e)`; on an optional it is the value inside, or an
+/// early `return nil`.
+///
+/// It does not clash with the `??` hole, which is an atom: a hole never
+/// directly follows an expression (two expressions side by side on one
+/// line are not valid), so after an expression a `?` is always this
+/// operator and `x??` is `(x?)?`. A `?` at the start of a line is never
+/// postfix, so a hole on a line of its own still begins a statement. `T?`
+/// is a type and is parsed by the type grammar, which this never sees.
+fn propagate_expr(p: &mut Parser<'_>, lhs: CompletedMarker) -> CompletedMarker {
+    assert!(p.at(T![?]));
+    let m = lhs.precede(p);
+    p.bump(T![?]);
+    m.complete(p, PROPAGATE_EXPR)
 }
 
 /// `expr^` transfers a value into a new temporary in Mojo style: the source
@@ -520,6 +541,11 @@ fn atom_expr(p: &mut Parser<'_>, r: Restrictions) -> Option<(CompletedMarker, Bl
         return Some((scope_expr(p), BlockLike::Block));
     }
 
+    // `group { .. }`, under the same condition as `scope`.
+    if !r.forbid_structs && p.at_contextual_kw("group") && p.nth_at(1, T!['{']) {
+        return Some((group_expr(p), BlockLike::Block));
+    }
+
     // `offer ep { .. } or { .. }`: the branch the session's other endpoint
     // chose. Promoted only before a name and `{`.
     if !r.forbid_structs && p.at_contextual_kw("offer") && p.nth(1) == IDENT && p.nth_at(2, T!['{'])
@@ -618,10 +644,33 @@ fn match_arm_list(p: &mut Parser<'_>) {
     let m = p.start();
     p.bump(T!['{']);
     while !p.at(EOF) && !p.at(T!['}']) {
+        if p.at(T!['{']) {
+            // Pattern recovery stops at a `{` without consuming it, and so
+            // would every iteration after this one: consume it as an error.
+            let error = p.start();
+            p.error("expected pattern");
+            p.bump_any();
+            error.complete(p, ERROR);
+            continue;
+        }
         let arm = p.start();
         patterns::pattern(p);
-        if p.expect(T![->]) {
+        if p.at(T![=]) && p.nth_at(1, T![>]) {
+            // `pattern => value`, as in Rust: say so, and read the value.
+            let error = p.start();
+            p.error("a `match` arm is `pattern -> value`, not `pattern => value`");
+            p.bump_any();
+            p.bump_any();
+            error.complete(p, ERROR);
             expr(p);
+        } else if p.expect(T![->]) {
+            expr(p);
+        } else if !p.at(T!['}']) && !p.at(T![,]) && !p.at(EOF) {
+            // Nothing here continues the arm, and the pattern parser does
+            // not skip a `{`: skip one token so the loop makes progress.
+            let error = p.start();
+            p.bump_any();
+            error.complete(p, ERROR);
         }
         if !p.at(T!['}']) {
             p.eat(T![,]);
@@ -650,6 +699,17 @@ fn scope_expr(p: &mut Parser<'_>) -> CompletedMarker {
     p.bump_remap(T![scope]);
     block(p);
     m.complete(p, SCOPE_EXPR)
+}
+
+/// `group { .. }`: a task group. Every task `spawn`ed inside the block is
+/// joined before control leaves it, and the group's value is their results
+/// in spawn order (see `codira_hir::expr::tasks`).
+fn group_expr(p: &mut Parser<'_>) -> CompletedMarker {
+    assert!(p.at_contextual_kw("group"));
+    let m = p.start();
+    p.bump_remap(T![group]);
+    block(p);
+    m.complete(p, GROUP_EXPR)
 }
 
 /// `select { arm, .. }`: waits until one of the arms' channel operations can

@@ -106,7 +106,7 @@ extern "C" fn print_bool(value: u8) {
 /// # Safety
 ///
 /// `data` must point to `len` readable bytes.
-unsafe fn embedded_str<'a>(data: *const u8, len: usize) -> std::borrow::Cow<'a, str> {
+pub(crate) unsafe fn embedded_str<'a>(data: *const u8, len: usize) -> std::borrow::Cow<'a, str> {
     if len == 0 {
         return std::borrow::Cow::Borrowed("");
     }
@@ -124,7 +124,7 @@ unsafe fn embedded_str<'a>(data: *const u8, len: usize) -> std::borrow::Cow<'a, 
 /// code generator does not promise today. What the language guarantees is
 /// the part that matters most -- a bad index stops the program with its
 /// location instead of reading or writing memory it does not own.
-fn report_panic(message: &str, file: &str, line: u32, column: u32) -> ! {
+pub(crate) fn report_panic(message: &str, file: &str, line: u32, column: u32) -> ! {
     let _ignored = std::io::stdout().flush();
     eprintln!("panic at {file}:{line}:{column}: {message}");
     std::process::exit(101)

@@ -34,6 +34,20 @@
 
 use crate::name::Name;
 
+mod array;
+
+pub use array::{
+    is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, ElementRequirement,
+};
+mod format;
+mod pipeline;
+mod string;
+
+pub(crate) use format::dotted_name;
+pub use format::{FormatAlign, FormatCount, FormatKind, FormatSpec, ValueClass};
+pub use pipeline::PipelineOp;
+pub use string::{StringArg, StringOp};
+
 /// A function provided by the compiler rather than declared in source.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinFn {
@@ -54,6 +68,9 @@ pub enum BuiltinFn {
     /// `channel(capacity)` creates a bounded `Channel[T]`, owned by the
     /// enclosing `scope` (see `expr::validator::tasks`).
     Channel,
+    /// `cancelled()`: whether the running task has been cancelled (see
+    /// `codira_runtime::tasks`); always `false` outside a task.
+    Cancelled,
     /// `array_filled(value, count)` creates a `[T]` of `count` copies of
     /// `value`, an integer, float or `bool`. The only way a program can make
     /// an array whose length is not written out in the source.
@@ -81,6 +98,15 @@ pub enum BuiltinFn {
     ArrayUncheckedGet,
     /// `s.len()` on a `str`: its length in bytes, as `usize`.
     StrLen,
+    /// A method of `[T]` that grows, searches, orders or iterates it
+    /// (`push`, `sort`, `map`, ...; see [`ArrayMethod`]).
+    Array(ArrayMethod),
+    /// A method of `String`, `to_string()` on a primitive, or
+    /// `string_from_utf8` (see [`StringOp`]).
+    String(StringOp),
+    /// An operation of a lazy pipeline (`xs.iter().map(f).sum()`; see
+    /// [`PipelineOp`]).
+    Pipeline(PipelineOp),
 }
 
 impl BuiltinFn {
@@ -91,11 +117,14 @@ impl BuiltinFn {
         BuiltinFn::Declassify,
         BuiltinFn::CtSelect,
         BuiltinFn::Channel,
+        BuiltinFn::Cancelled,
         BuiltinFn::ArrayFilled,
         BuiltinFn::Select,
         BuiltinFn::Likely,
         BuiltinFn::Unlikely,
         BuiltinFn::Fma,
+        BuiltinFn::String(StringOp::FromUtf8),
+        BuiltinFn::String(StringOp::TakeUtf8),
     ];
 
     /// The name a program calls this builtin by.
@@ -106,6 +135,7 @@ impl BuiltinFn {
             BuiltinFn::Declassify => "declassify",
             BuiltinFn::CtSelect => "ct_select",
             BuiltinFn::Channel => "channel",
+            BuiltinFn::Cancelled => "cancelled",
             BuiltinFn::ArrayFilled => "array_filled",
             BuiltinFn::Select => "select",
             BuiltinFn::Likely => "likely",
@@ -113,6 +143,9 @@ impl BuiltinFn {
             BuiltinFn::Fma => "fma",
             BuiltinFn::ArrayLen | BuiltinFn::StrLen => "len",
             BuiltinFn::ArrayUncheckedGet => "unchecked_get",
+            BuiltinFn::Array(method) => method.name(),
+            BuiltinFn::String(op) => op.name(),
+            BuiltinFn::Pipeline(op) => op.name(),
         }
     }
 
@@ -137,7 +170,7 @@ mod tests {
     func a(n: usize) -> [i64] { array_filled(0i64, n) }
     func b(n: usize) -> [f64] { array_filled(1.5, n) }
     func c(n: usize) -> [i64] { array_filled(0i64) }
-    func d(n: usize) -> [i64] { array_filled("x", n) }
+    func d(n: usize) -> [(str, i64)] { array_filled(("x", 1i64), n) }
     func e(c: bool, x: f64, y: f64) -> f64 { select(c, x, y) }
     func f(c: i64, x: f64, y: f64) -> f64 { select(c, x, y) }
     func g(x: f64, y: f64) -> f64 { select(true, x) }
@@ -154,11 +187,8 @@ mod tests {
             1,
             "{diags}"
         );
-        assert_eq!(
-            count("`array_filled` makes an array of integers, floats or `bool`s"),
-            1,
-            "{diags}"
-        );
+        // Any element type fills: `d` checks.
+        assert_eq!(count("array_filled` makes"), 0, "{diags}");
         assert_eq!(
             count("`select` takes a condition and two values, found 2 argument(s)"),
             1,
@@ -171,6 +201,6 @@ mod tests {
         );
         // `f` (integer condition), `j` (mixed widths) and `l` (integer hint)
         // are mismatches the unifier reports.
-        assert!(diags.lines().count() >= 7, "{diags}");
+        assert!(diags.lines().count() >= 6, "{diags}");
     }
 }

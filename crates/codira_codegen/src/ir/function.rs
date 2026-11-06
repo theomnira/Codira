@@ -36,6 +36,7 @@ pub(crate) fn gen_prototype<'db, 'ink>(
     if instance.is_generic() || local_copy {
         let value = module.add_function(&instance.name(db), ir_ty, Some(Linkage::Private));
         mark_noreturn(db, func, value);
+        mark_inline(db, func, value);
         return value;
     }
     let name = func.name(db).to_string();
@@ -65,7 +66,42 @@ pub(crate) fn gen_prototype<'db, 'ink>(
 
     let value = module.add_function(&name, ir_ty, linkage);
     mark_noreturn(db, func, value);
+    mark_inline(db, func, value);
+    mark_constant_time(db, func, value);
     value
+}
+
+/// Gives `value` LLVM's `alwaysinline` attribute when `func` is marked
+/// `@inline`. Only direct calls in the same library can be inlined; a call
+/// through the dispatch table (to a public function of another library)
+/// stays a call.
+fn mark_inline<'ink>(db: &dyn HirDatabase, func: codira_hir::Function, value: FunctionValue<'ink>) {
+    if func.is_inline(db) {
+        let context = value.get_type().get_context();
+        let kind = Attribute::get_named_enum_kind_id("alwaysinline");
+        value.add_attribute(
+            AttributeLoc::Function,
+            context.create_enum_attribute(kind, 0),
+        );
+    }
+}
+
+/// Marks a `@constant_time` or `oblivious` function for the GC passes
+/// (`crate::gc_roots`): it gets neither a frame record nor polls, whose
+/// branches and indirect calls its constant-time guarantee rules out, and is
+/// scanned conservatively instead.
+fn mark_constant_time<'ink>(
+    db: &dyn HirDatabase,
+    func: codira_hir::Function,
+    value: FunctionValue<'ink>,
+) {
+    if codira_hir::verify::constant_time_signature(db, func).is_some() {
+        let context = value.get_type().get_context();
+        value.add_attribute(
+            AttributeLoc::Function,
+            context.create_string_attribute("codira-constant-time", ""),
+        );
+    }
 }
 
 /// Whether a call to `func` can never come back: it returns `never` and
@@ -105,6 +141,28 @@ fn mark_noreturn<'ink>(
 /// reason this is split between two functions is that first all signatures are
 /// generated and then all bodies. This allows bodies to reference
 /// `FunctionValue` wherever they are declared in the file.
+/// Whether `f` is called from the host (and from other modules) through a
+/// `_wrapper` with the host-visible signature: a public function whose
+/// receiver, parameters or result cross boxed (a value struct, a `String`),
+/// a function taking hidden effect evidence, or a `main` returning a
+/// `Result`, which the host sees returning its `Ok` payload.
+pub(crate) fn needs_host_wrapper(
+    db: &dyn codira_hir::HirDatabase,
+    f: codira_hir::Function,
+) -> bool {
+    let fn_sig = f.ty(db).callable_sig(db).unwrap();
+    let boxed_receiver = f.self_param_ty(db).is_some_and(|ty| {
+        ty.is_string()
+            || ty
+                .as_struct()
+                .is_some_and(|s| s.data(db).memory_kind == codira_hir::StructMemoryKind::Value)
+    });
+    (codira_hir::HasVisibility::visibility(&f, db).is_externally_visible()
+        && (!fn_sig.marshallable(db) || boxed_receiver))
+        || crate::ir::body::has_evidence(db, f)
+        || codira_hir::main_result(db, f).is_some()
+}
+
 pub(crate) fn gen_public_prototype<'db, 'ink>(
     db: &'db dyn HirDatabase,
     types: &HirTypeCache<'db, 'ink>,

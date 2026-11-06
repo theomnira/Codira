@@ -1,0 +1,10237 @@
+{
+ "format": "aurora-bench/1",
+ "environment": {
+  "date": "2026-11-06T15:22:47+00:00",
+  "host": "vm",
+  "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+  "cpu_mhz": "2100.000",
+  "logical_cpus": 4,
+  "cpu_flags_simd": [
+   "fma",
+   "sse4_2",
+   "avx",
+   "avx2",
+   "bmi2",
+   "avx512f"
+  ],
+  "memory": "16472088 kB",
+  "os": "Ubuntu 24.04.5 LTS",
+  "kernel": "6.18.44-fc-v242",
+  "arch": "x86_64",
+  "virtualization": "container: docker, hypervisor (CPUID flag set: a virtual machine)",
+  "cpu_governor": "not exposed",
+  "load_average_start": [
+   2.08,
+   2.66,
+   1.99
+  ],
+  "python": "3.13.18",
+  "commit": "8613d0af4b7543cf93effe3401c08a0ff7f7e91e",
+  "commit_dirty": false,
+  "codira": "/home/user/Codira/target/release/codira",
+  "codira_version": "codira 0.6.0-dev",
+  "codira_binary_sha256": "b5d62d73659e48ee73c226b253e54c558eddd6465a9a87f7dd864481ebb74ff3",
+  "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+  "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "cxx": "/usr/bin/clang++-22",
+  "cxx_version": [
+   "Ubuntu clang version 22.1.8 (++20260714014902+ca7933e47d3a-1~exp1~20260714135019.80)"
+  ],
+  "llvm_config": "22.1.8",
+  "flags": {
+   "codira": [
+    "build",
+    "-O",
+    "3",
+    "(target CPU: the compiler's default, generic x86-64)"
+   ],
+   "codira_host": "cargo build --release (opt-level 3) of benches/aurora/host",
+   "rust": [
+    "--edition",
+    "2021",
+    "-C",
+    "opt-level=3",
+    "-C",
+    "codegen-units=1"
+   ],
+   "rust_cargo": "cargo build --release (profile in the baseline's Cargo.toml)",
+   "cxx": [
+    "-O3",
+    "-std=c++23",
+    "-pthread",
+    "-DNDEBUG"
+   ]
+  },
+  "perf": "/usr/lib/linux-tools/6.8.0-149-generic/perf",
+  "perf_events": {
+   "cycles": "not supported (no hardware performance counters visible to this VM)",
+   "instructions": "not supported (no hardware performance counters visible to this VM)",
+   "cache-misses": "not supported (no hardware performance counters visible to this VM)",
+   "branch-misses": "not supported (no hardware performance counters visible to this VM)",
+   "context-switches": "ok",
+   "cpu-migrations": "ok",
+   "page-faults": "ok",
+   "task-clock": "ok"
+  },
+  "machine": {
+   "cpu": "Intel(R) Xeon(R) Processor @ 2.10GHz",
+   "logical_cpus": 4,
+   "arch": "x86_64"
+  },
+  "codira_env": {},
+  "runs": 11,
+  "suite": "full",
+  "seed": 20261106,
+  "load_average_end": [
+   1.1,
+   1.26,
+   1.37
+  ]
+ },
+ "heap_floor": {
+  "kernel": "server.long_run",
+  "floor_mb": 56,
+  "fails_at_mb": 52,
+  "step_mb": 4,
+  "live_after_last_bytes": 43108112,
+  "peak_heap_bytes": 58720240,
+  "collections": 141,
+  "ns": 4406454114
+ },
+ "kernels": {
+  "strings.append_short": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "10222227",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "7937836",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "7704807",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "7608850",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "9586083",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "8529624",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "8232255",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "11281116",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "7934381",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "7932449",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "8211447",
+       "check": "5000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "5107633",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "6546499",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "5320171",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "5496160",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "5827138",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "7429980",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "5501931",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "5751892",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "5653998",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "5631719",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "5523589",
+       "check": "5000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "12590837",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "12939824",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "13128342",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "12487098",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "13967258",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "15242274",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "12755862",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "13645354",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "13024375",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "13216285",
+       "check": "5000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "16552825",
+       "check": "5000000"
+      }
+     }
+    ]
+   }
+  },
+  "strings.append_numbers": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "10080440",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "11564804",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "13150896",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "20535475",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "12734116",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "13177165",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "11928776",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "13337006",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "19439720",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "13821130",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "13275709",
+       "check": "6888890"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "30888852",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "43474588",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "30654423",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "28357745",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "47219176",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "28449445",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "35185057",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "28917474",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "28553060",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "28410926",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "28167093",
+       "check": "6888890"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "19392632",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "23338974",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "20187636",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "18833859",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "19597657",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "19685405",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "18946622",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "18809834",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "28198113",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "18937007",
+       "check": "6888890"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "19421811",
+       "check": "6888890"
+      }
+     }
+    ]
+   }
+  },
+  "strings.concat": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "119683231",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "117741158",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "140001693",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "105792430",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "116359810",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "119779829",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "109526163",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "130788098",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "126124666",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "118043243",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "123496869",
+       "check": "65000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "44579680",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "43543811",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "42230006",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "43984611",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "53227631",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "43018108",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "44124890",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "46255265",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "43444539",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "66099419",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "42724312",
+       "check": "65000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "24876456",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "21908287",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "23434749",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "20388564",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "20161092",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "26605380",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "20576906",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "20990561",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "20501043",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "20529807",
+       "check": "65000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "20775254",
+       "check": "65000000"
+      }
+     }
+    ]
+   }
+  },
+  "strings.split_lazy_count": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "20059135",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "18249953",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "17150759",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "18056069",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "18527625",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "19077547",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "18387172",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "18653992",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "17817980",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "18363302",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "19186024",
+       "check": "1233600"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "23272521",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "30779363",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "23760218",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "23540059",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "24339086",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "23413717",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "23444438",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "23518488",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "23438653",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "38924692",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "24840388",
+       "check": "1233600"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "14435176",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "14871128",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "14302349",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "13976382",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "15080644",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "14929103",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "14658950",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "14743994",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "14496424",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "14861744",
+       "check": "1233600"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "14362385",
+       "check": "1233600"
+      }
+     }
+    ]
+   }
+  },
+  "strings.split_fields": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "19804707",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "19151758",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "21270177",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "23088812",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "18922881",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "20082391",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "21157933",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "21051002",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "21138641",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "19460992",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "19534333",
+       "check": "1000005750000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "30435962",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "21684853",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "22066403",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "21048817",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "21629309",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "22858038",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "19135079",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "22385833",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "22668276",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "30698058",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "21327548",
+       "check": "1000005750000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "22816209",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "25252742",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "24989523",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "22755780",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "21596413",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "22565900",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "23869008",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "26605367",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "22158782",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "26895880",
+       "check": "1000005750000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "26116124",
+       "check": "1000005750000"
+      }
+     }
+    ]
+   }
+  },
+  "format.int_display": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "19813240",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "16102478",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "13048872",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "11608795",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "12347172",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "12293598",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "11682564",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "12872905",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "12724618",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "12755159",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "12464754",
+       "check": "58777773"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "24337774",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "21933691",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "21335411",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "21758118",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "22556759",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "21964710",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "32049815",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "21623292",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "20905269",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "21741088",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "22007345",
+       "check": "58777773"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "16809163",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "18567074",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "18271589",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "18769531",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "10595227",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "16971846",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "15920189",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "16680000",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "15902078",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "16118308",
+       "check": "58777773"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "15589610",
+       "check": "58777773"
+      }
+     }
+    ]
+   }
+  },
+  "format.int_zero_8": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "16663351",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "16482786",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "16847359",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "18187193",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "15800038",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "28045639",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "16403241",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "17329806",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "16974401",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "16572912",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "20045283",
+       "check": "60499988"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "45529190",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "48012475",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "75845459",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "46995896",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "50695166",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "53491121",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "46534783",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "47528036",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "82667428",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "60306441",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "49940322",
+       "check": "60499988"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "75568941",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "69636312",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "70978483",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "69116725",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "93530654",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "66510472",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "96788826",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "70702457",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "97130048",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "69191977",
+       "check": "60499988"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "84159411",
+       "check": "60499988"
+      }
+     }
+    ]
+   }
+  },
+  "format.float_right_10_3": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "207301185",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "215952184",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "223710933",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "218904740",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "235475053",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "210689913",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "219770481",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "227482645",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "214458774",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "217797747",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "206517323",
+       "check": "62503497"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "197115852",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "227275749",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "282987184",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "204573664",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "204578664",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "249853085",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "216992547",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "214494305",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "209615449",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "207498589",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "209921864",
+       "check": "62503497"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "129989939",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "144087896",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "138931128",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "134343599",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "142821644",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "131172174",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "132247315",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "210259622",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "130826768",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "118347886",
+       "check": "62503497"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "128923156",
+       "check": "62503497"
+      }
+     }
+    ]
+   }
+  },
+  "format.debug_struct": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "187285045",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "163494629",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "168348329",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "158427021",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "163303620",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "153490736",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "150233295",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "175588139",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "158790708",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "163701826",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "171836960",
+       "check": "166524234"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "256291776",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "246811238",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "291820797",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "342165811",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "246035767",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "257696563",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "252661472",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "248823497",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "239098785",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "251605431",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "284564309",
+       "check": "166524234"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "139482612",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "128124932",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "161282260",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "130721695",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "140551274",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "187675285",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "198768605",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "139669119",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "135308296",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "135518387",
+       "check": "166524234"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "135939259",
+       "check": "166524234"
+      }
+     }
+    ]
+   }
+  },
+  "result.wrapped_ok": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "37305488",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "34906361",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "35207035",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "35402027",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "37837026",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "36853534",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "35162267",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "33361005",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "33949057",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "34519157",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "35716457",
+       "check": "455000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "12380715",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "12836106",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "14948745",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "13055081",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "18128038",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "14970890",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "15748303",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "13520066",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "13586167",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "14976051",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "14177344",
+       "check": "455000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "23889437",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "25549821",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "24135978",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "24401494",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "23144398",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "25300953",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "23982188",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "24172468",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "28484811",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "21412032",
+       "check": "455000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "22800688",
+       "check": "455000000"
+      }
+     }
+    ]
+   }
+  },
+  "result.wrapped_err": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "34174507",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "34990998",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "33860870",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "34449028",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "34434601",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "63433253",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "34147954",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "41482125",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "31720635",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "43837783",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "36675798",
+       "check": "10000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "7513890",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "7801653",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "7138601",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "7800492",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "9857371",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "13431513",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "7044501",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "7660471",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "7325052",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "13536769",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "7397736",
+       "check": "10000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "21690238",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "22125076",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "23064249",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "23564425",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "41984725",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "23422315",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "33963785",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "40627980",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "23590210",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "24922028",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "22473984",
+       "check": "10000000"
+      }
+     }
+    ]
+   }
+  },
+  "result.sum_words": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "19313110",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "24461029",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "26565887",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "27499060",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "18977143",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "19855405",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "17953433",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "19754389",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "19171729",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "19078287",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "18759493",
+       "check": "441540721"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "20746352",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "19133731",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "19068918",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "19070793",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "21576220",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "18992482",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "20003284",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "21767778",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "24408820",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "20633796",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "18714973",
+       "check": "441540721"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "22667753",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "20139074",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "17836077",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "19200302",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "24299496",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "18426411",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "18696846",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "19623598",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "20351290",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "19126717",
+       "check": "441540721"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "20048329",
+       "check": "441540721"
+      }
+     }
+    ]
+   }
+  },
+  "result.propagate_depth8": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "12073735",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "12073076",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "12081322",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "11965148",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "13740343",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "15646592",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "11895938",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "12396177",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "11706983",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "12068898",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "12277970",
+       "check": "140820642812500"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "10594612",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "10224464",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "12544265",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "10974352",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "18520597",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "10621054",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "10474920",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "10388984",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "10260219",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "10932041",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "12025453",
+       "check": "140820642812500"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "9161406",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "10043967",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "9811285",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "11942077",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "8943663",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "20082200",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "9643594",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "9059420",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "8831671",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "10878335",
+       "check": "140820642812500"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "9601737",
+       "check": "140820642812500"
+      }
+     }
+    ]
+   }
+  },
+  "collections.push_10m": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "52516916",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "50841734",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "48485258",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "47410808",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "55109513",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "48223081",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "46128829",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "47034949",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "47191570",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "56501521",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "46415107",
+       "check": "10000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "40090447",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "41680293",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "42194223",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "48917516",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "40316988",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "47805208",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "39968776",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "52269956",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "42683948",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "44857575",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "44064658",
+       "check": "10000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "120712490",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "117113405",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "163284592",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "123479103",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "126133135",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "126997836",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "110141929",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "119893178",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "152314168",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "120326483",
+       "check": "10000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "127501434",
+       "check": "10000000"
+      }
+     }
+    ]
+   }
+  },
+  "collections.sort_1m": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "19879876",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "20107695",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "18826106",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "19472686",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "20455041",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "20662122",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "21918918",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "20338452",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "22626665",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "19965988",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "20417777",
+       "check": "4616982377405454899"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "20198608",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "19815911",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "20679852",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "20265570",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "20838651",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "18897177",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "20038270",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "18706021",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "28263349",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "21014106",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "20996709",
+       "check": "4616982377405454899"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "75258244",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "79964943",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "82552199",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "81419362",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "83819347",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "79321275",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "87670312",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "104177497",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "79297902",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "79154902",
+       "check": "4616982377405454899"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "82116666",
+       "check": "4616982377405454899"
+      }
+     }
+    ]
+   }
+  },
+  "collections.map_filter_sum_lazy": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "15817962",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "18213718",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "15678175",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "16280862",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "15480787",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "17978624",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "15803739",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "16460087",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "15740423",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "15360329",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "15869562",
+       "check": "33333336666666"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "15011351",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "15321452",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "15988421",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "17659731",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "17015112",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "14215595",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "16608927",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "15188979",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "15710104",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "15257646",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "14957546",
+       "check": "33333336666666"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "14702196",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "14544773",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "15988128",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "15869554",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "15105780",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "15282510",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "17967522",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "15656985",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "16285746",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "15849362",
+       "check": "33333336666666"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "15145641",
+       "check": "33333336666666"
+      }
+     }
+    ]
+   }
+  },
+  "collections.filter_collect": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "63064054",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "57862149",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "59675523",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "58202018",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "62712298",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "61505715",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "62036218",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "79521719",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "66792939",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "75190606",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "61623142",
+       "check": "3339721"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "62859556",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "64720943",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "63684484",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "63339813",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "69181747",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "63447421",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "64668234",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "64035413",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "62787933",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "76556112",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "64527036",
+       "check": "3339721"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "109194218",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "112684283",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "108033101",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "106515242",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "113255421",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "114284613",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "122221268",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "111158786",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "121051311",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "111742259",
+       "check": "3339721"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "111082158",
+       "check": "3339721"
+      }
+     }
+    ]
+   }
+  },
+  "loops.sum_for": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "8425984",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "9291034",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "8789455",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "9717543",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "8598574",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "7487814",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "9120288",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "8905871",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "9046333",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "8896265",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "11491906",
+       "check": "149999915000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "9561567",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "9219376",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "9315987",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "8635301",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "9254992",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "9195652",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "8822973",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "9808814",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "9381706",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "10862425",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "9197539",
+       "check": "149999915000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "9254837",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "9048201",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "11209748",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "10060073",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "9911179",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "9370289",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "6613051",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "9517432",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "9142065",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "9183775",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "9276512",
+       "check": "149999915000000"
+      }
+     }
+    ]
+   }
+  },
+  "loops.store_field": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "23179627",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "23764212",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "22921422",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "27038030",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "24876196",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "24476625",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "21458479",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "23260006",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "22757599",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "21959376",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "23331140",
+       "check": "149999915000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "9690265",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "9113919",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "10684849",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "9526085",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "8943903",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "8703536",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "8466505",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "9582329",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "9061767",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "10140970",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "9349300",
+       "check": "149999915000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "9181903",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "7509868",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "9205794",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "8024180",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "10255616",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "8507481",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "8235065",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "9335871",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "8838668",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "9369677",
+       "check": "149999915000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "9849181",
+       "check": "149999915000000"
+      }
+     }
+    ]
+   }
+  },
+  "loops.copy_plus_one": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "19265543",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "18569836",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "18814642",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "19415405",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "18317885",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "18832711",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "17658108",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "19811004",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "19775251",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "18642332",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "18964864",
+       "check": "30000006"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "16026812",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "14373335",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "14819040",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "14590106",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "15596729",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "16488969",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "14687797",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "14903224",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "14040020",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "14519624",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "14523758",
+       "check": "30000006"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "15188899",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "14327126",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "14757228",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "14961479",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "14472101",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "14543674",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "14481475",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "14875035",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "14615925",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "14387559",
+       "check": "30000006"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "15019174",
+       "check": "30000006"
+      }
+     }
+    ]
+   }
+  },
+  "loops.fib_32": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "8274459",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "6390569",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "6259817",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "8364014",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "6291559",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "6389698",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "6073375",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "6328454",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "6591709",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "6891176",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "6200964",
+       "check": "2178309"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "7515309",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "7023867",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "7843898",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "7693865",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "7357671",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "6963002",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "7479256",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "10579292",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "7928006",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "10151807",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "7864121",
+       "check": "2178309"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "7476851",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "7630320",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "7699951",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "7323349",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "7152106",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "7535554",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "7029162",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "7506243",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "7758068",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "7779247",
+       "check": "2178309"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "7152916",
+       "check": "2178309"
+      }
+     }
+    ]
+   }
+  },
+  "loops.mandelbrot": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "44650769",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "43840983",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "45017676",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "43498310",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "45687222",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "43060000",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "49295824",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "46823665",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "43146969",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "47317697",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "46919210",
+       "check": "61100013428357"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "43621300",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "44166723",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "45838421",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "43975558",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "44514369",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "46632632",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "44019983",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "44541941",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "45378036",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "44314265",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "51090207",
+       "check": "61100013428357"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "45270838",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "40274517",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "45056960",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "45466193",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "45026548",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "47456782",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "45662712",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "47221140",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "44291828",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "46445009",
+       "check": "61100013428357"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "44769888",
+       "check": "61100013428357"
+      }
+     }
+    ]
+   }
+  },
+  "hashmap.remove_i64_fast_100k": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "19919718",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "20576302",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "21235710",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "27529695",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "20548080",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "21432510",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "20727057",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "28675783",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "21479572",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "20627468",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "20716128",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "17131581",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "16996535",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "16705142",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "15775870",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "15994863",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "21921012",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "18141361",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "16808244",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "19050796",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "17949607",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "16130961",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "41940244",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "39695725",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "67803729",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "38584616",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "45419720",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "41553911",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "39367494",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "40606047",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "39336278",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "40485451",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "43580334",
+       "check": "1000000"
+      }
+     }
+    ]
+   }
+  },
+  "hashmap.insert_i64_fast_1m": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "72370288",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "75332168",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "80385666",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "73006767",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "71838858",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "74988706",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "67149956",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "72906618",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "77995965",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "75969558",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "112602403",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "68964613",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "70634522",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "69915252",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "66875407",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "73781294",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "69864008",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "64119990",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "75345380",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "69645325",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "72524356",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "69095999",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "285769269",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "285130679",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "225413430",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "297749459",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "234835686",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "192874841",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "248133022",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "324686586",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "358178046",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "224282293",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "261424016",
+       "check": "1000000"
+      }
+     }
+    ]
+   }
+  },
+  "hashmap.hit_i64_fast_1m": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "23755875",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "27754325",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "22025580",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "22207165",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "29179173",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "28999903",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "34719854",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "28960838",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "26176815",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "21387927",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "24914511",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "34635807",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "21560116",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "20959464",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "21293973",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "20489828",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "23325895",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "22058477",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "22378701",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "22067111",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "21223502",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "27451510",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "50387123",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "41315711",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "37001972",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "42818514",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "41811449",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "41009085",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "41825428",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "45365845",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "44188833",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "45099038",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "39467610",
+       "check": "1000000"
+      }
+     }
+    ]
+   }
+  },
+  "hashmap.miss_i64_fast_1m": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "9286402",
+       "check": "0"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "13269667",
+       "check": "0"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "13633633",
+       "check": "0"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "8645932",
+       "check": "0"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "9107177",
+       "check": "0"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "16080340",
+       "check": "0"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "11582845",
+       "check": "0"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "11564736",
+       "check": "0"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "8703028",
+       "check": "0"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "9334117",
+       "check": "0"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "10170099",
+       "check": "0"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "10362896",
+       "check": "0"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "10841170",
+       "check": "0"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "10204365",
+       "check": "0"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "10159000",
+       "check": "0"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "9514361",
+       "check": "0"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "9621371",
+       "check": "0"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "9673347",
+       "check": "0"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "10032361",
+       "check": "0"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "10639807",
+       "check": "0"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "10146864",
+       "check": "0"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "9482632",
+       "check": "0"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "62662933",
+       "check": "0"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "56198730",
+       "check": "0"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "57350020",
+       "check": "0"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "68085681",
+       "check": "0"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "85659978",
+       "check": "0"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "54973723",
+       "check": "0"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "55689938",
+       "check": "0"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "66400591",
+       "check": "0"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "61932562",
+       "check": "0"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "53852954",
+       "check": "0"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "62956606",
+       "check": "0"
+      }
+     }
+    ]
+   }
+  },
+  "hashmap.hit_string_fast_100k": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "39607047",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "40575285",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "39425603",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "37571208",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "36800661",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "37772842",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "35224782",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "42717127",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "39990519",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "39564561",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "36449007",
+       "check": "500000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "36379052",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "32542296",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "34906896",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "36824222",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "33853843",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "53258851",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "36140052",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "54818386",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "33454433",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "36760182",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "53688896",
+       "check": "500000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "63856149",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "62181835",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "82331957",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "58941437",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "62456923",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "63340581",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "64924090",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "59221242",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "62511226",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "75434002",
+       "check": "500000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "60363952",
+       "check": "500000"
+      }
+     }
+    ]
+   }
+  },
+  "hashmap.churn_fast": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "94381859",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "96112771",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "122989019",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "98510991",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "89874867",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "97924411",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "105223638",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "109749290",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "104995880",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "113642798",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "93228658",
+       "check": "3000249065536"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "70653517",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "68342612",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "101453429",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "72795613",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "70747249",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "70438932",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "68871095",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "73638678",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "69504101",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "66677530",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "65571672",
+       "check": "3000249065536"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "267010925",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "349853711",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "279990273",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "282727891",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "270636266",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "274806625",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "279063170",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "299571811",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "297537877",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "266122742",
+       "check": "3000249065536"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "275130298",
+       "check": "3000249065536"
+      }
+     }
+    ]
+   }
+  },
+  "hashmap.insert_i64_secure_1m": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "98600088",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "103101569",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "127821723",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "107948674",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "97723057",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "97611333",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "95841158",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "114579576",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "100560328",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "134152045",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "126316975",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "89715307",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "85636965",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "89345529",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "124131361",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "92998652",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "89534920",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "110608282",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "97976154",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "107761600",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "113516450",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "83588099",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": []
+   }
+  },
+  "hashmap.hit_i64_secure_1m": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "49269151",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "75486163",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "102088546",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "79493543",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "63559149",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "52759612",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "68702436",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "69043454",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "66903248",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "54149185",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "72660466",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "66720342",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "71435216",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "63105210",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "69061362",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "65881273",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "65604073",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "58998622",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "71771897",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "69375363",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "61047734",
+       "check": "1000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "84616940",
+       "check": "1000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": []
+   }
+  },
+  "json.parse_twitter": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "1065693539",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "922564657",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "1146252645",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "968074529",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "908423818",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "899887032",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "898814917",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "948012750",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "1029717979",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "1008149148",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "937840140",
+       "check": "1628330558389365514"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "1138875562",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "1177056955",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "1145706236",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "1258832320",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "1160048623",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "1144456586",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "1233682021",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "1352363435",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "1166007762",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "1200880472",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "1150307060",
+       "check": "1628330558389365514"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "284721351",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "302951906",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "314683018",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "281753644",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "298299250",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "289839515",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "283426462",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "289889743",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "282683506",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "287371999",
+       "check": "1628330558389365514"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "290712211",
+       "check": "1628330558389365514"
+      }
+     }
+    ]
+   }
+  },
+  "json.parse_canada": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "659434234",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "562485413",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "687156637",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "586741157",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "581441583",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "636450570",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "588253917",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "672220631",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "561556869",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "613050428",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "664322060",
+       "check": "5204918758324824793"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "433258450",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "532312766",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "532713618",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "411207104",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "469255706",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "485329038",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "421068800",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "481162239",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "462013420",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "470044308",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "455212552",
+       "check": "5204918758324824793"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "213199530",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "202213253",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "193156072",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "219562297",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "231272956",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "190045886",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "221097231",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "192210636",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "215989954",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "197416735",
+       "check": "5204918758324824793"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "198558724",
+       "check": "5204918758324824793"
+      }
+     }
+    ]
+   }
+  },
+  "json.print_twitter": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "297473653",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "369088033",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "372463989",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "305430873",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "291712390",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "269563033",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "292813651",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "301029442",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "311863449",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "289310228",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "291741608",
+       "check": "16863107"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "305823811",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "290835875",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "310234848",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "341341340",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "306844537",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "316492633",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "304529070",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "323245982",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "308627574",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "323602844",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "313022255",
+       "check": "16863107"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "241573752",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "243760617",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "241724511",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "243739601",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "253761717",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "245157107",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "238674678",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "242550699",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "263319617",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "239213772",
+       "check": "16863107"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "269906863",
+       "check": "16863107"
+      }
+     }
+    ]
+   }
+  },
+  "json.print_canada": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "253903410",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "244126924",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "255494671",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "266913103",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "232771867",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "216892320",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "248401294",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "234492598",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "224506195",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "259776967",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "239793648",
+       "check": "11812306"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "161818566",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "165726090",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "193888920",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "159259879",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "165086406",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "190727841",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "158135230",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "172729090",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "163593653",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "167604326",
+       "check": "11812306"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "158714456",
+       "check": "11812306"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "299353188",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "244100097",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "257906401",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "245716836",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "244177982",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "263141593",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "253936864",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "263586413",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "242967439",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "241141400",
+       "check": "11812663"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "255485925",
+       "check": "11812663"
+      }
+     }
+    ]
+   }
+  },
+  "graph.binary_trees": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "950192123",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "864609740",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "930824571",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "951986532",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "983961393",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "897348164",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "928274225",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "903880801",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "884162838",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "891961189",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "868576701",
+       "check": "14723759"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "309217019",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "298591198",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "302520472",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "313970456",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "308294399",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "314115230",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "287260432",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "325732516",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "330269879",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "354466356",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "368440442",
+       "check": "14723759"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "372263861",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "413145055",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "405660138",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "375352166",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "362416745",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "448285263",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "365424946",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "430827395",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "395059359",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "409051405",
+       "check": "14723759"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "376311990",
+       "check": "14723759"
+      }
+     }
+    ]
+   }
+  },
+  "graph.cyclic_graph": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "421463825",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "397199971",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "393463127",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "380008065",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "396774732",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "412482046",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "420195820",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "392831895",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "575089097",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "412289356",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "410163494",
+       "check": "784173477057"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "106616879",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "114372380",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "122446593",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "113992933",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "114949011",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "117347132",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "110061105",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "118469432",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "125353526",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "111578337",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "113398623",
+       "check": "784173477057"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "106184993",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "127534689",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "109242448",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "113117742",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "132346054",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "120594236",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "125905445",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "111992616",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "105730619",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "126740342",
+       "check": "784173477057"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "106926786",
+       "check": "784173477057"
+      }
+     }
+    ]
+   }
+  },
+  "channels.spsc": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "266521426",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "235535182",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "266832532",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "245282289",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "234986939",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "220414236",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "213284724",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "207313500",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "248729312",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "247056430",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "245323135",
+       "check": "1999999000000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "66715370",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "33573811",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "71725268",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "45783159",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "131395842",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "64547743",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "43424439",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "54706512",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "43882538",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "48563957",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "45759035",
+       "check": "1999999000000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "676190432",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "435169196",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "436970614",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "462935637",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "387934383",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "649018922",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "488871008",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "646227100",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "441589966",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "766191579",
+       "check": "1999999000000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "514995404",
+       "check": "1999999000000"
+      }
+     }
+    ]
+   }
+  },
+  "server.requests": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "294921832",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "337631667",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "302569638",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "318534311",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "317376296",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "351291634",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "290797040",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "324681323",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "349048735",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "353808328",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "321806596",
+       "check": "23133404000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "180820373",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "127782280",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "135912541",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "144680358",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "201725942",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "134868762",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "140434935",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "133376512",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "162735858",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "138199684",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "132475542",
+       "check": "23133404000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "186257011",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "165287877",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "225392348",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "216597409",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "166641490",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "173110980",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "174272495",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "166507721",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "173991354",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "170176102",
+       "check": "23133404000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "177959533",
+       "check": "23133404000"
+      }
+     }
+    ]
+   }
+  },
+  "server.long_run_heap_128": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "2635785501",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "2500257983",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "2509922842",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "2372743232",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "2457818809",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "2614435692",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "2479109779",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "2564420358",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "2394801857",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "2798059072",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "2942264989",
+       "check": "116332883000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "743144009",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "972188435",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "814768229",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "785500749",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "905725584",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "795145238",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "884865651",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "987102426",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "969781235",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "847731107",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "874093587",
+       "check": "116332883000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "1041070841",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "881642599",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "1194546689",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "1050556075",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "1089966751",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "968905954",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "1102996806",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "997727915",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "1114379011",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "1009559495",
+       "check": "116332883000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "1020746256",
+       "check": "116332883000"
+      }
+     }
+    ]
+   }
+  },
+  "regions.list_heap": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "263817909",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "265831788",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "265844717",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "305728480",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "262676367",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "259253930",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "279751260",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "248584665",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "268790061",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "265870036",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "359556966",
+       "check": "204800000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "106237070",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "103087242",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "103138670",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "103443520",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "155313305",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "138081499",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "97061597",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "161005296",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "104497281",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "106215213",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "148178812",
+       "check": "204800000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "103264049",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "104097971",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "138790032",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "166895409",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "115395478",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "125773606",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "101724036",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "113590462",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "146303297",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "156421385",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "103333044",
+       "check": "204800000"
+      }
+     }
+    ]
+   }
+  },
+  "regions.list_region": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "144822051",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "149570635",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "159615209",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "151551228",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "151355080",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "177934889",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "151280531",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "152990840",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "158099268",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "160085896",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "148498881",
+       "check": "204800000"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "98427481",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "130561495",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "116698480",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "104177440",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "103251106",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "113034422",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "100427055",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "119718684",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "105878608",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "106175913",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "159060248",
+       "check": "204800000"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "45358357",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "36069039",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "34630776",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "45245080",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "44906622",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "33120842",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "34118977",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "52397867",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "34987015",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "51766709",
+       "check": "204800000"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "48151731",
+       "check": "204800000"
+      }
+     }
+    ]
+   }
+  },
+  "groups.fib_64": {
+   "codira": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "38747273",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "37999207",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "46469078",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "35914301",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "37002970",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "37557350",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "37898166",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "38174433",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "39703137",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "39686258",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "50496370",
+       "check": "38845760"
+      }
+     }
+    ]
+   },
+   "rust": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "109319769",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "107493298",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "95143430",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "86864492",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "97867265",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "101277918",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "85573155",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "90773029",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "106262023",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "96577244",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "80357183",
+       "check": "38845760"
+      }
+     }
+    ]
+   },
+   "cpp": {
+    "samples": [
+     {
+      "round": 0,
+      "values": {
+       "ns": "85705378",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 1,
+      "values": {
+       "ns": "68704134",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 2,
+      "values": {
+       "ns": "74440781",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 3,
+      "values": {
+       "ns": "67195375",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 4,
+      "values": {
+       "ns": "78271857",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 5,
+      "values": {
+       "ns": "79735670",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 6,
+      "values": {
+       "ns": "83727628",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 7,
+      "values": {
+       "ns": "73270888",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 8,
+      "values": {
+       "ns": "76412627",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 9,
+      "values": {
+       "ns": "79757672",
+       "check": "38845760"
+      }
+     },
+     {
+      "round": 10,
+      "values": {
+       "ns": "68875782",
+       "check": "38845760"
+      }
+     }
+    ]
+   }
+  }
+ }
+}

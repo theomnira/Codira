@@ -20,6 +20,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 pub use self::{
     scope::ExprScopes,
     session::{opened_session, SessionFlow},
+    tasks::direct_spawns,
 };
 use crate::{
     code_model::{src::HasSource, DefWithBody},
@@ -33,6 +34,7 @@ use crate::{
 };
 
 pub(crate) mod effects;
+mod interpolation;
 pub(crate) mod scope;
 pub(crate) mod session;
 mod tasks;
@@ -369,6 +371,13 @@ pub enum LiteralError {
 
     /// An escape sequence whose character is not one this language defines.
     UnknownEscape(char),
+
+    /// An interpolated literal (`f".."`) with an unbalanced brace, or a
+    /// hole that is not a name followed by fields.
+    InvalidInterpolation,
+
+    /// A hole's format spec (`{x:>8.3}`) that does not parse: the reason.
+    InvalidFormatSpec(String),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -466,6 +475,23 @@ pub enum Expr {
     Unwrap {
         expr: ExprId,
     },
+    /// `expr?`: error propagation. The `Ok` payload of a `Result`, or an
+    /// early return of its `Err` from the enclosing function; the value
+    /// inside an optional, or an early `return nil`. See
+    /// `ty::infer::propagate` for the rules.
+    Propagate {
+        expr: ExprId,
+    },
+    /// `{value:spec}`, a hole with a format spec in an interpolated literal
+    /// (`f"{x:>8.3}"`): `value` written as `spec` says, as a new `String`.
+    /// `width` and `precision` are the variables a `{w}` width or precision
+    /// reads. See `builtin::format` for the grammar and the rules.
+    Format {
+        value: ExprId,
+        spec: crate::FormatSpec,
+        width: Option<ExprId>,
+        precision: Option<ExprId>,
+    },
     /// `start..end`, or `start..=end` when `inclusive`. Valid only as a
     /// `for` loop's iterable for now; there is no range value type.
     Range {
@@ -523,8 +549,13 @@ pub enum Expr {
     Scope {
         body: ExprId,
     },
+    /// `group { .. }`: like `scope`, but the value is the results of the
+    /// tasks spawned directly in it, in spawn order (see `expr::tasks`).
+    Group {
+        body: ExprId,
+    },
     /// `spawn f(args)`: runs the call `call` as a task of the innermost
-    /// enclosing `scope`.
+    /// enclosing `scope` or `group`.
     Spawn {
         call: ExprId,
     },
@@ -782,9 +813,20 @@ impl Expr {
                 }
             }
             Expr::Scope { body: expr }
+            | Expr::Group { body: expr }
             | Expr::Spawn { call: expr }
             | Expr::ChannelReceive { channel: expr }
-            | Expr::Unwrap { expr } => f(*expr),
+            | Expr::Unwrap { expr }
+            | Expr::Propagate { expr } => f(*expr),
+            Expr::Format {
+                value,
+                width,
+                precision,
+                ..
+            } => {
+                f(*value);
+                width.iter().chain(precision.iter()).copied().for_each(f);
+            }
             Expr::ChannelSend { channel, value } => {
                 f(*channel);
                 f(*value);
@@ -1150,6 +1192,11 @@ impl<'a> ExprCollector<'a> {
 
                     expr_id
                 }
+                ast::LiteralKind::String(lit)
+                    if codira_syntax::AstToken::text(&lit).starts_with('f') =>
+                {
+                    self.collect_interpolated(codira_syntax::AstToken::text(&lit), syntax_ptr)
+                }
                 ast::LiteralKind::String(lit) => {
                     let (value, errors) = string_lit(codira_syntax::AstToken::text(&lit));
                     let expr_id =
@@ -1384,6 +1431,10 @@ impl<'a> ExprCollector<'a> {
                 let body = self.collect_block_opt(e.body());
                 self.alloc_expr(Expr::Scope { body }, syntax_ptr)
             }
+            ast::ExprKind::GroupExpr(e) => {
+                let body = self.collect_block_opt(e.body());
+                self.alloc_expr(Expr::Group { body }, syntax_ptr)
+            }
             ast::ExprKind::SpawnExpr(e) => {
                 let call = self.collect_expr_opt(e.expr());
                 self.alloc_expr(Expr::Spawn { call }, syntax_ptr)
@@ -1503,6 +1554,10 @@ impl<'a> ExprCollector<'a> {
             ast::ExprKind::TryExpr(e) => {
                 let inner = self.collect_expr_opt(e.expr());
                 self.alloc_expr(Expr::Unwrap { expr: inner }, syntax_ptr)
+            }
+            ast::ExprKind::PropagateExpr(e) => {
+                let inner = self.collect_expr_opt(e.expr());
+                self.alloc_expr(Expr::Propagate { expr: inner }, syntax_ptr)
             }
             // `x^` transfer (see spec/LANGUAGE_SPEC.md section 14) is fully
             // parsed but lowers to a `Missing` placeholder: the HIR has no
@@ -1852,8 +1907,13 @@ fn filtered_float_lit(str: &str, suffix: Option<&str>, base: u32) -> (Literal, V
         LiteralFloatKind::Unsuffixed
     };
 
+    // The lexer accepts an exponent without digits (`5e`), which is not a
+    // number: report it as a malformed literal.
     let value = if base == 10 {
-        f64::from_str(str).expect("could not parse floating point number, this is definitely a bug")
+        f64::from_str(str).unwrap_or_else(|_| {
+            errors.push(LiteralError::LexerError);
+            0.0
+        })
     } else {
         0.0
     };
@@ -2243,7 +2303,7 @@ mod diagnostics {
     use crate::{
         code_model::DefWithBody,
         diagnostics::{
-            ComptimeBudgetExhausted, DiagnosticSink, IntLiteralTooLarge,
+            ComptimeBudgetExhausted, DiagnosticSink, ExprError, IntLiteralTooLarge,
             InvalidFloatingPointLiteral, InvalidLiteral, InvalidLiteralSuffix,
         },
         HirDatabase,
@@ -2293,9 +2353,16 @@ mod diagnostics {
                         // what `InvalidLiteral` says; the escape itself is
                         // inside the highlighted span, so the reader can see
                         // which one it was.
-                        LiteralError::InvalidByteEscape | LiteralError::UnknownEscape(_) => {
+                        LiteralError::InvalidByteEscape
+                        | LiteralError::UnknownEscape(_)
+                        | LiteralError::InvalidInterpolation => {
                             sink.push(InvalidLiteral { literal });
                         }
+                        LiteralError::InvalidFormatSpec(reason) => sink.push(ExprError {
+                            file: literal.file_id,
+                            node: literal.value.syntax_node_ptr(),
+                            message: format!("invalid format spec: {reason}"),
+                        }),
                     }
                 }
                 ExprDiagnostic::ComptimeExhausted { block, limit } => {

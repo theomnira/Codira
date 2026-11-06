@@ -1,0 +1,7 @@
+---
+source: crates/codira_hir/src/escape/tests.rs
+expression: diags
+snapshot_kind: text
+---
+134..154: `make` is `@region`, but this class `Point` may outlive the region: it is returned from `make`
+210..230: `keep` is `@region`, but this class `Point` may outlive the region: it is stored into field `p` of parameter `h`, which may be a heap object

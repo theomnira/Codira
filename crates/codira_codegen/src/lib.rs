@@ -30,6 +30,7 @@ mod code_gen;
 mod db;
 mod eidos_fold;
 mod eidos_options;
+pub mod gc_roots;
 pub mod rewrite;
 #[macro_use]
 mod ir;
@@ -43,6 +44,8 @@ mod run_test;
 mod test;
 #[cfg(test)]
 mod test_memtag;
+#[cfg(test)]
+mod test_layout;
 #[cfg(test)]
 mod test_never;
 #[cfg(test)]

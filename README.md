@@ -102,10 +102,11 @@ never run on MTE hardware; CHERI targets are refused) are in progress.
 Each stage is a group of crates in `crates/`. Arrows into `codira_smt` (Z3)
 and `codira_tv` are proofs the compiler asks for before it trusts a
 contract, a transformation, a rewrite rule or a replacement instruction
-sequence. This is the compiler as of 5 November 2026 (release 26.11): amber
-outlines mark what was added or changed since 26.10, dashed outlines
-mark parts that are on `main` but unfinished, experimental or opt-in, and the
-grey box lists unfinished work that is not on `main`. Stage 8 works on
+sequence. This is the compiler as of 6 November 2026, after release 26.11:
+amber outlines mark what was added or changed since 26.11 (the AURORA memory
+and runtime work and the standard-library foundations), dashed outlines mark
+parts that are on `main` but unfinished, experimental or opt-in, and the grey
+box lists unfinished work that is not on `main`. Stage 8 works on
 machine code: it reads the instructions the back ends produce.
 
 ```mermaid
@@ -113,8 +114,8 @@ flowchart TD
     %% ---------------------------------------------------------------- legend
     subgraph LEGEND [" Legend "]
         direction LR
-        L1["on main before 16 Oct<br/>(plain outline)"]
-        L2["added in 26.11<br/>16 Oct - 5 Nov (amber outline)"]
+        L1["on main at 26.11<br/>(plain outline)"]
+        L2["added since 26.11<br/>(amber outline)"]
         L3["on main but unfinished,<br/>experimental or opt-in (dashed)"]
     end
 
@@ -122,6 +123,8 @@ flowchart TD
     subgraph TOOLS [" 5. Tooling and interop "]
         direction LR
         CLI["codira CLI<br/>new, build, check, run, start,<br/>test, query, synth, quantum"]
+        DevTools["codira fmt, doc, lint,<br/>bench (Mann-Whitney regression check),<br/>audit (licences, hashes, externs)"]
+        RunFlags["run / start / test flags<br/>--heap-limit, --gc-growth,<br/>--runtime-stats, --explain-alloc"]
         Daemon["codira_compiler_daemon<br/>warm salsa + LLVM, token-authenticated"]
         LSP["codira_language_server"]
         ImportC["codira import-c<br/>C headers via Clang"]
@@ -136,11 +139,11 @@ flowchart TD
     %% ---------------------------------------------------------------- 1
     subgraph FRONTEND [" 1. Front end: codira_syntax, codira_hir (salsa) "]
         direction TB
-        Src["Codira source<br/>*.code, codira.toml"] --> Parse["codira_syntax<br/>lexer, parser, lossless CST<br/>contextual keywords"]
-        StdLib["std package<br/>import std.crypto.hash, std.fs.fs, std.memory.region,<br/>std.math.*, std.bit.*, std.complex, std.random.rng,<br/>std.base64, std.hashlib, std.time, std.sys.terminate,<br/>std.collections.optional; a ratchet test records<br/>which modules check clean, no implicit prelude"]
+        Src["Codira source<br/>*.code, codira.toml"] --> Parse["codira_syntax<br/>lexer, parser, lossless CST<br/>contextual keywords, f-strings"]
+        StdLib["std package: 36 of 96 modules importable<br/>std.result, std.error (AnyError, context),<br/>std.json (strict parser, printer, stream, typed),<br/>std.collections.map/set/deque/binary_heap/counter,<br/>std.cmp, std.format, std.fs.file, std.text.ascii,<br/>std.crypto.hash, std.random.rng, std.time, ...;<br/>ratchet tests record which modules check clean"]
         StdLib --> Parse
         Parse --> ItemTree["Item tree and name resolution<br/>modules, visibility, imports,<br/>names across packages"]
-        ItemTree --> Infer["Type inference<br/>generics, optionals, enums,<br/>closures, effect rows"]
+        ItemTree --> Infer["Type inference<br/>generics, optionals, generic enums,<br/>closures, effect rows"]
         Infer --> Mono["codira_hir::mono<br/>one instance per type argument"]
         Traits["Traits and bounds<br/>trait, extend T: Trait, T: A + B,<br/>defaults, supertraits;<br/>static dispatch per instance"]
         Traits --> Mono
@@ -150,20 +153,27 @@ flowchart TD
         Enums["enum, match, optionals<br/>exhaustiveness checker"]
         Closures["function values and closures<br/>capture by value, hot-reload safe"]
         Loops["for loops, ranges, continue<br/>bounds-checked indexing"]
+        Results["Result and ?<br/>wraps into the one variant that holds<br/>the error; @error_conversion into AnyError;<br/>main may return a Result"]
+        Strings["String and [T]<br/>built-in UTF-8 String, growable arrays<br/>with builtin methods; f-string format specs<br/>checked at compile time; {x:?} for every type"]
+        Pipelines["Lazy pipelines<br/>xs.iter().map(..).filter(..).sum()<br/>one fused loop, no intermediate arrays;<br/>lines() / split() read lazily"]
         Infer --- Enums
         Infer --- Closures
         Infer --- Loops
+        Infer --- Results
+        Infer --- Strings
+        Infer --- Pipelines
 
         subgraph CHECKS [" Static checks, every one a diagnostic, never a crash "]
             direction LR
             Effects["Effect obligations<br/>uses / handle"]
-            Tasks["Structured concurrency<br/>scope, spawn, channels,<br/>select, session types"]
+            Tasks["Structured concurrency<br/>scope, group (results in spawn order),<br/>spawn, cancelled(), channels,<br/>select, session types"]
             Flow["Information flow<br/>secret, oblivious, ct_select"]
             Units["Units of measure<br/>f64 unit(m / s)"]
-            Realtime["@noalloc @nopanic<br/>@noblock @realtime<br/>call-graph fixpoint over 8 effects,<br/>uses proven divisions"]
+            Realtime["@noalloc @nopanic<br/>@noblock @realtime<br/>call-graph fixpoint over 8 effects;<br/>runtime calls read from the catalogue"]
             Envelope["Semantic envelopes<br/>@envelope(allocation: none, ...)<br/>package envelope in codira.toml;<br/>unchecked keys rejected"]
             Codegen_ok["Codegen support<br/>honest refusals"]
             Bindings["Binding rules<br/>assigning to a let, in-place parameters<br/>and module-level let/var are errors"]
+            Escape["Escape analysis (ALI)<br/>per-allocation placement, escape summaries;<br/>@region: an escape is a compile error;<br/>string_escape sizes kept format results"]
             Realtime --> Envelope
         end
         Infer --> CHECKS
@@ -203,7 +213,11 @@ flowchart TD
     %% ---------------------------------------------------------------- 3
     subgraph BACKENDS [" 3. Back ends: codira_codegen and friends "]
         direction TB
-        LLVMGen["codira_codegen<br/>HIR instance to LLVM IR via inkwell<br/>bounds checks, effects, tasks, fuel,<br/>checked integer division, masked shifts,<br/>saturating float casts, value-struct host wrappers,<br/>array assignment, never-returning functions,<br/>ct_select stays a cmov at every -O level"]
+        LLVMGen["codira_codegen<br/>HIR instance to LLVM IR via inkwell<br/>bounds checks, effects, tasks, fuel,<br/>checked integer division, masked shifts,<br/>saturating float casts, value-struct host wrappers,<br/>ct_select stays a cmov at every -O level;<br/>methods link as module::Type::method, @inline"]
+        Fabric["String Fabric<br/>inline append into a buffer the thread owns;<br/>compile-time format plans, digits written in place;<br/>kept results sized to what they hold"]
+        Roots["Precise stack roots<br/>frame records only where a reference is live<br/>across a call; one-load back-edge polls;<br/>a frame without a record is scanned conservatively"]
+        FrameAlloc["--frame-alloc (experimental)<br/>non-escaping objects in the stack frame;<br/>@region functions allocate in an arena"]
+        Catalogue["codira_abi runtime catalogue<br/>every runtime function: signature, alloc,<br/>panic, block, safepoint, shared state;<br/>read by LLVM, Cranelift and the effects"]
         ArrayAlias["array alias classes<br/>TBAA tags for array lengths, elements, handles;<br/>opt-in, CODIRA_ARRAY_TBAA=1"]
         Targets["codira_target<br/>14 targets held to LLVM data layouts<br/>--target-cpu"]
         Native["[native] C, C++, asm in a package<br/>bitcode linked before optimization;<br/>C++ static constructors and destructors run<br/>(.init_array / .fini_array on ELF)"]
@@ -213,7 +227,7 @@ flowchart TD
         Exe["codira build --exe<br/>standalone executable"]
         Wasm["wasm32-unknown-unknown<br/>module that imports nothing"]
         PTX["@target(gpu)<br/>NVPTX, launched by codira_gpu"]
-        CL["codira_cranelift<br/>codira run --jit, no LLVM, no linker<br/>scalar core only; same integer, cast and<br/>print semantics as LLVM; narrow values<br/>extended across calls"]
+        CL["codira_cranelift<br/>codira run --jit, no LLVM, no linker<br/>scalar core and arrays (literals, indexing,<br/>push, for); String, regions, groups and<br/>pipelines refused by name, run on LLVM"]
         Quantum["codira_quantum<br/>@target(qpu): circuit IR, simulator,<br/>QIR, OpenQASM 2/3"]
         Circuits["codira_circuits<br/>oblivious function to R1CS, Circom,<br/>Groth16 (attest); Verilog (@target(fpga))"]
         Asm["@asm inline assembly<br/>machine memory intrinsics"]
@@ -222,6 +236,11 @@ flowchart TD
         Bindgen["codira bindgen<br/>C, Rust, Go, TypeScript"]
         Bun["Bun plugin<br/>import a .code file"]
 
+        Fabric --> LLVMGen
+        Roots --> LLVMGen
+        FrameAlloc -.-> LLVMGen
+        Catalogue --- LLVMGen
+        Catalogue --- CL
         LLVMGen --> Targets
         ArrayAlias -.-> LLVMGen
         Native --> LLVMGen
@@ -238,10 +257,13 @@ flowchart TD
         Lib --> Bun
     end
     Mono ==> LLVMGen
+    Escape ==>|placements| FrameAlloc
+    Escape -.->|kept or temporary| Fabric
     Fold -.->|constant shortcut| LLVMGen
     Mono ==>|dev JIT| CL
     Infer ==>|"qpu kernels"| Quantum
     Flow ==>|"oblivious subset"| Circuits
+    Realtime --- Catalogue
 
     %% ---------------------------------------------------------------- 4
     subgraph RUNTIME [" 4. Runtime: codira_runtime, codira_memory, codira_healing "]
@@ -250,9 +272,15 @@ flowchart TD
         Reload["Hot reload<br/>relink dispatch table, migrate heap<br/>@renamed, saturating retypes;<br/>world stopped, only with no thread in Codira code"]
         Snap["Heap snapshots<br/>save and restore the whole GC heap"]
         Cells["Function-value code cells<br/>repointed on every reload"]
-        GC["codira_memory<br/>mark-sweep GC, size-class blocks, heap cap;<br/>stop-the-world: every thread running Codira code<br/>parks at a safepoint, its stack scanned"]
-        Regions["Region arenas with quotas<br/>W^X OS pages"]
-        Pool["Worker pool<br/>scope joins, bounded channels"]
+        GC["codira_memory GC<br/>mark-sweep, size-class blocks, stop-the-world;<br/>precise frame roots, conservative elsewhere;<br/>SIGURG preemption of a thread that never polls<br/>(Linux x86-64 and AArch64)"]
+        Policy["Heap policy<br/>finite default limit (50% of available memory),<br/>GOGC-style pacing from Codira allocations,<br/>collect_blocking / request_collection with a<br/>fairness window; controlled OOM exit (102);<br/>Runtime::stats(): heap, pauses p50/p99/max"]
+        Relocate["Relocation (opt-in, CODIRA_GC_COMPACT=1)<br/>evacuates sparse blocks; anything a stack,<br/>root, pin or root region refers to stays;<br/>off while Cascade is attached"]
+        Cascade["Cascade (opt-in, runtime only)<br/>deferred reference counting, epochs,<br/>bounded cycle collection; the compiler<br/>emits no retains or releases yet"]
+        Arenas["@region arenas<br/>per-thread chunk cache, released at once;<br/>registered as root spans; close-time check<br/>in debug builds"]
+        RootRegion["root_region<br/>conservatively scanned words: task-group<br/>results, region chunks"]
+        StringRT["String runtime<br/>owner word per buffer (thread pointer);<br/>views, Rust str algorithms, ryu floats"]
+        Sched["Fabric scheduler<br/>per-worker deques, work stealing,<br/>blocking-I/O pool, task tree with<br/>cooperative cancellation, group results"]
+        Regions["Region arenas with quotas<br/>W^X OS pages (std.memory)"]
         EffRT["Effect handlers<br/>resume, abort across frames"]
         Fuel["Fuel metering<br/>--fuel"]
         Heracles["codira_healing (HERACLES)<br/>fault interception (Windows only),<br/>@heal strategies"]
@@ -261,6 +289,7 @@ flowchart TD
             direction LR
             FsSvc["codira_fs_*<br/>open, read, write, seek,<br/>fsync, rename, sync_dir<br/>(std.fs.fs)"]
             HashSvc["codira_hash_*<br/>SHA-256, SHA-512, BLAKE3<br/>via sha2 / blake3 crates<br/>(std.crypto.hash)"]
+            RandSvc["codira_random_*<br/>OS entropy (getrandom),<br/>per-process hash-table key<br/>(std.random.rng, Map's SipHash-1-3)"]
             DbSvc["codira_db_*<br/>open, begin, get, put, delete,<br/>commit (conflict code), checkpoint<br/>(std/db/db.code)"]
             AiSvc["codira_ai_*<br/>f32 tensors, matmul, add, relu,<br/>softmax, Linear + MSE + SGD step<br/>(std/ai/runtime.code)"]
         end
@@ -269,10 +298,20 @@ flowchart TD
         Reload --> GC
         Reload --> Snap
         Reload --> Cells
+        Policy --> GC
+        Relocate -.-> GC
+        Cascade -.-> GC
+        RootRegion --> GC
+        Arenas --> RootRegion
+        Sched --> RootRegion
         Fuel --> Heracles
     end
     Lib ==> Loader
     Exe ==> Loader
+    Fabric ==> StringRT
+    FrameAlloc ==> Arenas
+    Tasks ==> Sched
+    Roots ==>|frame records| GC
 
     %% ---------------------------------------------------------------- engines
     subgraph ENGINES [" 6. Native engines (pure Rust, no Python, no BLAS) "]
@@ -286,13 +325,16 @@ flowchart TD
     %% ---------------------------------------------------------------- quality
     subgraph QUALITY [" 7. Quality "]
         direction LR
-        Diff["Differential testing<br/>seeded random programs on LLVM -O2,<br/>LLVM -O0 and Cranelift; outputs compared;<br/>every former divergence a regression test"]
-        Bench["benches/ + scripts/bench.sh<br/>Criterion vs Rust, LuaJIT, Wasm;<br/>baselines recorded, not gated"]
-        CI["CI on Linux, Windows and macOS<br/>Linux and Windows: all tests but a stale<br/>generated header pass (now regenerated);<br/>macOS: 23 more of 3,517 fail (Funis Mach-O, 6 codegen);<br/>nightly format check fails"]
-        Supply["Supply chain<br/>cargo audit: 1 open advisory<br/>(tracing-subscriber via arkworks)"]
+        Diff["Differential testing<br/>seeded random programs on LLVM -O2,<br/>LLVM -O0 and Cranelift, arrays included;<br/>frame-alloc and @region differentials"]
+        Bench["AURORA benchmark suite (benches/aurora)<br/>Codira vs Rust and C/C++, bootstrap intervals,<br/>heap floor tracked per commit; regression gate<br/>refuses a baseline from another machine"]
+        Gates["AURORA gates (TESTING.md)<br/>GC stress with shadow models, fault injection<br/>at every allocation, loom models of the safepoint<br/>protocol, ASan / TSan, fuzzers, gc-modes, soak"]
+        CI["CI on Linux, Windows and macOS<br/>plus opt-in aurora-gates and aurora-bench<br/>workflows; last per-OS results at 26.11:<br/>macOS Funis Mach-O failures, nightly fmt"]
+        Supply["Supply chain<br/>cargo audit: 1 open advisory<br/>(tracing-subscriber 0.2 via arkworks)"]
     end
     Diff -.->|checks| LLVMGen
     Diff -.->|checks| CL
+    Gates -.->|stresses| GC
+    Bench -.->|gates| LLVMGen
 
     %% ---------------------------------------------------------------- 8
     subgraph MCODE [" 8. Machine code: codira_ctcheck, codira_mcode, codira_superopt "]
@@ -312,10 +354,13 @@ flowchart TD
     %% ---------------------------------------------------------------- in progress
     subgraph NEXT [" Not on main: unfinished work "]
         direction LR
+        N1["Cascade in the compiler<br/>retain / release insertion from the<br/>uniqueness analysis"]
+        N4["relocation that pays for itself<br/>cheap sparse-block selection;<br/>relocation together with Cascade"]
+        N5["class-field alias information<br/>a field updated in a loop stays in memory<br/>(store_field 2.5x Rust)"]
         N2["loop schedules (LLVM hints)<br/>fails a dependence-safety test"]
         N3["multi-shot continuations,<br/>sample / observe<br/>fails posterior checks"]
         N6["proof-gated live updates<br/>relational prover and runtime<br/>protocol do not compile yet"]
-        N7["superoptimiser in loop bodies and on<br/>other targets, array handles marked<br/>dereferenceable"]
+        N7["superoptimiser in loop bodies and on<br/>other targets"]
         N8["@budget, table declarations,<br/>tensor shape checking, memory<br/>domains, capability types (in progress)"]
     end
 
@@ -333,6 +378,7 @@ flowchart TD
     classDef legend fill:#0f172a,stroke:#94a3b8,color:#f8fafc,stroke-width:1px;
     classDef added fill:#1f2937,stroke:#f59e0b,color:#fef3c7,stroke-width:3px;
     classDef wip fill:#111827,stroke:#9ca3af,color:#d1d5db,stroke-width:2px,stroke-dasharray:5 5;
+    classDef addedwip fill:#111827,stroke:#f59e0b,color:#fef3c7,stroke-width:3px,stroke-dasharray:5 5;
     classDef old fill:#1f2937,stroke:#64748b,color:#f1f5f9,stroke-width:1px;
 
     class FRONTEND frontend;
@@ -350,9 +396,10 @@ flowchart TD
     class L1 old;
     class L2 added;
     class L3 wip;
-    class N2,N3,N6,N7,N8 wip;
+    class N1,N2,N3,N4,N5,N6,N7,N8 wip;
     class MTE,Funis,Ueval,ArrayAlias,Superopt,Profiles,CI wip;
-    class StdLib,Traits,Tasks,Realtime,Envelope,EnvCLI,Certify,ApiDiff,CERT,Fold,LLVMGen,Lib,FsSvc,HashSvc,DbSvc,AiSvc,DbEngine,AiEngine,Diff,Bench,Heracles,Bindings,Native,CL,CTCheck,MCodeIR,GC,Reload,LLD,Supply added;
+    class FrameAlloc,Relocate,Cascade addedwip;
+    class DevTools,RunFlags,StdLib,Parse,Infer,Results,Strings,Pipelines,Tasks,Realtime,Escape,LLVMGen,Fabric,Roots,Catalogue,CL,GC,Policy,Arenas,RootRegion,StringRT,Sched,RandSvc,Diff,Bench,Gates added;
     linkStyle default stroke:#94a3b8,stroke-width:1.5px;
 ```
 
@@ -472,3 +519,62 @@ rather than volume. It is part of the Codira workspace (`funis`, `funis_common`,
 MIT licence; see [`crates/funis/README.md`](crates/funis/README.md) and
 [`crates/funis/NOTICE`](crates/funis/NOTICE) for what it is, what has changed
 from mold, and what is still only a goal.
+
+## Strings: measured against Rust
+
+`String` (see "Strings" in `agents/USING_CODIRA.md`) against Rust's
+`String` on the same algorithms. The programs are now the `strings`
+workload of the AURORA benchmark suite, `benches/aurora/strings/`:
+`src/mod.code` (Codira), `strings.rs` (Rust) and `strings.cpp` (C++), one
+kernel per process, each printing its elapsed nanoseconds and a check
+value; the check values are equal for every kernel. The table below was
+measured with the earlier programs (the names are now `append_short`,
+`append_numbers`, `split_lines`, `lines_lazy`, `split_lazy_count`,
+`find_10mb`, `parse_i64`); `benches/aurora/RESULTS.md` has current numbers
+with confidence intervals.
+
+| benchmark | before String Fabric | Codira | Rust | Codira / Rust |
+|---|---:|---:|---:|---:|
+| `concat_1m_short`: 1M appends of `"word "` (`s += ..` / `push_str`) | 17.3 ms | 7.5 ms | 5.3 ms | 1.42x |
+| `concat_1m_numbers`: 1M appends of `i.to_string()` and `"\n"` | 112.6 ms | 12.0 ms | 26.1 ms | 0.46x |
+| `split_10mb_lines`: `lines()` of a 10.5 MB text (205,600 lines, views) | 10.3 ms | 6.5 ms | 5.7 ms | 1.15x |
+| `lines_10mb_lazy`: `for line in text.lines()`, bytes summed | -- | 2.3 ms | 4.2 ms | 0.56x |
+| `split_10mb_lazy_count`: `split(",").filter(len > 3).count()` | -- | 16.3 ms | 22.1 ms | 0.74x |
+| `find_10mb`: `find("needle")` at the end of 10 MB of `"ab"` | 1.8 ms | 1.4 ms | 1.7 ms | 0.80x |
+| `parse_1m_i64`: `parse_i64()` of 1M decimal fields, summed | 11.5 ms | 6.8 ms | 6.5 ms | 1.05x |
+
+Medians of 11 alternating runs, on one machine: Intel Xeon @ 2.10 GHz (4
+vCPUs, AVX2 and AVX-512), 16 GB, Linux 6.18; Rust 1.97.1. The machine was
+shared with other builds (load average 4 to 5), so single runs vary by up
+to 30%. Codira: the program built with `codira build -O 3` and run by
+a host (now `benches/aurora/host`; the runtime in release mode, so its string
+functions are optimized as in a release `codira`); Rust: `rustc -C
+opt-level=3 strings.rs`. Both for the default x86-64 target. (Rust's lazy
+split uses a `char` pattern, `split(',')`, its fastest.)
+
+What the numbers say:
+
+- **An append with room is inline**: a check of the buffer's owner word
+  against the thread pointer, of the fill and of the room, a copy and a
+  plain store of the fill (see "String Fabric" in `agents/USING_CODIRA.md`
+  for why no atomic is needed). Most of what is left of the 1.4x is
+  memory: nothing is collected during the run, so every buffer is fresh
+  memory (Rust's time on 100 strings of 10,000 appends rises from 2.7 ms
+  to 5.1 ms when its strings are leaked instead of freed; Codira's is
+  6.5 ms), and each doubling copies into a new GC buffer, where Rust's
+  `realloc` of a large block remaps pages.
+- **Numbers are written into the destination** (`concat_1m_numbers`): the
+  digits go into the string's buffer; Rust's `i.to_string()` allocates a
+  temporary `String` first.
+- **Lazy `lines()`/`split()`** find each piece with `memchr` and make a
+  view; the eager `lines()` counts the lines, then fills the `[String]`.
+- **Search and parsing** run Rust's own code (`str::find`, `i64::from_str`
+  inside the runtime), so they are at parity.
+- Not measured: memory use, and GC pause times while strings are built.
+
+To run them:
+
+```bash
+cargo build --release -p codira
+python3 scripts/bench.py --only strings.
+```

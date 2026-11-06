@@ -147,11 +147,31 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             TyKind::TypeAlias(alias) => alias.target_type(self.db),
             _ => fn_ty.clone(),
         };
+        let mut values = Vec::with_capacity(args.len());
+        for &arg in args {
+            values.push(self.gen_expr(arg)?);
+        }
+        let never = matches!(self.infer[call].interned(), TyKind::Never);
+        self.gen_fn_value_call(callee, &fn_ty, &values, never)
+    }
+
+    /// Calls the function value `callee` (of the function type `fn_ty`,
+    /// without an alias) with the already evaluated `values`. `never` says
+    /// the call does not return.
+    pub(super) fn gen_fn_value_call(
+        &mut self,
+        callee: BasicValueEnum<'ink>,
+        fn_ty: &Ty,
+        values: &[BasicValueEnum<'ink>],
+        never: bool,
+    ) -> Option<BasicValueEnum<'ink>> {
         let handle = callee.into_pointer_value();
         let mut call_args: Vec<BasicMetadataValueEnum<'ink>> = vec![handle.into()];
-        for &arg in args {
-            call_args.push(self.gen_expr(arg)?.into());
-        }
+        call_args.extend(
+            values
+                .iter()
+                .map(|&value| BasicMetadataValueEnum::from(value)),
+        );
 
         // Only a hot reload can leave a function value empty; stop there
         // rather than call through null.
@@ -200,7 +220,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .build_load(ptr_ty, cell, "fn_value.code")
             .expect("failed to load a function value's code")
             .into_pointer_value();
-        let code_ty = self.hir_types.get_fn_value_code_type(&fn_ty);
+        let code_ty = self.hir_types.get_fn_value_code_type(fn_ty);
         let result = self
             .builder
             .build_indirect_call(code_ty, code, &call_args, "fn_value.call")
@@ -208,20 +228,25 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .try_as_basic_value()
             .basic();
 
-        match self.infer[call].interned() {
-            TyKind::Never => {
-                self.builder
-                    .build_unreachable()
-                    .expect("failed to build unreachable");
-                None
-            }
-            _ => Some(result.unwrap_or_else(|| self.context.const_struct(&[], false).into())),
+        if never {
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable");
+            None
+        } else {
+            Some(result.unwrap_or_else(|| self.context.const_struct(&[], false).into()))
         }
     }
 
     /// Generates the code of `target` into this generator's function: a
     /// closure's body, or a thunk calling a named function.
     pub(crate) fn gen_fn_value_target(&mut self, target: &FnValueTarget) {
+        // A target is a function of its own, not the body the escape
+        // analysis placed objects for: its allocations go to the heap (a
+        // closure body's would anyway; an inlined closure's target is never
+        // called), and it has no region.
+        self.escapes = None;
+        self.region_function = false;
         let value = self
             .fn_value
             .get_nth_param(0)
@@ -345,5 +370,6 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         }
         // Undo what a hardware-safety mode set up, before every return.
         self.finish_safety();
+        self.unify_aggregate_returns();
     }
 }

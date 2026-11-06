@@ -285,7 +285,28 @@ impl Ty {
             }
             TypeNs::TypeAliasId(id) => type_for_def_fn(TypableDef::TypeAlias(id.into())),
             TypeNs::PrimitiveType(id) => type_for_def_fn(TypableDef::PrimitiveType(id.into())),
-            TypeNs::EnumId(id) => type_for_def_fn(TypableDef::Enum(id.into())),
+            TypeNs::EnumId(id) => {
+                let e: crate::Enum = id.into();
+                // As for a struct: a bare `Result` keeps the enum's own
+                // parameters (right inside its declaration), an argument
+                // list replaces them.
+                if generic_args.is_empty() {
+                    return Some(e.ty(db));
+                }
+                let arguments: Substitution = generic_args
+                    .iter()
+                    .map(|arg| {
+                        Self::from_hir_with_diagnostics(
+                            db,
+                            resolver,
+                            type_ref_map,
+                            diagnostics,
+                            *arg,
+                        )
+                    })
+                    .collect();
+                Some(TyKind::Enum(e, arguments).intern())
+            }
             // This is the whole point of the generic-parameter scope: `T`
             // in a signature or field becomes a real type rather than an
             // unresolved-name error.
@@ -400,7 +421,7 @@ pub(crate) fn type_for_def(db: &dyn HirDatabase, def: TypableDef, ns: Namespace)
         (TypableDef::Struct(s), Namespace::Values) => type_for_struct_constructor(db, s),
         (TypableDef::Struct(s), Namespace::Types) => type_for_struct(db, s),
         (TypableDef::TypeAlias(t), Namespace::Types) => type_for_type_alias(db, t),
-        (TypableDef::Enum(e), Namespace::Types) => e.ty(),
+        (TypableDef::Enum(e), Namespace::Types) => e.ty(db),
 
         // 'error' cases:
         (TypableDef::Function(_), Namespace::Types)
@@ -424,6 +445,7 @@ pub(crate) fn type_for_primitive(def: PrimitiveType) -> Ty {
         crate::primitive_type::PrimitiveType::Int(i) => TyKind::Int(i.into()),
         crate::primitive_type::PrimitiveType::Bool => TyKind::Bool,
         crate::primitive_type::PrimitiveType::Str => TyKind::Str,
+        crate::primitive_type::PrimitiveType::String => TyKind::String,
     }
     .intern()
 }

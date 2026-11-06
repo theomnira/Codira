@@ -116,6 +116,12 @@ fn scan_identifier_or_keyword(c: char, cursor: &mut Cursor<'_>) -> SyntaxKind {
     match (c, cursor.current()) {
         ('_', None) => return UNDERSCORE,
         ('_', Some(c)) if !is_ident_continue(c) => return UNDERSCORE,
+        // `f"x = {x}"`: an interpolated string literal, one token.
+        ('f', Some('"')) => {
+            cursor.bump();
+            scan_string('"', cursor);
+            return STRING;
+        }
         _ => (),
     };
     cursor.bump_while(is_ident_continue);
@@ -127,6 +133,11 @@ fn scan_identifier_or_keyword(c: char, cursor: &mut Cursor<'_>) -> SyntaxKind {
 
 fn scan_index(c: char, cursor: &mut Cursor<'_>) -> Option<SyntaxKind> {
     if c == '.' {
+        // At the end of the input the loop below consumes nothing; a `.`
+        // alone is not an index.
+        if cursor.current().is_none() {
+            return None;
+        }
         let mut is_first = true;
         while let Some(cc) = cursor.current() {
             match cc {

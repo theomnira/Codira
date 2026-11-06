@@ -111,7 +111,15 @@ impl AsName for ast::FieldKind {
     fn as_name(&self) -> Name {
         match self {
             ast::FieldKind::Name(nr) => nr.as_name(),
-            ast::FieldKind::Index(idx) => Name::new_tuple_field(idx.text()[1..].parse().unwrap()),
+            // An index too large for `usize` names no field; as text it is
+            // reported as an unknown field instead of panicking here.
+            ast::FieldKind::Index(idx) => {
+                let digits = &idx.text()[1..];
+                digits.parse().map_or_else(
+                    |_| Name::new_text(digits.into()),
+                    Name::new_tuple_field,
+                )
+            }
         }
     }
 }
@@ -130,7 +138,7 @@ pub mod known {
     known_names!(
         // Primitives
         int, isize, i8, i16, i32, i64, i128, uint, usize, u8, u16, u32, u64, u128, float, f32, f64,
-        bool, str,
+        bool, str, String,
     );
 
     // self/Self cannot be used as an identifier

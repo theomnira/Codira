@@ -11,11 +11,13 @@ use std::{
     collections::HashMap,
     ptr::NonNull,
     sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Arc, OnceLock, Weak,
     },
+    time::{Duration, Instant},
 };
 
+use parking_lot::{Condvar, Mutex};
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
@@ -24,9 +26,13 @@ use crate::{
         array::ArrayHeader,
         heap::{
             array_payload_layout, handle_of, header_of, AllocError, Heap, HeapInner, ObjectHeader,
-            PayloadMigration, COLOR_BLACK, COLOR_WHITE,
+            PayloadMigration, SweepOutcome, COLOR_BLACK, COLOR_WHITE,
         },
-        safepoint, Array as GcArray, Event, GcPtr, GcRuntime, Observer, Stats, TypeTrace,
+        cascade::{Cascade, CascadeConfig, CascadeHost, Mutator, StepReport},
+        policy::GcPolicy,
+        frames, safepoint,
+        stats::{CollectionCounts, CollectionReport, GcStats, PauseHistogram, Trigger},
+        Array as GcArray, Event, GcPtr, GcRuntime, Observer, Stats, TypeTrace,
     },
     mapping::{self, resolve_struct_to_struct_edit, Action, FieldMapping, Mapping, MemoryMapper},
     r#type::{Type, TypeData},
@@ -48,14 +54,31 @@ pub(crate) fn array_data_offset(element: &TypeData) -> usize {
 ///
 /// `header` must be an allocated object whose payload matches its type.
 #[inline]
-unsafe fn for_each_reference(header: &ObjectHeader, mut f: impl FnMut(NonNull<ObjectHeader>)) {
-    let ty = header.type_data();
-    let payload = header.data;
-    let mut visit = |slot: *const u8| {
-        if let Some(child) = NonNull::new(*slot.cast::<*mut ObjectHeader>()) {
+pub(crate) unsafe fn for_each_reference(
+    header: &ObjectHeader,
+    mut f: impl FnMut(NonNull<ObjectHeader>),
+) {
+    for_each_reference_slot(header, |slot| {
+        if let Some(child) = NonNull::new(*slot) {
             f(child);
         }
-    };
+    });
+}
+
+/// Calls `f` with the address of every slot of `header`'s payload that
+/// holds a GC reference (null or not).
+///
+/// # Safety
+///
+/// `header` must be an allocated object whose payload matches its type.
+#[inline]
+pub(crate) unsafe fn for_each_reference_slot(
+    header: &ObjectHeader,
+    mut f: impl FnMut(*mut *mut ObjectHeader),
+) {
+    let ty = header.type_data();
+    let payload = header.data;
+    let mut visit = |slot: *mut u8| f(slot.cast::<*mut ObjectHeader>());
 
     if let Some(element) = ty.array_element() {
         let length = (*payload.cast::<ArrayHeader>()).length;
@@ -126,15 +149,115 @@ impl TypeTrace for Type {
 /// such thread has parked at a safepoint (an allocation) or in a blocking
 /// runtime call, scans their stacks, collects, and resumes them (see
 /// [`safepoint`]).
+///
+/// A collection starts in one of four ways (see [`Trigger`]):
+///
+/// - **pacing**: the heap grew by the [`GcPolicy`]'s percentage over what
+///   the previous collection left live; the next allocation by a thread
+///   running Codira code collects;
+/// - **the heap limit**: an allocation would exceed it; it collects and
+///   retries once, and fails with [`AllocError::LimitExceeded`] if the
+///   memory is still not there;
+/// - [`MarkSweep::request_collection`]: returns at once; the collection runs
+///   on a thread of the collector's own;
+/// - [`MarkSweep::collect_blocking`]: returns when the collection is done.
+///
+/// The last two are requests from outside. They wait until Codira code has
+/// run for the policy's mutator window since the previous collection, and a
+/// request is folded into any collection that starts after it was made, so
+/// no loop of requests can starve the threads running Codira code.
 pub struct MarkSweep<O>
 where
     O: Observer<Event = Event>,
 {
     pub(crate) heap: Arc<Heap>,
-    observer: O,
-    /// Collections started because an allocation hit the heap limit.
-    emergency_collections: AtomicUsize,
+    pub(crate) core: Arc<Core<O>>,
+    /// Requests for [`MarkSweep::request_collection`]'s thread.
+    requests: Arc<Requests>,
+    /// That thread, once started.
+    request_thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    /// Says where the heap limit came from, for the diagnostic of a failed
+    /// allocation (see [`MarkSweep::set_heap_limit_note`]).
+    limit_note: Mutex<Option<String>>,
+    /// Test-only fault injection: 0 when disarmed; otherwise the number of
+    /// allocations, this one included, until one fails (see
+    /// [`MarkSweep::fail_nth_allocation`]).
+    fault_countdown: AtomicU64,
+    /// Allocations that fault injection made fail.
+    injected_failures: AtomicU64,
 }
+
+/// What a collection needs, shared with [`MarkSweep::request_collection`]'s
+/// thread.
+pub(crate) struct Core<O> {
+    heap: Arc<Heap>,
+    observer: O,
+    policy: Mutex<GcPolicy>,
+    accounting: Mutex<Accounting>,
+    /// Collections started, ever. Written with the world stopped.
+    started: AtomicU64,
+    /// What region arenas did. See `gc::region`.
+    pub(crate) regions: super::region::RegionCounters,
+    /// The Cascade engine, once a host enabled it (experimental, off by
+    /// default; see `CASCADE.md`).
+    cascade: OnceLock<Arc<Cascade>>,
+    /// Whether collections evacuate sparse blocks (see
+    /// [`MarkSweep::set_compaction`]).
+    compaction: AtomicBool,
+    /// What the last collection's relocation did.
+    last_relocation: Mutex<RelocationReport>,
+}
+
+/// The collector's statistics and the state its fairness rule needs.
+#[derive(Default)]
+struct Accounting {
+    counts: CollectionCounts,
+    bytes_reclaimed: u64,
+    objects_reclaimed: u64,
+    time_to_safepoint: Duration,
+    pauses: PauseHistogram,
+    /// When the previous collection ended, and how long it paused.
+    last_end: Option<Instant>,
+    last_pause: Duration,
+    last_report: CollectionReport,
+}
+
+/// Pending [`MarkSweep::request_collection`] calls.
+#[derive(Default)]
+struct Requests {
+    state: Mutex<RequestState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct RequestState {
+    /// A request is waiting for a collection to start.
+    pending: bool,
+    /// [`Core::started`] when the first pending request was made: a
+    /// collection that starts after that satisfies it.
+    started_at_request: u64,
+    /// The collector is being dropped.
+    shutdown: bool,
+}
+
+/// What the relocation of one collection did, for measurements (see
+/// [`MarkSweep::set_compaction`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RelocationReport {
+    /// How long the world was stopped for the collection itself (marking,
+    /// moving, sweeping), excluding the wait for threads to park.
+    pub pause: std::time::Duration,
+    /// Objects moved out of sparse blocks.
+    pub moved: usize,
+    /// Objects the stacks referred to (which could not move); rooted and
+    /// pinned objects are not counted.
+    pub pinned: usize,
+    /// Bytes the heap held from the system after the collection.
+    pub committed: usize,
+}
+
+/// Blocks at most this full (in percent of their cells) are evacuated.
+const EVACUATE_LIVE_PERCENT: usize = 25;
 
 impl<O> Default for MarkSweep<O>
 where
@@ -149,21 +272,130 @@ impl<O> MarkSweep<O>
 where
     O: Observer<Event = Event>,
 {
-    /// Creates a `MarkSweep` memory collector with the specified `Observer`.
+    /// Creates a `MarkSweep` memory collector with the specified `Observer`
+    /// and the default [`GcPolicy`] (pacing on, no heap limit).
     pub fn with_observer(observer: O) -> Self {
+        let heap = Heap::new(None);
+        let policy = GcPolicy::default();
+        heap.inner
+            .write()
+            .set_pacing(policy.growth_percent, policy.min_heap);
         Self {
-            heap: Heap::new(None),
-            observer,
-            emergency_collections: AtomicUsize::new(0),
+            heap: heap.clone(),
+            core: Arc::new(Core {
+                heap,
+                observer,
+                policy: Mutex::new(policy),
+                accounting: Mutex::new(Accounting::default()),
+                started: AtomicU64::new(0),
+                regions: super::region::RegionCounters::new(),
+                cascade: OnceLock::new(),
+                compaction: AtomicBool::new(matches!(
+                    std::env::var("CODIRA_GC_COMPACT").as_deref(),
+                    Ok("1")
+                )),
+                last_relocation: Mutex::new(RelocationReport::default()),
+            }),
+            requests: Arc::new(Requests::default()),
+            request_thread: Mutex::new(None),
+            limit_note: Mutex::new(None),
+            fault_countdown: AtomicU64::new(0),
+            injected_failures: AtomicU64::new(0),
+        }
+    }
+
+    /// **Test-only fault injection.** Makes the `n`th GC allocation from now
+    /// fail with [`AllocError::Injected`] (`n` counts from 1); every other
+    /// allocation is unaffected, and injection disarms itself once it fired.
+    /// `None` (or `Some(0)`) disarms it.
+    ///
+    /// Every allocation point of the collector counts, on every thread:
+    /// [`MarkSweep::try_alloc`], [`MarkSweep::try_alloc_array`] and
+    /// [`MarkSweep::try_grow_array`] (so objects, arrays, strings and array
+    /// growth from generated code, the runtime and the host, and heap
+    /// snapshot restores). Hot-reload migration allocates under the heap
+    /// lock without going through these and is not counted.
+    ///
+    /// A harness runs a program with `n = 1, 2, ...` until it no longer
+    /// fails, which checks every allocation point the program reaches. When
+    /// disarmed this costs one relaxed load per allocation.
+    pub fn fail_nth_allocation(&self, n: Option<u64>) {
+        self.fault_countdown.store(n.unwrap_or(0), Ordering::SeqCst);
+    }
+
+    /// Returns how many allocations fault injection made fail.
+    pub fn injected_failures(&self) -> u64 {
+        self.injected_failures.load(Ordering::SeqCst)
+    }
+
+    /// Counts one allocation against [`MarkSweep::fail_nth_allocation`].
+    #[inline]
+    fn check_fault(&self) -> Result<(), AllocError> {
+        if self.fault_countdown.load(Ordering::Relaxed) == 0 {
+            Ok(())
+        } else {
+            self.count_fault()
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn count_fault(&self) -> Result<(), AllocError> {
+        let previous =
+            self.fault_countdown
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    left.checked_sub(1)
+                });
+        if previous == Ok(1) {
+            self.injected_failures.fetch_add(1, Ordering::SeqCst);
+            Err(AllocError::Injected)
+        } else {
+            Ok(())
         }
     }
 
     /// Returns the observer
     pub fn observer(&self) -> &O {
-        &self.observer
+        &self.core.observer
     }
 
-    /// Returns the number of bytes the heap currently holds from the system:
+    /// Enables the experimental Cascade reclamation engine on this heap
+    /// (`crates/codira_memory/CASCADE.md`) and returns it; if it is already
+    /// enabled, returns the existing engine and ignores `config`.
+    ///
+    /// Only objects allocated through a Cascade [`Mutator`] are managed by
+    /// it; every other object, and every object while no mutator runs, is
+    /// reclaimed by tracing exactly as before. Tracing collections become
+    /// slightly more expensive: they treat the mutators' local references
+    /// as roots and resynchronise the reference counts afterwards.
+    pub fn enable_cascade(&self, config: CascadeConfig) -> Arc<Cascade> {
+        self.core
+            .cascade
+            .get_or_init(|| Arc::new(Cascade::new(self.heap.clone(), config)))
+            .clone()
+    }
+
+    /// Returns the Cascade engine, if it was enabled.
+    pub fn cascade(&self) -> Option<&Arc<Cascade>> {
+        self.core.cascade.get()
+    }
+
+    /// Runs one bounded step of Cascade collector work (see
+    /// [`Cascade::step`]); `None` if Cascade is not enabled.
+    pub fn cascade_step(&self, budget: usize) -> Option<StepReport> {
+        let cascade = self.core.cascade.get()?;
+        Some(cascade.step(self, budget))
+    }
+
+    /// The bytes of objects Cascade has found or suspects to be garbage but
+    /// not reclaimed yet (0 if Cascade is not enabled). Not included in
+    /// [`Stats::allocated_memory`], which counts them as live until they
+    /// are reclaimed.
+    pub fn cascade_deferred_bytes(&self) -> usize {
+        self.core.cascade.get().map_or(0, |c| c.deferred_bytes())
+    }
+
+    /// Returns the bytes the heap currently holds from the system:
     /// size-class blocks (including cached empty blocks), individually
     /// allocated large objects and out-of-line payloads. This is larger than
     /// [`Stats::allocated_memory`], which only counts live payload bytes.
@@ -188,32 +420,91 @@ where
         self.heap.inner.read().limit()
     }
 
+    /// Records where the heap limit came from (a flag, a setting, a
+    /// default), in words a user can act on. The runtime prints it with the
+    /// diagnostic of an allocation that fails at the limit.
+    pub fn set_heap_limit_note(&self, note: Option<String>) {
+        *self.limit_note.lock() = note;
+    }
+
+    /// Returns what [`MarkSweep::set_heap_limit_note`] recorded.
+    pub fn heap_limit_note(&self) -> Option<String> {
+        self.limit_note.lock().clone()
+    }
+
+    /// Sets when the collector runs besides at the heap limit (pacing) and
+    /// how requests from outside share time with Codira code (see
+    /// [`GcPolicy`]).
+    pub fn set_policy(&self, policy: GcPolicy) {
+        self.heap
+            .inner
+            .write()
+            .set_pacing(policy.growth_percent, policy.min_heap);
+        *self.core.policy.lock() = policy;
+    }
+
+    /// Returns the current [`GcPolicy`].
+    pub fn policy(&self) -> GcPolicy {
+        self.core.policy.lock().clone()
+    }
+
     /// Returns how many collections were started because an allocation hit
     /// the heap limit.
     pub fn emergency_collections(&self) -> usize {
-        self.emergency_collections.load(Ordering::Relaxed)
+        self.core.accounting.lock().counts.at_limit as usize
+    }
+
+    /// Returns the heap's statistics: its size, allocation totals,
+    /// collections by cause, what they reclaimed and how long they paused.
+    ///
+    /// Counting costs a load and a store of two thread-local counters per
+    /// allocation, and a few clock readings per collection; reading the
+    /// statistics takes the heap lock briefly. Allocation totals of threads
+    /// that are allocating at the moment may be a few objects behind.
+    pub fn heap_stats(&self) -> GcStats {
+        let counters = self.heap.inner.read().counters();
+        let accounting = self.core.accounting.lock();
+        let pauses = accounting.pauses.summary();
+        GcStats {
+            heap_bytes: counters.committed,
+            peak_heap_bytes: counters.peak_committed,
+            heap_limit: counters.limit,
+            live_bytes: counters.live,
+            live_bytes_after_last_collection: counters.live_after_sweep,
+            next_paced_collection_at: counters.trigger,
+            bytes_allocated: counters.bytes_allocated,
+            objects_allocated: counters.objects_allocated,
+            collections: accounting.counts,
+            bytes_reclaimed: accounting.bytes_reclaimed,
+            objects_reclaimed: accounting.objects_reclaimed,
+            collection_time: pauses.total,
+            time_to_safepoint: accounting.time_to_safepoint,
+            pauses,
+        }
     }
 
     /// Allocates an object of type `ty`, or returns why the heap could not
     /// provide the memory.
     ///
     /// Every allocation is a safepoint: a thread running Codira code parks
-    /// here while another thread collects.
+    /// here while another thread collects. An allocation also collects first
+    /// when pacing asked for a collection (see [`GcPolicy`]).
     ///
     /// When the allocation would exceed the heap limit, the collector runs
     /// first (stopping the world, so every thread running Codira code is
     /// parked and its stack scanned conservatively, this thread's included)
     /// and the allocation is retried once. If the collection cannot run
-    /// safely -- the current thread is itself collecting or migrating, or
-    /// some thread's stack cannot be scanned on this platform -- the
-    /// allocation fails with [`AllocError::LimitExceeded`] without
-    /// collecting.
+    /// safely -- the current thread is exiting, is itself collecting or
+    /// migrating, or some thread's stack cannot be scanned on this platform
+    /// -- the allocation fails with [`AllocError::LimitExceeded`] without
+    /// collecting. After a collection, the error's `live` is what survived
+    /// it.
     pub fn try_alloc(&self, ty: &Type) -> Result<GcPtr, AllocError> {
         assert!(ty.is_concrete());
 
         let header = self.alloc_payload(ty, ty.value_layout())?;
         let handle = handle_of(header);
-        self.observer.event(Event::Allocation(handle));
+        self.core.observer.event(Event::Allocation(handle));
         Ok(handle)
     }
 
@@ -226,20 +517,104 @@ where
         let layout = array_payload_layout(element, n).ok_or(AllocError::TooLarge)?;
         let header = self.alloc_payload(ty, layout)?;
         unsafe { init_array_header(header.as_ref().data, n) };
-        self.observer.event(Event::Allocation(handle_of(header)));
+        self.core
+            .observer
+            .event(Event::Allocation(handle_of(header)));
         Ok(ArrayHandle { obj: header })
     }
 
-    /// Allocates an object with a payload of `layout`, collecting once if
-    /// the heap limit is hit and that is safe.
+    /// Makes room in the array `handle` for at least `min_capacity`
+    /// elements, or returns why the heap could not provide the memory.
+    ///
+    /// The capacity at least doubles (and is at least 4), so pushing `n`
+    /// elements one at a time copies O(n) elements in total. The array keeps
+    /// its handle; its elements move to a new buffer (see
+    /// `HeapInner::grow_array`). Like an allocation this is a safepoint, a
+    /// paced collection may run first, and at the heap limit it collects
+    /// once and retries, the array being reachable from the caller's stack.
+    ///
+    /// # Safety
+    ///
+    /// `handle` must be a live array of this heap that no other thread
+    /// accesses during the call.
+    pub unsafe fn try_grow_array(
+        &self,
+        handle: GcPtr,
+        min_capacity: usize,
+    ) -> Result<(), AllocError> {
+        let header = header_of(handle);
+        let capacity = (*header.as_ref().data.cast::<ArrayHeader>()).capacity;
+        if min_capacity <= capacity {
+            return Ok(());
+        }
+        self.check_fault()?;
+        let new_capacity = min_capacity.max(capacity.saturating_mul(2)).max(4);
+        let grow = || unsafe { self.heap.inner.write().grow_array(header, new_capacity) };
+        let grow_or_collect = || match grow() {
+            Err(err @ AllocError::LimitExceeded { .. }) if safepoint::is_running() => self
+                .core
+                .collect_stopped_then(Trigger::HeapLimit, |_| false, grow)
+                .map_err(|CollectRefused| err)
+                .and_then(|(_, result)| result)
+                .map_err(|err| self.core.refresh_live(err)),
+            result => result,
+        };
+        if safepoint::is_running() {
+            safepoint::poll();
+            if frames::stress_due() {
+                // Stress mode: allocations collect.
+                self.stress_collect();
+            }
+            if self.heap.collection_due() {
+                self.core.collect_for_pacing();
+            }
+            grow_or_collect()
+        } else if safepoint::holds_stop() {
+            grow()
+        } else {
+            safepoint::with_allocation_section(grow_or_collect)
+        }
+    }
+
+    /// Moves the out-of-line elements of the array `from` to the empty
+    /// array `to` without copying them, leaving `from` empty (see
+    /// `HeapInner::take_array_payload`; a buffer with much room to spare is
+    /// shrunk, keeping room for `room` more elements). Returns `false`,
+    /// changing nothing,
+    /// when `from` keeps its elements inline (a small array that never
+    /// grew), which the caller then copies. Not a safepoint: nothing is
+    /// allocated.
+    ///
+    /// # Safety
+    ///
+    /// Both must be live arrays of this heap with the same element type,
+    /// which holds no references; `to` must be freshly allocated with
+    /// length and capacity 0; no other thread may access either during the
+    /// call.
+    pub unsafe fn try_take_array_payload(&self, from: GcPtr, to: GcPtr, room: usize) -> bool {
+        let (from, to) = (header_of(from), header_of(to));
+        self.heap.inner.write().take_array_payload(from, to, room)
+    }
+
+    /// Allocates an object with a payload of `layout`, collecting first if
+    /// pacing asked for it, and once more if the heap limit is hit, when
+    /// that is safe.
     #[inline]
     fn alloc_payload(
         &self,
         ty: &Type,
         layout: Layout,
     ) -> Result<NonNull<ObjectHeader>, AllocError> {
+        self.check_fault()?;
         if safepoint::is_running() {
             safepoint::poll();
+            if frames::stress_due() {
+                // Stress mode: allocations collect.
+                self.stress_collect();
+            }
+            if self.heap.collection_due() {
+                self.core.collect_for_pacing();
+            }
             self.alloc_or_collect(ty, layout)
         } else if safepoint::holds_stop() {
             // Every other thread is parked, and this one must not start a
@@ -248,6 +623,14 @@ where
         } else {
             // Not running Codira code: allocate in a brief running section,
             // so no collection can sweep the cell while it is initialized.
+            //
+            // A host allocation never starts a paced collection. A host
+            // thread is scanned only while it is inside such a section, so a
+            // collection started here could free an object another host
+            // thread holds unrooted between two of its allocations, which
+            // a host may do as long as it never collects itself. Pacing
+            // stays due and the next allocation by Codira code collects.
+            // The heap limit still collects here, as it always has.
             safepoint::with_allocation_section(|| self.alloc_or_collect(ty, layout))
         }
     }
@@ -273,72 +656,366 @@ where
                 // part of the stack a collection would scan, and another
                 // thread may collect before this one resumes.
                 let (_, result) = self
-                    .collect_stopped_then(|| {
-                        let result = self.heap.alloc(ty, layout);
-                        if let Ok(header) = result {
-                            unsafe { header.as_ref() }
-                                .roots
-                                .fetch_add(1, Ordering::AcqRel);
-                        }
-                        result
-                    })
+                    .core
+                    .collect_stopped_then(
+                        Trigger::HeapLimit,
+                        |_| false,
+                        || {
+                            let result = self.heap.alloc(ty, layout);
+                            if let Ok(header) = result {
+                                unsafe { header.as_ref() }
+                                    .roots
+                                    .fetch_add(1, Ordering::AcqRel);
+                            }
+                            result
+                        },
+                    )
                     .map_err(|CollectRefused| err)?;
-                self.emergency_collections.fetch_add(1, Ordering::Relaxed);
-                if let Ok(header) = result {
-                    unsafe { header.as_ref() }
-                        .roots
-                        .fetch_sub(1, Ordering::AcqRel);
+                match result {
+                    Ok(header) => {
+                        unsafe { header.as_ref() }
+                            .roots
+                            .fetch_sub(1, Ordering::AcqRel);
+                        Ok(header)
+                    }
+                    Err(err) => Err(self.core.refresh_live(err)),
                 }
-                result
             }
             result => result,
         }
     }
 
+    /// Turns relocation on or off (experimental; off unless
+    /// `CODIRA_GC_COMPACT=1`). With it on, a collection moves the live
+    /// objects out of size-class blocks that are at most a quarter full and
+    /// releases those blocks, rewriting every reference to a moved object
+    /// stored in the heap. An object a stack refers to (precisely or
+    /// conservatively), a rooted object and a pinned object never moves:
+    /// stacks and host-held handles are not rewritten.
+    pub fn set_compaction(&self, on: bool) {
+        self.core.compaction.store(on, Ordering::Relaxed);
+    }
+
+    /// Returns whether collections relocate (see [`MarkSweep::set_compaction`]).
+    pub fn compaction(&self) -> bool {
+        self.core.compaction.load(Ordering::Relaxed)
+    }
+
+    /// Pins `handle` until the matching [`MarkSweep::unpin`]: the object
+    /// stays alive and never moves, so foreign code may keep its address
+    /// (and the address of its payload). Pins nest. A pin is a root: an
+    /// object rooted through [`GcRuntime::root`] is pinned as well.
+    pub fn pin(&self, handle: GcPtr) {
+        GcRuntime::root(self, handle);
+    }
+
+    /// Ends one [`MarkSweep::pin`] of `handle`.
+    pub fn unpin(&self, handle: GcPtr) {
+        GcRuntime::unroot(self, handle);
+    }
+
+    /// Returns what the last collection's relocation did.
+    pub fn last_relocation(&self) -> RelocationReport {
+        *self.core.last_relocation.lock()
+    }
+
+    /// Collects right away, without waiting for the mutator window: what
+    /// stress mode (`frames::set_stress`) does at a safepoint. Counted as an
+    /// explicit collection.
+    #[doc(hidden)]
+    pub fn stress_collect(&self) {
+        let _refused = self
+            .core
+            .collect_stopped_then(Trigger::Explicit, |_| false, || ());
+    }
+
+    /// Returns true if `address` points into an object the heap holds (its
+    /// header, its inline payload, or its out-of-line payload). For tests
+    /// and diagnostics: it takes the heap lock and searches every block.
+    pub fn holds_object_at(&self, address: usize) -> bool {
+        let inner = self.heap.inner.read();
+        !inner.objects_referenced_by(&mut [address]).is_empty()
+    }
+
     /// Collects all memory that is no longer referenced by rooted objects
-    /// or from the stack of a thread running Codira code. Returns `true` if
-    /// memory was reclaimed, `false` otherwise -- including when the
-    /// collection was refused (see [`MarkSweep::try_collect`]).
+    /// or from the stack of a thread running Codira code, and returns what
+    /// was reclaimed once the collection is done.
     ///
     /// Safe to call from any thread at any time: the collection stops the
-    /// world first. It waits for every thread running Codira code to reach a
-    /// safepoint, so it can take as long as the longest stretch of Codira
-    /// code that neither allocates nor blocks.
-    pub fn collect(&self) -> bool {
-        self.try_collect().unwrap_or(false)
+    /// world first. Before that it waits until Codira code has run for the
+    /// [`GcPolicy`]'s mutator window since the previous collection (if some
+    /// other thread is inside Codira code), so calling this in a loop cannot
+    /// starve the threads running Codira code; the wait happens parked, so
+    /// it never holds up another thread's collection. A call is folded into
+    /// a collection that another thread starts after the call began
+    /// ([`CollectionReport::coalesced`]). The stop itself waits for every
+    /// thread running Codira code to reach a safepoint, so it can take as
+    /// long as the longest stretch of Codira code that neither allocates nor
+    /// blocks.
+    ///
+    /// Fails with [`CollectRefused`] when some thread inside Codira code is
+    /// parked on a platform whose stacks cannot be scanned, so collecting
+    /// could free objects only it refers to.
+    pub fn collect_blocking(&self) -> Result<CollectionReport, CollectRefused> {
+        let started_at_call = self.core.started.load(Ordering::SeqCst);
+        self.core.wait_for_window(started_at_call, |wait| {
+            safepoint::blocking(|| std::thread::sleep(wait));
+            true
+        });
+        self.core
+            .collect_external(Trigger::Explicit, started_at_call)
+    }
+}
+
+impl<O> MarkSweep<O>
+where
+    O: Observer<Event = Event> + 'static,
+{
+    /// Asks for a collection without waiting for it. Returns `true` if this
+    /// call queued a request, `false` if one was already pending (the
+    /// requests are coalesced into one collection).
+    ///
+    /// The collection runs on a thread of the collector's own (started by
+    /// the first request), as soon as Codira code has run for the
+    /// [`GcPolicy`]'s mutator window since the previous collection; a
+    /// collection of any kind that starts after the request satisfies it.
+    /// [`GcStats::collections`] counts the requests served.
+    pub fn request_collection(&self) -> bool {
+        let queued = {
+            let mut state = self.requests.state.lock();
+            if state.shutdown {
+                return false;
+            }
+            let queued = !state.pending;
+            if queued {
+                state.pending = true;
+                state.started_at_request = self.core.started.load(Ordering::SeqCst);
+            }
+            queued
+        };
+        self.requests.wake.notify_all();
+        if queued {
+            self.ensure_request_thread();
+        }
+        queued
     }
 
-    /// Like [`MarkSweep::collect`], but says when it refused to collect:
-    /// some thread inside Codira code is parked on a platform whose stacks
-    /// cannot be scanned, so collecting could free objects only it refers
-    /// to.
-    pub fn try_collect(&self) -> Result<bool, CollectRefused> {
-        self.collect_stopped_then(|| ()).map(|(freed, ())| freed)
+    fn ensure_request_thread(&self) {
+        let mut thread = self.request_thread.lock();
+        if thread.is_some() {
+            return;
+        }
+        let core = Arc::downgrade(&self.core);
+        let requests = self.requests.clone();
+        match std::thread::Builder::new()
+            .name("codira-gc-requests".to_string())
+            .spawn(move || serve_requests(&core, &requests))
+        {
+            Ok(handle) => *thread = Some(handle),
+            Err(_spawn_error) => {
+                // No thread to serve it: let the next allocation by Codira
+                // code collect instead, as pacing would.
+                self.heap.due.store(true, Ordering::Relaxed);
+                self.requests.state.lock().pending = false;
+            }
+        }
+    }
+}
+
+/// The loop of [`MarkSweep::request_collection`]'s thread.
+fn serve_requests<O: Observer<Event = Event>>(core: &Weak<Core<O>>, requests: &Requests) {
+    loop {
+        let started_at_request = {
+            let mut state = requests.state.lock();
+            while !state.pending && !state.shutdown {
+                requests.wake.wait(&mut state);
+            }
+            if state.shutdown {
+                return;
+            }
+            state.started_at_request
+        };
+        let Some(core) = core.upgrade() else {
+            return;
+        };
+        let waited = core.wait_for_window(started_at_request, |wait| {
+            let mut state = requests.state.lock();
+            if !state.shutdown {
+                requests.wake.wait_for(&mut state, wait);
+            }
+            !state.shutdown
+        });
+        if !waited {
+            return;
+        }
+        // Requests made from here on wait for the next collection.
+        requests.state.lock().pending = false;
+        // A refusal (an unscannable thread) leaves nothing to do but wait
+        // for the next request.
+        let _refused = core.collect_external(Trigger::Requested, started_at_request);
+    }
+}
+
+impl<O> Drop for MarkSweep<O>
+where
+    O: Observer<Event = Event>,
+{
+    fn drop(&mut self) {
+        self.requests.state.lock().shutdown = true;
+        self.requests.wake.notify_all();
+        if let Some(thread) = self.request_thread.get_mut().take() {
+            // The thread may be stopping the world; park while waiting for
+            // it, in case this thread runs Codira code.
+            safepoint::blocking(|| {
+                let _ = thread.join();
+            });
+        }
+    }
+}
+
+impl<O> Core<O>
+where
+    O: Observer<Event = Event>,
+{
+    /// Runs the collection pacing asked for, unless another thread ran one
+    /// since.
+    #[cold]
+    #[inline(never)]
+    fn collect_for_pacing(&self) {
+        let outcome =
+            self.collect_stopped_then(Trigger::Pacing, |core| !core.heap.collection_due(), || ());
+        if outcome.is_err() {
+            // Collecting is not possible right now; do not retry on every
+            // allocation (the next slow path asks again).
+            self.heap.due.store(false, Ordering::Relaxed);
+        }
     }
 
-    /// Stops the world, collects, and runs `then` before resuming the
-    /// other threads. Returns whether memory was reclaimed and what `then`
-    /// returned.
+    /// Waits until Codira code has had its mutator window since the
+    /// previous collection, no other thread is inside Codira code, or a
+    /// collection started after [`Core::started`] was `started_at_request`
+    /// (which satisfies the request). `sleep` waits (parked) for up to the
+    /// given time and returns false to give up; then this returns false too.
+    fn wait_for_window(
+        &self,
+        started_at_request: u64,
+        mut sleep: impl FnMut(Duration) -> bool,
+    ) -> bool {
+        /// Waits are cut into slices of at most this, to notice a collection
+        /// that satisfies the request.
+        const SLICE: Duration = Duration::from_millis(1);
+        loop {
+            if self.started.load(Ordering::SeqCst) > started_at_request {
+                return true;
+            }
+            let remaining = {
+                let accounting = self.accounting.lock();
+                let Some(last_end) = accounting.last_end else {
+                    return true;
+                };
+                let window = self.policy.lock().mutator_window(accounting.last_pause);
+                (last_end + window).checked_duration_since(Instant::now())
+            };
+            match remaining {
+                Some(wait) if !wait.is_zero() && safepoint::other_threads_in_codira() => {
+                    if !sleep(wait.min(SLICE)) {
+                        return false;
+                    }
+                }
+                _ => return true,
+            }
+        }
+    }
+
+    /// Collects for a request from outside made when [`Core::started`] was
+    /// `started_at_request`, unless a collection started since.
+    fn collect_external(
+        &self,
+        trigger: Trigger,
+        started_at_request: u64,
+    ) -> Result<CollectionReport, CollectRefused> {
+        let (report, ()) = self.collect_stopped_then(
+            trigger,
+            |core| core.started.load(Ordering::SeqCst) > started_at_request,
+            || (),
+        )?;
+        Ok(report.unwrap_or_else(|| CollectionReport {
+            coalesced: true,
+            ..self.accounting.lock().last_report
+        }))
+    }
+
+    /// Fills in the live bytes of a [`AllocError::LimitExceeded`] after the
+    /// collection that preceded it.
+    fn refresh_live(&self, err: AllocError) -> AllocError {
+        match err {
+            AllocError::LimitExceeded {
+                limit,
+                committed,
+                requested,
+                ..
+            } => AllocError::LimitExceeded {
+                limit,
+                committed,
+                requested,
+                live: self.heap.allocated_bytes(),
+            },
+            other => other,
+        }
+    }
+
+    /// Stops the world and, unless `skip` says a collection is no longer
+    /// needed, collects; then runs `then` before resuming the other
+    /// threads. Returns what the collection did (`None` if skipped) and
+    /// what `then` returned.
     fn collect_stopped_then<R>(
         &self,
+        trigger: Trigger,
+        skip: impl FnOnce(&Self) -> bool,
         then: impl FnOnce() -> R,
-    ) -> Result<(bool, R), CollectRefused> {
+    ) -> Result<(Option<CollectionReport>, R), CollectRefused> {
         safepoint::stop_the_world(|world| {
+            if skip(self) {
+                return Ok((None, then()));
+            }
             if world.has_unscannable_threads() {
                 return Err(CollectRefused);
             }
-            let mut words = world.stack_words();
-            let freed = if words.is_empty() {
+            self.started.fetch_add(1, Ordering::SeqCst);
+            let roots = world.stack_roots();
+            let mut words = roots.conservative;
+            words.extend(roots.precise);
+            let swept = if words.is_empty() {
                 self.collect_impl(None)
             } else {
                 self.collect_impl(Some(&mut words))
             };
-            Ok((freed, then()))
+            let value = then();
+            let end = Instant::now();
+            let report = CollectionReport {
+                reclaimed_objects: swept.objects,
+                reclaimed_bytes: swept.bytes,
+                pause: end.saturating_duration_since(world.requested_at),
+                coalesced: false,
+            };
+            let mut accounting = self.accounting.lock();
+            accounting.counts.count(trigger);
+            accounting.bytes_reclaimed += swept.bytes as u64;
+            accounting.objects_reclaimed += swept.objects as u64;
+            accounting.time_to_safepoint += world
+                .stopped_at
+                .saturating_duration_since(world.requested_at);
+            accounting.pauses.record(report.pause);
+            accounting.last_end = Some(end);
+            accounting.last_pause = report.pause;
+            accounting.last_report = report;
+            Ok((Some(report), value))
         })
     }
 
-    fn collect_impl(&self, stack_words: Option<&mut Vec<usize>>) -> bool {
+    fn collect_impl(&self, stack_words: Option<&mut Vec<usize>>) -> SweepOutcome {
         self.observer.event(Event::Start);
+        let start = std::time::Instant::now();
 
         let mut inner = self.heap.inner.write();
 
@@ -366,9 +1043,23 @@ where
             }
         });
 
+        // Relocation is not combined with Cascade yet: the engine keeps object
+        // addresses in its own buffers and queues, which evacuation would not
+        // update. With Cascade enabled, nothing moves.
+        let compaction = self.compaction.load(Ordering::Relaxed) && self.cascade.get().is_none();
+        // Objects that must not move: rooted (and so pinned) ones, whose
+        // headers say so, and those a stack refers to, kept here (sorted)
+        // so that relocation can look them up without building a set.
+        let mut stack_objects: Vec<usize> = Vec::new();
+
         // Objects the scanned stack may refer to are roots too
         if let Some(words) = stack_words {
-            for object in inner.objects_referenced_by(words) {
+            let referenced = inner.objects_referenced_by(words);
+            if compaction {
+                // Sorted and without duplicates already.
+                stack_objects = referenced.iter().map(|o| o.as_ptr() as usize).collect();
+            }
+            for object in referenced {
                 let header = object.as_ptr();
                 unsafe {
                     if (*header).color == COLOR_WHITE {
@@ -376,6 +1067,20 @@ where
                         stack.push(object);
                     }
                 }
+            }
+        }
+
+        // Objects Cascade mutators hold locally are roots too
+        if let Some(cascade) = self.cascade.get() {
+            // Safety: the world is stopped.
+            unsafe {
+                cascade.trace_roots(|object| {
+                    let header = object.as_ptr();
+                    if (*header).color == COLOR_WHITE {
+                        (*header).color = COLOR_BLACK;
+                        stack.push(object);
+                    }
+                });
             }
         }
 
@@ -397,17 +1102,75 @@ where
             }
         }
 
-        let freed = inner.sweep(|handle| self.observer.event(Event::Deallocation(handle)));
+        let swept = inner.sweep(|handle| self.observer.event(Event::Deallocation(handle)));
+        if let Some(cascade) = self.cascade.get() {
+            // Safety: the world is stopped and `inner` is this heap's state.
+            unsafe { cascade.resync(&inner) };
+        }
+
+        let mut moved = 0;
+        if compaction {
+            // Safety: the world is stopped and the heap was just swept.
+            let forwarded = unsafe { inner.evacuate(&stack_objects, EVACUATE_LIVE_PERCENT) };
+            moved = forwarded.len();
+            if moved > 0 {
+                inner.for_each_object(|object| unsafe {
+                    for_each_reference_slot(object.as_ref(), |slot| {
+                        if let Some(&new) = forwarded.get(&(*slot as usize)) {
+                            *slot = new as *mut ObjectHeader;
+                        }
+                    });
+                });
+            }
+        }
+
+        let committed = inner.committed();
         drop(inner);
+        *self.last_relocation.lock() = RelocationReport {
+            pause: start.elapsed(),
+            moved,
+            pinned: stack_objects.len(),
+            committed,
+        };
 
         self.observer.event(Event::End);
 
-        freed > 0
+        swept
     }
 }
 
-/// [`MarkSweep::try_collect`] refused to collect: a thread inside Codira code
-/// cannot have its stack scanned on this platform.
+impl<O> MarkSweep<O>
+where
+    O: Observer<Event = Event> + 'static,
+{
+    /// Creates a Cascade [`Mutator`] for the current thread; `None` if
+    /// Cascade is not enabled. The thread counts as running Codira code
+    /// while the mutator lives.
+    pub fn cascade_mutator(self: &Arc<Self>) -> Option<Mutator> {
+        let cascade = self.core.cascade.get()?.clone();
+        Some(Mutator::new(cascade, self.clone()))
+    }
+}
+
+impl<O> CascadeHost for MarkSweep<O>
+where
+    O: Observer<Event = Event>,
+{
+    fn cascade_alloc(&self, ty: &Type) -> Result<GcPtr, AllocError> {
+        self.try_alloc(ty)
+    }
+
+    fn cascade_alloc_array(&self, ty: &Type, n: usize) -> Result<GcPtr, AllocError> {
+        self.try_alloc_array(ty, n).map(|array| array.as_raw())
+    }
+
+    fn cascade_collect(&self) -> bool {
+        self.collect_blocking().is_ok()
+    }
+}
+
+/// [`MarkSweep::collect_blocking`] refused to collect: a thread inside
+/// Codira code cannot have its stack scanned on this platform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("a thread running Codira code cannot have its stack scanned on this platform")]
 pub struct CollectRefused;
@@ -965,11 +1728,16 @@ where
 
         // Types no live object uses anymore no longer need to be kept alive
         inner.prune_types();
+        if let Some(cascade) = self.core.cascade.get() {
+            // Migration may have dropped or duplicated reference fields.
+            // Safety: the world is stopped and `inner` is this heap's state.
+            unsafe { cascade.resync(&inner) };
+        }
         drop(inner);
         self.heap.bump_type_epoch();
 
         for handle in new_objects {
-            self.observer.event(Event::Allocation(handle));
+            self.core.observer.event(Event::Allocation(handle));
         }
 
         deleted

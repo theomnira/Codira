@@ -24,6 +24,8 @@
 //!   abnormal exit): all four call `panic`, which returns `Never`.
 //! - A program importing a standard-library module with errors does not
 //!   build, and the errors are reported against the standard-library file.
+//! - `std.json.json`: a document parsed, read, changed, built and printed
+//!   (its conformance and property tests are in `tests/json.rs`).
 
 use std::{
     path::{Path, PathBuf},
@@ -1064,4 +1066,672 @@ public func main() {
         stderr.contains("panic: Optional.unwrap: called on None\n"),
         "{stderr}"
     );
+}
+
+/// `std.result.result`, `std.fs.file` and `std.text.ascii` import together:
+/// a file is read as a `Result`, its words parsed with `?`, and a missing
+/// file and a bad word come back as errors.
+#[test]
+fn std_result_fs_file_and_text_ascii_read_and_parse_a_file() {
+    let work = tempfile::tempdir().unwrap();
+    let good = work.path().join("good.txt");
+    std::fs::write(&good, "40 -3\n5\n").unwrap();
+    let bad = work.path().join("bad.txt");
+    std::fs::write(&bad, "7 x").unwrap();
+    let program = r#"
+import std.result.result.{Result}
+import std.fs.file.{read_file, FileError}
+import std.text.ascii.{next_word, parse_i64, ParseError}
+
+enum Problem { Io(FileError), Parse(ParseError) }
+
+func total(path: str) -> Result[i64, Problem] {
+    let bytes = read_file(path)?
+    var sum: i64 = 0
+    var at: usize = 0
+    while let (start, end) = next_word(bytes, at) {
+        sum += parse_i64(bytes, start, end)?
+        at = end
+    }
+    Result.Ok(sum)
+}
+
+func show(r: Result[i64, Problem]) {
+    match r {
+        Result.Ok(v) -> println(v),
+        Result.Err(Problem.Io(FileError.NotFound)) -> println("not found"),
+        Result.Err(Problem.Io(_)) -> println("io"),
+        Result.Err(Problem.Parse(ParseError.InvalidDigit(at))) -> println(at),
+        Result.Err(Problem.Parse(_)) -> println("parse"),
+    }
+}
+
+public func main() {
+    show(total("{good}"))
+    show(total("{bad}"))
+    show(total("{good}.missing"))
+}
+"#
+    .replace("{good}", good.to_str().unwrap())
+    .replace("{bad}", bad.to_str().unwrap());
+    let (_dir, stdout) = run_ok(&[("mod.code", &program)]);
+    assert_eq!(stdout, "42\n2\nnot found\n");
+}
+
+/// A program whose enum holds a standard-library type it only names --
+/// nothing of `std.text.ascii` is called -- loads: the library declaring
+/// the type is a dependency of the program's. It used to fail at load
+/// time with "Failed to load type with id `unknown TypeId ...`", because
+/// only modules whose functions a library calls were loaded with it.
+#[test]
+fn a_type_named_from_a_std_module_loads_its_library() {
+    let (_dir, stdout) = run_ok(&[(
+        "mod.code",
+        r#"
+import std.text.ascii.{ParseError}
+
+enum Problem { Parse(ParseError), Other(i64) }
+
+struct Wrapped { why: ParseError }
+
+public func main() {
+    let p = Problem.Other(3)
+    match p {
+        Problem.Other(n) -> println(n),
+        Problem.Parse(_) -> println("parse"),
+    }
+    let w = Wrapped { why: ParseError.InvalidDigit(4) }
+    if let ParseError.InvalidDigit(at) = w.why { println(at) }
+}
+"#,
+    )]);
+    assert_eq!(stdout, "3\n4\n");
+}
+
+/// `Map`, `Set`, `Deque`, `BinaryHeap` and `Counter` from `std.collections`,
+/// on the growable arrays, against values worked out by hand.
+#[test]
+fn std_collections_map_set_deque_heap_and_counter() {
+    let program = r#"
+import std.collections.map.{Map}
+import std.collections.set.{Set}
+import std.collections.deque.{Deque}
+import std.collections.binary_heap.{BinaryHeap}
+import std.collections.counter.{Counter}
+import std.cmp.cmp.{min_of, max_of}
+
+public func main() {
+    let m: Map[i64, i64] = Map.new()
+    for i in 0..1000 {
+        m.insert(i, i * i);
+    }
+    println(m.len(), " ", m.get(10)!, " ", m.get(1000) == nil, " ", m.contains_key(999))
+    println(m.insert(10, 5)!, " ", m.get(10)!, " ", m.len())
+    for i in 0..500 {
+        m.remove(i * 2);
+    }
+    println(m.len(), " ", m.get(10) == nil, " ", m.get(11)!, " ", m.get_or(10, -1))
+    println(m.keys().len(), " ", m.values().sum())
+    m.clear()
+    println(m.len(), " ", m.get(11) == nil)
+
+    let ages: Map[str, f64] = Map.new()
+    ages.insert("ada", 36.5)
+    ages.insert("alan", 41.0)
+    println(ages.get("ada")!, " ", ages.get("bob") == nil, " ", ages.len())
+
+    let s: Set[str] = Set.new()
+    println(s.insert("a"), " ", s.insert("b"), " ", s.insert("a"), " ", s.len())
+    println(s.contains("b"), " ", s.remove("b"), " ", s.remove("b"), " ", s.len())
+    let t = Set.from_array([1, 2, 3, 4])
+    let u = Set.from_array([3, 4, 5])
+    println(t.union(u).len(), " ", t.intersection(u).len(), " ", t.difference(u).len())
+    println(t.is_subset(u), " ", Set.from_array([3]).is_subset(u))
+
+    let q: Deque[i64] = Deque.new()
+    for i in 0..10 { q.push_back(i) }
+    for i in 1..5 { q.push_front(-i) }
+    println(q.len(), " ", q.front()!, " ", q.back()!, " ", q.get(4))
+    println(q.pop_back()!, " ", q.pop_front()!, " ", q.len())
+    var total = 0
+    while let x = q.pop_front() { total += x }
+    println(total, " ", q.is_empty(), " ", q.pop_back() == nil)
+
+    let h: BinaryHeap[i64] = BinaryHeap.new()
+    for x in [5, 1, 8, 3, 9, 2, 8] { h.push(x) }
+    print(h.peek()!, ":")
+    while let x = h.pop() { print(" ", x) }
+    println()
+    let sorted = BinaryHeap.from_array(["pear", "fig", "apple"]).to_sorted_array()
+    println(sorted[0], " ", sorted[2], " ", min_of(3, 2), " ", max_of(1.5, 0.5))
+
+    let words = Counter.from_array(["a", "b", "a", "c", "a", "b"])
+    println(words.count("a"), " ", words.count("z"), " ", words.len(), " ", words.total())
+    println(words.most_common()!, " ", words.subtract("a"), " ", words.count("a"))
+}
+"#;
+    let (_dir, stdout) = run_ok(&[("mod.code", program)]);
+    assert_eq!(
+        stdout,
+        "1000 100 true true\n\
+         100 5 1000\n\
+         500 true 121 -1\n\
+         500 166666500\n\
+         0 true\n\
+         36.5 true 2\n\
+         true true false 2\n\
+         true true false 1\n\
+         5 2 2\n\
+         false true\n\
+         14 -4 9 0\n\
+         9 -4 12\n\
+         30 true true\n\
+         9: 9 8 8 5 3 2 1\n\
+         apple pear 2 1.5\n\
+         3 0 3 6\n\
+         a true 2\n"
+    );
+}
+
+/// `Map` replays random operation sequences exactly as Rust's `HashMap` does:
+/// insertions, removals and re-insertions, lookups that hit and miss,
+/// `reserve`, `shrink_to_fit`, `clear`, and order-independent sums over
+/// `iter()`. Three phases: churn over 48 keys (tombstones made and cleared
+/// over and over), growth to tens of thousands of keys (every resize), and
+/// alternating inserts and removes over 2000 keys (tombstone storms that
+/// force same-size rebuilds). Each phase runs on every hasher -- the keyed
+/// default, `unkeyed`, a fixed key, and a map made `with_capacity` -- with
+/// `i64` keys, and on `String` keys and on `Set[i64]` against `HashSet`.
+/// Both sides draw the same operations from the same xorshift generator.
+#[test]
+fn std_collections_map_matches_rust_hash_map() {
+    use std::collections::{HashMap, HashSet};
+
+    /// (seed, operations, key space, per-mille thresholds for insert,
+    /// remove, get, contains; the rest split between reserve, shrink,
+    /// iterate and clear).
+    const PHASES: [(u64, u64, u64, [u64; 4]); 3] = [
+        (0x1234_5678, 12_000, 48, [350, 700, 900, 960]),
+        (0x9E37_79B9, 30_000, 50_000, [600, 700, 950, 990]),
+        (0xDEAD_BEEF, 20_000, 2_000, [450, 900, 960, 990]),
+    ];
+
+    struct Xorshift(u64);
+    impl Xorshift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
+        }
+    }
+
+    /// What one operation prints, for a map from keys `K` (made from the
+    /// drawn number by `key`).
+    fn replay<K: std::hash::Hash + Eq + Clone>(
+        out: &mut String,
+        key: impl Fn(u64) -> K,
+        weight: impl Fn(&K) -> i64,
+    ) {
+        for &(seed, ops, space, [ins, rem, get, has]) in &PHASES {
+            let mut r = Xorshift(seed);
+            let mut m: HashMap<K, i64> = HashMap::new();
+            for _ in 0..ops {
+                let op = r.next() % 1000;
+                let k = key(r.next() % space);
+                let v = (r.next() % 1000) as i64;
+                if op < ins {
+                    match m.insert(k, v) {
+                        Some(old) => out.push_str(&format!("{old},")),
+                        None => out.push_str("-,"),
+                    }
+                } else if op < rem {
+                    match m.remove(&k) {
+                        Some(old) => out.push_str(&format!("{old},")),
+                        None => out.push_str("-,"),
+                    }
+                } else if op < get {
+                    out.push_str(&format!("{},", m.get(&k).copied().unwrap_or(-1)));
+                } else if op < has {
+                    out.push_str(if m.contains_key(&k) { "t," } else { "f," });
+                } else {
+                    match op % 4 {
+                        0 => m.reserve(v as usize),
+                        1 => m.shrink_to_fit(),
+                        2 => {
+                            let mut sum = 0i64;
+                            let mut count = 0i64;
+                            for (k, v) in &m {
+                                sum = sum.wrapping_add(weight(k).wrapping_mul(31) ^ v);
+                                count += 1;
+                            }
+                            out.push_str(&format!("[{count} {sum}],"));
+                        }
+                        _ => {
+                            if v < 100 {
+                                m.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            out.push_str(&format!("{}\n", m.len()));
+        }
+    }
+
+    let mut expected = String::new();
+    let mut ints = String::new();
+    replay(&mut ints, |n| n as i64, |k| *k);
+    for _ in 0..4 {
+        expected.push_str(&ints);
+    }
+    replay(&mut expected, |n| format!("k{n}"), |k| k.len() as i64);
+    // `Set[i64]`: insert and remove answer whether they changed the set.
+    for &(seed, ops, space, [ins, rem, _, has]) in &PHASES {
+        let mut r = Xorshift(seed);
+        let mut s: HashSet<i64> = HashSet::new();
+        for _ in 0..ops {
+            let op = r.next() % 1000;
+            let k = (r.next() % space) as i64;
+            let _ = r.next();
+            if op < ins {
+                expected.push_str(if s.insert(k) { "t," } else { "f," });
+            } else if op < rem {
+                expected.push_str(if s.remove(&k) { "t," } else { "f," });
+            } else if op < has {
+                expected.push_str(if s.contains(&k) { "t," } else { "f," });
+            }
+        }
+        expected.push_str(&format!("{}\n", s.len()));
+    }
+
+    let phases = PHASES
+        .iter()
+        .map(|(seed, ops, space, [a, b, c, d])| {
+            format!("        Phase {{ seed: {seed}, ops: {ops}, space: {space}, ins: {a}, rem: {b}, get: {c}, has: {d} }},\n")
+        })
+        .collect::<String>();
+    let program = r#"
+import std.collections.map.{Map}
+import std.collections.set.{Set}
+import std.hashlib.hash.{HashKey}
+
+class R { s: u64 }
+
+func next(r: R) -> u64 {
+    var x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+struct Phase { seed: u64, ops: u64, space: u64, ins: u64, rem: u64, get: u64, has: u64 }
+
+func phases() -> [Phase] {
+    [
+PHASES    ]
+}
+
+func print_old(o: i64?) {
+    if let v = o { print(v, ",") } else { print("-,") }
+}
+
+func run_ints(kind: i64) {
+    for p in phases() {
+        let r = R { s: p.seed }
+        var m: Map[i64, i64] = Map.new()
+        if kind == 1 { m = Map.unkeyed() }
+        if kind == 2 { m = Map.with_key(HashKey.new(7, 11)) }
+        if kind == 3 { m = Map.with_capacity(100) }
+        var i: u64 = 0
+        while i < p.ops {
+            let op = next(r) % 1000
+            let k = (next(r) % p.space) as i64
+            let v = (next(r) % 1000) as i64
+            if op < p.ins {
+                print_old(m.insert(k, v))
+            } else if op < p.rem {
+                print_old(m.remove(k))
+            } else if op < p.get {
+                print(m.get_or(k, -1), ",")
+            } else if op < p.has {
+                print(if m.contains_key(k) { "t," } else { "f," })
+            } else if op % 4 == 0 {
+                m.reserve(v as usize)
+            } else if op % 4 == 1 {
+                m.shrink_to_fit()
+            } else if op % 4 == 2 {
+                var sum: i64 = 0
+                var count: i64 = 0
+                for (key, value) in m.iter() {
+                    sum += (key * 31) ^ value
+                    count += 1
+                }
+                print("[", count, " ", sum, "],")
+            } else if v < 100 {
+                m.clear()
+            }
+            i += 1
+        }
+        println(m.len())
+    }
+}
+
+func run_strings() {
+    for p in phases() {
+        let r = R { s: p.seed }
+        let m: Map[String, i64] = Map.new()
+        var i: u64 = 0
+        while i < p.ops {
+            let op = next(r) % 1000
+            let n = next(r) % p.space
+            let k = f"k{n}"
+            let v = (next(r) % 1000) as i64
+            if op < p.ins {
+                print_old(m.insert(k, v))
+            } else if op < p.rem {
+                print_old(m.remove(k))
+            } else if op < p.get {
+                print(m.get_or(k, -1), ",")
+            } else if op < p.has {
+                print(if m.contains_key(k) { "t," } else { "f," })
+            } else if op % 4 == 0 {
+                m.reserve(v as usize)
+            } else if op % 4 == 1 {
+                m.shrink_to_fit()
+            } else if op % 4 == 2 {
+                var sum: i64 = 0
+                var count: i64 = 0
+                for (key, value) in m.iter() {
+                    sum += ((key.len() as i64) * 31) ^ value
+                    count += 1
+                }
+                print("[", count, " ", sum, "],")
+            } else if v < 100 {
+                m.clear()
+            }
+            i += 1
+        }
+        println(m.len())
+    }
+}
+
+func run_set() {
+    for p in phases() {
+        let r = R { s: p.seed }
+        let s: Set[i64] = Set.new()
+        var i: u64 = 0
+        while i < p.ops {
+            let op = next(r) % 1000
+            let k = (next(r) % p.space) as i64
+            let _skip = next(r)
+            if op < p.ins {
+                print(if s.insert(k) { "t," } else { "f," })
+            } else if op < p.rem {
+                print(if s.remove(k) { "t," } else { "f," })
+            } else if op < p.has {
+                print(if s.contains(k) { "t," } else { "f," })
+            }
+            i += 1
+        }
+        println(s.len())
+    }
+}
+
+public func main() {
+    for kind in 0..4 { run_ints(kind) }
+    run_strings()
+    run_set()
+}
+"#
+    .replace("PHASES", &phases);
+    let (_dir, stdout) = run_ok(&[("mod.code", &program)]);
+    if stdout != expected {
+        let line = stdout
+            .lines()
+            .zip(expected.lines())
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        let (got, want) = (
+            stdout.lines().nth(line).unwrap_or(""),
+            expected.lines().nth(line).unwrap_or(""),
+        );
+        let at = got
+            .split(',')
+            .zip(want.split(','))
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        panic!(
+            "line {line} differs at operation {at}: got {:?}, want {:?}",
+            got.split(',').nth(at),
+            want.split(',').nth(at)
+        );
+    }
+}
+
+/// The modules written against `String`: `std.collections.string`,
+/// `std.format.format`, `std.hashlib.string_hash`, `std.complex.complex_string`,
+/// `std.base64.base64_string` and `std.sys.arg`, checked against values
+/// computed independently (the hashes by Rust's FNV-1a, the encodings by the
+/// RFC 4648 test vectors).
+#[test]
+fn std_string_modules_work() {
+    let dir = package_with(&[(
+        "mod.code",
+        r#"
+import std.collections.string.*
+import std.format.format.{format, format_int, format_uint, hex, bin, oct, pad_left, pad_right, center}
+import std.hashlib.string_hash.{hash_string, hash_string_bytes}
+import std.complex.complex.{complex_new}
+import std.complex.complex_string.{complex_to_string}
+import std.base64.base64_string.{b64encode, b64decode, b32encode, b16encode, b16decode, b64encode_string, b64decode_string}
+import std.sys.arg.{argc, argv, program_name, args, env_get, env_has}
+
+public func main() {
+    println(join(", ", "a b  c".to_string().split(" ")))
+    println(join("-", split_whitespace("  one two\tthree \n")))
+    println(split_whitespace("   ").len())
+    println(insert("héllo", 3, "XY"), " ", remove("héllo", 1, 3), " ", reverse("héllo"))
+    println(count("banana", "an"), " ", count("abc", ""), " ", compare("a", "b"), " ", equals("x", "x"))
+    println(string_from_code_point(0x4E16)!, string_from_code_point(0x1F600)!, " ", string_from_code_point(0xD800) == nil)
+    println(string_from_code_points([104u32, 233u32])!, " ", string_from_bytes([0xFFu8]) == nil)
+
+    println(format("Hello, {}! You are {} ({1}) {{x}} {9}", ["Alice", "30"]))
+    println(format_int(-255, 16), " ", format_uint(255, 2), " ", format_int(-9223372036854775808, 10))
+    println(hex(-255), " ", bin(5), " ", oct(8), " ", format_int(1, 99))
+    println("[", pad_left("7", 3, "0"), "] [", pad_right("ab", 4, "."), "] [", center("é", 4, "*"), "]")
+
+    println(hash_string("hello"), " ", hash_string_bytes("hello"), " ", hash_string(""))
+
+    println(complex_to_string(complex_new(1.0, 2.5)), " ", complex_to_string(complex_new(0.0, -1.0)))
+
+    println(b64encode("foobar".to_string().bytes()), " ", b32encode("fo".to_string().bytes()), " ", b16encode([1u8, 171u8]))
+    println(string_from_utf8(b64decode("Zm9vYmE=".to_string()))!, " ", b16decode("01ab".to_string())[1])
+    println(b64encode_string("héllo"), " ", b64decode_string(b64encode_string("héllo"))!)
+
+    println(argc() >= 1, " ", argv(0) != nil, " ", program_name().len() > 0, " ", argv(argc()) == nil, " ", args().len() as i64 == argc() - 1)
+    println(env_get("CODIRA_STRING_TEST")!, " ", env_has("CODIRA_SURELY_UNSET_VARIABLE"))
+}
+"#,
+    )]);
+    let output = Command::new(env!("CARGO_BIN_EXE_codira"))
+        .arg("run")
+        .arg("--manifest-path")
+        .arg(dir.path().join("codira.toml"))
+        .arg("--color")
+        .arg("disable")
+        .env("CODIRA_STD_PATH", std_dir())
+        .env("CODIRA_STRING_TEST", "set-by-the-test")
+        .env_remove("CODIRA_SURELY_UNSET_VARIABLE")
+        .output()
+        .expect("failed to spawn codira");
+    let stdout = text(&output.stdout);
+    assert!(
+        output.status.success(),
+        "codira run failed\nstdout:\n{stdout}\nstderr:\n{}",
+        text(&output.stderr)
+    );
+    let expected = format!(
+        "a, b, , c\n\
+         one-two-three\n\
+         0\n\
+         héXYllo hllo olléh\n\
+         2 4 -1 true\n\
+         世😀 true\n\
+         hé true\n\
+         Hello, Alice! You are 30 (30) {{x}} {{9}}\n\
+         -ff 11111111 -9223372036854775808\n\
+         -0xff 0b101 0o10 <invalid base>\n\
+         [007] [ab..] [*é**]\n\
+         {h} {h} 14695981039346656037\n\
+         1.0+2.5i 0.0-1.0i\n\
+         Zm9vYmFy MZXQ==== 01AB\n\
+         fooba 171\n\
+         aMOpbGxv héllo\n\
+         true true true true true\n\
+         set-by-the-test false\n",
+        h = fnv1a(b"hello"),
+    );
+    assert_eq!(stdout, expected);
+}
+
+/// `std.json.json`: a document parsed, read through the accessors, changed,
+/// built from scratch and printed, compact and pretty; errors with their
+/// position; equality; and `?` passing a `JsonError` on. The parser's
+/// conformance and property tests are in `tests/json.rs`.
+#[test]
+fn std_json_parses_reads_builds_and_prints() {
+    let (_dir, stdout) = run_ok(&[(
+        "mod.code",
+        r#"
+import std.json.json.{Json, JsonObject, JsonError, JsonErrorKind, ParseOptions, DuplicateKeys, parse, parse_with, parse_bytes, to_string, to_pretty_string, to_pretty_string_with, equals, default_options}
+import std.result.result.{Result}
+
+func total_age(text: String) -> Result[i64, JsonError] {
+    let doc = parse(text)?
+    var total: i64 = 0
+    if let people = doc.get("people") {
+        var i: usize = 0
+        while i < people.len() {
+            if let age = people.at(i)!.get("age") { total += age.as_i64()! }
+            i += 1
+        }
+    }
+    Result.Ok(total)
+}
+
+public func main() {
+    let text = "{\"name\": \"Ada\", \"tags\": [\"math\", \"code\"], \"born\": 1815, \"ratio\": 0.5, \"alive\": false, \"spouse\": null}"
+    let doc = parse(text).unwrap()
+    println(doc.kind_name(), " ", doc.len(), " ", doc.get("name")!.as_str()!, " ", doc.get("born")!.as_i64()!)
+    println(doc.get("tags")!.at(1)!.as_str()!, " ", doc.get("tags")!.at(2) == nil, " ", doc.get("missing") == nil)
+    println(doc.get("ratio")!.as_f64()!, " ", doc.get("born")!.as_f64()!, " ", doc.get("ratio")!.as_i64() == nil)
+    println(doc.get("alive")!.as_bool()!, " ", doc.get("spouse")!.is_null(), " ", doc.get("name")!.is_string())
+    println(to_string(doc))
+
+    let o = doc.as_object()!
+    o.set("born", Json.Int(1816));
+    o.set("langs", Json.Arr([Json.Str("en".to_string()), Json.Float(1.0)]));
+    o.remove("spouse");
+    println(o.len(), " ", o.key_at(0)!, " ", o.key_at(5)!, " ", o.contains_key("spouse"))
+    println(to_string(doc))
+
+    let built = JsonObject.new()
+        .with("a", Json.Int(-9223372036854775807 - 1))
+        .with("b", Json.Arr([]))
+        .with("c", Json.Obj(JsonObject.new().with("d", Json.Bool(true))))
+        .with("e", Json.Str("tab\there \"q\" é \x01".to_string()))
+    let value = Json.Obj(built)
+    println(to_string(value))
+    println(to_pretty_string(value))
+    println(to_pretty_string_with(Json.Arr([Json.Int(1), Json.Obj(JsonObject.new())]), 4))
+
+    let wide = JsonObject.new()
+    var i: i64 = 0
+    while i < 40 {
+        wide.set(f"key{i}", Json.Int(i * i));
+        i += 1
+    }
+    wide.set("key7", Json.Str("seven".to_string()));
+    wide.remove("key0");
+    println(wide.len(), " ", wide.get("key39")!.as_i64()!, " ", wide.get("key7")!.as_str()!, " ", wide.get("key0") == nil, " ", wide.key_at(0)!)
+
+    let a = parse("{\"x\": [1, 2.5, {\"y\": null}], \"z\": \"w\"}").unwrap()
+    let b = parse("{\"z\": \"w\", \"x\": [1, 2.5, {\"y\": null}]}").unwrap()
+    let c = parse("{\"z\": \"w\", \"x\": [1.0, 2.5, {\"y\": null}]}").unwrap()
+    println(equals(a, b), " ", a.equals(c), " ", equals(parse(to_string(a)).unwrap(), a))
+
+    match parse("[1, 2,]") {
+        Result.Ok(_) -> println("accepted"),
+        Result.Err(e) -> println(e.message(), " ", e.kind == JsonErrorKind.TrailingComma),
+    }
+    match parse("{\"k\": 1, \"k\": 2}") {
+        Result.Ok(_) -> println("accepted"),
+        Result.Err(e) -> println(e.reason(), " at ", e.offset),
+    }
+    let keep = ParseOptions { max_depth: 8, duplicate_keys: DuplicateKeys.KeepLast }
+    println(to_string(parse_with("{\"k\": 1, \"k\": 2}", keep).unwrap()))
+    match parse_with("[[[[[[[[[1]]]]]]]]]", keep) {
+        Result.Ok(_) -> println("accepted"),
+        Result.Err(e) -> println(e.reason(), " at ", e.offset),
+    }
+    println(default_options().max_depth)
+    match parse_bytes([34u8, 0xFFu8, 34u8]) {
+        Result.Ok(_) -> println("accepted"),
+        Result.Err(e) -> println(e.reason(), " at ", e.offset),
+    }
+    println(to_string(parse_bytes("[\"ok\"]".to_string().bytes()).unwrap()))
+
+    println(total_age("{\"people\": [{\"age\": 36}, {\"age\": 41}, {\"name\": \"x\"}]}").unwrap())
+    println(total_age("{\"people\": [}").err()!.message())
+    println(to_string(Json.Float(0.0 / 0.0)), " ", to_string(Json.Float(1e300)), " ", to_string(Json.Float(-0.0)))
+}
+"#,
+    )]);
+    let expected = "\
+object 6 Ada 1815
+code true true
+0.5 1815.0 true
+false true true
+{\"name\":\"Ada\",\"tags\":[\"math\",\"code\"],\"born\":1815,\"ratio\":0.5,\"alive\":false,\"spouse\":null}
+6 name langs false
+{\"name\":\"Ada\",\"tags\":[\"math\",\"code\"],\"born\":1816,\"ratio\":0.5,\"alive\":false,\"langs\":[\"en\",1.0]}
+{\"a\":-9223372036854775808,\"b\":[],\"c\":{\"d\":true},\"e\":\"tab\\there \\\"q\\\" é \\u0001\"}
+{
+  \"a\": -9223372036854775808,
+  \"b\": [],
+  \"c\": {
+    \"d\": true
+  },
+  \"e\": \"tab\\there \\\"q\\\" é \\u0001\"
+}
+[
+    1,
+    {}
+]
+39 1521 seven true key1
+true false true
+trailing comma at line 1, column 7 (byte 6) true
+duplicate key in an object at 9
+{\"k\":2}
+arrays and objects nested deeper than the limit at 8
+128
+invalid UTF-8 at 1
+[\"ok\"]
+77
+expected a value at line 1, column 13 (byte 12)
+null 1e300 -0.0
+";
+    assert_eq!(stdout, expected);
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }

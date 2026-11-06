@@ -912,8 +912,10 @@ impl AstNode for Expr {
                 | PERFORM_EXPR
                 | SPAWN_EXPR
                 | SCOPE_EXPR
+                | GROUP_EXPR
                 | HANDLE_EXPR
                 | TRY_EXPR
+                | PROPAGATE_EXPR
                 | TRANSFER_EXPR
                 | CHANNEL_RECV_EXPR
                 | CHANNEL_SEND_EXPR
@@ -964,8 +966,10 @@ pub enum ExprKind {
     PerformExpr(PerformExpr),
     SpawnExpr(SpawnExpr),
     ScopeExpr(ScopeExpr),
+    GroupExpr(GroupExpr),
     HandleExpr(HandleExpr),
     TryExpr(TryExpr),
+    PropagateExpr(PropagateExpr),
     TransferExpr(TransferExpr),
     ChannelRecvExpr(ChannelRecvExpr),
     ChannelSendExpr(ChannelSendExpr),
@@ -1114,6 +1118,11 @@ impl From<ScopeExpr> for Expr {
         Expr { syntax: n.syntax }
     }
 }
+impl From<GroupExpr> for Expr {
+    fn from(n: GroupExpr) -> Expr {
+        Expr { syntax: n.syntax }
+    }
+}
 impl From<HandleExpr> for Expr {
     fn from(n: HandleExpr) -> Expr {
         Expr { syntax: n.syntax }
@@ -1121,6 +1130,11 @@ impl From<HandleExpr> for Expr {
 }
 impl From<TryExpr> for Expr {
     fn from(n: TryExpr) -> Expr {
+        Expr { syntax: n.syntax }
+    }
+}
+impl From<PropagateExpr> for Expr {
+    fn from(n: PropagateExpr) -> Expr {
         Expr { syntax: n.syntax }
     }
 }
@@ -1197,8 +1211,12 @@ impl Expr {
             PERFORM_EXPR => ExprKind::PerformExpr(PerformExpr::cast(self.syntax.clone()).unwrap()),
             SPAWN_EXPR => ExprKind::SpawnExpr(SpawnExpr::cast(self.syntax.clone()).unwrap()),
             SCOPE_EXPR => ExprKind::ScopeExpr(ScopeExpr::cast(self.syntax.clone()).unwrap()),
+            GROUP_EXPR => ExprKind::GroupExpr(GroupExpr::cast(self.syntax.clone()).unwrap()),
             HANDLE_EXPR => ExprKind::HandleExpr(HandleExpr::cast(self.syntax.clone()).unwrap()),
             TRY_EXPR => ExprKind::TryExpr(TryExpr::cast(self.syntax.clone()).unwrap()),
+            PROPAGATE_EXPR => {
+                ExprKind::PropagateExpr(PropagateExpr::cast(self.syntax.clone()).unwrap())
+            }
             TRANSFER_EXPR => {
                 ExprKind::TransferExpr(TransferExpr::cast(self.syntax.clone()).unwrap())
             }
@@ -1694,6 +1712,34 @@ impl AstNode for GenericParamList {
 impl GenericParamList {
     pub fn generic_params(&self) -> impl Iterator<Item = GenericParam> {
         super::children(self)
+    }
+}
+
+// GroupExpr
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GroupExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for GroupExpr {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, GROUP_EXPR)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(GroupExpr { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl GroupExpr {
+    pub fn body(&self) -> Option<BlockExpr> {
+        super::child_opt(self)
     }
 }
 
@@ -2950,6 +2996,34 @@ impl AstNode for PrefixExpr {
     }
 }
 impl PrefixExpr {
+    pub fn expr(&self) -> Option<Expr> {
+        super::child_opt(self)
+    }
+}
+
+// PropagateExpr
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PropagateExpr {
+    pub(crate) syntax: SyntaxNode,
+}
+
+impl AstNode for PropagateExpr {
+    fn can_cast(kind: SyntaxKind) -> bool {
+        matches!(kind, PROPAGATE_EXPR)
+    }
+    fn cast(syntax: SyntaxNode) -> Option<Self> {
+        if Self::can_cast(syntax.kind()) {
+            Some(PropagateExpr { syntax })
+        } else {
+            None
+        }
+    }
+    fn syntax(&self) -> &SyntaxNode {
+        &self.syntax
+    }
+}
+impl PropagateExpr {
     pub fn expr(&self) -> Option<Expr> {
         super::child_opt(self)
     }

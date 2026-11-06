@@ -1,0 +1,727 @@
+// std/collections/map.code
+// Map[K, V]: a hash map from keys to values -- a Swiss table, keyed with
+// SipHash by default.
+//
+//     import std.collections.map.{Map}
+//
+//     let ages: Map[str, i64] = Map.new()
+//     ages.insert("ada", 36)
+//     if let age = ages.get("ada") { println(age) }
+//     for (name, age) in ages.iter() { println(name, " ", age) }
+//
+// Keys need `Hashable` (std.hashlib.hash) and `Eq` (std.cmp.cmp); every
+// integer and float type, `bool`, `str` and `String` have both. Expected
+// O(1) insertion, lookup and removal.
+//
+// HASHING. `Map.new()` hashes keys with SipHash-1-3 under a secret 128-bit
+// key of its own, drawn from the runtime's entropy service
+// (`HashKey.random()`): whoever does not know the key cannot choose keys
+// that collide, so the map is DoS-resistant (std.hashlib.hash says why
+// SipHash-1-3). The other hashers are asked for by name:
+//
+//   - `Map.with_key(key)`: SipHash-1-3 under a key you give. Deterministic
+//     (the same key gives the same iteration order on every run); as
+//     resistant as the key is secret.
+//   - `Map.unkeyed()`: the keys' fast `hash_value()` (a MurmurHash3
+//     finalizer for integers, FNV-1a for strings). NOT DoS-RESISTANT:
+//     whoever chooses the keys can make every one collide and every
+//     operation O(n). For trusted keys, when the hash is the bottleneck.
+//     Copying one unkeyed map into another (in iteration order) can
+//     cluster the new table; maps with keys of their own do not interfere.
+//
+// CUSTOM HASHERS are a property of the key type, as the language has no
+// generic traits for a hasher parameter: a key type implements `Hashable`
+// with the `hash_keyed` (used by `new` and `with_key`) and `hash_value`
+// (used by `unkeyed`) it wants, and wraps an existing type when the hash
+// of that type is not the one wanted:
+//
+//     struct NoCase { text: String }   // keys equal up to ASCII case
+//     extend NoCase: Hashable {
+//         func hash_value(self) -> u64 { self.text.to_lower().hash() }
+//         func hash_keyed(self, key: HashKey) -> u64 {
+//             SipHasher13.new(key).write_string(self.text.to_lower()).finish()
+//         }
+//     }
+//     extend NoCase: Eq { func eq(self, o: NoCase) -> bool { self.text.to_lower() == o.text.to_lower() } }
+//
+// Every call is then resolved at compile time and inlined. (A hasher held
+// as a function value was tried and measured: the indirect call it puts in
+// the probe loop of every map, custom or not, stops LLVM from keeping the
+// table's addresses in registers across lookups, costing about 2 ns per
+// lookup of a 1K-entry map.) A program-defined key type gets a keyed hash
+// from its `hash_value` by default, which is only as collision-resistant
+// as `hash_value` is injective; std.hashlib.hash's `Hashable.hash_keyed`
+// says how to do better.
+//
+// LAYOUT. The table is `8 * G` slots in `G` groups of 8 (`G` a power of
+// two), each slot one `(K, V)` pair, and one control byte per slot packed
+// in a `u64` per group: EMPTY (0xFF), DELETED (0x80, a tombstone), or FULL
+// with the top 7 bits of the key's hash (0x00..0x7F). A lookup reads the
+// group the hash's low bits pick and tests all 8 control bytes at once
+// with word arithmetic (SWAR, as hashbrown's portable implementation does;
+// the language has no SIMD vector types): the bytes equal to the 7-bit tag
+// give the few slots whose key is compared, and a group with an EMPTY byte
+// ends the search. Groups are probed in triangular order (1, 2, 3, ...
+// groups on), which visits every group of a power-of-two table. A lookup
+// therefore touches one control word and, when found, one slot, usually in
+// one cache line each.
+//
+// The table holds at most 7/8 of its slots (7 for a one-group table) and
+// doubles when full. Removing a key leaves a tombstone only when its group
+// has no EMPTY byte (a probe could have passed through it); otherwise the
+// slot is EMPTY again. Tombstones count against the 7/8: when inserting
+// finds no room and at most half the capacity is live, the table is
+// rebuilt at the same size, which clears them, instead of growing.
+//
+// SMALL MAPS. A one-group map (at most 7 entries) of integer, float or
+// `bool` keys (`compares_cheaply()`) is never hashed while it stays that
+// small: a lookup compares the key with every entry, which costs less than
+// SipHash. It hashes its keys when it first grows.
+//
+// CAPACITY. `Map.new()` allocates the map object and nothing else: its
+// key is drawn and its table allocated by the first insertion.
+// `Map.with_capacity(n)` and `m.reserve(n)` size the table so that `n`
+// (more) entries fit without growing; `capacity()` is how many entries fit
+// now, `shrink_to_fit()` rebuilds the smallest table that holds the
+// entries. The slot array of a table is filled with copies of a key and
+// value already at hand (arrays of a type parameter have no default
+// value), so `with_capacity` allocates the control words at once and the
+// slots on the first insertion.
+//
+// ITERATION. `m.iter()` is an iterator object over the `(key, value)`
+// pairs in table order (which is not insertion order, and differs between
+// maps with different keys); `keys()`, `values()` and `entries()` are
+// arrays, in that order, copied when called. While an iterator is in use:
+//   - changing the value of a key already in the map, and removing keys,
+//     are allowed: an entry removed before the iterator reaches it is not
+//     produced, and every entry in the map for the whole iteration is
+//     produced exactly once;
+//   - an entry inserted under a new key may or may not be produced (and a
+//     key removed and inserted again may be produced twice);
+//   - an insertion that grows or rebuilds the table, and `reserve`,
+//     `shrink_to_fit` and `clear`, end the iteration: the iterator's next
+//     step panics ("the map was resized or cleared while being
+//     iterated"). Reserve the room first, or collect `keys()`.
+// Nothing here is ever memory-unsafe: every slot read is in bounds.
+//
+// A `Map` is a class: assigning it or passing it shares the one map. Keys
+// and values are stored by value (a class is stored as its reference). A
+// removed entry's key and value stay in its slot until the slot is reused
+// (they are not released to the collector before). A float key that is
+// NaN is never found again (`nan.eq(nan)` is false).
+
+import root.hashlib.hash.{Hashable, HashKey};
+import root.cmp.cmp.{Eq};
+import root.sys.terminate.{panic};
+
+extern "codira-intrinsic" {
+    func cttz_u64(value: u64) -> u64;
+}
+
+public class Map[K, V] {
+    // One control word per group: byte `b` of `ctrl[g]` (from the least
+    // significant) is slot `8 * g + b`'s. `nil` before there is a table;
+    // the length is then a power of two.
+    ctrl: [u64]?,
+    // `8 * ctrl.len()` pairs, or `nil` before the first insertion (a table
+    // `reserve` planned has control words but no slots yet). Slots that are
+    // not FULL hold some earlier pair, never read.
+    slots: [(K, V)]?,
+    // The FULL slots.
+    count: usize,
+    // How many more EMPTY slots may be filled before the table must grow:
+    // the capacity minus FULL and DELETED slots. 0 when there is no table,
+    // or no slot array yet.
+    growth_left: usize,
+    // What hashes the keys: KEYED (0) with `key`, UNKEYED (1) with
+    // `hash_value`, or KEYED with a key not drawn yet (2), which the first
+    // table draws.
+    mode: u8,
+    key: HashKey,
+    // Changes whenever the table is replaced or cleared; iterators stop
+    // when it does.
+    epoch: usize,
+}
+
+// Control words: one byte per slot.
+func EMPTY_GROUP() -> u64 { 0xFFFFFFFFFFFFFFFF }
+func LSB() -> u64 { 0x0101010101010101 }
+func MSB() -> u64 { 0x8080808080808080 }
+func EMPTY() -> u64 { 0xFF }
+func DELETED() -> u64 { 0x80 }
+// "No slot": larger than any slot index.
+func NONE() -> usize { 0xFFFFFFFFFFFFFFFF }
+
+// The bytes of `word` equal to `tag` (a 7-bit value), as their top bits.
+// May also flag a byte just above a true match (the borrow of the
+// subtraction); the key comparison that follows rules those out.
+@inline
+func match_tag(word: u64, tag: u64) -> u64 {
+    let x = word ^ (tag * LSB())
+    (x - LSB()) & ~x & MSB()
+}
+
+// The EMPTY bytes of `word` (0xFF: the only byte whose two top bits are
+// both set).
+@inline
+func match_empty(word: u64) -> u64 {
+    word & (word << 1) & MSB()
+}
+
+// The EMPTY or DELETED bytes (top bit set).
+@inline
+func match_free(word: u64) -> u64 {
+    word & MSB()
+}
+
+// The FULL bytes (top bit clear).
+@inline
+func match_full(word: u64) -> u64 {
+    ~word & MSB()
+}
+
+// The index of the lowest flagged byte of a non-zero match.
+@inline
+func lowest(mask: u64) -> usize {
+    (cttz_u64(mask) >> 3) as usize
+}
+
+// `word` with byte `b` set to `value`.
+@inline
+func with_byte(word: u64, b: usize, value: u64) -> u64 {
+    let shift = (b * 8) as u64
+    (word & ~(0xFF << shift)) | (value << shift)
+}
+
+// The entries a table of `groups` groups holds: 7/8 of its slots, and 7
+// for one group.
+func capacity_of(groups: usize) -> usize {
+    groups * 7
+}
+
+// The fewest groups whose capacity is at least `n`: a power of two.
+func groups_for(n: usize) -> usize {
+    var groups: usize = 1
+    while capacity_of(groups) < n {
+        groups = groups * 2
+    }
+    groups
+}
+
+extend Map[K: Hashable + Eq, V] {
+    // An empty map hashing with SipHash-1-3 under a secret key of its own,
+    // drawn (`HashKey.random()`) when its first entry is inserted. It
+    // allocates nothing but itself until then.
+    public func new() -> Map[K, V] {
+        Map {
+            ctrl: nil,
+            slots: nil,
+            count: 0,
+            growth_left: 0,
+            mode: 2,
+            key: HashKey.new(0, 0),
+            epoch: 0,
+        }
+    }
+
+    // An empty map with room for `n` entries before it grows.
+    public func with_capacity(n: usize) -> Map[K, V] {
+        let m: Map[K, V] = Map.new()
+        m.reserve(n)
+        m
+    }
+
+    // An empty map hashing with SipHash-1-3 under `key`.
+    public func with_key(key: HashKey) -> Map[K, V] {
+        Map {
+            ctrl: nil,
+            slots: nil,
+            count: 0,
+            growth_left: 0,
+            mode: 0,
+            key: key,
+            epoch: 0,
+        }
+    }
+
+    // An empty map hashing with the keys' own `hash_value()`. NOT
+    // DoS-RESISTANT: see the module comment.
+    public func unkeyed() -> Map[K, V] {
+        Map {
+            ctrl: nil,
+            slots: nil,
+            count: 0,
+            growth_left: 0,
+            mode: 1,
+            key: HashKey.new(0, 0),
+            epoch: 0,
+        }
+    }
+
+    // The number of entries.
+    public func len(self) -> usize {
+        self.count
+    }
+
+    public func is_empty(self) -> bool {
+        self.count == 0
+    }
+
+    // How many entries fit before the table grows.
+    public func capacity(self) -> usize {
+        if let ctrl = self.ctrl { capacity_of(ctrl.len()) } else { 0 }
+    }
+
+    // The value stored for `key`, or `nil`.
+    @inline
+    public func get(self, key: K) -> V? {
+        let slot = self.find(key)
+        if slot != NONE() { self.slots!.unchecked_get(slot).1 } else { nil }
+    }
+
+    // The value stored for `key`, or `default`.
+    @inline
+    public func get_or(self, key: K, default: V) -> V {
+        let slot = self.find(key)
+        if slot != NONE() { self.slots!.unchecked_get(slot).1 } else { default }
+    }
+
+    @inline
+    public func contains_key(self, key: K) -> bool {
+        self.find(key) != NONE()
+    }
+
+    // Stores `value` for `key`; returns the value it replaces, or `nil`
+    // when `key` is new. A replaced entry keeps the key it had.
+    @inline
+    public func insert(self, key: K, value: V) -> V? {
+        if self.growth_left == 0 {
+            if self.count == 0 {
+                return self.insert_slow(key, value)
+            }
+        }
+        let ctrl = self.ctrl!
+        let slots = self.slots!
+        let groups = ctrl.len()
+        if groups == 1 {
+            return self.insert_small(key, value)
+        }
+        let hash = self.hash_of(key)
+        let mask = groups - 1
+        let tag = hash >> 57
+        var g = (hash as usize) & mask
+        var stride: usize = 0
+        var free = NONE()
+        loop {
+            let word = ctrl.unchecked_get(g)
+            var m = match_tag(word, tag)
+            while m != 0 {
+                let slot = g * 8 + lowest(m)
+                let pair = slots.unchecked_get(slot)
+                if pair.0.eq(key) {
+                    slots[slot] = (pair.0, value)
+                    return pair.1
+                }
+                m = m & (m - 1)
+            }
+            if free == NONE() {
+                let f = match_free(word)
+                if f != 0 {
+                    free = g * 8 + lowest(f)
+                }
+            }
+            if match_empty(word) != 0 {
+                break
+            }
+            stride += 1
+            g = (g + stride) & mask
+        }
+        let fg = free / 8
+        let fb = free % 8
+        let fword = ctrl.unchecked_get(fg)
+        let was_empty = ((fword >> ((fb * 8) as u64)) & 0xFF) == EMPTY()
+        if was_empty && self.growth_left == 0 {
+            // Full: grow (or clear the tombstones), then place it afresh.
+            self.make_room(key, value, 1)
+            self.place(key, value, hash)
+            return nil
+        }
+        ctrl[fg] = with_byte(fword, fb, tag)
+        slots[free] = (key, value)
+        self.count += 1
+        if was_empty {
+            self.growth_left -= 1
+        }
+        nil
+    }
+
+    // Removes `key`; returns its value, or `nil` when it was not there.
+    @inline
+    public func remove(self, key: K) -> V? {
+        let slot = self.find(key)
+        if slot == NONE() {
+            return nil
+        }
+        let ctrl = self.ctrl!
+        let g = slot / 8
+        let word = ctrl.unchecked_get(g)
+        if match_empty(word) != 0 {
+            // A probe stops at this group anyway: the slot is free again.
+            ctrl[g] = with_byte(word, slot % 8, EMPTY())
+            self.growth_left += 1
+        } else {
+            ctrl[g] = with_byte(word, slot % 8, DELETED())
+        }
+        self.count -= 1
+        self.slots!.unchecked_get(slot).1
+    }
+
+    // Removes every entry and gives the table's memory back.
+    public func clear(self) {
+        self.ctrl = nil
+        self.slots = nil
+        self.count = 0
+        self.growth_left = 0
+        self.epoch += 1
+    }
+
+    // Makes room for `additional` more entries without growing.
+    public func reserve(self, additional: usize) {
+        let need = self.count + additional
+        let groups = if let ctrl = self.ctrl { ctrl.len() } else { 0 }
+        if let slots = self.slots {
+            if self.growth_left >= additional {
+                return
+            }
+            var target = groups_for(need)
+            if target < groups {
+                target = groups
+            }
+            let filler = slots.unchecked_get(0)
+            self.rebuild(target, filler.0, filler.1)
+            return
+        }
+        // No pair to fill a slot array with yet: plan the table, and let
+        // the first insertion fill it.
+        let target = groups_for(need)
+        if target > groups {
+            self.ctrl = array_filled(EMPTY_GROUP(), target)
+            self.epoch += 1
+        }
+    }
+
+    // Rebuilds the table at the smallest size that holds the entries (none
+    // when the map is empty).
+    public func shrink_to_fit(self) {
+        if self.count == 0 {
+            self.clear()
+            return
+        }
+        let target = groups_for(self.count)
+        if target < self.ctrl!.len() {
+            let filler = self.slots!.unchecked_get(0)
+            self.rebuild(target, filler.0, filler.1)
+        }
+    }
+
+    // Every key, in table order (which is not insertion order).
+    public func keys(self) -> [K] {
+        let out: [K] = []
+        if self.count == 0 {
+            return out
+        }
+        out.reserve(self.count)
+        let ctrl = self.ctrl!
+        let slots = self.slots!
+        var g: usize = 0
+        while g < ctrl.len() && out.len() < self.count {
+            var m = match_full(ctrl.unchecked_get(g))
+            while m != 0 {
+                out.push(slots.unchecked_get(g * 8 + lowest(m)).0)
+                m = m & (m - 1)
+            }
+            g += 1
+        }
+        out
+    }
+
+    // Every value, in the same order as `keys()`.
+    public func values(self) -> [V] {
+        let out: [V] = []
+        if self.count == 0 {
+            return out
+        }
+        out.reserve(self.count)
+        let ctrl = self.ctrl!
+        let slots = self.slots!
+        var g: usize = 0
+        while g < ctrl.len() && out.len() < self.count {
+            var m = match_full(ctrl.unchecked_get(g))
+            while m != 0 {
+                out.push(slots.unchecked_get(g * 8 + lowest(m)).1)
+                m = m & (m - 1)
+            }
+            g += 1
+        }
+        out
+    }
+
+    // Every `(key, value)` pair, in the same order as `keys()`.
+    public func entries(self) -> [(K, V)] {
+        let out: [(K, V)] = []
+        if self.count == 0 {
+            return out
+        }
+        out.reserve(self.count)
+        let ctrl = self.ctrl!
+        let slots = self.slots!
+        var g: usize = 0
+        while g < ctrl.len() && out.len() < self.count {
+            var m = match_full(ctrl.unchecked_get(g))
+            while m != 0 {
+                out.push(slots.unchecked_get(g * 8 + lowest(m)))
+                m = m & (m - 1)
+            }
+            g += 1
+        }
+        out
+    }
+
+    // An iterator over the `(key, value)` pairs, in table order; see the
+    // module comment for what may change while it runs.
+    public func iter(self) -> MapIter[K, V] {
+        MapIter { map: self, epoch: self.epoch, group: 0, bits: 0, started: false }
+    }
+
+    // ── Internals ────────────────────────────────────────────────────────
+
+    // The hash of `key` by this map's hasher (never called before the
+    // table exists, when a KEYED map's key has been drawn).
+    @inline
+    func hash_of(self, key: K) -> u64 {
+        if self.mode == 1 { key.hash_value() } else { key.hash_keyed(self.key) }
+    }
+
+    // The control byte a key with `hash` gets in this table: the top 7
+    // bits, or 0 in a one-group table of keys that compare cheaply (which
+    // is scanned, not matched).
+    func tag_of(self, key: K, hash: u64, groups: usize) -> u64 {
+        if groups == 1 && key.compares_cheaply() { 0 } else { hash >> 57 }
+    }
+
+    // The slot holding `key`, or `NONE()`.
+    @inline
+    func find(self, key: K) -> usize {
+        if self.count == 0 {
+            return NONE()
+        }
+        let ctrl = self.ctrl!
+        let slots = self.slots!
+        let groups = ctrl.len()
+        if groups == 1 && key.compares_cheaply() {
+            var m = match_full(ctrl.unchecked_get(0))
+            while m != 0 {
+                let slot = lowest(m)
+                if slots.unchecked_get(slot).0.eq(key) {
+                    return slot
+                }
+                m = m & (m - 1)
+            }
+            return NONE()
+        }
+        let hash = self.hash_of(key)
+        let mask = groups - 1
+        let tag = hash >> 57
+        var g = (hash as usize) & mask
+        var stride: usize = 0
+        loop {
+            let word = ctrl.unchecked_get(g)
+            var m = match_tag(word, tag)
+            while m != 0 {
+                let slot = g * 8 + lowest(m)
+                if slots.unchecked_get(slot).0.eq(key) {
+                    return slot
+                }
+                m = m & (m - 1)
+            }
+            if match_empty(word) != 0 {
+                return NONE()
+            }
+            stride += 1
+            g = (g + stride) & mask
+        }
+    }
+
+    // `insert` into a one-group table: a scan for cheaply compared keys,
+    // the tag match otherwise.
+    func insert_small(self, key: K, value: V) -> V? {
+        let ctrl = self.ctrl!
+        let slots = self.slots!
+        let word = ctrl.unchecked_get(0)
+        let cheap = key.compares_cheaply()
+        let hash = if cheap { 0 } else { self.hash_of(key) }
+        var m = if cheap { match_full(word) } else { match_tag(word, hash >> 57) }
+        while m != 0 {
+            let slot = lowest(m)
+            let pair = slots.unchecked_get(slot)
+            if pair.0.eq(key) {
+                slots[slot] = (pair.0, value)
+                return pair.1
+            }
+            m = m & (m - 1)
+        }
+        if self.growth_left == 0 {
+            self.make_room(key, value, 1)
+            let grown = if cheap { self.hash_of(key) } else { hash }
+            self.place(key, value, grown)
+            return nil
+        }
+        // A one-group table never has tombstones: its group always has an
+        // EMPTY byte, so removals free their slot.
+        let slot = lowest(match_free(word))
+        ctrl[0] = with_byte(word, slot, if cheap { 0 } else { hash >> 57 })
+        slots[slot] = (key, value)
+        self.count += 1
+        self.growth_left -= 1
+        nil
+    }
+
+    // `insert` into an empty map: no table, a table without slots, or one
+    // whose entries were all removed.
+    func insert_slow(self, key: K, value: V) -> V? {
+        self.make_room(key, value, 1)
+        let hash = if self.ctrl!.len() == 1 && key.compares_cheaply() { 0 } else { self.hash_of(key) }
+        self.place(key, value, hash)
+        nil
+    }
+
+    // Makes room for `additional` more entries: draws the key of a KEYED
+    // map, fills a planned slot array (with copies of `key` and `value`),
+    // or rebuilds the table -- twice the size, or the same size when
+    // tombstones are what fills it.
+    func make_room(self, key: K, value: V, additional: usize) {
+        if self.mode == 2 {
+            self.key = HashKey.random()
+            self.mode = 0
+        }
+        let groups = if let ctrl = self.ctrl { ctrl.len() } else { 0 }
+        let need = self.count + additional
+        if groups > 0 && self.slots == nil && capacity_of(groups) >= need {
+            // A table `reserve` planned: give it its slots.
+            self.slots = array_filled((key, value), groups * 8)
+            self.growth_left = capacity_of(groups)
+            return
+        }
+        var target = groups_for(need)
+        if target < groups {
+            target = groups
+        }
+        if target == groups && need > capacity_of(groups) / 2 {
+            target = groups * 2
+        }
+        self.rebuild(target, key, value)
+    }
+
+    // Moves every entry into a new table of `groups` groups, whose slot
+    // array is filled with copies of `key` and `value`.
+    func rebuild(self, groups: usize, key: K, value: V) {
+        let old_ctrl = self.ctrl
+        let old_slots = self.slots
+        self.ctrl = array_filled(EMPTY_GROUP(), groups)
+        self.slots = array_filled((key, value), groups * 8)
+        self.growth_left = capacity_of(groups)
+        self.count = 0
+        self.epoch += 1
+        if let slots = old_slots {
+            let ctrl = old_ctrl!
+            var g: usize = 0
+            while g < ctrl.len() {
+                var m = match_full(ctrl.unchecked_get(g))
+                while m != 0 {
+                    let pair = slots.unchecked_get(g * 8 + lowest(m))
+                    let hash = if groups == 1 && pair.0.compares_cheaply() { 0 } else { self.hash_of(pair.0) }
+                    self.place(pair.0, pair.1, hash)
+                    m = m & (m - 1)
+                }
+                g += 1
+            }
+        }
+    }
+
+    // Puts a key known to be absent into the first free slot of its probe
+    // sequence; there is room.
+    func place(self, key: K, value: V, hash: u64) {
+        let ctrl = self.ctrl!
+        let groups = ctrl.len()
+        let mask = groups - 1
+        var g = (hash as usize) & mask
+        var stride: usize = 0
+        loop {
+            let word = ctrl.unchecked_get(g)
+            let f = match_free(word)
+            if f != 0 {
+                let b = lowest(f)
+                let was_empty = ((word >> ((b * 8) as u64)) & 0xFF) == EMPTY()
+                ctrl[g] = with_byte(word, b, self.tag_of(key, hash, groups))
+                let slots = self.slots!
+                slots[g * 8 + b] = (key, value)
+                self.count += 1
+                if was_empty {
+                    self.growth_left -= 1
+                }
+                return
+            }
+            stride += 1
+            g = (g + stride) & mask
+        }
+    }
+}
+
+// An iterator over a `Map`'s `(key, value)` pairs (`m.iter()`); `for (k,
+// v) in m.iter() { .. }` loops over them.
+public class MapIter[K, V] {
+    map: Map[K, V],
+    epoch: usize,
+    // The group being produced and the FULL slots of it not produced yet.
+    group: usize,
+    bits: u64,
+    started: bool,
+}
+
+extend MapIter[K: Hashable + Eq, V] {
+    // The next pair, or `nil` after the last.
+    public func next(self) -> (K, V)? {
+        let map = self.map
+        if map.epoch != self.epoch {
+            panic("std.collections.map: the map was resized or cleared while being iterated")
+        }
+        if map.count == 0 {
+            return nil
+        }
+        let ctrl = map.ctrl!
+        let slots = map.slots!
+        let groups = ctrl.len()
+        if !self.started {
+            self.started = true
+            self.bits = match_full(ctrl.unchecked_get(0))
+        }
+        loop {
+            if self.group >= groups {
+                return nil
+            }
+            while self.bits != 0 {
+                let b = lowest(self.bits)
+                self.bits = self.bits & (self.bits - 1)
+                // Skip an entry removed since its group was read.
+                let word = ctrl.unchecked_get(self.group)
+                if ((word >> ((b * 8) as u64)) & 0x80) == 0 {
+                    return slots.unchecked_get(self.group * 8 + b)
+                }
+            }
+            self.group += 1
+            if self.group < groups {
+                self.bits = match_full(ctrl.unchecked_get(self.group))
+            }
+        }
+    }
+}

@@ -14,8 +14,30 @@
 // module-level state. (Its `seed` chains SplitMix64's mixing function
 // through its own outputs instead of stepping SplitMix64, so the same seed
 // gives a different sequence there.) Here the state is a `Rng` the caller holds (a class,
-// so the functions advance it in place). There is no seeding from system
-// entropy here: the caller chooses the seed.
+// so the functions advance it in place). The caller chooses the seed, or
+// asks for one from the system: `rng_from_entropy()`.
+//
+// SYSTEM ENTROPY. `os_random_u64()` and `os_random_bytes(n)` read the
+// operating system's cryptographically secure generator through the
+// runtime's entropy service (`codira_random_fill`, the `getrandom` crate:
+// `getrandom(2)` on Linux, `getentropy(2)` on macOS and the BSDs,
+// `ProcessPrng` on Windows). Those bytes ARE suitable for keys, tokens and
+// nonces; a `Rng` seeded from them is still not (its later outputs follow
+// from a few earlier ones). They return `nil` if the system refuses, which
+// on a running system it does not.
+
+extern "C" {
+    // Fills `len` bytes at `out_addr` from the operating system's secure
+    // generator; 0 on success (codira_runtime::native_random).
+    @nopanic
+    func codira_random_fill(out_addr: usize, len: usize) -> i32;
+}
+
+extern "codira-intrinsic" {
+    func stack_alloc(size: usize, align: usize) -> usize;
+    func load_u64(addr: usize) -> u64;
+    func load_u8(addr: usize) -> u8;
+}
 
 public class Rng {
     var s0: u64,
@@ -93,4 +115,47 @@ public func rng_range_i64(r: Rng, low: i64, high: i64) -> i64 {
 // true with probability 1/2.
 public func rng_next_bool(r: Rng) -> bool {
     return (rng_next_u64(r) >> 63) == 1;
+}
+
+// 64 bits from the operating system's secure generator, or `nil` if it
+// refused.
+public func os_random_u64() -> u64? {
+    let out = stack_alloc(8, 8);
+    if codira_random_fill(out, 8) != 0 {
+        return nil;
+    }
+    return load_u64(out);
+}
+
+// `n` bytes from the operating system's secure generator, or `nil` if it
+// refused.
+public func os_random_bytes(n: usize) -> [u8]? {
+    let out: [u8] = [];
+    out.reserve(n);
+    let chunk = stack_alloc(64, 8);
+    var done: usize = 0;
+    while done < n {
+        var take = n - done;
+        if take > 64 {
+            take = 64;
+        }
+        if codira_random_fill(chunk, take) != 0 {
+            return nil;
+        }
+        var i: usize = 0;
+        while i < take {
+            out.push(load_u8(chunk + i));
+            i = i + 1;
+        }
+        done = done + take;
+    }
+    return out;
+}
+
+// A generator seeded with 64 bits from the operating system (different on
+// every call and in every run), or `nil` if it refused. Not cryptographic:
+// see the module comment.
+public func rng_from_entropy() -> Rng? {
+    let seed = os_random_u64()?;
+    return rng_seeded(seed);
 }

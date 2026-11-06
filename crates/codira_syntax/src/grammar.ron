@@ -176,6 +176,10 @@ Grammar(
         // stays an ordinary identifier everywhere else (`if scope { .. }`
         // still tests a variable named `scope`).
         "scope",
+        // `group { .. }`: a task group -- like `scope`, but its value is the
+        // results of the tasks `spawn`ed in it, in spawn order. Promoted under
+        // the same condition as `scope`.
+        "group",
         // `select { .. }`: waits on several channel operations and performs
         // exactly one. Promoted only when directly followed by `{` where a
         // block may start, like `scope`; `default` only at the start of a
@@ -315,6 +319,7 @@ Grammar(
         "PERFORM_EXPR",
         "SPAWN_EXPR",
         "SCOPE_EXPR",
+        "GROUP_EXPR",
         "SELECT_EXPR",
         "SELECT_ARM_LIST",
         "SELECT_ARM",
@@ -327,6 +332,7 @@ Grammar(
         "HANDLER_ARM_LIST",
         "HANDLER_ARM",
         "TRY_EXPR",
+        "PROPAGATE_EXPR",
         "HOLE_EXPR",
         "CHOOSE_EXPR",
 
@@ -654,6 +660,9 @@ Grammar(
         "ScopeExpr": (
             options: [ ["body", "BlockExpr"] ]
         ),
+        "GroupExpr": (
+            options: [ ["body", "BlockExpr"] ]
+        ),
         "ChannelRecvExpr": (
             options: [ ["expr", "Expr"] ]
         ),
@@ -679,6 +688,9 @@ Grammar(
             options: [ "Path", "ParamList", ["body", "Expr"] ]
         ),
         "TryExpr": (options: ["Expr"]),
+        // `expr?` -- error propagation: the `Ok` payload of a `Result`, or
+        // the value inside an optional, else an early return.
+        "PropagateExpr": (options: ["Expr"]),
         // `??` -- a hole `codira synth` fills with an expression proven to
         // meet the function's contract.
         "HoleExpr": (),
@@ -719,9 +731,12 @@ Grammar(
                 "PerformExpr",
                 "SpawnExpr",
                 "ScopeExpr",
+                "GroupExpr",
                 "HandleExpr",
                 "TryExpr",
+                "PropagateExpr",
                 "TransferExpr",
+
                 "ChannelRecvExpr",
                 "ChannelSendExpr",
                 "SelectExpr",

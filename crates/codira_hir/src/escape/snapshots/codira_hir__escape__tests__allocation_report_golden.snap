@@ -1,0 +1,14 @@
+---
+source: crates/codira_hir/src/escape/tests.rs
+expression: text
+snapshot_kind: text
+---
+src/mod.code:7:30: in `make`: class `Point`: escapes: returned from `make`
+src/mod.code:11:17: in `sum`: class `Point`: moved to the stack
+src/mod.code:12:18: in `sum`: array literal of 3 elements: moved to the stack
+src/mod.code:18:16: in `link`: class `Node`: escapes: stored into field `next` of parameter `head`, which may be a heap object
+src/mod.code:23:13: in `start`: class `Point`: escapes: sent to a task by `spawn`
+src/mod.code:27:15: in `builder`: class `Bag`: moved to the stack
+src/mod.code:27:28: in `builder`: empty array literal: escapes: grown by `push`, which the runtime does on the heap
+src/mod.code:28:36: in `builder`: class `Point`: escapes: stored into an element of a heap object
+8 allocation sites: 3 moved to the stack, 5 escape, 0 stay on the heap for another reason

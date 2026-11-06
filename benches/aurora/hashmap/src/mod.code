@@ -1,0 +1,247 @@
+// AURORA: hash maps. Every operation -- insert into a new map (no
+// `reserve`), look up every key (hit), look up as many absent keys (miss),
+// iterate over the entries, remove every key -- at 1K, 100K and 1M keys,
+// with `i64` and `String` keys, under two hashers, compared separately and
+// never against each other:
+//
+//   - `fast`: the same unkeyed hash everywhere: the MurmurHash3 finalizer
+//     for integers, FNV-1a over the bytes for strings (`Map.unkeyed()`;
+//     `hashmap.rs` and `hashmap.cpp` compute the same);
+//   - `secure`: each language's default, flooding-resistant hasher:
+//     SipHash-1-3 under a random key (`Map.new()`, Rust's `HashMap::new()`).
+//     The C++ standard library has none.
+//
+// The 1K and 100K sizes repeat the operation (1000 and 10 times) on fresh
+// maps, so that every kernel does at least a million operations. Also:
+// small maps of five keys, built and read, and a churn of removals,
+// inserts and lookups on a table of constant size. Folds in the map part of
+// `examples/collections_bench`.
+//
+// The kernels of a key type share one function: `op` is 0 insert, 1 hit,
+// 2 miss, 3 iter, 4 remove; `secure` is 0 or 1; `n` the number of keys.
+
+import std.collections.map.{Map}
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report_ns(ns: u64, check: i64) {
+    println("@@ ns=", ns, " check=", check as u64)
+}
+
+class Rng { s: u64 }
+
+func next(r: Rng) -> u64 {
+    var x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+// `hits` are even, `misses` odd: never in the map.
+func int_keys(r: Rng, n: i64) -> [i64] {
+    let out: [i64] = []
+    for _ in 0..n { out.push(((next(r) >> 2) * 2) as i64) }
+    out
+}
+
+func int_misses(r: Rng, n: i64) -> [i64] {
+    let out: [i64] = []
+    for _ in 0..n { out.push(((next(r) >> 2) * 2 + 1) as i64) }
+    out
+}
+
+func string_keys(keys: [i64]) -> [String] {
+    let out: [String] = []
+    for k in keys { out.push(f"key-{k}") }
+    out
+}
+
+func new_int_map(secure: i64) -> Map[i64, i64] {
+    if secure == 1 { Map.new() } else { Map.unkeyed() }
+}
+
+func new_string_map(secure: i64) -> Map[String, i64] {
+    if secure == 1 { Map.new() } else { Map.unkeyed() }
+}
+
+func reps_for(n: i64) -> i64 {
+    if n <= 1000 { 1000 } else if n <= 100000 { 10 } else { 1 }
+}
+
+public func map_int(op: i64, secure: i64, n: i64) {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let keys = int_keys(r, n)
+    let misses = int_misses(r, n)
+    let reps = reps_for(n)
+    var ns: u64 = 0
+    var check: i64 = 0
+    var m = new_int_map(secure)
+    if op != 0 {
+        for k in keys { m.insert(k, k ^ 5); }
+    }
+    if op == 0 {
+        for _ in 0..reps {
+            let t = now()
+            m = new_int_map(secure)
+            for k in keys { m.insert(k, k ^ 5); }
+            ns += now() - t
+            check += m.len() as i64
+        }
+    } else if op == 1 {
+        let t = now()
+        for _ in 0..reps {
+            for k in keys {
+                if let v = m.get(k) { check += v & 1 }
+            }
+        }
+        ns = now() - t
+    } else if op == 2 {
+        let t = now()
+        for _ in 0..reps {
+            for k in misses {
+                if m.contains_key(k) { check += 1 }
+            }
+        }
+        ns = now() - t
+    } else if op == 3 {
+        let t = now()
+        for _ in 0..reps {
+            for (k, v) in m.iter() { check += (k ^ v) & 7 }
+        }
+        ns = now() - t
+    } else {
+        for rep in 0..reps {
+            if rep > 0 {
+                for k in keys { m.insert(k, k ^ 5); }
+            }
+            let t = now()
+            for k in keys {
+                if let v = m.remove(k) { check += v & 1 }
+            }
+            ns += now() - t
+        }
+        check += m.len() as i64
+    }
+    report_ns(ns, check)
+}
+
+public func map_string(op: i64, secure: i64, n: i64) {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let keys = string_keys(int_keys(r, n))
+    let misses = string_keys(int_misses(r, n))
+    let reps = reps_for(n)
+    var ns: u64 = 0
+    var check: i64 = 0
+    var m = new_string_map(secure)
+    if op != 0 {
+        var i: i64 = 0
+        for k in keys { m.insert(k, i); i += 1 }
+    }
+    if op == 0 {
+        for _ in 0..reps {
+            let t = now()
+            m = new_string_map(secure)
+            var i: i64 = 0
+            for k in keys { m.insert(k, i); i += 1 }
+            ns += now() - t
+            check += m.len() as i64
+        }
+    } else if op == 1 {
+        let t = now()
+        for _ in 0..reps {
+            for k in keys {
+                if let v = m.get(k) { check += v & 1 }
+            }
+        }
+        ns = now() - t
+    } else if op == 2 {
+        let t = now()
+        for _ in 0..reps {
+            for k in misses {
+                if m.contains_key(k) { check += 1 }
+            }
+        }
+        ns = now() - t
+    } else if op == 3 {
+        let t = now()
+        for _ in 0..reps {
+            for (k, v) in m.iter() { check += (k.len() as i64 + v) & 7 }
+        }
+        ns = now() - t
+    } else {
+        for rep in 0..reps {
+            if rep > 0 {
+                var i: i64 = 0
+                for k in keys { m.insert(k, i); i += 1 }
+            }
+            let t = now()
+            for k in keys {
+                if let v = m.remove(k) { check += v & 1 }
+            }
+            ns += now() - t
+        }
+        check += m.len() as i64
+    }
+    report_ns(ns, check)
+}
+
+// Five integer keys: 200K maps built (`op` 0), or 1M lookups half of which
+// miss (`op` 1).
+public func small(op: i64, secure: i64) {
+    let keys: [i64] = [17, 4242, -9, 123456789, 77]
+    var check: i64 = 0
+    if op == 0 {
+        let t = now()
+        for _ in 0..200000 {
+            let m = new_int_map(secure)
+            for k in keys { m.insert(k, k ^ 5); }
+            check += m.len() as i64
+        }
+        report_ns(now() - t, check)
+    } else {
+        let m = new_int_map(secure)
+        for k in keys { m.insert(k, k ^ 5); }
+        let t = now()
+        var i: i64 = 0
+        while i < 1000000 {
+            let k = keys[(i % 8) as usize % 5] + (i & 8)
+            if let v = m.get(k) { check += v & 3 }
+            i += 1
+        }
+        report_ns(now() - t, check)
+    }
+}
+
+// 2M steps over a table of 65,536 live keys: each step removes the oldest
+// key, inserts a new one and looks one up.
+public func churn(secure: i64) {
+    let r = Rng { s: 0x9E3779B97F4A7C15 }
+    let ring = array_filled(0i64, 65536)
+    let m = new_int_map(secure)
+    var i: usize = 0
+    while i < 65536 {
+        let k = (next(r) >> 1) as i64
+        ring[i] = k
+        m.insert(k, k);
+        i += 1
+    }
+    let start = now()
+    var found: i64 = 0
+    var step: usize = 0
+    while step < 2000000 {
+        let slot = step & 65535
+        m.remove(ring[slot]);
+        let k = (next(r) >> 1) as i64
+        ring[slot] = k
+        m.insert(k, k);
+        if let v = m.get(ring[(step * 7) & 65535]) { found += (v & 1) + 1 }
+        step += 1
+    }
+    report_ns(now() - start, found * 1000000 + m.len() as i64)
+}

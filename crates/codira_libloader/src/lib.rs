@@ -148,6 +148,33 @@ impl CodiraLibrary {
         }
     }
 
+    /// Calls the library's `set_gc_hooks` with the collector's hooks: the
+    /// chain-head function, the poll word (unused by current libraries) and
+    /// the poll function. Returns the address of the library's own poll
+    /// byte, which the runtime must keep equal to its poll word, or null if
+    /// the library has no frame records and polls.
+    ///
+    /// # Safety
+    ///
+    /// This operations executes a function in the codiralib. The pointers
+    /// must stay valid for as long as code in the library runs.
+    pub unsafe fn set_gc_hooks(
+        &mut self,
+        chain_fn: *const c_void,
+        poll_word: *const c_void,
+        poll_fn: *const c_void,
+    ) -> *mut u8 {
+        match self
+            .0
+            .library()
+            .get::<extern "C" fn(*const c_void, *const c_void, *const c_void) -> *mut u8>(
+                abi::SET_GC_HOOKS_FN_NAME.as_bytes(),
+            ) {
+            Ok(set_gc_hooks_fn) => set_gc_hooks_fn(chain_fn, poll_word, poll_fn),
+            Err(_) => std::ptr::null_mut(),
+        }
+    }
+
     /// Calls a hardware-safety build's `set_hardware_safety` with `table`
     /// (the runtime's capability table) and returns the
     /// `HARDWARE_SAFETY_*` flags the library was built with; `0` for a

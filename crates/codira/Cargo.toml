@@ -21,6 +21,8 @@ pretty_env_logger = { workspace = true }
 codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
 codira_certificate = { version = "0.6.0-dev", path = "../codira_certificate" }
 codira_compiler = { version = "0.6.0-dev", path = "../codira_compiler" }
+codira_doc = { version = "0.6.0-dev", path = "../codira_doc" }
+codira_fmt = { version = "0.6.0-dev", path = "../codira_fmt" }
 codira_hir = { version = "0.6.0-dev", path = "../codira_hir" }
 codira_hir_input = { version = "0.6.0-dev", path = "../codira_hir_input" }
 codira_compiler_daemon = { version = "0.6.0-dev", path = "../codira_compiler_daemon" }
@@ -29,8 +31,13 @@ codira_runtime = { version = "0.6.0-dev", path = "../codira_runtime" }
 codira_healing = { version = "0.6.0-dev", path = "../codira_healing" }
 codira_language_server = { version = "0.6.0-dev", path = "../codira_language_server" }
 codira_project = { version = "0.6.0-dev", path = "../codira_project" }
+codira_smt = { version = "0.6.0-dev", path = "../codira_smt" }
+codira_syntax = { version = "0.6.0-dev", path = "../codira_syntax" }
+codira_target = { version = "0.6.0-dev", path = "../codira_target" }
 codira_quantum = { version = "0.6.0-dev", path = "../codira_quantum" }
+llvm-sys = "221.0.1"
 semver = { workspace = true }
+sha2 = { workspace = true }
 codira_circuits = { version = "0.6.0-dev", path = "../codira_circuits" }
 serde_json = { workspace = true, features = ["std"] }
 
@@ -38,6 +45,9 @@ serde_json = { workspace = true, features = ["std"] }
 codira_ctcheck = { version = "0.6.0-dev", path = "../codira_ctcheck" }
 cargo-husky = { workspace = true, features = ["user-hooks"] }
 tempfile = { workspace = true }
+# The oracle of the `std.json.json` tests (`tests/json.rs`): exact float
+# parsing, so that it and Codira read every number alike.
+serde_json = { workspace = true, features = ["std", "float_roundtrip"] }
 codira_skeptic = { path = "../codira_skeptic", version = "0.6.0-dev" }
 
 [build-dependencies]

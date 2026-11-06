@@ -50,6 +50,7 @@ fn collect_expr<'ink>(
     let uses_tasks = matches!(
         expr,
         Expr::Scope { .. }
+            | Expr::Group { .. }
             | Expr::Spawn { .. }
             | Expr::ChannelSend { .. }
             | Expr::ChannelReceive { .. }
@@ -62,6 +63,20 @@ fn collect_expr<'ink>(
             collect_intrinsic(context, target, intrinsic, intrinsics);
         }
     }
+    // A string operation calls the runtime's string functions, and most of
+    // them allocate.
+    if crate::ir::strings::uses_strings(body, infer, expr_id) {
+        for intrinsic in intrinsics::string_functions() {
+            collect_intrinsic(context, target, intrinsic, intrinsics);
+        }
+        collect_intrinsic(
+            context,
+            target,
+            &intrinsics::panic_index_out_of_bounds,
+            intrinsics,
+        );
+        *needs_alloc = true;
+    }
     if let Some(builtin) = infer.builtin_call(expr_id) {
         if builtin != codira_hir::BuiltinFn::Channel {
             for intrinsic in intrinsics::print_functions() {
@@ -71,6 +86,17 @@ fn collect_expr<'ink>(
         // `array_filled` allocates its array through the runtime.
         if builtin == codira_hir::BuiltinFn::ArrayFilled {
             collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
+            *needs_alloc = true;
+        }
+        // The array methods grow, sort, search and copy through the
+        // runtime, and check indices like indexing does.
+        if let codira_hir::BuiltinFn::Array(_) = builtin {
+            collect_array_intrinsics(context, target, intrinsics);
+            *needs_alloc = true;
+        }
+        // `collect` makes and grows an array.
+        if builtin == codira_hir::BuiltinFn::Pipeline(codira_hir::PipelineOp::Collect) {
+            collect_array_intrinsics(context, target, intrinsics);
             *needs_alloc = true;
         }
     } else if let Expr::Call { callee, .. } = expr {
@@ -85,25 +111,38 @@ fn collect_expr<'ink>(
             // `gen_call`), and boxing allocates: a module whose only
             // allocation is such a call still needs `new`.
             Some(codira_hir::CallableDef::Function(f)) => {
-                let boxes_a_value_struct = f.ty(db).callable_sig(db).is_some_and(|sig| {
-                    sig.params()
-                        .iter()
-                        .chain(std::iter::once(sig.ret()))
-                        .any(|ty| {
-                            ty.as_struct().is_some_and(|s| {
-                                s.data(db).memory_kind == codira_hir::StructMemoryKind::Value
-                            })
-                        })
-                });
-                if boxes_a_value_struct {
+                if boxes_a_value_struct(db, f) {
                     collect_intrinsic(context, target, &intrinsics::new, intrinsics);
                     *needs_alloc = true;
+                }
+                if crate::gc_roots::is_foreign_transition(db, f) {
+                    collect_intrinsic(context, target, &intrinsics::gc_foreign_enter, intrinsics);
+                    collect_intrinsic(context, target, &intrinsics::gc_foreign_leave, intrinsics);
                 }
             }
             // A call through a function value calls no runtime function.
             None if infer.is_indirect_call(expr_id) => (),
             None => panic!("expected a callable expression"),
         }
+    } else if let Expr::MethodCall { .. } = expr {
+        // As for a call: a method of another module's type is called
+        // through the dispatch table, which boxes a value-struct receiver,
+        // argument or result.
+        if let Some(f) = infer
+            .method_resolution(expr_id)
+            .map(codira_hir::Function::from)
+        {
+            if boxes_a_value_struct(db, f) {
+                collect_intrinsic(context, target, &intrinsics::new, intrinsics);
+                *needs_alloc = true;
+            }
+        }
+    }
+
+    // A group allocates the array of its tasks' results.
+    if matches!(expr, Expr::Group { .. }) {
+        collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
+        *needs_alloc = true;
     }
 
     // Creating a function value allocates its object.
@@ -152,6 +191,14 @@ fn collect_expr<'ink>(
         );
     }
 
+    // Slicing makes a new array and checks its range.
+    if let Expr::Index { index, .. } = expr {
+        if matches!(body[*index], Expr::Range { .. }) {
+            collect_array_intrinsics(context, target, intrinsics);
+            *needs_alloc = true;
+        }
+    }
+
     if let Expr::Array(_) = expr {
         collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
         *needs_alloc = true;
@@ -170,6 +217,65 @@ fn collect_expr<'ink>(
             infer,
         );
     });
+}
+
+/// Whether a call of `f` through the dispatch table boxes a value: a
+/// `String` or a value struct as its receiver, a parameter or its result.
+fn boxes_a_value_struct(db: &dyn HirDatabase, f: codira_hir::Function) -> bool {
+    let receiver = f.self_param_ty(db);
+    f.ty(db).callable_sig(db).is_some_and(|sig| {
+        receiver
+            .iter()
+            .chain(sig.params().iter())
+            .chain(std::iter::once(sig.ret()))
+            .any(|ty| {
+                ty.is_string()
+                    || ty.as_struct().is_some_and(|s| {
+                        s.data(db).memory_kind == codira_hir::StructMemoryKind::Value
+                    })
+            })
+    })
+}
+
+/// Collects every runtime function an array method or a slice may call.
+fn collect_array_intrinsics<'ink>(
+    context: &'ink Context,
+    target: &TargetData,
+    intrinsics: &mut IntrinsicsMap<'ink>,
+) {
+    for intrinsic in intrinsics::array_functions() {
+        collect_intrinsic(context, target, intrinsic, intrinsics);
+    }
+    collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
+    collect_intrinsic(context, target, &intrinsics::str_eq, intrinsics);
+    collect_intrinsic(context, target, &intrinsics::panic, intrinsics);
+    collect_intrinsic(
+        context,
+        target,
+        &intrinsics::panic_index_out_of_bounds,
+        intrinsics,
+    );
+}
+
+/// Collects what reporting the `Err` of a `main` that returns a `Result`
+/// needs (see `codira_hir::main_result`): the string functions, and
+/// boxing for a call of the error's `to_string` through the dispatch table.
+pub fn collect_main_result<'ink>(
+    context: &'ink Context,
+    target: TargetData,
+    db: &dyn HirDatabase,
+    intrinsics: &mut IntrinsicsMap<'ink>,
+    needs_alloc: &mut bool,
+    function: codira_hir::Function,
+) {
+    if codira_hir::main_result(db, function).is_none() {
+        return;
+    }
+    for intrinsic in intrinsics::string_functions() {
+        collect_intrinsic(context, &target, intrinsic, intrinsics);
+    }
+    collect_intrinsic(context, &target, &intrinsics::new, intrinsics);
+    *needs_alloc = true;
 }
 
 /// Collects all intrinsics from the specified `body`.
@@ -192,6 +298,17 @@ pub fn collect_fn_body<'ink>(
         body,
         infer,
     );
+}
+
+/// Collects the runtime functions a `@region` function calls.
+pub fn collect_region<'ink>(
+    context: &'ink Context,
+    target: TargetData,
+    intrinsics: &mut IntrinsicsMap<'ink>,
+) {
+    for intrinsic in intrinsics::region_functions() {
+        collect_intrinsic(context, &target, intrinsic, intrinsics);
+    }
 }
 
 /// Collects the runtime functions fuel-instrumented code calls.

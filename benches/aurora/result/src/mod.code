@@ -1,0 +1,168 @@
+// AURORA: `Result` and `?`. Passing errors on: wrapped in an enum variant
+// (no allocation), converted to an `AnyError` (a message and a context
+// list), with a context added, and through eight frames of `?` in a tight
+// loop. `result.rs` and `result.cpp` (`std::expected`) do the same work
+// with the same error types and print the same check values. Folds in what
+// `examples/error_bench` measured.
+
+import std.error.error.{AnyError}
+import std.result.result.{Result}
+import std.text.ascii.{next_word, parse_i64, ParseError}
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+enum Problem { Parse(ParseError) }
+
+// `bytes[0..end]`: "4d" parses, "4dx" does not. Every iteration of the
+// loops below writes the digit `d` first, so that the parse cannot be moved
+// out of the loop (the Rust and C++ baselines do the same).
+func wrapped(bytes: [u8], end: usize) -> Result[i64, Problem] {
+    let v = parse_i64(bytes, 0, end)?
+    Result.Ok(v + 1)
+}
+
+func converted(bytes: [u8], end: usize) -> Result[i64, AnyError] {
+    let v = parse_i64(bytes, 0, end)?
+    Result.Ok(v + 1)
+}
+
+func with_context(bytes: [u8], end: usize) -> Result[i64, AnyError] {
+    let v = parse_i64(bytes, 0, end).context("parsing the answer")?
+    Result.Ok(v + 1)
+}
+
+func run_wrapped(end: usize) {
+    let bytes = "42x".bytes()
+    let start = now()
+    var check: u64 = 0
+    var i = 0
+    while i < 10000000 {
+        bytes[1] = (48 + i % 10) as u8
+        match wrapped(bytes, end) {
+            Result.Ok(v) -> check += v as u64,
+            Result.Err(_) -> check += 1,
+        }
+        i += 1
+    }
+    report(start, check)
+}
+
+// 10M parses that succeed, passed on through `?`.
+public func wrapped_ok() { run_wrapped(2) }
+
+// 10M parses that fail, the error wrapped in `Problem.Parse` by `?`.
+public func wrapped_err() { run_wrapped(3) }
+
+func run_converted(end: usize) {
+    let bytes = "42x".bytes()
+    let start = now()
+    var check: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        bytes[1] = (48 + i % 10) as u8
+        match converted(bytes, end) {
+            Result.Ok(v) -> check += v as u64,
+            Result.Err(e) -> check += e.root_cause().len() as u64,
+        }
+        i += 1
+    }
+    report(start, check)
+}
+
+// 1M parses that succeed through a converting `?`.
+public func converted_ok() { run_converted(2) }
+
+// 1M failures converted to an `AnyError` by `?`.
+public func converted_err() { run_converted(3) }
+
+func run_context(end: usize) {
+    let bytes = "42x".bytes()
+    let start = now()
+    var check: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        bytes[1] = (48 + i % 10) as u8
+        match with_context(bytes, end) {
+            Result.Ok(v) -> check += v as u64,
+            Result.Err(e) -> check += e.root_cause().len() as u64 + e.chain().len() as u64,
+        }
+        i += 1
+    }
+    report(start, check)
+}
+
+// 1M parses that succeed, with a context ready for the error path.
+public func context_ok() { run_context(2) }
+
+// 1M failures converted, with a context added.
+public func context_err() { run_context(3) }
+
+// The sum of the whitespace-separated integers in `bytes`, or the first
+// word that is not one: `next_word`, `parse_i64` and `?` per word.
+func sum_words_of(bytes: [u8]) -> Result[i64, Problem] {
+    var total: i64 = 0
+    var at: usize = 0
+    while let (start, end) = next_word(bytes, at) {
+        total += parse_i64(bytes, start, end)?
+        at = end
+    }
+    Result.Ok(total)
+}
+
+// 1M words of up to six digits, some negative, each followed by a space.
+public func sum_words() {
+    let text: [u8] = []
+    var x: u64 = 88172645463325252
+    for _ in 0..1000000 {
+        x = x ^ (x << 13)
+        x = x ^ (x >> 7)
+        x = x ^ (x << 17)
+        let n = (x % 1000000) as i64 - 500000
+        for b in f"{n} ".bytes() { text.push(b) }
+    }
+    let start = now()
+    var check: u64 = 0
+    match sum_words_of(text) {
+        Result.Ok(v) -> check = v as u64,
+        Result.Err(_) -> check = 1,
+    }
+    report(start, check)
+}
+
+// Eight frames of `?`; one value in 16 fails at the bottom.
+enum Bad { Odd(i64) }
+
+func level0(x: i64) -> Result[i64, Bad] {
+    if (x & 15) == 0 { Result.Err(Bad.Odd(x)) } else { Result.Ok(x * 3) }
+}
+func level1(x: i64) -> Result[i64, Bad] { let v = level0(x)?; Result.Ok(v + 1) }
+func level2(x: i64) -> Result[i64, Bad] { let v = level1(x)?; Result.Ok(v ^ 5) }
+func level3(x: i64) -> Result[i64, Bad] { let v = level2(x)?; Result.Ok(v + 7) }
+func level4(x: i64) -> Result[i64, Bad] { let v = level3(x)?; Result.Ok(v ^ 9) }
+func level5(x: i64) -> Result[i64, Bad] { let v = level4(x)?; Result.Ok(v + 11) }
+func level6(x: i64) -> Result[i64, Bad] { let v = level5(x)?; Result.Ok(v ^ 13) }
+func level7(x: i64) -> Result[i64, Bad] { let v = level6(x)?; Result.Ok(v + 15) }
+
+// 10M calls through eight `?` frames.
+public func propagate_depth8() {
+    let start = now()
+    var check: u64 = 0
+    var i: i64 = 0
+    while i < 10000000 {
+        match level7(i) {
+            Result.Ok(v) -> check += v as u64,
+            Result.Err(e) -> match e { Bad.Odd(x) -> check += (x as u64) >> 4 },
+        }
+        i += 1
+    }
+    report(start, check)
+}

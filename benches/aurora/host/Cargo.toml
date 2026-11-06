@@ -1,0 +1,18 @@
+# Runs one kernel of a Codira benchmark program with the runtime compiled in
+# release mode (as in a release build of `codira`) and a cap on the GC heap.
+# Built by `scripts/bench.py`, on its own, outside the root workspace:
+#
+#   cargo build --release --manifest-path benches/aurora/host/Cargo.toml
+[package]
+name = "aurora_host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+codira_runtime = { path = "../../../crates/codira_runtime" }
+
+[profile.release]
+opt-level = 3

@@ -4,11 +4,11 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use codira_hir::{
     mono::{self, Instance},
-    HasVisibility, ModuleDef,
+    ModuleDef,
 };
 use inkwell::{module::Module, values::FunctionValue};
 
@@ -28,10 +28,19 @@ use crate::{
 pub struct FileIr<'ink> {
     /// The LLVM module that contains the IR
     pub llvm_module: Module<'ink>,
-    /// The `codira_hir::Function`s that constitute the file's API.
-    pub function_definitions: HashSet<codira_hir::Function>,
+    /// The `codira_hir::Function`s that constitute the file's API, each
+    /// with the LLVM name of its entry point: its `_wrapper` when it has
+    /// one, otherwise the function itself. The name is not always the
+    /// function's own: LLVM renames the second of two functions of one
+    /// module with the same name (`Json.len` and `JsonObject.len` become
+    /// `len` and `len.3`).
+    pub function_definitions: HashMap<codira_hir::Function, String>,
     /// The types defined in this file
     pub type_definitions: HashSet<codira_hir::Ty>,
+    /// The LLVM names of the functions this file defines for Codira code
+    /// that nothing outside the assembly calls by symbol: every function
+    /// and wrapper but an `@export` one. See `AssemblyBuilder::build`.
+    pub local_symbols: Vec<String>,
 }
 
 /// Adds every tuple, optional and `str` type inside `ty` (including `ty`
@@ -57,7 +66,7 @@ fn collect_structural_types(
         };
         let structural = match inner.interned() {
             TyKind::Tuple(arity, _) => *arity > 0 && !holds_handle(),
-            TyKind::Optional(_) | TyKind::Str => true,
+            TyKind::Optional(_) | TyKind::Str | TyKind::String => true,
             _ => false,
         };
         if structural && inner.guid_string(db).is_some() {
@@ -94,6 +103,7 @@ pub(crate) fn gen_file_ir<'ink>(
     let mut ordered: Vec<(usize, FunctionValue<'ink>)> = Vec::new();
     let mut type_definitions = HashSet::new();
     let mut wrapper_functions = BTreeMap::new();
+    let mut local_symbols = Vec::new();
     for (index, unit) in group_ir.units.iter().enumerate() {
         let fun = function::gen_prototype(
             code_gen.db,
@@ -104,6 +114,9 @@ pub(crate) fn gen_file_ir<'ink>(
         );
         functions.insert(unit.instance.clone(), fun);
         ordered.push((index, fun));
+        if unit.instance.function().export_abi(code_gen.db).is_none() {
+            local_symbols.push(fun.get_name().to_string_lossy().into_owned());
+        }
 
         // An instance or a copy is internal to this module: it has no
         // host-visible wrapper and is never exported.
@@ -112,16 +125,18 @@ pub(crate) fn gen_file_ir<'ink>(
         }
         let f = unit.instance.function();
 
-        let fn_sig = f.ty(code_gen.db).callable_sig(code_gen.db).unwrap();
-        // A function taking hidden evidence parameters always gets a
-        // wrapper with the host-visible signature: the runtime finds a
-        // function through it, and must never call the internal one
-        // with too few arguments.
-        if (f.visibility(code_gen.db).is_externally_visible() && !fn_sig.marshallable(code_gen.db))
-            || crate::ir::body::has_evidence(code_gen.db, f)
-        {
+        // A method's receiver is a parameter too: a value-struct or
+        // `String` receiver crosses boxed, like any such argument. A
+        // function taking hidden evidence parameters always gets a wrapper
+        // with the host-visible signature: the runtime finds a function
+        // through it, and must never call the internal one with too few
+        // arguments.
+        if function::needs_host_wrapper(code_gen.db, f) {
             let wrapper_fun =
                 function::gen_public_prototype(code_gen.db, &code_gen.hir_types, f, &llvm_module);
+            if f.export_abi(code_gen.db).is_none() {
+                local_symbols.push(wrapper_fun.get_name().to_string_lossy().into_owned());
+            }
             wrapper_functions.insert(f, wrapper_fun);
         }
     }
@@ -131,10 +146,14 @@ pub(crate) fn gen_file_ir<'ink>(
         .flat_map(|module| module.declarations(code_gen.db))
     {
         if let ModuleDef::Enum(e) = def {
+            // A generic enum is defined per instantiation, below.
+            if e.is_generic(code_gen.db) {
+                continue;
+            }
             // An enum is exported by the module that declares it, like a
             // struct, together with the tuples and optionals its payloads
             // use.
-            type_definitions.insert(e.ty());
+            type_definitions.insert(e.ty(code_gen.db));
             for slot in e.layout(code_gen.db).slots.iter() {
                 collect_structural_types(code_gen.db, &slot.ty, &mut type_definitions);
             }
@@ -160,6 +179,11 @@ pub(crate) fn gen_file_ir<'ink>(
                 collect_structural_types(code_gen.db, &field_ty, &mut type_definitions);
             }
         }
+        if let Some(layout) = mono::enum_layout(code_gen.db, ty) {
+            for slot in layout.slots.iter() {
+                collect_structural_types(code_gen.db, &slot.ty, &mut type_definitions);
+            }
+        }
     }
 
     // Tuples, optionals and `str` have no declaration to export them from,
@@ -176,6 +200,15 @@ pub(crate) fn gen_file_ir<'ink>(
         for ty in unit.infer.all_types() {
             collect_structural_types(code_gen.db, ty, &mut type_definitions);
         }
+    }
+    // A string operation registers `[String]` with the runtime even when no
+    // expression of the group has the type `String` (`"a,b".find(",")` only
+    // copies a `str` into one): export `String` with it, or the runtime
+    // cannot link the array's element type.
+    let string = codira_hir::TyKind::String.intern();
+    let string_id = code_gen.hir_types.type_id(&string);
+    if group_ir.type_table.entries().iter().any(|id| **id == *string_id) {
+        type_definitions.insert(string);
     }
 
     let external_globals = {
@@ -201,6 +234,7 @@ pub(crate) fn gen_file_ir<'ink>(
             type_table: type_table.map(|g| unsafe { Global::from_raw(g) }),
             hardware_safety: code_gen.hardware_safety,
             safety_refusals: code_gen.safety_refusals.clone(),
+            frame_allocation: code_gen.frame_allocation,
         }
     };
 
@@ -299,18 +333,26 @@ pub(crate) fn gen_file_ir<'ink>(
 
     // Filter private methods. Only the group's own non-generic functions
     // can be exported: an instance or a copy belongs to this module alone.
-    let function_definitions: HashSet<codira_hir::Function> = group_ir
+    let function_definitions: HashMap<codira_hir::Function, String> = group_ir
         .units
         .iter()
         .filter(|unit| !unit.instance.is_generic() && !unit.local_copy)
-        .map(|unit| unit.instance.function())
-        .filter(|&f| module_group.should_export_fn(code_gen.db, f))
+        .filter(|unit| module_group.should_export_fn(code_gen.db, unit.instance.function()))
+        .map(|unit| {
+            let f = unit.instance.function();
+            let entry = wrapper_functions
+                .get(&f)
+                .or_else(|| functions.get(&unit.instance))
+                .expect("every unit has a function");
+            (f, entry.get_name().to_string_lossy().into_owned())
+        })
         .collect();
 
     FileIr {
         llvm_module,
         function_definitions,
         type_definitions,
+        local_symbols,
     }
 }
 

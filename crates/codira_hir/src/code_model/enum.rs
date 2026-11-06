@@ -19,7 +19,7 @@ use std::{fmt, iter::once, sync::Arc};
 
 use codira_hir_input::FileId;
 use codira_syntax::{
-    ast::{self, AstNode, NameOwner, TypeAscriptionOwner},
+    ast::{self, AstNode, GenericParamsOwner, NameOwner, TypeAscriptionOwner},
     SyntaxNodePtr,
 };
 use la_arena::{Arena, Idx};
@@ -29,10 +29,13 @@ use super::Module;
 use crate::{
     diagnostics::ExprError,
     has_module::HasModule,
-    ids::{EnumId, Lookup},
+    ids::{EnumId, GenericDefId, Lookup, TypeParamId},
     name::AsName,
     resolve::HasResolver,
-    ty::lower::{lower_types, LowerTyMap},
+    ty::{
+        lower::{lower_types, LowerTyMap},
+        substitute_type_params, Substitution, TypeWalk,
+    },
     type_ref::{LocalTypeRefId, TypeRefMap, TypeRefSourceMap},
     visibility::RawVisibility,
     DefDatabase, DiagnosticSink, HasSource, HasVisibility, HirDatabase, HirDisplay, Name,
@@ -94,8 +97,10 @@ pub struct EnumData {
     pub name: Name,
     pub visibility: RawVisibility,
     pub variants: Arena<VariantData>,
-    /// The names of the enum's generic parameters. Generic enums are
-    /// reported as unsupported (see [`Enum::diagnostics`]).
+    /// The names of the enum's generic parameters, in declaration order:
+    /// the index into this list is the parameter's `TypeParamId::index`.
+    /// A generic enum is laid out per instantiation, like a generic struct
+    /// (see [`EnumLayout`] and `crate::mono`).
     pub generic_params: Box<[Name]>,
     type_ref_map: TypeRefMap,
     type_ref_source_map: TypeRefSourceMap,
@@ -193,7 +198,16 @@ impl EnumLayout {
     /// The name of the tag field.
     pub const TAG: &'static str = "tag";
 
-    pub(crate) fn enum_layout_query(db: &dyn HirDatabase, e: Enum) -> Arc<EnumLayout> {
+    /// The layout of `e` at the generic arguments `args` (empty for a
+    /// non-generic enum, and for the declared layout of a generic one,
+    /// whose slots are then typed by its parameters). Each instantiation of
+    /// a generic enum has a layout of its own: `Result[i64, i64]` needs one
+    /// `i64` slot, `Result[i64, f64]` an `i64` and an `f64` one.
+    pub(crate) fn enum_layout_query(
+        db: &dyn HirDatabase,
+        e: Enum,
+        args: Substitution,
+    ) -> Arc<EnumLayout> {
         let mut slots: Vec<EnumSlot> = Vec::new();
         let mut variant_slots = Vec::new();
         for variant in e.variants(db) {
@@ -201,7 +215,7 @@ impl EnumLayout {
             // of type `T`, adding one when no earlier variant needed as many.
             let mut used = FxHashSet::default();
             let mut assigned = Vec::new();
-            for ty in variant.field_types(db) {
+            for ty in variant.field_types_at(db, &args) {
                 let existing = slots
                     .iter()
                     .enumerate()
@@ -281,9 +295,35 @@ impl Enum {
             .map(|(id, _)| EnumVariant { parent: self, id })
     }
 
-    /// The enum as a type.
-    pub fn ty(self) -> Ty {
-        TyKind::Enum(self, crate::ty::Substitution::empty()).intern()
+    /// The enum as a type, with its own parameters standing in for its
+    /// generic arguments (`Result[T, E]` inside its declaration), as a
+    /// bare struct name is. Empty arguments for a non-generic enum.
+    pub fn ty(self, db: &dyn HirDatabase) -> Ty {
+        TyKind::Enum(self, self.identity_substitution(db)).intern()
+    }
+
+    /// Whether the enum has generic parameters.
+    pub fn is_generic(self, db: &dyn HirDatabase) -> bool {
+        !self.data(db).generic_params.is_empty()
+    }
+
+    /// A substitution mapping each of the enum's parameters to itself.
+    pub fn identity_substitution(self, db: &dyn HirDatabase) -> Substitution {
+        self.data(db)
+            .generic_params
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                TyKind::TypeParam(
+                    TypeParamId {
+                        owner: GenericDefId::EnumId(self.id),
+                        index: index as u32,
+                    },
+                    name.clone(),
+                )
+                .intern()
+            })
+            .collect()
     }
 
     /// Resolves every type the variants mention.
@@ -291,49 +331,96 @@ impl Enum {
         db.lower_enum(self)
     }
 
-    /// The value layout (see [`EnumLayout`]).
+    /// The value layout (see [`EnumLayout`]) of a non-generic enum, or the
+    /// declared layout of a generic one (slots typed by its parameters).
     pub fn layout(self, db: &dyn HirDatabase) -> Arc<EnumLayout> {
-        db.enum_layout(self)
+        db.enum_layout(self, Substitution::empty())
     }
 
-    /// Whether `==`/`!=` can compare two values of this enum: every payload
-    /// is a number or a `bool`, so comparing the tag and every slot (the
-    /// unused ones are zero on both sides) is the same as comparing the
-    /// variant and its payload.
-    pub fn is_comparable(self, db: &dyn HirDatabase) -> bool {
-        self.layout(db).slots.iter().all(|slot| {
+    /// The value layout at the generic arguments `args`.
+    pub fn layout_at(self, db: &dyn HirDatabase, args: &Substitution) -> Arc<EnumLayout> {
+        db.enum_layout(self, args.clone())
+    }
+
+    /// Whether `==`/`!=` can compare two values of this enum at `args`:
+    /// every payload is a number or a `bool`, so comparing the tag and
+    /// every slot (the unused ones are zero on both sides) is the same as
+    /// comparing the variant and its payload. `numeric` says whether a
+    /// slot type still being inferred is known to be a number.
+    pub fn is_comparable(
+        self,
+        db: &dyn HirDatabase,
+        args: &Substitution,
+        numeric: impl Fn(&Ty) -> bool,
+    ) -> bool {
+        self.layout_at(db, args).slots.iter().all(|slot| {
             matches!(
                 slot.ty.interned(),
                 TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool
-            )
+            ) || numeric(&slot.ty)
         })
     }
 
     /// Reports unresolved payload types, and the enum shapes code
-    /// generation cannot lay out: generic enums, variants written with
-    /// braces, duplicate variant names, and an enum that contains itself by
-    /// value (it would have no finite size).
+    /// generation cannot lay out: bounds on the enum's own parameters, a
+    /// payload naming a generic type without its arguments, variants
+    /// written with braces, duplicate variant names, and an enum that
+    /// contains itself by value (it would have no finite size).
     pub fn diagnostics(self, db: &dyn HirDatabase, sink: &mut DiagnosticSink<'_>) {
         let data = self.data(db);
         let lower = self.lower(db);
         let file = self.file_id(db);
-        // A generic enum's payloads mention its parameters, which are not in
-        // scope here; the one error below says all there is to say.
-        if data.generic_params.is_empty() {
-            lower.add_diagnostics(db, file, data.type_ref_source_map(), sink);
-        }
+        lower.add_diagnostics(db, file, data.type_ref_source_map(), sink);
 
         let src = self.source(db).value;
         let enum_node = SyntaxNodePtr::new(src.syntax());
         let name = data.name.clone();
 
-        if !data.generic_params.is_empty() {
+        // As for a struct, a bound belongs on the `extend` block that needs
+        // it: the enum itself holds any `T`.
+        for param in src
+            .generic_param_list()
+            .into_iter()
+            .flat_map(|list| list.generic_params())
+        {
+            if let Some(bound) = param.bounds().next() {
+                sink.push(ExprError {
+                    file,
+                    node: SyntaxNodePtr::new(bound.syntax()),
+                    message: format!(
+                        "bounds on an enum's own parameters are not supported; bound the \
+                         `extend` block that needs them instead (`extend {name}[T: Trait]`)"
+                    ),
+                });
+            }
+        }
+
+        // A payload may mention the enum's own parameters; any other one can
+        // only come from a generic type written without its arguments
+        // (`Box` for `Box[T]`), which nothing ever instantiates.
+        let own = GenericDefId::EnumId(self.id);
+        let foreign = self.variants(db).into_iter().find_map(|variant| {
+            variant.field_types(db).into_iter().find_map(|ty| {
+                let mut found = None;
+                ty.walk(&mut |inner| {
+                    if let TyKind::TypeParam(id, param) = inner.interned() {
+                        if found.is_none() && id.owner != own {
+                            found = Some(param.clone());
+                        }
+                    }
+                });
+                found.map(|param| (ty, param))
+            })
+        });
+        if let Some((ty, param)) = foreign {
             sink.push(ExprError {
                 file,
                 node: enum_node.clone(),
                 message: format!(
-                    "generic enums are not supported yet: `{name}` cannot take type parameters \
-                     (generic functions, structs and classes can)"
+                    "the payload type `{}` mentions the generic parameter `{param}`, which \
+                     `{name}` does not declare: a generic type needs its arguments written out, \
+                     e.g. `Box[i32]` rather than `Box`",
+                    ty.display(db),
                 ),
             });
         }
@@ -375,7 +462,7 @@ impl Enum {
                 node: enum_node,
                 message: format!(
                     "`{name}` contains itself by value, so it would have no finite size; \
-                     hold the recursive part through a `class`"
+                     hold the recursive part through a `class` or an array"
                 ),
             });
         }
@@ -395,21 +482,22 @@ fn contains_by_value(
         return false;
     }
     match ty.interned() {
-        TyKind::Enum(e, _) => {
+        TyKind::Enum(e, args) => {
             *e == target
                 || e.variants(db)
                     .into_iter()
-                    .flat_map(|variant| variant.field_types(db))
+                    .flat_map(|variant| variant.field_types_at(db, args))
                     .any(|field| contains_by_value(db, &field, target, visited))
         }
         TyKind::Tuple(_, elements) => elements
             .iter()
             .any(|element| contains_by_value(db, element, target, visited)),
         TyKind::Optional(inner) => contains_by_value(db, inner, target, visited),
-        TyKind::Struct(s, _) if s.data(db).memory_kind == StructMemoryKind::Value => s
-            .fields(db)
-            .into_iter()
-            .any(|field| contains_by_value(db, &field.ty(db), target, visited)),
+        TyKind::Struct(s, _) if s.data(db).memory_kind == StructMemoryKind::Value => {
+            crate::mono::struct_field_types(db, ty)
+                .into_iter()
+                .any(|field| contains_by_value(db, &field, target, visited))
+        }
         _ => false,
     }
 }
@@ -450,9 +538,25 @@ impl EnumVariant {
             .collect()
     }
 
+    /// The payload types at the parent enum's generic arguments `args`
+    /// (the declared types when `args` is empty): `Result.Ok`'s payload is
+    /// `i64` in a `Result[i64, str]`.
+    pub fn field_types_at(self, db: &dyn HirDatabase, args: &Substitution) -> Vec<Ty> {
+        let owner = GenericDefId::EnumId(self.parent.id);
+        self.field_types(db)
+            .into_iter()
+            .map(|ty| substitute_type_params(ty, &owner, args))
+            .collect()
+    }
+
     /// The slot each payload field lives in (see [`EnumLayout`]).
     pub fn slots(self, db: &dyn HirDatabase) -> Vec<usize> {
         self.parent.layout(db).variant_slots[self.index() as usize].clone()
+    }
+
+    /// The slot each payload field lives in at the generic arguments `args`.
+    pub fn slots_at(self, db: &dyn HirDatabase, args: &Substitution) -> Vec<usize> {
+        self.parent.layout_at(db, args).variant_slots[self.index() as usize].clone()
     }
 
     /// `Shape.Circle`, as the variant is written in code.

@@ -240,6 +240,34 @@ pub fn struct_name(db: &dyn HirDatabase, strukt: Struct, args: &Substitution) ->
     name
 }
 
+/// The name an enum type is known by in generated code and to the runtime:
+/// the enum's full name, and for an instantiated generic one its arguments,
+/// `results::Result[i64, str]`. Hot reload matches an old and a new layout
+/// of a type by this name.
+pub fn enum_name(db: &dyn HirDatabase, e: crate::Enum, args: &Substitution) -> String {
+    let mut name = e.full_name(db);
+    push_args(db, &mut name, args);
+    name
+}
+
+/// The layout of the enum type `ty` (see `code_model::EnumLayout`), read
+/// through its generic arguments. `None` when `ty` is not an enum.
+pub fn enum_layout(db: &dyn HirDatabase, ty: &Ty) -> Option<Arc<crate::EnumLayout>> {
+    match ty.interned() {
+        TyKind::Enum(e, args) => Some(e.layout_at(db, args)),
+        _ => None,
+    }
+}
+
+/// The generic arguments of the enum type `ty` (empty when it is not an
+/// enum or not generic).
+pub fn enum_args(ty: &Ty) -> Substitution {
+    match ty.interned() {
+        TyKind::Enum(_, args) => args.clone(),
+        _ => Substitution::empty(),
+    }
+}
+
 /// Appends `[a, b]` for a non-empty argument list.
 fn push_args(db: &dyn HirDatabase, name: &mut String, args: &Substitution) {
     if args.is_empty() {
@@ -257,11 +285,14 @@ fn push_args(db: &dyn HirDatabase, name: &mut String, args: &Substitution) {
 
 /// A type's name, with every struct in it written by its full name, so that
 /// two structs of the same name in different modules are not confused.
-fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
+pub fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
     match ty.interned() {
         TyKind::Struct(strukt, args) => struct_name(db, *strukt, args),
+        TyKind::Enum(e, args) => enum_name(db, *e, args),
+        TyKind::Optional(inner) => format!("{}?", type_name(db, inner)),
         TyKind::Array(element) => format!("[{}]", type_name(db, element)),
         TyKind::Channel(element) => format!("Channel[{}]", type_name(db, element)),
+        TyKind::Iter(element) => format!("Iter[{}]", type_name(db, element)),
         TyKind::Tuple(_, elements) => {
             let elements: Vec<String> = elements.iter().map(|ty| type_name(db, ty)).collect();
             if elements.len() == 1 {
@@ -277,8 +308,12 @@ fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
 /// How deeply `ty` nests: 1 for a type with no type inside it.
 fn type_depth(ty: &Ty) -> usize {
     let inner = match ty.interned() {
-        TyKind::Array(element) | TyKind::Channel(element) => type_depth(element),
+        TyKind::Array(element)
+        | TyKind::Channel(element)
+        | TyKind::Iter(element)
+        | TyKind::Optional(element) => type_depth(element),
         TyKind::Struct(_, args)
+        | TyKind::Enum(_, args)
         | TyKind::Tuple(_, args)
         | TyKind::FnDef(_, args)
         | TyKind::Function(args) => args.iter().map(type_depth).max().unwrap_or(0),
@@ -340,27 +375,30 @@ pub fn collect_instances(
         let function = instance.function();
         let infer = instance.infer(db);
         let body = function.body(db);
-        for (expr_id, expr) in body.exprs() {
+        let calls = body.exprs().filter_map(|(expr_id, expr)| {
             if infer.builtin_call(expr_id).is_some() {
-                continue;
+                return None;
             }
             let callee = match expr {
                 // A named function used as a value is reached like a call:
                 // its thunk calls it.
-                Expr::Path(_) => match infer.function_value(expr_id) {
-                    Some(function) => function,
-                    None => continue,
-                },
+                Expr::Path(_) => infer.function_value(expr_id)?,
                 Expr::Call { callee, .. } => match infer[*callee].as_callable_def() {
                     Some(CallableDef::Function(callee)) => callee,
-                    _ => continue,
+                    _ => return None,
                 },
-                Expr::MethodCall { .. } => match infer.method_resolution(expr_id) {
-                    Some(callee) => Function::from(callee),
-                    None => continue,
-                },
-                _ => continue,
+                Expr::MethodCall { .. } => Function::from(infer.method_resolution(expr_id)?),
+                // `x?` passing its error on through an `@error_conversion`
+                // calls it (see `ty::infer::propagate`).
+                Expr::Propagate { .. } => Function::from(infer.method_resolution(expr_id)?),
+                _ => return None,
             };
+            Some((expr_id, callee))
+        });
+        // A `for` loop over an iterator object, and `it.iter()`, call the
+        // object's `next`.
+        let calls: Vec<(ExprId, Function)> = calls.chain(infer.iterator_nexts()).collect();
+        for (expr_id, callee) in calls {
             if callee.is_extern(db) || callee.is_inline_asm(db) {
                 continue;
             }

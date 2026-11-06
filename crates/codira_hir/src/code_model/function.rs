@@ -77,6 +77,14 @@ pub struct FunctionData {
     /// `codira test` runner calls (see `expr::validator::test_fn` for what
     /// shape a test must have).
     is_test: bool,
+    /// Whether this function carries the `@error_conversion` attribute: an
+    /// associated function of a type `F` that `?` calls to pass an error of
+    /// another type on as an `F` (see `ty::infer::propagate`).
+    is_error_conversion: bool,
+    /// Whether this function carries the `@inline` attribute: every call is
+    /// to be inlined (LLVM's `alwaysinline`), for a small function on a hot
+    /// path whose callers the optimizer would otherwise leave calling it.
+    is_inline: bool,
     /// The ABI named by an `@export("C")` attribute, if present.
     ///
     /// `spec/LANGUAGE_SPEC.md` section 10: "`@export(\"C\")` on a Codira
@@ -174,6 +182,22 @@ impl FunctionData {
             })
         });
 
+        let is_error_conversion = src.attribute_list().is_some_and(|attrs| {
+            attrs.attributes().any(|attr| {
+                attr.path().and_then(|p| p.segment()).is_some_and(|s| {
+                    matches!(s.kind(), Some(ast::PathSegmentKind::Name(n)) if n.text() == "error_conversion")
+                })
+            })
+        });
+
+        let is_inline = src.attribute_list().is_some_and(|attrs| {
+            attrs.attributes().any(|attr| {
+                attr.path()
+                    .and_then(|p| p.segment())
+                    .is_some_and(|s| matches!(s.kind(), Some(ast::PathSegmentKind::Name(n)) if n.text() == "inline"))
+            })
+        });
+
         let ret_type = if let Some(type_ref) = src.ret_type().and_then(|rt| rt.type_ref()) {
             type_ref_builder.alloc_from_node(&type_ref)
         } else {
@@ -204,6 +228,8 @@ impl FunctionData {
             consuming_params,
             is_strict,
             is_test,
+            is_error_conversion,
+            is_inline,
             export_abi,
             asm_variants,
             self_param,
@@ -327,6 +353,16 @@ impl FunctionData {
     pub fn is_test(&self) -> bool {
         self.is_test
     }
+
+    /// Whether this function is an `@error_conversion`.
+    pub fn is_error_conversion(&self) -> bool {
+        self.is_error_conversion
+    }
+
+    /// Whether this function is marked `@inline`.
+    pub fn is_inline(&self) -> bool {
+        self.is_inline
+    }
 }
 
 impl Function {
@@ -346,6 +382,37 @@ impl Function {
             String::from("::"),
         )
         .collect()
+    }
+
+    /// The name the runtime links this function by: its [`full_name`]
+    /// (`foo::bar`), with the type of the `extend` block between the
+    /// module path and the name for a method (`foo::Point::length`).
+    ///
+    /// A module's dispatch table finds another module's function by this
+    /// name, and two methods of one module with the same name (`Json::len`
+    /// and `JsonObject::len`), or a method and a free function
+    /// (`Json::equals` and `equals`), would otherwise be the same name, and
+    /// the runtime could not tell which one a call means.
+    ///
+    /// [`full_name`]: Function::full_name
+    pub fn link_name(self, db: &dyn HirDatabase) -> String {
+        use crate::{ids::ItemContainerId, HirDisplay};
+        match self.id.lookup(db).container {
+            ItemContainerId::ImplId(impl_id) => {
+                let self_ty = db.type_for_impl_self(impl_id);
+                itertools::Itertools::intersperse(
+                    self.module(db)
+                        .path_to_root(db)
+                        .into_iter()
+                        .filter_map(|module| module.name(db))
+                        .chain(once(self_ty.display(db).to_string()))
+                        .chain(once(self.name(db).to_string())),
+                    String::from("::"),
+                )
+                .collect()
+            }
+            _ => self.full_name(db),
+        }
     }
 
     pub fn file_id(self, db: &dyn HirDatabase) -> FileId {
@@ -395,6 +462,18 @@ impl Function {
     /// Whether this function is a `@test` the `codira test` runner calls.
     pub fn is_test(self, db: &dyn HirDatabase) -> bool {
         self.data(db).is_test()
+    }
+
+    /// Whether this function is an `@error_conversion`, which `?` calls to
+    /// pass an error on as the type it belongs to.
+    pub fn is_error_conversion(self, db: &dyn HirDatabase) -> bool {
+        self.data(db).is_error_conversion()
+    }
+
+    /// Whether this function is marked `@inline`: code generation asks
+    /// LLVM to inline every call of it (`alwaysinline`).
+    pub fn is_inline(self, db: &dyn HirDatabase) -> bool {
+        self.data(db).is_inline()
     }
 
     pub fn ret_type(self, db: &dyn HirDatabase) -> Ty {
@@ -537,6 +616,32 @@ impl Function {
     }
 
     pub fn diagnostics(self, db: &dyn HirDatabase, sink: &mut DiagnosticSink<'_>) {
+        // Only a declaration of a foreign function (in an `extern` block)
+        // or a required method of a trait may leave out the body. Anywhere
+        // else there is nothing to generate code from: code generation used
+        // to reach the missing body and panic.
+        let data = db.fn_data(self.id);
+        let in_trait = matches!(
+            self.id.lookup(db).container,
+            crate::ids::ItemContainerId::TraitId(_)
+        );
+        let source = self.source(db);
+        // A declaration that ends in `;`: one cut short by a syntax error
+        // already has that error.
+        let declared = source
+            .value
+            .syntax()
+            .last_token()
+            .is_some_and(|token| token.kind() == codira_syntax::SyntaxKind::SEMI);
+        if !data.has_body() && !data.is_extern() && !in_trait && declared {
+            sink.push(crate::diagnostics::ExprError {
+                file: source.file_id,
+                node: codira_syntax::SyntaxNodePtr::new(source.value.syntax()),
+                message: "a function needs a body: only a function in an `extern` block or a \
+                          required method of a trait is declared without one"
+                    .to_string(),
+            });
+        }
         db.function_bounds(self.id).add_diagnostics(sink);
         let body = self.body(db);
         body.add_diagnostics(db, self.into(), sink);
@@ -544,6 +649,7 @@ impl Function {
         infer.add_diagnostics(db, self, sink);
         let validator = ExprValidator::new(self, db);
         validator.validate_body(sink);
+        crate::escape::region_diagnostics(db, self, sink);
     }
 }
 

@@ -162,7 +162,7 @@ fn nested_structs_and_arrays_of_structs_survive_layout_changes() {
 
     // The migrated graph is fully traceable: a collection (which frees the
     // boxed copies the reads above made) leaves every object of it intact.
-    driver.runtime.gc_collect();
+    driver.runtime.collect_blocking().unwrap();
     assert_eq!(world.get::<i64>("tick").unwrap(), 11);
     let particles = world
         .get::<ArrayRef<'_, StructRef<'_>>>("particles")

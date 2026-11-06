@@ -40,12 +40,12 @@ fn gc_trace() {
     let value: StructRef<'_> = runtime.invoke("new_foo", ()).unwrap();
     let value = value.root();
 
-    assert!(!runtime.gc_collect());
+    assert!(!runtime.collect_blocking().unwrap().reclaimed_anything());
     assert!(runtime.gc_stats().allocated_memory > 0);
 
     drop(value);
 
-    assert!(runtime.gc_collect());
+    assert!(runtime.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(runtime.gc_stats().allocated_memory, 0);
 }
 

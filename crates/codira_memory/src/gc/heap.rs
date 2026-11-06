@@ -32,7 +32,7 @@ use std::{
     cell::RefCell,
     ptr::NonNull,
     sync::{
-        atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering},
         Arc, Weak,
     },
 };
@@ -145,8 +145,15 @@ pub(crate) struct ObjectHeader {
     pub flags: u8,
     /// The size class of the cell, or [`LARGE_CLASS`].
     pub class: u8,
-    /// Number of payload bytes available inline after the header.
-    pub inline_capacity: usize,
+    /// Small cells: the number of payload bytes available inline after the
+    /// header. Large objects: the offset of the inline payload area from the
+    /// header (their capacity follows from the allocation layout, see
+    /// [`HeapInner::inline_capacity`]).
+    pub inline_extent: u32,
+    /// The Cascade ownership word (`gc::cascade::word`). Zero -- untracked --
+    /// unless the object is managed by an enabled Cascade engine; the
+    /// tracing collector never reads it.
+    pub ownership: AtomicU32,
 }
 
 const _: () = assert!(std::mem::size_of::<ObjectHeader>() == 32);
@@ -220,11 +227,27 @@ pub(crate) fn array_payload_layout(element: &TypeData, capacity: usize) -> Optio
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AllocError {
     /// Committing more memory would exceed the configured heap limit.
-    #[error("GC heap limit of {limit} bytes exceeded ({committed} bytes committed, {requested} more requested)")]
+    ///
+    /// When the allocation came from a thread running Codira code, a full
+    /// collection ran first (see `MarkSweep::try_alloc`), so `live` is what
+    /// survived it.
+    #[error(
+        "GC heap limit of {limit} bytes exceeded: {requested} more bytes requested, {committed} \
+         bytes committed, {live} bytes in objects not known to be garbage"
+    )]
     LimitExceeded {
+        /// The configured limit on committed bytes.
         limit: usize,
+        /// Bytes the heap holds from the system (blocks, large objects and
+        /// out-of-line payloads).
         committed: usize,
+        /// Bytes the failed request needed on top of `committed`: a whole
+        /// 64 KiB block for a small object, the object itself otherwise.
         requested: usize,
+        /// Payload bytes of the objects the last collection found live plus
+        /// everything allocated since (headers and size-class rounding not
+        /// included).
+        live: usize,
     },
     /// The system allocator returned null.
     #[error("the system allocator could not provide {requested} bytes")]
@@ -232,6 +255,10 @@ pub enum AllocError {
     /// The requested object is too large to describe with a memory layout.
     #[error("the requested object is too large")]
     TooLarge,
+    /// Test-only fault injection made this allocation fail (see
+    /// `MarkSweep::fail_nth_allocation`). Never returned otherwise.
+    #[error("injected allocation failure (test-only fault injection)")]
+    Injected,
 }
 
 /// An in-progress payload replacement, see
@@ -252,6 +279,10 @@ struct Block {
     class: u8,
     cell_size: usize,
     cell_count: usize,
+    /// Live cells after the last sweep (all of them until the first one).
+    live: usize,
+    /// A thread cache held a run in the block at the last sweep.
+    leased: bool,
 }
 
 impl Block {
@@ -295,8 +326,8 @@ pub(crate) struct HeapInner {
     /// Owning references to the type of every object that was allocated in
     /// this heap, keyed by type data address. Headers store raw pointers.
     types: FxHashMap<usize, Type>,
-    /// Live-byte counters of the thread caches of this heap.
-    thread_counters: Vec<Arc<AtomicUsize>>,
+    /// Allocation counters of the thread caches of this heap.
+    thread_counters: Vec<Arc<ThreadCounters>>,
     /// Live payload bytes not accounted for by thread counters. Can be
     /// negative when objects counted by a thread were freed.
     global_bytes: isize,
@@ -307,7 +338,71 @@ pub(crate) struct HeapInner {
     committed: usize,
     /// Optional cap on `committed`.
     limit: Option<usize>,
+    /// The most `committed` has ever been.
+    peak_committed: usize,
+    /// Payload bytes and objects allocated through the locked paths, ever.
+    locked_bytes_total: u64,
+    locked_objects_total: u64,
+    /// Payload bytes and objects allocated by thread caches that no longer
+    /// exist.
+    retired_bytes_total: u64,
+    retired_objects_total: u64,
+    /// Live payload bytes the last sweep found.
+    live_after_sweep: usize,
+    /// Pacing (see [`crate::gc::GcPolicy`]): grow by this percentage over
+    /// `live_after_sweep` before collecting; `None` collects only at the
+    /// limit.
+    growth_percent: Option<u32>,
+    /// Pacing never asks for a collection below this many live bytes.
+    min_heap: usize,
+    /// Pacing asks for a collection once [`HeapInner::allocated_bytes`] is
+    /// above this; `usize::MAX` when pacing is off.
+    trigger: usize,
+    /// Set when `trigger` was passed: the next allocation by a thread
+    /// running Codira code collects. Shared with [`Heap::due`].
+    due: Arc<AtomicBool>,
 }
+
+/// What a sweep freed.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SweepOutcome {
+    /// Objects freed.
+    pub objects: usize,
+    /// Payload bytes of the objects freed (headers and size-class rounding
+    /// not included, as in [`HeapInner::allocated_bytes`]).
+    pub bytes: usize,
+}
+
+/// A consistent reading of the heap's counters, for statistics.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct HeapCounters {
+    pub committed: usize,
+    pub peak_committed: usize,
+    pub limit: Option<usize>,
+    pub live: usize,
+    pub live_after_sweep: usize,
+    pub trigger: Option<usize>,
+    pub bytes_allocated: u64,
+    pub objects_allocated: u64,
+}
+
+/// Allocation counters of one thread cache. Only the owning thread writes
+/// them; they only grow.
+#[derive(Default)]
+pub(crate) struct ThreadCounters {
+    /// Payload bytes allocated.
+    bytes: AtomicUsize,
+    /// Objects allocated.
+    objects: AtomicUsize,
+}
+
+/// Relocation runs only when it can give back at least this many bytes ...
+const MIN_EVACUATION_BYTES: usize = 4 * BLOCK_SIZE;
+/// ... and at least this fraction (1/n) of the committed heap ...
+const EVACUATION_FRACTION: usize = 4;
+/// ... or this smaller one when the heap is within a quarter of its limit,
+/// where giving memory back decides whether allocations succeed.
+const NEAR_LIMIT_EVACUATION_FRACTION: usize = 16;
 
 /// The maximum number of empty blocks a heap keeps cached.
 const MAX_CACHED_EMPTY_BLOCKS: usize = 16;
@@ -317,7 +412,7 @@ fn block_layout() -> Layout {
 }
 
 impl HeapInner {
-    fn new(limit: Option<usize>) -> Self {
+    fn new(limit: Option<usize>, due: Arc<AtomicBool>) -> Self {
         Self {
             blocks: Vec::new(),
             free_runs: Default::default(),
@@ -331,6 +426,77 @@ impl HeapInner {
             empty_blocks: Vec::new(),
             committed: 0,
             limit,
+            peak_committed: 0,
+            locked_bytes_total: 0,
+            locked_objects_total: 0,
+            retired_bytes_total: 0,
+            retired_objects_total: 0,
+            live_after_sweep: 0,
+            growth_percent: None,
+            min_heap: 0,
+            trigger: usize::MAX,
+            due,
+        }
+    }
+
+    /// Records `bytes` more committed memory.
+    #[inline]
+    fn add_committed(&mut self, bytes: usize) {
+        self.committed += bytes;
+        self.peak_committed = self.peak_committed.max(self.committed);
+    }
+
+    /// Sets the pacing parameters (see [`crate::gc::GcPolicy`]) and
+    /// recomputes when the next paced collection is due.
+    pub(crate) fn set_pacing(&mut self, growth_percent: Option<u32>, min_heap: usize) {
+        self.growth_percent = growth_percent;
+        self.min_heap = min_heap;
+        self.recompute_trigger();
+        self.check_trigger();
+    }
+
+    fn recompute_trigger(&mut self) {
+        self.trigger = match self.growth_percent {
+            None => usize::MAX,
+            Some(percent) => {
+                let goal = self.live_after_sweep as u128 * (100 + u128::from(percent)) / 100;
+                usize::try_from(goal)
+                    .unwrap_or(usize::MAX)
+                    .max(self.min_heap)
+            }
+        };
+    }
+
+    /// Asks for a collection if pacing's trigger was reached. Called on the
+    /// slow allocation paths (refilling a thread's run, large objects,
+    /// growing arrays), so the per-object fast path pays nothing for it.
+    #[inline]
+    fn check_trigger(&self) {
+        if self.trigger != usize::MAX && self.allocated_bytes() > self.trigger {
+            self.due.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Returns the heap's counters.
+    pub(crate) fn counters(&self) -> HeapCounters {
+        let (thread_bytes, thread_objects) =
+            self.thread_counters.iter().fold((0u64, 0u64), |(b, o), c| {
+                (
+                    b + c.bytes.load(Ordering::Relaxed) as u64,
+                    o + c.objects.load(Ordering::Relaxed) as u64,
+                )
+            });
+        HeapCounters {
+            committed: self.committed,
+            peak_committed: self.peak_committed,
+            limit: self.limit,
+            live: self.allocated_bytes(),
+            live_after_sweep: self.live_after_sweep,
+            trigger: (self.trigger != usize::MAX).then_some(self.trigger),
+            bytes_allocated: self.locked_bytes_total + self.retired_bytes_total + thread_bytes,
+            objects_allocated: self.locked_objects_total
+                + self.retired_objects_total
+                + thread_objects,
         }
     }
 
@@ -356,6 +522,7 @@ impl HeapInner {
                 limit,
                 committed: self.committed,
                 requested,
+                live: self.allocated_bytes(),
             })
         } else {
             Ok(())
@@ -474,7 +641,7 @@ impl HeapInner {
                     requested: BLOCK_SIZE,
                 },
             )?;
-            self.committed += BLOCK_SIZE;
+            self.add_committed(BLOCK_SIZE);
             base
         };
 
@@ -484,6 +651,8 @@ impl HeapInner {
             class,
             cell_size,
             cell_count: BLOCK_SIZE / cell_size,
+            live: BLOCK_SIZE / cell_size,
+            leased: true,
         };
         let run = Run {
             start: base.as_ptr() as usize,
@@ -496,6 +665,7 @@ impl HeapInner {
     /// Leases a run of `class` to a thread cache.
     fn lease_run(&mut self, class: u8) -> Result<Run, AllocError> {
         let run = self.take_run(class)?;
+        self.check_trigger();
         self.leases.insert(
             run.start,
             Lease {
@@ -573,13 +743,14 @@ impl HeapInner {
                 requested: layout.size(),
             },
         )?;
-        self.committed += layout.size();
+        self.add_committed(layout.size());
         self.large.insert(base.as_ptr() as usize, layout);
 
         let header = base.cast::<ObjectHeader>();
         unsafe {
             (*header.as_ptr()).data = base.as_ptr().add(offset);
-            (*header.as_ptr()).inline_capacity = payload.size();
+            (*header.as_ptr()).inline_extent =
+                u32::try_from(offset).expect("payload alignment exceeds 4 GiB");
         }
         Ok(header)
     }
@@ -599,7 +770,7 @@ impl HeapInner {
                 std::ptr::write_bytes(payload_ptr, 0, payload.size());
                 (*header.as_ptr()).data = payload_ptr;
                 (*header.as_ptr()).class = class;
-                (*header.as_ptr()).inline_capacity = class_size(class) - HEADER_SIZE;
+                (*header.as_ptr()).inline_extent = (class_size(class) - HEADER_SIZE) as u32;
             }
             header
         } else {
@@ -609,6 +780,9 @@ impl HeapInner {
         };
         unsafe { init_header(header, ty, (*header.as_ptr()).class) };
         self.global_bytes += payload.size() as isize;
+        self.locked_bytes_total += payload.size() as u64;
+        self.locked_objects_total += 1;
+        self.check_trigger();
         Ok(header)
     }
 
@@ -633,7 +807,7 @@ impl HeapInner {
         let hdr = header.as_ptr();
         let key = hdr as usize;
         let old_out_of_line = self.out_of_line.remove(&key);
-        let fits_inline = new_layout.size() <= (*hdr).inline_capacity
+        let fits_inline = new_layout.size() <= self.inline_capacity(&*hdr)
             && new_layout.align() <= (*hdr).inline_payload_align();
 
         let (src, release) = match old_out_of_line {
@@ -658,7 +832,7 @@ impl HeapInner {
         };
 
         let dest = if fits_inline {
-            let inline = (*hdr).inline_payload_for(self);
+            let inline = (*hdr).inline_payload();
             std::ptr::write_bytes(inline.as_ptr(), 0, new_layout.size());
             (*hdr).flags &= !FLAG_OUT_OF_LINE;
             inline
@@ -674,7 +848,7 @@ impl HeapInner {
                     requested: layout.size(),
                 },
             )?;
-            self.committed += layout.size();
+            self.add_committed(layout.size());
             self.out_of_line.insert(key, (buffer, layout));
             (*hdr).flags |= FLAG_OUT_OF_LINE;
             buffer
@@ -682,6 +856,171 @@ impl HeapInner {
         (*hdr).data = dest.as_ptr();
 
         Ok(PayloadMigration { src, dest, release })
+    }
+
+    /// Moves the payload of the array `header` to a new out-of-line buffer
+    /// with room for `new_capacity` elements, for a growing array (`push`,
+    /// `reserve`, ...).
+    ///
+    /// The array header and the `length` elements in use are copied (an
+    /// out-of-line buffer is `realloc`ed, which copies it whole or moves its
+    /// pages); the slots past the length are left uninitialized, which is
+    /// sound because
+    /// nothing reads them (the collector, heap snapshots and hot-reload
+    /// migration stop at the length, and generated code checks every index
+    /// against it). An old out-of-line buffer is freed; an old inline
+    /// payload stays in its cell, unused, until the object dies. The object
+    /// keeps its address, so every handle to it stays valid.
+    ///
+    /// # Safety
+    ///
+    /// `header` must be an allocated array object of this heap, and no
+    /// other thread may access it during the call.
+    pub(crate) unsafe fn grow_array(
+        &mut self,
+        header: NonNull<ObjectHeader>,
+        new_capacity: usize,
+    ) -> Result<(), AllocError> {
+        let hdr = header.as_ptr();
+        let element = (*hdr)
+            .type_data()
+            .array_element()
+            .expect("growing an object that is not an array");
+        let old = (*hdr).data.cast::<ArrayHeader>();
+        let length = (*old).length;
+        let old_size = (*hdr).payload_size();
+        if new_capacity <= (*old).capacity {
+            return Ok(());
+        }
+        let new_layout = array_payload_layout(element, new_capacity).ok_or(AllocError::TooLarge)?;
+        let used = array_payload_layout(element, length)
+            .ok_or(AllocError::TooLarge)?
+            .size();
+        let layout = Layout::from_size_align(
+            new_layout.size().max(1),
+            new_layout.align().max(SMALL_PAYLOAD_ALIGN),
+        )
+        .map_err(|_layout_error| AllocError::TooLarge)?;
+        let key = hdr as usize;
+        let buffer = match self.out_of_line.get(&key).copied() {
+            // Already out of line: `realloc`, which for a large buffer moves
+            // pages instead of copying bytes.
+            Some((previous, previous_layout)) if previous_layout.align() == layout.align() => {
+                self.reserve(layout.size().saturating_sub(previous_layout.size()))?;
+                let buffer = NonNull::new(std::alloc::realloc(
+                    previous.as_ptr(),
+                    previous_layout,
+                    layout.size(),
+                ))
+                .ok_or(AllocError::SystemOutOfMemory {
+                    requested: layout.size(),
+                })?;
+                self.committed -= previous_layout.size();
+                self.add_committed(layout.size());
+                buffer
+            }
+            _ => {
+                self.reserve(layout.size())?;
+                let buffer = NonNull::new(std::alloc::alloc(layout)).ok_or(
+                    AllocError::SystemOutOfMemory {
+                        requested: layout.size(),
+                    },
+                )?;
+                std::ptr::copy_nonoverlapping((*hdr).data, buffer.as_ptr(), used);
+                self.add_committed(layout.size());
+                if let Some((previous, previous_layout)) = self.out_of_line.remove(&key) {
+                    std::alloc::dealloc(previous.as_ptr(), previous_layout);
+                    self.committed -= previous_layout.size();
+                }
+                buffer
+            }
+        };
+        (*buffer.as_ptr().cast::<ArrayHeader>()).capacity = new_capacity;
+        self.out_of_line.insert(key, (buffer, layout));
+        (*hdr).flags |= FLAG_OUT_OF_LINE;
+        (*hdr).data = buffer.as_ptr();
+        self.global_bytes += new_layout.size() as isize - old_size as isize;
+        self.locked_bytes_total += new_layout.size() as u64;
+        self.check_trigger();
+        Ok(())
+    }
+
+    /// Moves the out-of-line payload of the array `from` to the array `to`,
+    /// without copying it, and leaves `from` empty (length and capacity 0,
+    /// on its inline payload again). Returns `false`, changing nothing,
+    /// when `from`'s payload is inline (in its cell), which cannot move.
+    ///
+    /// Both arrays keep their handles: `to` now owns the buffer (it is
+    /// freed with `to`, or when `to` grows), and every handle to `from` sees
+    /// an empty array, which may grow again as any array does. A buffer with
+    /// more than an eighth of its room unused beyond `room` more elements is
+    /// shrunk to its length plus `room` on the way (the heap's committed and live byte counts go down by the
+    /// difference); otherwise the accounting does not change: the buffer is
+    /// still committed, and the payload sizes of the two objects are
+    /// exchanged.
+    ///
+    /// # Safety
+    ///
+    /// Both must be allocated array objects of this heap with the same
+    /// element type, that element type must hold no references (the
+    /// collector may have traced one of the two already in this cycle), `to`
+    /// must have an inline payload of length 0, and no other thread may
+    /// access either during the call.
+    pub(crate) unsafe fn take_array_payload(
+        &mut self,
+        from: NonNull<ObjectHeader>,
+        to: NonNull<ObjectHeader>,
+        room: usize,
+    ) -> bool {
+        let (from_hdr, to_hdr) = (from.as_ptr(), to.as_ptr());
+        if from_hdr == to_hdr || (*to_hdr).flags & FLAG_OUT_OF_LINE != 0 {
+            return false;
+        }
+        let Some(mut buffer) = self.out_of_line.remove(&(from_hdr as usize)) else {
+            return false;
+        };
+        let empty = (*to_hdr).data;
+        debug_assert_eq!((*empty.cast::<ArrayHeader>()).length, 0);
+        // A grown array has up to twice the room it uses, which a string
+        // keeps for as long as it lives: more than an eighth to spare, and
+        // the buffer is shrunk to the length (`realloc` down, which moves
+        // no bytes for a large block). If that fails the buffer stays as
+        // it is.
+        if let Some(element) = (*from_hdr).type_data().array_element() {
+            let header = buffer.0.as_ptr().cast::<ArrayHeader>();
+            let (length, capacity) = ((*header).length, (*header).capacity);
+            let (old_layout, old_size) = (buffer.1, (*from_hdr).payload_size());
+            let keep = length.saturating_add(room);
+            if capacity > keep && capacity - keep > capacity / 8 {
+                if let Some(used) = array_payload_layout(element, keep) {
+                    let size = used.size().max(1);
+                    let shrunk = std::alloc::realloc(buffer.0.as_ptr(), old_layout, size);
+                    if let (Some(shrunk), Ok(layout)) = (
+                        NonNull::new(shrunk),
+                        Layout::from_size_align(size, old_layout.align()),
+                    ) {
+                        (*shrunk.as_ptr().cast::<ArrayHeader>()).capacity = keep;
+                        self.committed = self.committed - old_layout.size() + layout.size();
+                        self.global_bytes -= old_size as isize - used.size() as isize;
+                        buffer = (shrunk, layout);
+                    }
+                }
+            }
+        }
+        self.out_of_line.insert(to_hdr as usize, buffer);
+        (*to_hdr).data = buffer.0.as_ptr();
+        (*to_hdr).flags |= FLAG_OUT_OF_LINE;
+        // `from` goes back to the inline area of its own cell, which every
+        // array has room for an `ArrayHeader` in.
+        let inline = (*from_hdr).inline_payload();
+        debug_assert!(self.inline_capacity(&*from_hdr) >= std::mem::size_of::<ArrayHeader>());
+        inline.as_ptr().cast::<ArrayHeader>().write(ArrayHeader {
+            length: 0,
+            capacity: 0,
+        });
+        (*from_hdr).data = inline.as_ptr();
+        (*from_hdr).flags &= !FLAG_OUT_OF_LINE;
+        true
     }
 
     /// Releases the buffers a [`PayloadMigration`] kept alive for reading.
@@ -721,8 +1060,10 @@ impl HeapInner {
 
     /// Frees every unmarked object, clears the marks of the others, rebuilds
     /// the free runs, and releases empty blocks. `on_free` is called with the
-    /// handle of every freed object. Returns the number of freed objects.
-    pub(crate) fn sweep(&mut self, mut on_free: impl FnMut(GcPtr)) -> usize {
+    /// handle of every freed object. Returns what was freed, and sets when
+    /// pacing asks for the next collection.
+    pub(crate) fn sweep(&mut self, mut on_free: impl FnMut(GcPtr)) -> SweepOutcome {
+        let before = self.allocated_bytes();
         let mut freed = 0usize;
         let mut live_bytes = 0usize;
 
@@ -748,7 +1089,7 @@ impl HeapInner {
 
         let mut retained_blocks = Vec::with_capacity(self.blocks.len());
         let mut block_runs = Vec::new();
-        for block in std::mem::take(&mut self.blocks) {
+        for mut block in std::mem::take(&mut self.blocks) {
             let leases = leases_by_block
                 .get(&(block.base.as_ptr() as usize))
                 .map_or(&[][..], Vec::as_slice);
@@ -788,6 +1129,8 @@ impl HeapInner {
                 block_runs.push(Run { start, end });
             }
 
+            block.live = live_cells;
+            block.leased = !leases.is_empty();
             if live_cells == 0 && leases.is_empty() {
                 self.release_block(block);
             } else {
@@ -818,12 +1161,196 @@ impl HeapInner {
         let thread_bytes: usize = self
             .thread_counters
             .iter()
-            .map(|c| c.load(Ordering::Relaxed))
+            .map(|c| c.bytes.load(Ordering::Relaxed))
             .sum();
         self.global_bytes = live_bytes as isize - thread_bytes as isize;
         self.sweeps += 1;
+        self.live_after_sweep = live_bytes;
+        self.recompute_trigger();
+        self.due.store(false, Ordering::Relaxed);
+        self.check_trigger();
 
-        freed
+        SweepOutcome {
+            objects: freed,
+            bytes: before.saturating_sub(live_bytes),
+        }
+    }
+
+    /// Moves the live objects out of sparse size-class blocks and releases
+    /// those blocks; returns where each moved object went (old header
+    /// address -> new header address). Call it right after a sweep (every
+    /// allocated object is live); the caller must then rewrite every
+    /// reference to a moved object.
+    ///
+    /// A block is a candidate when at most `max_live_percent` percent of
+    /// its cells are live, none of them is pinned (rooted, or in the sorted
+    /// `stack_objects`), and no thread cache holds a run in it. Candidates
+    /// are taken from the live counts the sweep recorded, sparsest first,
+    /// and only while the free cells of the class's other blocks can take
+    /// their objects, so evacuation never needs memory the heap does not
+    /// already hold. Only the cells of a candidate are read. Nothing moves
+    /// unless the candidates give back at least `MIN_EVACUATION_BYTES` and
+    /// a quarter of the committed heap (a sixteenth within a quarter of the
+    /// heap limit), so a collection with nothing worth evacuating costs
+    /// about what it costs without relocation.
+    ///
+    /// # Safety
+    ///
+    /// The world must be stopped, and the heap must have just been swept.
+    pub(crate) unsafe fn evacuate(
+        &mut self,
+        stack_objects: &[usize],
+        max_live_percent: usize,
+    ) -> FxHashMap<usize, usize> {
+        let mut forwarded = FxHashMap::default();
+
+        // Candidates from the counts the sweep just recorded: nothing here
+        // walks the cells of a block that is not a candidate.
+        let mut capacity = [0usize; NUM_CLASSES];
+        let mut sparse: Vec<usize> = Vec::new();
+        for (index, block) in self.blocks.iter().enumerate() {
+            if block.leased {
+                continue;
+            }
+            capacity[block.class as usize] += block.cell_count - block.live;
+            if block.live > 0 && block.live * 100 <= block.cell_count * max_live_percent {
+                sparse.push(index);
+            }
+        }
+        sparse.sort_unstable_by_key(|&index| self.blocks[index].live);
+        // Worth it only when it gives back a noticeable part of the heap;
+        // check that from the counts alone (an upper bound: pinned objects
+        // can only take blocks away) before reading any cell.
+        let near_limit = self
+            .limit
+            .is_some_and(|limit| self.committed.saturating_mul(4) >= limit.saturating_mul(3));
+        let fraction = if near_limit {
+            NEAR_LIMIT_EVACUATION_FRACTION
+        } else {
+            EVACUATION_FRACTION
+        };
+        let threshold = MIN_EVACUATION_BYTES.max(self.committed / fraction);
+        {
+            let mut room = capacity;
+            let mut upper = 0usize;
+            for &index in &sparse {
+                let block = &self.blocks[index];
+                let class = block.class as usize;
+                let take = block.cell_count;
+                if take <= room[class] {
+                    room[class] -= take;
+                    upper += BLOCK_SIZE;
+                }
+            }
+            if upper < threshold {
+                return forwarded;
+            }
+        }
+        let mut candidates: Vec<usize> = Vec::new();
+        for index in sparse {
+            let block = &self.blocks[index];
+            let class = block.class as usize;
+            let free = block.cell_count - block.live;
+            // Its own free cells are no destination once it is evacuated.
+            if block.live + free > capacity[class] {
+                continue;
+            }
+            // Only now its cells: a pinned object keeps the block.
+            let has_pinned = {
+                let mut cell = block.base.as_ptr() as usize;
+                let mut found = false;
+                while cell < block.end() && !found {
+                    let header = &*(cell as *const ObjectHeader);
+                    found = header.state.load(Ordering::Acquire) == STATE_ALLOCATED
+                        && (header.roots.load(Ordering::Acquire) > 0
+                            || stack_objects.binary_search(&cell).is_ok());
+                    cell += block.cell_size;
+                }
+                found
+            };
+            if has_pinned {
+                continue;
+            }
+            capacity[class] -= block.live + free;
+            candidates.push(index);
+        }
+        // The same check with the pinned blocks left out.
+        if candidates.len() * BLOCK_SIZE < threshold {
+            return forwarded;
+        }
+        if candidates.is_empty() {
+            return forwarded;
+        }
+        let ranges: Vec<(usize, usize)> = candidates
+            .iter()
+            .map(|&index| (self.blocks[index].base.as_ptr() as usize, self.blocks[index].end()))
+            .collect();
+        for runs in &mut self.free_runs {
+            runs.retain(|run| !ranges.iter().any(|&(lo, hi)| run.start >= lo && run.start < hi));
+        }
+
+        let mut emptied = vec![true; candidates.len()];
+        for (slot, &index) in candidates.iter().enumerate() {
+            let (base, end, class, cell_size) = {
+                let block = &self.blocks[index];
+                (block.base.as_ptr() as usize, block.end(), block.class, block.cell_size)
+            };
+            let mut cell = base;
+            while cell < end {
+                let old = cell as *mut ObjectHeader;
+                cell += cell_size;
+                if (*old).state.load(Ordering::Acquire) != STATE_ALLOCATED {
+                    continue;
+                }
+                let Ok(new) = self.alloc_cell_locked(class) else {
+                    emptied[slot] = false;
+                    break;
+                };
+                let new = new.as_ptr();
+                std::ptr::copy_nonoverlapping(old.cast::<u8>(), new.cast::<u8>(), cell_size);
+                let offset = ((*old).data as usize).wrapping_sub(old as usize);
+                if offset < cell_size {
+                    (*new).data = new.cast::<u8>().add(offset);
+                } else if let Some(entry) = self.out_of_line.remove(&(old as usize)) {
+                    self.out_of_line.insert(new as usize, entry);
+                }
+                (*old).flags = 0;
+                (*old).state.store(STATE_FREE, Ordering::Release);
+                forwarded.insert(old as usize, new as usize);
+            }
+        }
+
+        // Release the emptied blocks; give the others their free runs back.
+        let mut released: Vec<usize> = Vec::new();
+        for (slot, &index) in candidates.iter().enumerate() {
+            if emptied[slot] {
+                released.push(index);
+                continue;
+            }
+            let block = &self.blocks[index];
+            let (class, cell_size, end) = (block.class as usize, block.cell_size, block.end());
+            let mut run_start = None;
+            let mut cell = block.base.as_ptr() as usize;
+            while cell < end {
+                let free = (*(cell as *const ObjectHeader)).state.load(Ordering::Acquire)
+                    == STATE_FREE;
+                if free {
+                    run_start.get_or_insert(cell);
+                } else if let Some(start) = run_start.take() {
+                    self.free_runs[class].push(Run { start, end: cell });
+                }
+                cell += cell_size;
+            }
+            if let Some(start) = run_start {
+                self.free_runs[class].push(Run { start, end });
+            }
+        }
+        released.sort_unstable();
+        for index in released.into_iter().rev() {
+            let block = self.blocks.swap_remove(index);
+            self.release_block(block);
+        }
+        forwarded
     }
 
     /// Releases the memory of a dead object. For small cells the cell is
@@ -851,6 +1378,83 @@ impl HeapInner {
         }
     }
 
+    /// Releases objects that the Cascade engine proved dead, outside a
+    /// collection, and makes their cells available to new allocations.
+    ///
+    /// A small cell is pushed as a one-cell free run, unless it lies in the
+    /// used part of a run leased to a thread cache: a sweep never adds
+    /// leased cells to the free runs, and ending the lease would then add the
+    /// cell a second time. Such a cell is left to the lease instead, which
+    /// is marked so that ending it rescans its used part for free cells
+    /// (exactly what it does after a sweep).
+    ///
+    /// Returns the number of payload bytes released.
+    ///
+    /// # Safety
+    ///
+    /// Every header address must be an allocated object of this heap that no
+    /// thread can still legally access, listed once.
+    pub(crate) unsafe fn reclaim_objects(&mut self, headers: &[usize]) -> usize {
+        if headers.is_empty() {
+            return 0;
+        }
+        // Few cells (the common case of a single release): scan the leases;
+        // many: sort them once and search.
+        let sorted: Option<Vec<(usize, usize)>> = (headers.len() > 8).then(|| {
+            let mut leased: Vec<(usize, usize)> = self
+                .leases
+                .iter()
+                .map(|(&start, lease)| (start, lease.end))
+                .collect();
+            leased.sort_unstable();
+            leased
+        });
+        let mut released = 0usize;
+        for &cell in headers {
+            let hdr = cell as *mut ObjectHeader;
+            debug_assert_eq!(
+                (*hdr).state.load(Ordering::Relaxed),
+                STATE_ALLOCATED,
+                "reclaiming a free cell {hdr:p}"
+            );
+            released += (*hdr).payload_size();
+            let class = (*hdr).class;
+            self.free_object(NonNull::new_unchecked(hdr));
+            if class == LARGE_CLASS {
+                continue;
+            }
+            let lease_start = match &sorted {
+                Some(leased) => {
+                    let index = leased.partition_point(|&(start, _)| start <= cell);
+                    index
+                        .checked_sub(1)
+                        .map(|i| leased[i])
+                        .filter(|&(_, end)| cell < end)
+                        .map(|(start, _)| start)
+                }
+                None => self
+                    .leases
+                    .iter()
+                    .find(|(&start, lease)| start <= cell && cell < lease.end)
+                    .map(|(&start, _)| start),
+            };
+            match lease_start {
+                Some(start) => {
+                    if let Some(lease) = self.leases.get_mut(&start) {
+                        // Never equal to a real sweep count.
+                        lease.sweeps = u64::MAX;
+                    }
+                }
+                None => self.free_runs[class as usize].push(Run {
+                    start: cell,
+                    end: cell + class_size(class),
+                }),
+            }
+        }
+        self.global_bytes -= released as isize;
+        released
+    }
+
     fn release_block(&mut self, block: Block) {
         if self.empty_blocks.len() < MAX_CACHED_EMPTY_BLOCKS {
             self.empty_blocks.push(block.base);
@@ -860,12 +1464,13 @@ impl HeapInner {
         }
     }
 
-    /// Returns the exact number of payload bytes of live objects.
+    /// Returns the exact number of payload bytes of live objects: those the
+    /// last sweep kept plus everything allocated since.
     fn allocated_bytes(&self) -> usize {
         let thread_bytes: usize = self
             .thread_counters
             .iter()
-            .map(|c| c.load(Ordering::Relaxed))
+            .map(|c| c.bytes.load(Ordering::Relaxed))
             .sum();
         (self.global_bytes + thread_bytes as isize).max(0) as usize
     }
@@ -877,6 +1482,21 @@ impl HeapInner {
             used.insert(unsafe { (*o.as_ptr()).ty } as usize);
         });
         self.types.retain(|address, _| used.contains(address));
+    }
+
+    /// Returns the number of payload bytes available in the inline payload
+    /// area of `header` (inside its cell, or inside its large allocation).
+    ///
+    /// # Safety
+    ///
+    /// `header` must be an allocated object of this heap.
+    unsafe fn inline_capacity(&self, header: &ObjectHeader) -> usize {
+        if header.class == LARGE_CLASS {
+            let layout = self.large[&(header as *const ObjectHeader as usize)];
+            layout.size() - header.inline_extent as usize
+        } else {
+            header.inline_extent as usize
+        }
     }
 
     /// Returns the bytes currently committed by the heap.
@@ -899,12 +1519,10 @@ impl ObjectHeader {
     }
 
     /// Returns the inline payload area of the object.
-    unsafe fn inline_payload_for(&self, heap: &HeapInner) -> NonNull<u8> {
+    unsafe fn inline_payload(&self) -> NonNull<u8> {
         let header = self as *const Self as *mut u8;
         if self.class == LARGE_CLASS {
-            let layout = heap.large[&(header as usize)];
-            // The payload area is the tail of the allocation.
-            NonNull::new_unchecked(header.add(layout.size() - self.inline_capacity))
+            NonNull::new_unchecked(header.add(self.inline_extent as usize))
         } else {
             NonNull::new_unchecked(header.add(HEADER_SIZE))
         }
@@ -916,7 +1534,7 @@ impl ObjectHeader {
 /// # Safety
 ///
 /// `header` must point to a cell that no other thread uses, with `data`,
-/// `class` and `inline_capacity` already set.
+/// `class` and `inline_extent` already set.
 #[inline]
 unsafe fn init_header(header: NonNull<ObjectHeader>, ty: &Type, class: u8) {
     let hdr = header.as_ptr();
@@ -925,6 +1543,7 @@ unsafe fn init_header(header: NonNull<ObjectHeader>, ty: &Type, class: u8) {
     (*hdr).color = COLOR_WHITE;
     (*hdr).flags = 0;
     (*hdr).class = class;
+    (*hdr).ownership.store(0, Ordering::Relaxed);
     (*hdr).state.store(STATE_ALLOCATED, Ordering::Release);
 }
 
@@ -953,6 +1572,9 @@ static NEXT_HEAP_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct Heap {
     id: u64,
     pub(crate) inner: RwLock<HeapInner>,
+    /// Pacing asks for a collection (see [`HeapInner::check_trigger`]).
+    /// Read without the lock on every allocation by Codira code.
+    pub(crate) due: Arc<AtomicBool>,
     /// Incremented whenever the type registry is pruned, which invalidates
     /// the thread caches' sets of known-registered types.
     type_epoch: AtomicU64,
@@ -966,9 +1588,11 @@ unsafe impl Sync for HeapInner {}
 
 impl Heap {
     pub(crate) fn new(limit: Option<usize>) -> Arc<Self> {
+        let due = Arc::new(AtomicBool::new(false));
         Arc::new(Self {
             id: NEXT_HEAP_ID.fetch_add(1, Ordering::Relaxed),
-            inner: RwLock::new(HeapInner::new(limit)),
+            inner: RwLock::new(HeapInner::new(limit, due.clone())),
+            due,
             type_epoch: AtomicU64::new(0),
         })
     }
@@ -1016,6 +1640,12 @@ impl Heap {
     pub(crate) fn committed(&self) -> usize {
         self.inner.read().committed()
     }
+
+    /// Returns true if pacing asked for a collection.
+    #[inline]
+    pub(crate) fn collection_due(&self) -> bool {
+        self.due.load(Ordering::Relaxed)
+    }
 }
 
 /// The number of entries in a thread cache's known-type table.
@@ -1033,9 +1663,9 @@ struct LocalRun {
 struct ThreadHeapCache {
     heap_id: u64,
     heap: Weak<Heap>,
-    /// Payload bytes allocated by this thread since the last collection, as
-    /// seen by `stats`. Only this thread writes it.
-    counter: Arc<AtomicUsize>,
+    /// Payload bytes and objects this thread allocated, ever. Only this
+    /// thread writes them.
+    counter: Arc<ThreadCounters>,
     type_epoch: u64,
     /// Direct-mapped set of type data addresses known to be registered.
     known_types: [usize; KNOWN_TYPES],
@@ -1044,7 +1674,7 @@ struct ThreadHeapCache {
 
 impl ThreadHeapCache {
     fn new(heap: &Arc<Heap>) -> Self {
-        let counter = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::new(ThreadCounters::default());
         heap.inner.write().thread_counters.push(counter.clone());
         Self {
             heap_id: heap.id,
@@ -1101,13 +1731,19 @@ impl ThreadHeapCache {
             std::ptr::write_bytes(payload, 0, payload_size);
             let hdr = header.as_ptr();
             (*hdr).data = payload;
-            (*hdr).inline_capacity = cell_size - HEADER_SIZE;
+            (*hdr).inline_extent = (cell_size - HEADER_SIZE) as u32;
             init_header(header, ty, class);
         }
 
+        // Single-writer counters: a load and a store each, no atomic
+        // read-modify-write.
         let counter = &*self.counter;
-        counter.store(
-            counter.load(Ordering::Relaxed) + payload_size,
+        counter.bytes.store(
+            counter.bytes.load(Ordering::Relaxed) + payload_size,
+            Ordering::Relaxed,
+        );
+        counter.objects.store(
+            counter.objects.load(Ordering::Relaxed) + 1,
             Ordering::Relaxed,
         );
         Ok(header)
@@ -1126,8 +1762,10 @@ impl Drop for ThreadHeapCache {
                 inner.end_lease(run.start, run.cur, run.end);
             }
         }
-        let bytes = self.counter.load(Ordering::Relaxed);
+        let bytes = self.counter.bytes.load(Ordering::Relaxed);
         inner.global_bytes += bytes as isize;
+        inner.retired_bytes_total += bytes as u64;
+        inner.retired_objects_total += self.counter.objects.load(Ordering::Relaxed) as u64;
         inner
             .thread_counters
             .retain(|c| !Arc::ptr_eq(c, &self.counter));

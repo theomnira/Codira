@@ -4,7 +4,11 @@
 //!
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
-use std::{collections::HashSet, convert::TryFrom, ffi::CString};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryFrom,
+    ffi::CString,
+};
 
 use codira_abi as abi;
 use codira_hir::{mono, HirDatabase, TyKind};
@@ -35,7 +39,7 @@ fn gen_prototype_from_function<'ink>(
     hir_types: &HirTypeCache<'_, 'ink>,
     ir_type_builder: &TypeIdBuilder<'ink, '_, '_, '_>,
 ) -> ir::FunctionPrototype<'ink> {
-    let name = function.full_name(db);
+    let name = function.link_name(db);
 
     // Internalize the name of the function prototype
     let name_str = CString::new(name.clone())
@@ -44,7 +48,11 @@ fn gen_prototype_from_function<'ink>(
 
     // Get the `ir::TypeInfo` pointer for the return type of the function
     let fn_sig = function.ty(db).callable_sig(db).unwrap();
-    let return_type = ir_type_builder.construct_from_type_id(&hir_types.ret_type_id(fn_sig.ret()));
+    // A `main` returning a `Result` returns its `Ok` payload to the host
+    // (see `codira_hir::main_result`).
+    let host_ret = codira_hir::main_result(db, function)
+        .map_or_else(|| fn_sig.ret().clone(), |report| report.ok_ty);
+    let return_type = ir_type_builder.construct_from_type_id(&hir_types.ret_type_id(&host_ret));
 
     // Construct an array of pointers to `ir::TypeInfo`s for the arguments of the
     // prototype
@@ -186,7 +194,7 @@ fn get_type_definition_array<'ink>(
     types
         .sorted_by_cached_key(|type_info| match type_info.interned() {
             TyKind::Struct(s, args) => mono::struct_name(db, *s, args),
-            TyKind::Enum(e, _) => e.full_name(db),
+            TyKind::Enum(e, args) => mono::enum_name(db, *e, args),
             _ => type_info.guid_string(db).unwrap_or_default(),
         })
         .map(|type_info| match type_info.interned() {
@@ -219,7 +227,11 @@ fn get_type_definition_array<'ink>(
                     )),
                 }
             }
-            TyKind::Tuple(..) | TyKind::Optional(_) | TyKind::Enum(..) | TyKind::Str => {
+            TyKind::Tuple(..)
+            | TyKind::Optional(_)
+            | TyKind::Enum(..)
+            | TyKind::Str
+            | TyKind::String => {
                 gen_structural_definition(&type_info, context, hir_types, ir_type_builder, db)
             }
             _ => unreachable!("unsupported export type"),
@@ -247,7 +259,7 @@ fn gen_structural_definition<'ink>(
         .guid_string(db)
         .expect("only types with a structural name are exported");
     let name = match ty.interned() {
-        TyKind::Enum(e, _) => e.full_name(db),
+        TyKind::Enum(e, args) => mono::enum_name(db, *e, args),
         _ => guid_name.clone(),
     };
     let inkwell_type = hir_types
@@ -272,8 +284,19 @@ fn gen_structural_definition<'ink>(
                 TyKind::Int(codira_hir::IntTy::usize()).intern(),
             ],
         ),
-        TyKind::Enum(e, _) => {
-            let layout = e.layout(db);
+        // The buffer is a `[u8]` array object, which the collector traces
+        // and a heap snapshot or hot reload carries like any other field.
+        TyKind::String => (
+            vec!["buf".to_string(), "start".to_string(), "len".to_string()],
+            vec![
+                TyKind::Array(TyKind::Int(codira_hir::IntTy::u8()).intern()).intern(),
+                TyKind::Int(codira_hir::IntTy::usize()).intern(),
+                TyKind::Int(codira_hir::IntTy::usize()).intern(),
+            ],
+        ),
+        TyKind::Enum(e, args) => {
+            let layout = e.layout_at(db, args);
+
             (
                 std::iter::once(codira_hir::EnumLayout::TAG.to_string())
                     .chain(layout.slots.iter().map(|slot| slot.name.clone()))
@@ -438,27 +461,26 @@ fn gen_struct_info<'ink>(
 
 /// Construct a global that holds a reference to all functions. e.g.:
 /// `CodiraFunctionDefinition[] definitions = { ... }`
-fn get_function_definition_array<'ink, 'a>(
+fn get_function_definition_array<'ink>(
     db: &dyn HirDatabase,
     context: &IrValueContext<'ink, '_, '_>,
-    functions: impl Iterator<Item = &'a codira_hir::Function>,
+    functions: &HashMap<codira_hir::Function, String>,
     hir_types: &HirTypeCache<'_, 'ink>,
     ir_type_builder: &TypeIdBuilder<'ink, '_, '_, '_>,
 ) -> Global<'ink, [ir::FunctionDefinition<'ink>]> {
     let module = context.module;
     functions
-        .sorted_by_cached_key(|f| f.full_name(db))
-        .map(|f| {
-            let name = f.name(db).to_string();
-
-            // Get the function from the cloned module and modify the linkage of the
-            // function.
+        .iter()
+        .sorted_by_cached_key(|(f, _)| f.link_name(db))
+        .map(|(f, entry)| {
+            // The entry point the file module made for the function: its
+            // wrapper when it has one (required for struct types), otherwise
+            // the function itself. Looked up by the name it was given, not
+            // by the function's name: two methods of one module may share
+            // that (`len` of two types), and LLVM renames the second.
             let value = module
-                // If a wrapper function exists, use that (required for struct types)
-                .get_function(&format!("{name}_wrapper"))
-                // Otherwise, use the normal function
-                .or_else(|| module.get_function(&name))
-                .unwrap();
+                .get_function(entry)
+                .expect("the file module defines every exported function");
 
             // Codira functions are private in the assembly: the runtime reaches
             // them through this table's function *pointers*, never by symbol
@@ -593,7 +615,7 @@ pub(super) fn gen_reflection_ir<'db, 'ink>(
     db: &'db dyn HirDatabase,
     context: &IrValueContext<'ink, '_, '_>,
     module_name: &str,
-    function_definitions: &HashSet<codira_hir::Function>,
+    function_definitions: &HashMap<codira_hir::Function, String>,
     type_definitions: &HashSet<codira_hir::Ty>,
     synthetic_types: &[SyntheticStruct<'ink>],
     dispatch_table: &DispatchTable<'ink>,
@@ -608,7 +630,7 @@ pub(super) fn gen_reflection_ir<'db, 'ink>(
     let functions = get_function_definition_array(
         db,
         context,
-        function_definitions.iter(),
+        function_definitions,
         hir_types,
         &ir_type_builder,
     );

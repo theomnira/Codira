@@ -19,10 +19,14 @@ pub use salsa;
 pub use self::code_model::{
     Effect, EffectData, EffectOpSig, Enum, EnumLayout, EnumSlot, EnumVariant, Field, Function,
     FunctionData, HasSource, Module, ModuleDef, Package, PrimitiveType, Protocol, ProtocolStep,
-    Session, Struct, StructMemoryKind, Trait, TypeAlias, VariantKind,
+    Session, Struct, StructKind, StructMemoryKind, Trait, TypeAlias, VariantKind,
 };
 pub use crate::{
-    builtin::BuiltinFn,
+    builtin::{
+        is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, BuiltinFn,
+        ElementRequirement, FormatAlign, FormatCount, FormatKind, FormatSpec, PipelineOp,
+        StringArg, StringOp, ValueClass,
+    },
     db::{
         AstDatabase, AstDatabaseStorage, DefDatabase, DefDatabaseStorage, HirDatabase,
         HirDatabaseStorage, InternDatabase, InternDatabaseStorage,
@@ -30,9 +34,9 @@ pub use crate::{
     diagnostics::{Diagnostic, DiagnosticSink},
     display::HirDisplay,
     expr::{
-        opened_session, ArithOp, BinaryOp, Body, BodyContracts, CmpOp, Expr, ExprId, ExprScopes,
-        HandlerArm, Literal, LogicOp, LoopContract, MatchArm, MatchSource, Ordering, Pat, PatId,
-        RecordLitField, SelectArm, SelectOp, SessionFlow, Statement, UnaryOp,
+        direct_spawns, opened_session, ArithOp, BinaryOp, Body, BodyContracts, CmpOp, Expr, ExprId,
+        ExprScopes, HandlerArm, Literal, LogicOp, LoopContract, MatchArm, MatchSource, Ordering,
+        Pat, PatId, RecordLitField, SelectArm, SelectOp, SessionFlow, Statement, UnaryOp,
     },
     ids::{AssocItemId, ItemLoc},
     in_file::InFile,
@@ -43,9 +47,10 @@ pub use crate::{
     resolve::{resolver_for_expr, resolver_for_scope, Resolver, TypeNs, ValueNs},
     ty::{
         cast::{check_cast, CastCheck, CastOp, InvalidCastReason},
+        error_conversions, group_shape,
         lower::CallableDef,
-        ClosureInfo, FloatTy, FnSig, InferenceResult, IntTy, ResolveBitness, Substitution, Ty,
-        TyKind, TypableDef, TypeWalk,
+        main_result, result_variants, ClosureInfo, FloatTy, FnSig, GroupShape, InferenceResult,
+        IntTy, MainResult, ResolveBitness, Substitution, Ty, TyKind, TypableDef, TypeWalk,
     },
     visibility::{HasVisibility, Visibility},
 };
@@ -60,10 +65,14 @@ mod data_derive;
 mod db;
 pub mod diagnostics;
 mod display;
+pub mod escape;
 mod expr;
+#[cfg(test)]
+mod fuzz_regressions;
 mod ids;
 mod in_file;
 mod item_tree;
+pub mod layout;
 mod mir_lower;
 pub mod mono;
 mod name;
@@ -93,6 +102,7 @@ mod mock;
 mod package_defs;
 mod pretty;
 pub mod semantics;
+pub mod string_escape;
 mod source_analyzer;
 #[cfg(test)]
 mod tests;

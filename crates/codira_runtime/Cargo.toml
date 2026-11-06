@@ -25,12 +25,19 @@ log = { workspace = true }
 notify = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
+crossbeam-deque = { workspace = true }
 rustc-hash = { workspace = true }
 seq-macro = { workspace = true }
 thiserror = { workspace = true }
 # The hash services (`native_hash`): reviewed implementations, never our own.
 sha2 = { workspace = true }
 blake3 = { workspace = true }
+# The entropy service (`native_random`): the operating system's generator.
+getrandom = { workspace = true }
+# Shortest round-trip float formatting for `std.json` (`native_json`).
+ryu = { workspace = true }
+# The byte scan of `lines()` and of `split` on one ASCII byte.
+memchr = { workspace = true }
 # The database services (`native_db`) and tensor services (`native_ai`).
 codira_db = { version = "0.6.0-dev", path = "../codira_db" }
 codira_ai = { version = "0.6.0-dev", path = "../codira_ai" }
@@ -50,4 +57,12 @@ termcolor = { workspace = true }
 
 [[bench]]
 name = "fuel"
+harness = false
+
+[[bench]]
+name = "frame_alloc"
+harness = false
+
+[[bench]]
+name = "regions"
 harness = false

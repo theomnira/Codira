@@ -485,6 +485,8 @@ mod test {
             _world_field
         ));
         assert!(!has_field);
+
+        assert!(unsafe { codira_fields_destroy(fields) }.is_ok());
     }
 
     #[test]

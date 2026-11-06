@@ -15,7 +15,8 @@ use codira_project::Package;
 use crate::{
     ops::{
         build::{display_colors, locate_manifest, optimization_level, UseColor},
-        start::start_library,
+        heap::{HeapArgs, HeapSettings},
+        start::{start_library, StartOptions},
     },
     ExitStatus,
 };
@@ -46,6 +47,11 @@ pub struct Args {
     #[clap(long, conflicts_with = "jit")]
     fuel: Option<u64>,
 
+    /// EXPERIMENTAL: build with frame allocation (see `codira build
+    /// --frame-alloc`). Not available with `--jit`.
+    #[clap(long, conflicts_with = "jit")]
+    frame_alloc: bool,
+
     /// The function to invoke
     #[clap(default_value_t = String::from("main"))]
     entry: String,
@@ -56,6 +62,15 @@ pub struct Args {
     /// compile yet.
     #[clap(long, conflicts_with = "heal")]
     jit: bool,
+
+    #[clap(flatten)]
+    heap: HeapArgs,
+
+    /// Print the garbage collector's statistics (heap size and peak,
+    /// allocations, collections, pauses) to standard error when the entry
+    /// point returns
+    #[clap(long)]
+    runtime_stats: bool,
 }
 
 /// Builds the package `args` names and invokes its entry point.
@@ -76,25 +91,42 @@ pub fn run(args: Args) -> anyhow::Result<ExitStatus> {
         mode: codira_compiler::BuildMode::default(),
     };
 
+    // Read the heap settings first, so a bad value is reported before the
+    // build.
+    let package = Package::from_file(&manifest_path)?;
+    let heap = HeapSettings::resolve(
+        &args.heap,
+        Some((package.manifest().runtime(), &manifest_path)),
+    )?;
+
     if args.jit {
-        if let Some(status) = run_jit(&manifest_path, &config, colors, &args.entry)? {
+        if let Some(status) = run_jit(&manifest_path, &config, colors, &args.entry, &heap)? {
             return Ok(status);
         }
     }
 
-    let package = Package::from_file(&manifest_path)?;
     let library = codira_compiler::ensure_package_output_dir(&package, &config)?
         .join("mod")
         .with_extension("codiralib");
 
     let fuel = args.fuel;
+    let frame_alloc = args.frame_alloc;
     if !codira_compiler::compile_manifest_with(&manifest_path, config, colors, |driver| {
         driver.set_fuel_instrumentation(fuel.is_some());
+        driver.set_frame_allocation(frame_alloc);
     })? {
         return Ok(ExitStatus::Error);
     }
 
-    start_library(library, args.entry, args.heal, args.fuel)
+    heap.warn_if_unlimited();
+    start_library(StartOptions {
+        library,
+        entry: args.entry,
+        heal: args.heal,
+        fuel: args.fuel,
+        heap,
+        runtime_stats: args.runtime_stats,
+    })
 }
 
 /// Runs the package on the Cranelift backend, or returns `None` if it uses
@@ -105,6 +137,7 @@ fn run_jit(
     config: &Config,
     colors: codira_compiler::DisplayColor,
     entry: &str,
+    heap: &crate::ops::heap::HeapSettings,
 ) -> anyhow::Result<Option<ExitStatus>> {
     let (_package, driver) =
         codira_compiler::Driver::with_package_path(manifest_path, config.clone())?;
@@ -113,22 +146,42 @@ fn run_jit(
         return Ok(Some(ExitStatus::Error));
     }
     let start = std::time::Instant::now();
-    let program = match codira_cranelift::compile(driver.db(), entry) {
+    // The same heap limit and pacing a runtime started by `codira run` gets.
+    let options = codira_cranelift::Options {
+        heap_limit: heap.limit,
+        heap_limit_note: heap.limit.map(|_| heap.note()),
+        gc_policy: Some(codira_runtime::GcPolicy {
+            growth_percent: heap.growth,
+            ..codira_runtime::GcPolicy::default()
+        }),
+        ..codira_cranelift::Options::default()
+    };
+    let program = match codira_cranelift::compile_with(driver.db(), entry, options) {
         Ok(program) => program,
         Err(unsupported) => {
             eprintln!(
-                "note: running on the LLVM backend: the Cranelift backend does not compile                  {unsupported} yet"
+                "note: running on the LLVM backend: the Cranelift backend does not compile {unsupported} yet"
             );
             return Ok(None);
         }
     };
-    if std::env::var_os("CODIRA_JIT_TIMINGS").is_some() {
+    heap.warn_if_unlimited();
+    let timings = std::env::var_os("CODIRA_JIT_TIMINGS").is_some();
+    if timings {
         eprintln!(
             "cranelift: compiled in {:.3} ms",
             start.elapsed().as_secs_f64() * 1000.0
         );
     }
-    match program.run() {
+    let start = std::time::Instant::now();
+    let returned = program.run();
+    if timings {
+        eprintln!(
+            "cranelift: ran in {:.3} ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    match returned {
         codira_cranelift::Returned::Unit => {}
         codira_cranelift::Returned::Bool(value) => println!("{value}"),
         codira_cranelift::Returned::Int(value) => println!("{value}"),

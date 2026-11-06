@@ -9,7 +9,10 @@ use std::path::PathBuf;
 use anyhow::anyhow;
 use codira_runtime::Runtime;
 
-use crate::ExitStatus;
+use crate::{
+    ops::heap::{stats_report, HeapArgs, HeapSettings},
+    ExitStatus,
+};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -34,6 +37,25 @@ pub struct Args {
     /// with a message (a `FuelExhausted` fault under `--heal`).
     #[clap(long)]
     fuel: Option<u64>,
+
+    #[clap(flatten)]
+    heap: HeapArgs,
+
+    /// Print the garbage collector's statistics (heap size and peak,
+    /// allocations, collections, pauses) to standard error when the entry
+    /// point returns
+    #[clap(long)]
+    runtime_stats: bool,
+}
+
+/// How [`start_library`] runs a library.
+pub(crate) struct StartOptions {
+    pub library: PathBuf,
+    pub entry: String,
+    pub heal: bool,
+    pub fuel: Option<u64>,
+    pub heap: HeapSettings,
+    pub runtime_stats: bool,
 }
 
 /// Maps a hardware fault to the healing engine's fault taxonomy.
@@ -65,24 +87,42 @@ fn classify_fault(
 }
 
 /// Starts the runtime with the specified library and invokes function `entry`.
+///
+/// There is no manifest here, so the heap settings come from the flags, the
+/// environment or the default.
 pub fn start(args: Args) -> anyhow::Result<ExitStatus> {
-    start_library(args.library, args.entry, args.heal, args.fuel)
+    let heap = HeapSettings::resolve(&args.heap, None)?;
+    heap.warn_if_unlimited();
+    start_library(StartOptions {
+        library: args.library,
+        entry: args.entry,
+        heal: args.heal,
+        fuel: args.fuel,
+        heap,
+        runtime_stats: args.runtime_stats,
+    })
 }
 
 /// Loads `library` into a fresh runtime and invokes `entry`, printing its
 /// result if it returns a primitive. Shared by `codira start` and
 /// `codira run`, which differ only in where the library comes from.
-pub(crate) fn start_library(
-    library: PathBuf,
-    entry: String,
-    heal: bool,
-    fuel: Option<u64>,
-) -> anyhow::Result<ExitStatus> {
+pub(crate) fn start_library(options: StartOptions) -> anyhow::Result<ExitStatus> {
+    let started = std::time::Instant::now();
+    let StartOptions {
+        library,
+        entry,
+        heal,
+        fuel,
+        heap,
+        runtime_stats,
+    } = options;
     let args = Args {
         library,
         entry,
         heal,
         fuel,
+        heap: HeapArgs::default(),
+        runtime_stats,
     };
 
     // Arm fault interception *before* the runtime loads anything, so a
@@ -94,13 +134,21 @@ pub(crate) fn start_library(
         log::info!("HERACLES self-healing supervisor armed");
     }
 
-    let mut builder = Runtime::builder(args.library);
+    let mut builder = heap.apply(Runtime::builder(args.library));
     if let Some(fuel) = args.fuel {
         builder = builder.fuel(fuel);
     }
 
     // Safety: we assume that the passed in library is safe
     let runtime = unsafe { builder.finish() }?;
+    let report_stats = || {
+        if args.runtime_stats {
+            eprint!(
+                "{}",
+                stats_report(&runtime.stats(), &heap, started.elapsed())
+            );
+        }
+    };
 
     let fn_definition = runtime
         .get_function_definition(&args.entry)
@@ -168,7 +216,9 @@ pub(crate) fn start_library(
     };
 
     if !args.heal {
-        return invoke();
+        let result = invoke();
+        report_stats();
+        return result;
     }
 
     // Under `--heal`, a hardware fault anywhere in the entry point -- at
@@ -189,7 +239,9 @@ pub(crate) fn start_library(
         hasher.finish()
     };
 
-    match codira_healing::trap::protected(invoke) {
+    let protected = codira_healing::trap::protected(invoke);
+    report_stats();
+    match protected {
         Ok(result) => result,
         Err(fault) => {
             let Some(class) = classify_fault(fault.kind) else {

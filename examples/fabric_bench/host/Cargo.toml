@@ -1,0 +1,15 @@
+# Times the workloads of the built Codira benchmark, with the runtime
+# compiled in release mode (as in a release build of `codira`). Built on its
+# own, outside the workspace:
+#
+#   cargo build --release --manifest-path examples/fabric_bench/host/Cargo.toml
+[package]
+name = "fabric_bench_host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+codira_runtime = { path = "../../../crates/codira_runtime" }

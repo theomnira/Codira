@@ -486,6 +486,16 @@ impl Driver {
         }
     }
 
+    /// Turns frame allocation on or off for the code this driver generates
+    /// (`codira build --frame-alloc`): objects the escape analysis proves
+    /// never outlive their call are placed in the stack frame instead of
+    /// the GC heap (see `codira_hir::escape`).
+    pub fn set_frame_allocation(&mut self, enabled: bool) {
+        if self.db.frame_allocation() != enabled {
+            self.db.set_frame_allocation(enabled);
+        }
+    }
+
     /// The build mode and e-graph bounds this driver compiles with.
     pub fn eidos_options(&self) -> EidosOptions {
         self.db.eidos_options()
@@ -546,6 +556,38 @@ impl Driver {
 }
 
 impl Driver {
+    /// The allocation report of `codira build --explain-alloc`: every
+    /// allocation site of the package's own modules (not the standard
+    /// library's), where its object lives and why, from the escape analysis
+    /// (see `codira_hir::escape`), then the totals.
+    pub fn allocation_report(&self) -> String {
+        let std_root = self
+            .db
+            .packages()
+            .iter()
+            .find(|&package| self.db.packages()[package].name.as_deref() == Some("std"))
+            .map(|package| self.db.packages()[package].source_root);
+        let mut functions = Vec::new();
+        for package in codira_hir::Package::all(&self.db) {
+            for module in package.modules(&self.db) {
+                let Some(file_id) = module.file_id(&self.db) else {
+                    continue;
+                };
+                if Some(self.db.file_source_root(file_id)) == std_root {
+                    continue;
+                }
+                functions.extend(module.all_functions(&self.db));
+            }
+        }
+        let entries = codira_hir::escape::allocation_report(&self.db, &functions);
+        codira_hir::escape::format_allocation_report(
+            &self.db,
+            &entries,
+            self.db.frame_allocation(),
+            |file_id| display_path(&self.db, file_id).to_string(),
+        )
+    }
+
     /// Every HIR diagnostic of `module`, plus the ones that depend on how
     /// this driver builds: a fuel-instrumented build cannot keep the promise
     /// of a `@nopanic` or `@realtime` function.

@@ -522,6 +522,38 @@ struct CodiraErrorHandle codira_gc_root(struct CodiraRuntime runtime, CodiraGcPt
 struct CodiraErrorHandle codira_gc_unroot(struct CodiraRuntime runtime, CodiraGcPtr obj);
 
 /**
+ * Pins `obj`: until the matching [`codira_gc_unpin`] the object stays
+ * alive and never moves, so foreign code may keep its address and the
+ * address of its payload even when relocation is on. Pins nest; a pin is
+ * a root. If successful, returns a zero error handle.
+ *
+ * If a non-zero error handle is returned, it must be manually destructed using
+ * [`codira_error_destroy`].
+ *
+ * # Safety
+ *
+ * This function receives raw pointers as parameters. If any of the arguments
+ * is a null pointer, an error will be returned. Passing pointers to invalid
+ * data, will lead to undefined behavior.
+ */
+struct CodiraErrorHandle codira_gc_pin(struct CodiraRuntime runtime, CodiraGcPtr obj);
+
+/**
+ * Ends one [`codira_gc_pin`] of `obj`. If successful, returns a zero error
+ * handle.
+ *
+ * If a non-zero error handle is returned, it must be manually destructed using
+ * [`codira_error_destroy`].
+ *
+ * # Safety
+ *
+ * This function receives raw pointers as parameters. If any of the arguments
+ * is a null pointer, an error will be returned. Passing pointers to invalid
+ * data, will lead to undefined behavior.
+ */
+struct CodiraErrorHandle codira_gc_unpin(struct CodiraRuntime runtime, CodiraGcPtr obj);
+
+/**
  * Collects all memory that is no longer referenced by rooted objects. If
  * successful, `reclaimed` is set, otherwise a non-zero error handle is
  * returned. If `reclaimed` is `true`, memory was reclaimed, otherwise nothing
@@ -533,6 +565,14 @@ struct CodiraErrorHandle codira_gc_unroot(struct CodiraRuntime runtime, CodiraGc
  * are registered only between `codira_thread_enter` and
  * `codira_thread_leave`.
  *
+ * This call blocks until the collection is done. While another thread runs
+ * Codira code it first waits until that code has run for the collector's
+ * mutator window since the previous collection (1 ms, or four times the
+ * previous pause, by default), so calling it in a loop cannot starve Codira
+ * threads. `codira_gc_request_collection` asks without waiting. When the
+ * collection cannot run (a thread's stack cannot be scanned on this
+ * platform), `reclaimed` is set to `false`.
+ *
  * If a non-zero error handle is returned, it must be manually destructed using
  * [`codira_error_destroy`].
  *
@@ -543,6 +583,27 @@ struct CodiraErrorHandle codira_gc_unroot(struct CodiraRuntime runtime, CodiraGc
  * data, will lead to undefined behavior.
  */
 struct CodiraErrorHandle codira_gc_collect(struct CodiraRuntime runtime, bool *reclaimed);
+
+/**
+ * Asks for a collection without waiting for it. If successful, `queued` is
+ * set to `true` if this call queued a request and to `false` if one was
+ * already pending (requests are coalesced into one collection); otherwise
+ * a non-zero error handle is returned.
+ *
+ * The collection runs on a thread of the collector's own, once Codira code
+ * has run for the collector's mutator window since the previous
+ * collection.
+ *
+ * If a non-zero error handle is returned, it must be manually destructed using
+ * [`codira_error_destroy`].
+ *
+ * # Safety
+ *
+ * This function receives raw pointers as parameters. If any of the arguments
+ * is a null pointer, an error will be returned. Passing pointers to invalid
+ * data, will lead to undefined behavior.
+ */
+struct CodiraErrorHandle codira_gc_request_collection(struct CodiraRuntime runtime, bool *queued);
 
 /**
  * Constructs a new runtime that loads the library at `library_path` and its

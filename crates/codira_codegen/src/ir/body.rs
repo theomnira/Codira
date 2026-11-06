@@ -38,9 +38,17 @@ use crate::{
     value::Global,
 };
 
+mod arrays;
 mod closures;
 mod effects;
+mod fabric;
+mod format;
+mod frame;
+mod merge;
+mod pipelines;
+mod propagate;
 mod safety;
+mod strings;
 mod tasks;
 
 pub(crate) use effects::has_evidence;
@@ -67,6 +75,8 @@ pub(crate) struct ExternalGlobals<'ink> {
     pub hardware_safety: crate::HardwareSafety,
     /// Where `safety` records code the mode refuses to build.
     pub safety_refusals: std::rc::Rc<std::cell::RefCell<Vec<String>>>,
+    /// Whether non-escaping objects go to the stack frame (see `frame`).
+    pub frame_allocation: bool,
 }
 
 pub(crate) struct BodyIrGenerator<'db, 'ink, 't> {
@@ -107,6 +117,19 @@ pub(crate) struct BodyIrGenerator<'db, 'ink, 't> {
     /// What the hardware-safety mode undoes before each return. See
     /// `safety`.
     safety: safety::SafetyState<'ink>,
+    /// The slots holding the last result of a format plan in the function
+    /// being generated, from which the next plan continues: one for
+    /// temporaries, one for results the program may keep (see `fabric`).
+    plan_arena: Option<(FunctionValue<'ink>, [Option<PointerValue<'ink>>; 2])>,
+    /// The escape analysis of `hir_function` when frame allocation is on or
+    /// the function is `@region`. See `frame`.
+    escapes: Option<Arc<codira_hir::escape::FunctionEscapes>>,
+    /// Whether frame allocation is on.
+    frame_enabled: bool,
+    /// Whether `hir_function` is `@region`, and the entry-block slot that
+    /// holds its open region once the body opens it. See `frame`.
+    region_function: bool,
+    region_slot: Option<PointerValue<'ink>>,
 }
 
 impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
@@ -135,7 +158,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let body_ir = context.append_basic_block(ir_function, "body");
         builder.position_at_end(body_ir);
 
+        let frame_enabled = external_globals.frame_allocation;
+        let region_function = codira_hir::escape::is_region_function(db, hir_function);
+        let escapes = (frame_enabled || region_function).then(|| db.escape_analysis(hir_function));
+
         BodyIrGenerator {
+            escapes,
+            frame_enabled,
+            region_function,
+            region_slot: None,
             context,
             module,
             db,
@@ -159,6 +190,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             effects: effects::EffectState::default(),
             tasks: tasks::TaskState::default(),
             safety: safety::SafetyState::default(),
+            plan_arena: None,
         }
     }
 
@@ -272,6 +304,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // Every call costs one unit of fuel (when instrumented)
         self.gen_fuel_check();
 
+        // A `@region` function opens its arena first (see `frame`).
+        self.gen_region_open();
+
         // Generate code for the body of the function
         let ret_value = self.gen_expr(self.body.body_expr());
 
@@ -294,6 +329,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         // Undo what a hardware-safety mode set up, before every return.
         self.finish_safety();
+        // One return block for an aggregate result (see `merge`).
+        self.unify_aggregate_returns();
+        // Close the region before every return.
+        self.finish_region();
+        // A `main` returning a `Result` ends the program on an `Err`.
+        self.gen_main_result_check();
     }
 
     /// Emits a `@runtime_checked` function's `requires` clauses at its
@@ -336,8 +377,14 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // The host has no handlers to give: see `effects`.
         self.bind_unhandled_evidence();
         let fn_sig = self.hir_function.ty(self.db).callable_sig(self.db).unwrap();
-        let args: Vec<BasicMetadataValueEnum<'_>> = fn_sig
-            .params()
+        // A method's receiver is the wrapper's first parameter, boxed like
+        // the others.
+        let param_tys: Vec<Ty> = Instance::of(self.hir_function)
+            .self_param_ty(self.db)
+            .into_iter()
+            .chain(fn_sig.params().iter().cloned())
+            .collect();
+        let args: Vec<BasicMetadataValueEnum<'_>> = param_tys
             .iter()
             .enumerate()
             .map(|(idx, ty)| {
@@ -348,6 +395,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     } else {
                         param
                     }
+                } else if ty.is_string() {
+                    self.unbox_string(param)
                 } else {
                     param
                 }
@@ -355,7 +404,25 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             })
             .collect();
 
-        let ret_value = self.gen_call(None, self.hir_function, &args);
+        let mut ret_value = self.gen_call(None, self.hir_function, &args);
+        let mut fn_sig = fn_sig;
+
+        // A `main` returning a `Result` comes back only with an `Ok` (see
+        // `gen_main_result_check`), whose payload the host is handed.
+        if let Some(report) = codira_hir::main_result(self.db, self.hir_function) {
+            let args = codira_hir::mono::enum_args(fn_sig.ret());
+            let slot = report.ok.slots_at(self.db, &args).first().copied();
+            ret_value = match (ret_value, slot) {
+                (Some(value), Some(slot)) if !report.ok_ty.is_empty() => Some(
+                    self.builder
+                        .build_extract_value(value.into_struct_value(), slot as u32 + 1, "ok")
+                        .expect("the `Ok` slot exists in the layout"),
+                ),
+                _ => None,
+            };
+            fn_sig =
+                codira_hir::FnSig::from_params_and_return(fn_sig.params().to_vec(), report.ok_ty);
+        }
 
         // What the wrapper returns is decided by the function's declared
         // result, never by the type of its body expression: a body ending
@@ -378,6 +445,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 } else {
                     value
                 }
+            } else if fn_ret_type.is_string() {
+                self.box_string(value).into()
             } else {
                 value
             };
@@ -401,6 +470,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// individual construct has to know about the conversion.
     fn gen_expr(&mut self, expr: ExprId) -> Option<inkwell::values::BasicValueEnum<'ink>> {
         let value = self.gen_expr_inner(expr)?;
+        // A `str` used where a `String` is expected: see `strings`.
+        let value = if self.infer.is_string_conversion(expr) {
+            self.gen_string_conversion(expr, value)
+        } else {
+            value
+        };
         match self.infer.optional_wrap(expr).cloned() {
             Some(optional_ty) => Some(self.wrap_optional(&optional_ty, value)),
             None => Some(value),
@@ -457,6 +532,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     }
                     if builtin == BuiltinFn::ArrayFilled {
                         return self.gen_array_filled(expr, args);
+                    }
+                    if let BuiltinFn::String(op) = builtin {
+                        return self.gen_string_from_utf8(expr, op, args);
                     }
                     return self.gen_builtin_call(builtin, args);
                 }
@@ -519,10 +597,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 pat,
                 iterable,
                 body: loop_body,
-            } => self.gen_for(*pat, *iterable, *loop_body),
+            } => self.gen_for(expr, *pat, *iterable, *loop_body),
             Expr::Continue => self.gen_continue(),
             Expr::Match { expr: scrutinee, arms, .. } => self.gen_match(expr, *scrutinee, arms),
             Expr::Unwrap { expr: inner } => self.gen_unwrap(expr, *inner),
+            Expr::Propagate { expr: inner } => self.gen_propagate(expr, *inner),
+            Expr::Format { .. } => self.gen_format(expr),
             Expr::Range { .. } => unreachable!(
                 "inference rejects a range anywhere but a `for` loop's iterable, which `gen_for` lowers itself"
             ),
@@ -533,12 +613,21 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             } => self.gen_field(expr, *receiver_expr, name),
             Expr::Array(exprs) => self.gen_array(expr, exprs).map(Into::into),
             Expr::Tuple(exprs) => self.gen_tuple(expr, exprs),
-            Expr::Index { base, index } => self.gen_index(expr, *base, *index),
+            Expr::Index { base, index } => match body[*index] {
+                // `xs[lo..hi]`: a copy of those elements (see `arrays`).
+                Expr::Range {
+                    start,
+                    end,
+                    inclusive,
+                } => self.gen_array_slice(expr, *base, start, end, inclusive),
+                _ => self.gen_index(expr, *base, *index),
+            },
             Expr::Cast { expr: operand, .. } => self.gen_cast(expr, *operand),
             Expr::Perform { args, .. } => self.gen_perform(expr, args),
             Expr::Handle { body: handled, arms } => self.gen_handle(expr, *handled, arms),
             Expr::Resume { value } => self.gen_resume(*value),
             Expr::Scope { body: scoped } => self.gen_scope(*scoped),
+            Expr::Group { body: grouped } => self.gen_group(expr, *grouped),
             Expr::Spawn { call } => self.gen_spawn(*call),
             Expr::ChannelSend { channel, value } => self.gen_channel_send(*channel, *value),
             Expr::ChannelReceive { channel } => self.gen_channel_receive(expr, *channel),
@@ -569,7 +658,29 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     ) -> Option<BasicValueEnum<'ink>> {
         match builtin {
             BuiltinFn::Channel => unreachable!("lowered by `gen_channel_new`"),
-            BuiltinFn::ArrayLen | BuiltinFn::ArrayUncheckedGet | BuiltinFn::StrLen => {
+            BuiltinFn::Cancelled => {
+                let cancelled = self
+                    .call_runtime(&intrinsics::task_cancelled, &[])
+                    .expect("`codira.task_cancelled` returns a flag")
+                    .into_int_value();
+                Some(
+                    self.builder
+                        .build_int_compare(
+                            inkwell::IntPredicate::NE,
+                            cancelled,
+                            cancelled.get_type().const_zero(),
+                            "cancelled",
+                        )
+                        .expect("failed to test a flag")
+                        .into(),
+                )
+            }
+            BuiltinFn::ArrayLen
+            | BuiltinFn::ArrayUncheckedGet
+            | BuiltinFn::StrLen
+            | BuiltinFn::Array(_)
+            | BuiltinFn::String(_)
+            | BuiltinFn::Pipeline(_) => {
                 unreachable!("method builtins are lowered by `gen_builtin_method`")
             }
             BuiltinFn::Print | BuiltinFn::Println => {
@@ -912,9 +1023,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             | BuiltinFn::Unlikely
             | BuiltinFn::Fma
             | BuiltinFn::ArrayFilled
-            | BuiltinFn::Channel => {
+            | BuiltinFn::Channel
+            | BuiltinFn::Cancelled
+            | BuiltinFn::String(_) => {
                 unreachable!("free-function builtins are lowered by `gen_builtin_call`")
             }
+            BuiltinFn::Array(_) => unreachable!("array methods are lowered by `gen_array_method`"),
+            BuiltinFn::Pipeline(_) => unreachable!("pipelines are lowered by `pipelines`"),
         }
     }
 
@@ -994,6 +1109,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let ty = self.infer[arg].clone();
         match ty.interned() {
             TyKind::Str => self.gen_print_str(value.into_struct_value()),
+            TyKind::String => self.gen_print_string(arg, value),
             TyKind::Int(int_ty) => {
                 let int_value = value.into_int_value();
                 let signed = int_ty.signedness == codira_hir::Signedness::Signed;
@@ -1352,6 +1468,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// type of the struct.
     fn gen_struct_alloc(
         &mut self,
+        expr: ExprId,
         hir_ty: &Ty,
         args: Vec<BasicValueEnum<'ink>>,
     ) -> BasicValueEnum<'ink> {
@@ -1369,10 +1486,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
         match hir_struct.data(self.db).memory_kind {
             codira_hir::StructMemoryKind::Value => struct_lit.into(),
-            codira_hir::StructMemoryKind::Gc => {
-                // TODO: Root memory in GC
-                self.gen_struct_alloc_on_heap(hir_ty, struct_lit)
+            codira_hir::StructMemoryKind::Gc if self.is_frame_allocation(expr) => {
+                self.gen_struct_alloc_in_frame(expr, hir_ty, struct_lit)
             }
+            codira_hir::StructMemoryKind::Gc if self.is_region_allocation(expr) => {
+                self.gen_struct_alloc_in_region(hir_ty, struct_lit)
+            }
+            codira_hir::StructMemoryKind::Gc => self.gen_struct_alloc_on_heap(hir_ty, struct_lit),
         }
     }
 
@@ -1435,12 +1555,28 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         fields: &[codira_hir::RecordLitField],
     ) -> BasicValueEnum<'ink> {
         let struct_ty = self.infer[type_expr].clone();
-        let fields: Vec<BasicValueEnum<'ink>> = fields
-            .iter()
-            .map(|field| self.gen_expr(field.expr).expect("expected a field value"))
+        let hir_struct = struct_ty
+            .as_struct()
+            .expect("a record literal builds a struct");
+        // Evaluated in the order written, stored by name: the literal may
+        // name the fields in any order. They used to be stored in the order
+        // written, so `Foo { b: 4, a: 3 }` set `a` to 4.
+        let mut values: Vec<Option<BasicValueEnum<'ink>>> =
+            vec![None; hir_struct.fields(self.db).len()];
+        for field in fields {
+            let value = self.gen_expr(field.expr).expect("expected a field value");
+            let index = hir_struct
+                .field(self.db, &field.name)
+                .expect("inference checked the field exists")
+                .index(self.db) as usize;
+            values[index] = Some(value);
+        }
+        let fields: Vec<BasicValueEnum<'ink>> = values
+            .into_iter()
+            .map(|value| value.expect("inference checked every field is given once"))
             .collect();
 
-        self.gen_struct_alloc(&struct_ty, fields)
+        self.gen_struct_alloc(type_expr, &struct_ty, fields)
     }
 
     /// Generates IR for `receiver.method(args...)`.
@@ -1468,6 +1604,17 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         args: &[ExprId],
     ) -> Option<BasicValueEnum<'ink>> {
         if let Some(builtin) = self.infer.builtin_call(tgt_expr) {
+            if let BuiltinFn::Array(method) = builtin {
+                return self.gen_array_method(tgt_expr, method, receiver, args);
+            }
+            if let BuiltinFn::String(op) = builtin {
+                return self.gen_string_method(op, tgt_expr, receiver, args);
+            }
+            if let BuiltinFn::Pipeline(op) = builtin {
+                // Only a terminal is ever generated as an expression: the
+                // stages before it are part of its loop.
+                return self.gen_pipeline_terminal(tgt_expr, op, receiver, args);
+            }
             return self.gen_builtin_method(builtin, receiver, args);
         }
 
@@ -1526,7 +1673,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .map(|expr| self.gen_expr(*expr).expect("expected a field value"))
             .collect();
 
-        self.gen_struct_alloc(&struct_ty, args)
+        self.gen_struct_alloc(type_expr, &struct_ty, args)
     }
 
     /// Generates IR for a tuple literal, e.g. `(1.23, 4)`.
@@ -1567,7 +1714,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// Generates IR for a unit struct literal, e.g `Foo`
     fn gen_unit_struct_lit(&mut self, type_expr: ExprId) -> BasicValueEnum<'ink> {
         let struct_ty = self.infer[type_expr].clone();
-        self.gen_struct_alloc(&struct_ty, Vec::new())
+        self.gen_struct_alloc(type_expr, &struct_ty, Vec::new())
     }
 
     /// Generates IR for the specified block expression.
@@ -1851,11 +1998,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 | TyKind::Tuple(..)
                 | TyKind::Enum(..)
                 | TyKind::Function(_)
-                | TyKind::Array(_),
+                | TyKind::Array(_)
+                | TyKind::String,
                 BinaryOp::Assignment { op: None },
             ) => return self.gen_plain_assignment(lhs, rhs),
-            (TyKind::Enum(e, _), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
-                return self.gen_enum_eq(lhs, rhs, *e, negated)
+            (TyKind::String | TyKind::Str, _) => {
+                return self.gen_string_binary_op(tgt_expr, lhs, rhs, op);
+            }
+            (TyKind::Enum(..), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
+                return self.gen_enum_eq(lhs, rhs, &lhs_type.clone(), negated)
             }
             (TyKind::Optional(payload), BinaryOp::CmpOp(CmpOp::Eq { negated })) => {
                 return self.gen_optional_eq(lhs, rhs, &payload.clone(), negated)
@@ -1948,7 +2099,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let ty = &self.infer[expr];
         match ty.interned() {
             TyKind::Float(_) => self.gen_unary_op_float(expr, op),
-            &TyKind::Int(int_ty) => self.gen_unary_op_int(expr, op, int_ty.signedness),
+            &TyKind::Int(_) => self.gen_unary_op_int(expr, op),
             TyKind::Bool => self.gen_unary_op_bool(expr, op),
             _ => unimplemented!("unimplemented operation op{0}", ty.display(self.db)),
         }
@@ -1975,30 +2126,21 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     }
 
     /// Generates IR to calculate a unary operation on an integer value.
-    fn gen_unary_op_int(
-        &mut self,
-        expr: ExprId,
-        op: UnaryOp,
-        signedness: codira_hir::Signedness,
-    ) -> Option<BasicValueEnum<'ink>> {
+    fn gen_unary_op_int(&mut self, expr: ExprId, op: UnaryOp) -> Option<BasicValueEnum<'ink>> {
         let value: IntValue<'ink> = self
             .gen_expr(expr)
             .map(|value| self.opt_deref_value(expr, value))
             .expect("no value")
             .into_int_value();
         match op {
-            UnaryOp::Neg => {
-                if signedness == codira_hir::Signedness::Signed {
-                    Some(
-                        self.builder
-                            .build_int_neg(value, "neg")
-                            .expect("failed to build int neg")
-                            .into(),
-                    )
-                } else {
-                    unimplemented!("Operator {:?} is not implemented for unsigned integer", op)
-                }
-            }
+            // Wraps at the type's width for every integer, unsigned ones
+            // included (`-1u8` is `255u8`), as the Cranelift backend does.
+            UnaryOp::Neg => Some(
+                self.builder
+                    .build_int_neg(value, "neg")
+                    .expect("failed to build int neg")
+                    .into(),
+            ),
             // Both `!` (on an integer) and `~` are the bitwise complement
             // at the machine level; inference is what keeps `~` off
             // non-integers and `!` meaningful on bools.
@@ -2040,6 +2182,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         rhs_expr: ExprId,
         op: BinaryOp,
     ) -> Option<BasicValueEnum<'ink>> {
+        if let BinaryOp::Assignment { op } = op {
+            return self.gen_scalar_assignment(lhs_expr, rhs_expr, op, |this, old, rhs, op| {
+                this.gen_arith_bin_op_bool(old.into_int_value(), rhs.into_int_value(), op)
+                    .into()
+            });
+        }
         let lhs: IntValue<'ink> = self
             .gen_expr(lhs_expr)
             .map(|value| self.opt_deref_value(lhs_expr, value))?
@@ -2079,6 +2227,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         rhs_expr: ExprId,
         op: BinaryOp,
     ) -> Option<BasicValueEnum<'ink>> {
+        if let BinaryOp::Assignment { op } = op {
+            return self.gen_scalar_assignment(lhs_expr, rhs_expr, op, |this, old, rhs, op| {
+                this.gen_arith_bin_op_float(old.into_float_value(), rhs.into_float_value(), op)
+                    .into()
+            });
+        }
         let lhs = self
             .gen_expr(lhs_expr)
             .map(|value| self.opt_deref_value(lhs_expr, value))
@@ -2152,6 +2306,20 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         op: BinaryOp,
         signedness: codira_hir::Signedness,
     ) -> Option<BasicValueEnum<'ink>> {
+        if let BinaryOp::Assignment { op } = op {
+            return self.gen_scalar_assignment(lhs_expr, rhs_expr, op, |this, old, rhs, op| {
+                let (old, rhs) = (old.into_int_value(), rhs.into_int_value());
+                if codira_hir::realtime::division_needs_check(
+                    this.db,
+                    &this.body,
+                    &this.infer,
+                    expr,
+                ) {
+                    this.gen_division_check(expr, op, old, rhs, signedness);
+                }
+                this.gen_arith_bin_op_int(old, rhs, op, signedness).into()
+            });
+        }
         let lhs = self
             .gen_expr(lhs_expr)
             .map(|value| self.opt_deref_value(lhs_expr, value))
@@ -2735,10 +2903,21 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         };
 
         let through_table = local.is_none() && self.should_use_dispatch_table(function);
+        let foreign = crate::gc_roots::is_foreign_transition(self.db, function);
+        if foreign {
+            self.gen_foreign_transition(true);
+        }
         let call_site = if through_table {
+            // A method's receiver comes first, and is boxed like any other
+            // argument.
+            let param_tys: Vec<Ty> = instance
+                .self_param_ty(self.db)
+                .into_iter()
+                .chain(sig.params().iter().cloned())
+                .collect();
             let boxed_args: Vec<BasicMetadataValueEnum<'ink>> = args
                 .iter()
-                .zip(sig.params().iter())
+                .zip(param_tys.iter())
                 .map(|(arg, param_ty)| {
                     if let Some(hir_struct) = param_ty.as_struct() {
                         if hir_struct.data(self.db).memory_kind
@@ -2748,6 +2927,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                                 .gen_struct_alloc_on_heap(param_ty, arg.into_struct_value())
                                 .into();
                         }
+                    }
+                    if param_ty.is_string() {
+                        return self
+                            .box_string((*arg).try_into().expect("a String value"))
+                            .into();
                     }
                     *arg
                 })
@@ -2797,6 +2981,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 .expect("failed to build call")
         };
 
+        if foreign {
+            self.gen_foreign_transition(false);
+        }
         let ret_value = call_site.try_as_basic_value().basic();
         if !evidence.is_empty() {
             self.gen_abort_check();
@@ -2819,6 +3006,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     return ret_value
                         .map(|value| deref_heap_value(&self.builder, value, struct_ty));
                 }
+            }
+            if sig.ret().is_string() {
+                return ret_value.map(|value| self.unbox_string(value));
             }
         }
 
@@ -2891,14 +3081,10 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // Construct phi block if a value was returned
         if let Some(then_block_ir) = then_block_ir {
             match else_ir_and_block {
-                Some((Some(else_block_ir), else_block)) => {
-                    let phi = self
-                        .builder
-                        .build_phi(then_block_ir.get_type(), "iftmp")
-                        .expect("failed to build phi");
-                    phi.add_incoming(&[(&then_block_ir, then_block), (&else_block_ir, else_block)]);
-                    Some(phi.as_basic_value())
-                }
+                Some((Some(else_block_ir), else_block)) => Some(self.gen_merge(
+                    &[(then_block_ir, then_block), (else_block_ir, else_block)],
+                    "iftmp",
+                )),
                 // The `else` branch never reaches the merge block, so only
                 // the `then` branch's value arrives there.
                 Some((None, _)) => Some(then_block_ir),
@@ -2919,6 +3105,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                 merge_block
                     .remove_from_function()
                     .expect("merge block must have a parent");
+                // Leave the builder in a block of the function (the last
+                // one the `else` branch built, which it terminated), as a
+                // `loop` or a `match` that never finishes does. Left in the
+                // removed merge block, an enclosing `if` would try to move
+                // its own merge block after a block that is no longer in
+                // the function (`else if a { continue } else { return }`).
+                self.builder.position_at_end(current_block);
             }
             else_block_ir
         } else {
@@ -3374,14 +3567,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         if self.infer[match_expr].is_empty() {
             return Some(self.gen_empty());
         }
-        let phi = self
-            .builder
-            .build_phi(incoming[0].0.get_type(), "match")
-            .expect("failed to build a match phi");
-        for (arm_value, block) in &incoming {
-            phi.add_incoming(&[(arm_value, *block)]);
-        }
-        Some(phi.as_basic_value())
+        Some(self.gen_merge(&incoming, "match"))
     }
 
     /// Emits the test of `pat` against `value` (of type `ty`), or returns
@@ -3474,8 +3660,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     Pat::TupleStruct { args, .. } => args.clone(),
                     _ => Vec::new(),
                 };
-                let field_tys = variant.field_types(self.db);
-                let slots = variant.slots(self.db);
+                let enum_args = codira_hir::mono::enum_args(ty);
+                let field_tys = variant.field_types_at(self.db, &enum_args);
+                let slots = variant.slots_at(self.db, &enum_args);
                 for ((&arg, field_ty), slot) in args.iter().zip(field_tys.iter()).zip(slots) {
                     let field = self
                         .builder
@@ -3614,8 +3801,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     return;
                 };
                 let enum_value = value.into_struct_value();
-                let field_tys = variant.field_types(self.db);
-                let slots = variant.slots(self.db);
+                let enum_args = codira_hir::mono::enum_args(ty);
+                let field_tys = variant.field_types_at(self.db, &enum_args);
+                let slots = variant.slots_at(self.db, &enum_args);
                 for ((&arg, field_ty), slot) in args.iter().zip(field_tys.iter()).zip(slots) {
                     let field = self
                         .builder
@@ -3642,7 +3830,12 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             Expr::MethodCall { args, .. } => args.clone(),
             _ => Vec::new(),
         };
-        let enum_type = self.hir_types.get_enum_type(variant.parent());
+        // The construction's type is concrete here (a generic body is
+        // generated per instance), so it names the instantiation and with
+        // it the layout.
+        let enum_ty = self.infer[expr].clone();
+        let enum_args = codira_hir::mono::enum_args(&enum_ty);
+        let enum_type = self.hir_types.get_enum_type(&enum_ty);
         let tag = self
             .context
             .i32_type()
@@ -3651,7 +3844,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .builder
             .build_insert_value(enum_type.const_zero(), tag, 0, "variant")
             .expect("failed to set an enum tag");
-        for (&arg, slot) in args.iter().zip(variant.slots(self.db)) {
+        for (&arg, slot) in args.iter().zip(variant.slots_at(self.db, &enum_args)) {
             let payload = self.gen_expr(arg)?;
             value = self
                 .builder
@@ -3669,12 +3862,13 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         &mut self,
         lhs: ExprId,
         rhs: ExprId,
-        hir_enum: codira_hir::Enum,
+        enum_ty: &Ty,
         negated: bool,
     ) -> Option<BasicValueEnum<'ink>> {
         let lhs_value = self.gen_expr(lhs)?.into_struct_value();
         let rhs_value = self.gen_expr(rhs)?.into_struct_value();
-        let layout = hir_enum.layout(self.db);
+        let layout = codira_hir::mono::enum_layout(self.db, enum_ty).expect("`==` on an enum type");
+
         let b = &self.builder;
         let field = |value: StructValue<'ink>, idx: u32| {
             b.build_extract_value(value, idx, "field")
@@ -3742,11 +3936,22 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     /// Generates IR for `for pat in iterable { body }`.
     fn gen_for(
         &mut self,
+        for_expr: ExprId,
         pat: PatId,
         iterable: ExprId,
         body_expr: ExprId,
     ) -> Option<BasicValueEnum<'ink>> {
         let body = self.body.clone();
+        // Over a lazy pipeline or an iterator object: see `pipelines`.
+        if self.infer.iterator_next(for_expr).is_some()
+            || matches!(self.infer[iterable].interned(), TyKind::Iter(_))
+        {
+            return self.gen_pipeline_for(for_expr, pat, iterable, body_expr);
+        }
+        // Over the pieces of a string, without the array: see `pipelines`.
+        if self.text_pieces_call(iterable).is_some() {
+            return self.gen_text_for(pat, iterable, body_expr);
+        }
         if let Expr::Range {
             start,
             end,
@@ -3754,8 +3959,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         } = body[iterable]
         {
             self.gen_for_range(pat, start, end, inclusive, body_expr)
+        } else if self.infer.builtin_call(iterable)
+            == Some(BuiltinFn::Array(codira_hir::ArrayMethod::Enumerate))
+        {
+            // `for (i, x) in xs.enumerate()`: the array loop, binding pairs.
+            let Expr::MethodCall { receiver, .. } = body[iterable] else {
+                unreachable!("`enumerate()` is a method call")
+            };
+            self.gen_for_array(pat, receiver, body_expr, Some(iterable))
         } else {
-            self.gen_for_array(pat, iterable, body_expr)
+            self.gen_for_array(pat, iterable, body_expr, None)
         }
     }
 
@@ -3898,14 +4111,23 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
 
     /// `for x in array`: visits each element in order.
     ///
-    /// The array and its length are read once, before the first iteration;
-    /// the index never leaves `0..len`, so the element loads need no bounds
-    /// check -- the loop costs what hand-written unchecked indexing would.
+    /// The array and its length are read once, before the first iteration,
+    /// and the loop also stops at the array's current length, read on every
+    /// iteration: an element the body pushes is not visited, and a body that
+    /// shortens the array ends the loop at its new end (see `arrays`). So
+    /// the element loads need no bounds check, and when nothing in the loop
+    /// writes a length LLVM hoists the second load and folds the two tests
+    /// into one -- the loop costs what hand-written unchecked indexing
+    /// would.
+    ///
+    /// `enumerate` is the `xs.enumerate()` expression when the loop binds
+    /// `(index, element)` pairs.
     fn gen_for_array(
         &mut self,
         pat: PatId,
         iterable: ExprId,
         body_expr: ExprId,
+        enumerate: Option<ExprId>,
     ) -> Option<BasicValueEnum<'ink>> {
         let element_ty = self.infer[iterable]
             .as_array()
@@ -3924,6 +4146,16 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .expect("failed to load an array's length");
         array_tbaa::tag_value(length, ArrayAccess::Length);
         let length = length.into_int_value();
+        let pair_ty = enumerate.map(|enumerate| {
+            let pair = self.infer[enumerate]
+                .as_array()
+                .expect("`enumerate()` is an array of pairs")
+                .clone();
+            self.hir_types
+                .get_basic_type(&pair)
+                .expect("a pair is a basic type")
+                .into_struct_type()
+        });
 
         let counter = self
             .new_alloca_builder()
@@ -3938,23 +4170,35 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             body_expr,
             counter,
             length_type,
-            &|this, index| {
-                this.builder
-                    .build_int_compare(IntPredicate::ULT, index, length, "in_range")
-                    .expect("failed to compare a for loop index")
-            },
+            &|this, index| this.gen_live_in_range(array, index, length),
             &|this, index| {
                 let elements = array.get_elements(&this.builder);
                 let element_basic_ty = array.element_ty();
-                // Safety: `index < length`, checked by the loop condition.
+                // Safety: `index` is below the current length, checked by
+                // the loop condition.
                 let element_ptr = unsafe {
                     this.builder
                         .build_gep(element_basic_ty, elements, &[index], "element_ptr")
                         .expect("failed to build GEP for a for loop element")
                 };
-                this.builder
+                let element = this
+                    .builder
                     .build_load(element_basic_ty, element_ptr, "element")
-                    .expect("failed to load a for loop element")
+                    .expect("failed to load a for loop element");
+                match pair_ty {
+                    None => element,
+                    Some(pair_ty) => {
+                        let pair = this
+                            .builder
+                            .build_insert_value(pair_ty.get_undef(), index, 0, "pair.index")
+                            .expect("failed to build an index pair");
+                        this.builder
+                            .build_insert_value(pair, element, 1, "pair")
+                            .expect("failed to build an index pair")
+                            .into_struct_value()
+                            .into()
+                    }
+                }
             },
             None,
         )
@@ -4135,7 +4379,20 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         expr: ExprId,
         length_value: inkwell::values::IntValue<'ink>,
     ) -> RuntimeArrayValue<'ink> {
-        let array_ty = &self.infer[expr];
+        if self.is_region_allocation(expr) {
+            return self.alloc_array_in_region(expr, length_value);
+        }
+        let array_ty = self.infer[expr].clone();
+        self.alloc_array_of(&array_ty, length_value)
+    }
+
+    /// Allocates an array of type `array_ty` with room for `length_value`
+    /// elements; see [`Self::alloc_array`].
+    fn alloc_array_of(
+        &mut self,
+        array_ty: &Ty,
+        length_value: inkwell::values::IntValue<'ink>,
+    ) -> RuntimeArrayValue<'ink> {
         let element_ty = array_ty
             .as_array()
             .expect("the type of an array literal expression must be an Array");
@@ -4191,7 +4448,11 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             .hir_types
             .get_usize_type()
             .const_int(exprs.len() as u64, false);
-        let array = self.alloc_array(expr, length_value);
+        let array = if self.is_frame_allocation(expr) {
+            self.alloc_array_in_frame(expr, exprs.len())
+        } else {
+            self.alloc_array(expr, length_value)
+        };
         let array_elements = array.get_elements(&self.builder);
         let element_basic_ty = array.element_ty();
         for (idx, expr) in exprs.iter().enumerate() {
@@ -4266,8 +4527,22 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         index: ExprId,
     ) -> Option<PointerValue<'ink>> {
         let base_value = self.gen_expr(base)?;
-        let base = self.array_value(base, base_value);
         let index_value = self.gen_expr(index)?.into_int_value();
+        Some(self.gen_element_ptr(expr, base, base_value, index, index_value))
+    }
+
+    /// The address of the element `index_value` of the array `base_value`
+    /// (the values of `base` and `index` in `expr`, already evaluated),
+    /// checking that the index is in range first; see [`Self::gen_place_index`].
+    fn gen_element_ptr(
+        &mut self,
+        expr: ExprId,
+        base_expr: ExprId,
+        base_value: BasicValueEnum<'ink>,
+        index: ExprId,
+        index_value: IntValue<'ink>,
+    ) -> PointerValue<'ink> {
+        let base = self.array_value(base_expr, base_value);
 
         let length_type = base.length_ty();
         let length = self
@@ -4359,7 +4634,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let elements = base.get_elements(&self.builder);
         let element_basic_ty = base.element_ty();
         // Safety: `index < len`, checked above.
-        Some(unsafe {
+        unsafe {
             self.builder
                 .build_gep(
                     element_basic_ty,
@@ -4368,7 +4643,164 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     &format!("{}+index", elements.get_name().to_string_lossy()),
                 )
                 .expect("failed to build GEP for array index")
-        })
+        }
+    }
+
+    /// Evaluates the operands of the place `expr` -- the array and index of
+    /// `a[i]`, the instance of `obj.field` -- once, so that its address can
+    /// be computed again after other code has run (see
+    /// [`Self::gen_scalar_assignment`]) without evaluating them again.
+    fn gen_saved_place(&mut self, expr: ExprId) -> Option<SavedPlace<'ink>> {
+        let body = self.body.clone();
+        match &body[expr] {
+            Expr::Index { base, index } => {
+                let array = self.gen_expr(*base)?;
+                let index_value = self.gen_expr(*index)?.into_int_value();
+                Some(SavedPlace::Element {
+                    expr,
+                    base: *base,
+                    array,
+                    index: *index,
+                    index_value,
+                })
+            }
+            Expr::Field {
+                expr: receiver,
+                name,
+            } => {
+                let receiver_ty = self.infer[*receiver].clone();
+                if let TyKind::Tuple(_, substs) = receiver_ty.interned() {
+                    let index = name
+                        .as_tuple_index()
+                        .expect("inference accepted a non-index field name on a tuple");
+                    let tuple_ty = self.hir_types.get_tuple_type(substs.as_ref());
+                    let inner = self.gen_saved_place(*receiver)?;
+                    return Some(SavedPlace::Field {
+                        inner: Box::new(inner),
+                        struct_ty: tuple_ty,
+                        index: index as u32,
+                    });
+                }
+                let hir_struct = receiver_ty.as_struct().expect("expected a struct");
+                let index = hir_struct
+                    .field(self.db, name)
+                    .expect("expected a struct field")
+                    .index(self.db);
+                let struct_ty = self.hir_types.get_struct_type(&receiver_ty);
+                if hir_struct.data(self.db).memory_kind == codira_hir::StructMemoryKind::Gc {
+                    // The instance's handle, which keeps it alive (and is
+                    // what the collector sees) until the store.
+                    let handle = self.gen_expr(*receiver)?.into_pointer_value();
+                    Some(SavedPlace::ObjectField {
+                        handle,
+                        struct_ty,
+                        index,
+                    })
+                } else {
+                    let inner = self.gen_saved_place(*receiver)?;
+                    Some(SavedPlace::Field {
+                        inner: Box::new(inner),
+                        struct_ty,
+                        index,
+                    })
+                }
+            }
+            _ => self.gen_place_expr(expr).map(SavedPlace::Address),
+        }
+    }
+
+    /// The address of a place whose operands [`Self::gen_saved_place`]
+    /// evaluated: an element's index is checked against the array's length
+    /// as it is now.
+    fn gen_saved_place_ptr(&mut self, place: &SavedPlace<'ink>) -> PointerValue<'ink> {
+        match place {
+            SavedPlace::Address(address) => *address,
+            SavedPlace::Element {
+                expr,
+                base,
+                array,
+                index,
+                index_value,
+            } => self.gen_element_ptr(*expr, *base, *array, *index, *index_value),
+            SavedPlace::ObjectField {
+                handle,
+                struct_ty,
+                index,
+            } => {
+                // Safety: the handle is the value of a class-typed expression.
+                let reference =
+                    unsafe { RuntimeReferenceValue::from_ptr_unchecked(*handle, *struct_ty) };
+                let data = reference.get_data_ptr(&self.builder);
+                self.builder
+                    .build_struct_gep(*struct_ty, data, *index, "field")
+                    .expect("could not get the address of a field")
+            }
+            SavedPlace::Field {
+                inner,
+                struct_ty,
+                index,
+            } => {
+                let inner = self.gen_saved_place_ptr(inner);
+                self.builder
+                    .build_struct_gep(*struct_ty, inner, *index, "field")
+                    .expect("could not get the address of a field")
+            }
+        }
+    }
+
+    /// `place = rhs` and `place op= rhs` on a number or `bool`.
+    ///
+    /// The place's operands (an array and an index, an instance) are
+    /// evaluated once, first; an element's index is checked; for a compound
+    /// assignment the old value is read; then `rhs` is evaluated; then the
+    /// result is stored, the address recomputed from the saved operands and
+    /// an element's index checked again -- `rhs` may have resized the array.
+    /// Each operand used to be evaluated twice (once to read the old value,
+    /// once for the address of the store), so `xs[f()] += 1` called `f`
+    /// twice, and `make().n += 1` was a compiler crash.
+    fn gen_scalar_assignment(
+        &mut self,
+        lhs_expr: ExprId,
+        rhs_expr: ExprId,
+        op: Option<ArithOp>,
+        combine: impl FnOnce(
+            &mut Self,
+            BasicValueEnum<'ink>,
+            BasicValueEnum<'ink>,
+            ArithOp,
+        ) -> BasicValueEnum<'ink>,
+    ) -> Option<BasicValueEnum<'ink>> {
+        let value_ty = self
+            .hir_types
+            .get_basic_type(&self.infer[lhs_expr].clone())
+            .expect("a scalar has a basic type");
+        let saved = self.gen_saved_place(lhs_expr)?;
+        let place = self.gen_saved_place_ptr(&saved);
+        let old = match op {
+            Some(_) => {
+                let old = self
+                    .builder
+                    .build_load(value_ty, place, "old")
+                    .expect("failed to build a load");
+                if matches!(saved, SavedPlace::Element { .. }) {
+                    array_tbaa::tag_value(old, ArrayAccess::Element);
+                }
+                Some(old)
+            }
+            None => None,
+        };
+        let rhs = self.gen_expr(rhs_expr)?;
+        let value = match (op, old) {
+            (Some(op), Some(old)) => combine(self, old, rhs, op),
+            _ => rhs,
+        };
+        let place = self.gen_saved_place_ptr(&saved);
+        let store = self
+            .builder
+            .build_store(place, value)
+            .expect("failed to build store");
+        self.tag_if_indexed(lhs_expr, store);
+        Some(self.gen_empty())
     }
 
     /// Charges one unit of fuel: decrements the counter `fuelCounter` points
@@ -4455,6 +4887,50 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         self.builder.position_at_end(continue_block);
     }
 
+    /// Emits one half of a foreign transition (see
+    /// `crate::gc_roots::is_foreign_transition`): `enter` passes the stack
+    /// pointer at the call, from which a collection scans this thread while
+    /// the foreign function runs.
+    fn gen_foreign_transition(&mut self, enter: bool) {
+        let (fn_type, fn_ptr) = if enter {
+            self.dispatch_table.gen_intrinsic_lookup(
+                self.external_globals.dispatch_table,
+                &self.builder,
+                &intrinsics::gc_foreign_enter,
+            )
+        } else {
+            self.dispatch_table.gen_intrinsic_lookup(
+                self.external_globals.dispatch_table,
+                &self.builder,
+                &intrinsics::gc_foreign_leave,
+            )
+        };
+        let args: Vec<BasicMetadataValueEnum<'ink>> = if enter {
+            let ptr_type = self.context.ptr_type(AddressSpace::default());
+            let stacksave = inkwell::intrinsics::Intrinsic::find("llvm.stacksave")
+                .expect("llvm.stacksave exists")
+                .get_declaration(self.module, &[ptr_type.into()])
+                .expect("llvm.stacksave has a declaration");
+            let sp = self
+                .builder
+                .build_call(stacksave, &[], "gc.foreign.sp")
+                .expect("failed to read the stack pointer")
+                .try_as_basic_value()
+                .unwrap_basic();
+            vec![sp.into()]
+        } else {
+            Vec::new()
+        };
+        let call = self
+            .builder
+            .build_indirect_call(fn_type, fn_ptr, &args, "")
+            .expect("failed to build a foreign transition");
+        let attribute = self
+            .context
+            .create_string_attribute("codira-gc-foreign", "");
+        call.add_attribute(inkwell::attributes::AttributeLoc::Function, attribute);
+    }
+
     /// Returns a pointer to the allocator handle
     fn get_allocator_handle_ptr(&self) -> PointerValue<'ink> {
         let global = self
@@ -4509,4 +4985,31 @@ fn target_has_fused_multiply_add(target: &codira_target::spec::Target) -> bool {
             .any(|feature| feature == "+fma"),
         _ => false,
     }
+}
+
+/// A place whose operands are evaluated: see
+/// [`BodyIrGenerator::gen_saved_place`].
+enum SavedPlace<'ink> {
+    /// An address that stays valid: a local's slot.
+    Address(PointerValue<'ink>),
+    /// `base[index]`: the array (its handle) and the index.
+    Element {
+        expr: ExprId,
+        base: ExprId,
+        array: BasicValueEnum<'ink>,
+        index: ExprId,
+        index_value: IntValue<'ink>,
+    },
+    /// A field of a class instance, by the instance's handle.
+    ObjectField {
+        handle: PointerValue<'ink>,
+        struct_ty: inkwell::types::StructType<'ink>,
+        index: u32,
+    },
+    /// A field of a value struct or tuple that is itself in a place.
+    Field {
+        inner: Box<SavedPlace<'ink>>,
+        struct_ty: inkwell::types::StructType<'ink>,
+        index: u32,
+    },
 }

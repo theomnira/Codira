@@ -13,7 +13,28 @@
 //!   - module-level `let` and `var`, which were dropped and are rejected;
 //!   - assignment to a `let` binding, which is rejected, while what a `let`
 //!     refers to but does not hold (a class field, an array element) stays
-//!     assignable.
+//!     assignable;
+//!   - a call of a method or an associated function of another module's
+//!     type, which stopped code generation with "unknown function": method
+//!     calls never reached the dispatch table, and the receiver was left out
+//!     of the boxing on both sides of a call through it;
+//!   - a `()` field or enum payload (`Result[(), E]`), whose type the
+//!     runtime could not load: it was given a structural type id that no
+//!     module exports, instead of the runtime's own `()`.
+//!   - an `if` chain whose last `else if` leaves on both branches, which
+//!     crashed the code generator;
+//!   - non-generic methods of another module's types (value structs,
+//!     classes, enums), which could not be called from outside it;
+//!   - a private function named like a C library function (`error`),
+//!     which the dynamic linker bound to the C library's;
+//!   - an assignment to an element or a field of a number or `bool`
+//!     (`xs[f()] += 1`, `xs[f()] = v`), which evaluated the place's
+//!     operands twice -- once to read the old value, once for the store --
+//!     and crashed the code generator when the instance was a call result
+//!     (`make().n += 1`);
+//!   - a record literal naming its fields in another order than the
+//!     declaration (`P { y: 2.5, x: 1 }`), whose values were stored by
+//!     position, not by name.
 
 use std::{
     path::Path,
@@ -315,4 +336,374 @@ public func main() {
     let (code, stdout, stderr) = run(&[("mod.code", program)], &[]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(stdout, "2\n11\n6\n7\n");
+}
+
+// ---- methods of another module's types ------------------------------------
+
+/// Methods and associated functions of types declared in another module:
+/// a value-struct receiver, `String` arguments and results, a value-struct
+/// result, a class receiver and an associated function, all called through
+/// the dispatch table.
+#[test]
+fn methods_of_another_modules_types_are_called() {
+    let shapes = r#"
+public struct Size { public w: i64, public h: i64 }
+public class Counter { public n: i64 }
+
+extend Size {
+    public func area(self) -> i64 { self.w * self.h }
+    public func describe(self, unit: String) -> String { f"{self.w}x{self.h} {unit}" }
+    public func doubled(self) -> Size { Size { w: self.w * 2, h: self.h * 2 } }
+    public func square(side: i64) -> Size { Size { w: side, h: side } }
+}
+
+extend Counter {
+    public func bump(self, by: i64) -> i64 {
+        self.n += by
+        self.n
+    }
+}
+"#;
+    let main = r#"
+import shapes.{Size, Counter}
+public func main() {
+    let s = Size { w: 2, h: 3 }
+    println(s.area())
+    println(s.describe("cm"))
+    let d = s.doubled()
+    println(d.w, " ", d.h, " ", d.area())
+    let q = Size.square(4)
+    println(q.area())
+    let c = Counter { n: 1 }
+    println(c.bump(2), " ", c.bump(3), " ", c.n)
+}
+"#;
+    let (code, stdout, stderr) = run(&[("mod.code", main), ("shapes.code", shapes)], &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "6\n2x3 cm\n4 6 24\n16\n3 6 6\n");
+}
+
+// ---- the unit type in a layout ----------------------------------------------
+
+/// `()` as an enum payload, in a generic instantiation and as a struct field.
+#[test]
+fn a_unit_payload_or_field_loads_and_runs() {
+    let program = r#"
+enum R[T, E] { Ok(T), Err(E) }
+enum U { A(()), B }
+struct S { unit: (), n: i64 }
+
+func f(fail: bool) -> R[(), i64] {
+    if fail { R.Err(4) } else { R.Ok(()) }
+}
+
+public func main() {
+    let s = S { unit: (), n: 2 }
+    match f(false) { R.Ok(_) -> println("ok ", s.n), R.Err(e) -> println(e) }
+    match f(true) { R.Ok(_) -> println("ok"), R.Err(e) -> println("err ", e) }
+    match U.A(()) { U.A(_) -> println("a"), U.B -> println("b") }
+}
+"#;
+    let (code, stdout, stderr) = run(&[("mod.code", program)], &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "ok 2\nerr 4\na\n");
+}
+
+// ---- `if` chains whose last two branches diverge ---------------------------
+
+/// An `else if` whose own branches both leave (`continue` and `return`)
+/// ends an `if` chain that the enclosing `if` merges after: it used to
+/// leave the code generator in a block it had removed from the function,
+/// and the build panicked ("called `Result::unwrap()` on an `Err` value").
+#[test]
+fn an_if_chain_ending_in_two_diverging_branches_compiles() {
+    let program = r#"
+func step(x: i64) -> i64 {
+    var i = 0
+    var total = 0
+    while i < 10 {
+        if x == 1 {
+            total += 1
+        } else if x == 2 {
+            i += 2
+            continue
+        } else {
+            return -1
+        }
+        i += 1
+    }
+    total
+}
+
+func word(x: i64) -> String {
+    var out = "".to_string()
+    var i = 0
+    while i < 3 {
+        if x == 1 {
+            out += "a"
+        } else if x == 2 {
+            if i == 0 { out += "b" } else { out += "c" }
+            i += 1
+            continue
+        } else {
+            return "none".to_string()
+        }
+        i += 1
+    }
+    out
+}
+
+public func main() {
+    println(step(1), " ", step(2), " ", step(3))
+    println(word(1), " ", word(2), " ", word(3))
+}
+"#;
+    for level in ["0", "2"] {
+        let (code, stdout, stderr) = run(&[("mod.code", program)], &["-O", level]);
+        assert_eq!(code, Some(0), "-O {level}: {stderr}");
+        assert_eq!(stdout, "10 0 -1\naaa bcc none\n", "-O {level}");
+    }
+}
+
+// ---- methods called from another module ------------------------------------
+
+/// The module a program calls methods of: a value struct, a class and an
+/// enum with methods, three of them called `len`, and a method and a free
+/// function both called `same`.
+const SHAPES: &str = r#"
+public struct Point {
+    public x: i64,
+    public y: i64,
+}
+
+extend Point {
+    public func len(self) -> i64 { self.x * self.x + self.y * self.y }
+    public func shifted(self, by: i64) -> Point { Point { x: self.x + by, y: self.y + by } }
+    public func label(self) -> String {
+        let x = self.x
+        let y = self.y
+        f"({x}, {y})"
+    }
+    public func same(self, other: Point) -> bool { self.x == other.x && self.y == other.y }
+}
+
+public class Bag {
+    items: [i64],
+}
+
+extend Bag {
+    public func new() -> Bag { Bag { items: [] } }
+    public func add(self, item: i64) { self.items.push(item) }
+    public func len(self) -> usize { self.items.len() }
+    public func total(self) -> i64 { self.items.fold(0, func(a, x) { a + x }) }
+}
+
+public enum Shape {
+    Dot
+    Line(i64)
+    Named(String)
+}
+
+extend Shape {
+    public func len(self) -> i64 {
+        match self {
+            Shape.Dot -> 0,
+            Shape.Line(n) -> n,
+            Shape.Named(s) -> s.len() as i64,
+        }
+    }
+    public func name(self) -> String {
+        match self {
+            Shape.Named(s) -> s,
+            _ -> "anonymous".to_string(),
+        }
+    }
+}
+
+public func same(a: i64, b: i64) -> bool { a == b }
+"#;
+
+/// Non-generic methods of another module's types are called through the
+/// dispatch table like its functions. They used to get no slot in it (the
+/// build panicked with "unknown function"); a method with a value-struct
+/// receiver was called with its receiver missing, and had no wrapper to
+/// unbox it; and methods sharing a name with each other or with a free
+/// function of their module were linked to one of them.
+#[test]
+fn methods_sharing_a_name_across_types_of_another_module_are_called() {
+    let program = r#"
+import shapes.{Point, Bag, Shape, same}
+
+public func main() {
+    let p = Point { x: 3, y: 4 }
+    println(p.len(), " ", p.shifted(1).len(), " ", p.label(), " ", p.same(p.shifted(0)))
+    let b = Bag.new()
+    b.add(5)
+    b.add(7)
+    println(b.len(), " ", b.total())
+    let s = Shape.Named("circle".to_string())
+    let line = Shape.Line(9)
+    let dot = Shape.Dot
+    println(s.len(), " ", line.len(), " ", dot.len(), " ", s.name(), " ", dot.name())
+    println(same(2, 2), " ", same(2, 3))
+}
+"#;
+    for level in ["0", "2"] {
+        let (code, stdout, stderr) = run(
+            &[("mod.code", program), ("shapes.code", SHAPES)],
+            &["-O", level],
+        );
+        assert_eq!(code, Some(0), "-O {level}: {stderr}");
+        assert_eq!(
+            stdout, "25 41 (3, 4) true\n2 12\n6 9 0 circle anonymous\ntrue false\n",
+            "-O {level}"
+        );
+    }
+}
+
+// ---- private functions are local to their library --------------------------
+
+/// A private function named like a C library function (`error`, `abs`)
+/// is its module's own. It used to keep LLVM's default linkage, so a call
+/// that was not inlined went through the dynamic linker to the C
+/// library's `error(3)`, loaded first, which crashed in `printf`.
+#[test]
+fn a_private_function_named_like_a_c_function_is_not_interposed() {
+    let checks = r"
+public func check(values: [i64]) -> i64 {
+    var total: i64 = 0
+    for v in values {
+        if v < 0 {
+            total += error(v, 1)
+        } else if v > 100 {
+            total += error(v, 2)
+        } else {
+            total += abs(v - 50)
+        }
+    }
+    total
+}
+
+func error(value: i64, kind: i64) -> i64 {
+    var acc = value * kind
+    var i: i64 = 0
+    while i < kind * 3 {
+        acc = acc * 31 + i
+        i += 1
+    }
+    acc % 1000
+}
+
+func abs(x: i64) -> i64 { if x < 0 { -x } else { x } }
+";
+    let program = r"
+import checks.{check}
+
+public func main() {
+    println(check([-3, 7, 250, 50, -1]))
+}
+";
+    let error = |value: i64, kind: i64| {
+        let mut acc = value * kind;
+        for i in 0..kind * 3 {
+            acc = acc * 31 + i;
+        }
+        acc % 1000
+    };
+    let expected = error(-3, 1) + 43 + error(250, 2) + error(-1, 1);
+    for level in ["0", "2"] {
+        let (code, stdout, stderr) = run(
+            &[("mod.code", program), ("checks.code", checks)],
+            &["-O", level],
+        );
+        assert_eq!(code, Some(0), "-O {level}: {stderr}");
+        assert_eq!(stdout, format!("{expected}\n"), "-O {level}");
+    }
+}
+
+// ---- assignment to an element or a field --------------------------------
+
+const PLACE_OPERANDS_ONCE: &str = r#"
+class C { v: i64 }
+struct P { x: i32, y: i32 }
+func f() -> i64 { println("f"); 0 }
+func g(c: C) -> C { println("g"); c }
+public func main() {
+    let xs = [1, 2]
+    xs[f()] += 5
+    xs[f()] = xs[1] + 4
+    println(xs[0])
+    let c = C { v: 1 }
+    g(c).v += 3
+    g(c).v = g(c).v * 2
+    println(c.v)
+    var ps = [P { x: 1, y: 2 }]
+    ps[f()].y *= 10
+    println(ps[0].y)
+    var b = [true]
+    b[f()] = false
+    var fl = [1.5]
+    fl[f()] -= 0.25
+    println(b[0], fl[0])
+}
+"#;
+
+/// Each operand of the place of an assignment is evaluated once, on both
+/// backends and at both optimization levels.
+#[test]
+fn an_assigned_place_is_evaluated_once() {
+    let expected = "f\nf\n6\ng\ng\ng\n8\nf\n20\nf\nf\nfalse1.25\n";
+    for args in [&[][..], &["-O", "0"], &["--jit"]] {
+        let (code, stdout, stderr) = run(&[("mod.code", PLACE_OPERANDS_ONCE)], args);
+        assert_eq!(code, Some(0), "{args:?}: {stderr}");
+        assert_eq!(stdout, expected, "{args:?}");
+    }
+}
+
+/// The element of a compound assignment is still checked before the right
+/// operand runs, and reported at the assignment.
+#[test]
+fn an_assigned_element_is_checked_before_the_right_operand() {
+    let program = r#"
+func f() -> i64 { println("rhs"); 1 }
+public func main() {
+    var xs = [1, 2]
+    xs[2] += f()
+}
+"#;
+    for args in [&[][..], &["-O", "0"], &["--jit"]] {
+        let (code, stdout, stderr) = run(&[("mod.code", program)], args);
+        assert_eq!(code, Some(101), "{args:?}: {stderr}");
+        assert_eq!(stdout, "", "{args:?}");
+        assert!(
+            stderr.contains(
+                "panic at mod.code:5:5: index out of bounds: the length is 2 but the index is 2"
+            ),
+            "{args:?}: {stderr}"
+        );
+    }
+}
+
+// ---- record literals ---------------------------------------------------
+
+/// A record literal stores each value in the field it names, whatever the
+/// order, and evaluates the values in the order written.
+#[test]
+fn a_record_literal_stores_fields_by_name() {
+    let program = r#"
+class Foo { a: i64, b: i64 }
+struct P { x: i64, y: f64, z: bool }
+func p(x: i64) -> i64 { println(x); x }
+public func main() {
+    let f = Foo { b: p(4), a: p(3) }
+    println(f.a, " ", f.b)
+    let q = P { z: true, y: 2.5, x: 7 }
+    println(q.x, " ", q.y, " ", q.z)
+}
+"#;
+    for args in [&[][..], &["-O", "0"], &["--jit"]] {
+        let (code, stdout, stderr) = run(&[("mod.code", program)], args);
+        assert_eq!(code, Some(0), "{args:?}: {stderr}");
+        assert_eq!(stdout, "4\n3\n3 4\n7 2.5 true\n", "{args:?}");
+    }
 }

@@ -135,6 +135,7 @@ pub enum SyntaxKind {
     SECRET_KW,
     OBLIVIOUS_KW,
     SCOPE_KW,
+    GROUP_KW,
     SELECT_KW,
     DEFAULT_KW,
     SESSION_KW,
@@ -238,6 +239,7 @@ pub enum SyntaxKind {
     PERFORM_EXPR,
     SPAWN_EXPR,
     SCOPE_EXPR,
+    GROUP_EXPR,
     SELECT_EXPR,
     SELECT_ARM_LIST,
     SELECT_ARM,
@@ -250,6 +252,7 @@ pub enum SyntaxKind {
     HANDLER_ARM_LIST,
     HANDLER_ARM,
     TRY_EXPR,
+    PROPAGATE_EXPR,
     HOLE_EXPR,
     CHOOSE_EXPR,
     TRANSFER_EXPR,
@@ -621,6 +624,9 @@ macro_rules! T {
     (scope) => {
         $crate::SyntaxKind::SCOPE_KW
     };
+    (group) => {
+        $crate::SyntaxKind::GROUP_KW
+    };
     (select) => {
         $crate::SyntaxKind::SELECT_KW
     };
@@ -734,6 +740,7 @@ impl SyntaxKind {
         | SECRET_KW
         | OBLIVIOUS_KW
         | SCOPE_KW
+        | GROUP_KW
         | SELECT_KW
         | DEFAULT_KW
         | SESSION_KW
@@ -927,6 +934,7 @@ impl SyntaxKind {
             SECRET_KW => &SyntaxInfo { name: "SECRET_KW" },
             OBLIVIOUS_KW => &SyntaxInfo { name: "OBLIVIOUS_KW" },
             SCOPE_KW => &SyntaxInfo { name: "SCOPE_KW" },
+            GROUP_KW => &SyntaxInfo { name: "GROUP_KW" },
             SELECT_KW => &SyntaxInfo { name: "SELECT_KW" },
             DEFAULT_KW => &SyntaxInfo { name: "DEFAULT_KW" },
             SESSION_KW => &SyntaxInfo { name: "SESSION_KW" },
@@ -1030,6 +1038,7 @@ impl SyntaxKind {
             PERFORM_EXPR => &SyntaxInfo { name: "PERFORM_EXPR" },
             SPAWN_EXPR => &SyntaxInfo { name: "SPAWN_EXPR" },
             SCOPE_EXPR => &SyntaxInfo { name: "SCOPE_EXPR" },
+            GROUP_EXPR => &SyntaxInfo { name: "GROUP_EXPR" },
             SELECT_EXPR => &SyntaxInfo { name: "SELECT_EXPR" },
             SELECT_ARM_LIST => &SyntaxInfo { name: "SELECT_ARM_LIST" },
             SELECT_ARM => &SyntaxInfo { name: "SELECT_ARM" },
@@ -1042,6 +1051,7 @@ impl SyntaxKind {
             HANDLER_ARM_LIST => &SyntaxInfo { name: "HANDLER_ARM_LIST" },
             HANDLER_ARM => &SyntaxInfo { name: "HANDLER_ARM" },
             TRY_EXPR => &SyntaxInfo { name: "TRY_EXPR" },
+            PROPAGATE_EXPR => &SyntaxInfo { name: "PROPAGATE_EXPR" },
             HOLE_EXPR => &SyntaxInfo { name: "HOLE_EXPR" },
             CHOOSE_EXPR => &SyntaxInfo { name: "CHOOSE_EXPR" },
             TRANSFER_EXPR => &SyntaxInfo { name: "TRANSFER_EXPR" },

@@ -226,8 +226,16 @@ pub fn run_embedded() -> anyhow::Result<Launched> {
         return Ok(Launched::NoPayload);
     };
     let dir = unpack(&payload)?;
-    let runtime = unsafe { Runtime::builder(dir.join("mod.codiralib")).finish() }
-        .map_err(|e| anyhow!("could not load the program: {e}"))?;
+    // The executable's own arguments belong to the program, so the heap
+    // settings come from the environment (`CODIRA_HEAP_LIMIT`,
+    // `CODIRA_GC_GROWTH`) or the default.
+    let heap = crate::ops::heap::HeapSettings::resolve(&Default::default(), None)?;
+    heap.warn_if_unlimited();
+    let runtime = unsafe {
+        heap.apply(Runtime::builder(dir.join("mod.codiralib")))
+            .finish()
+    }
+    .map_err(|e| anyhow!("could not load the program: {e}"))?;
     let definition = runtime
         .get_function_definition(&payload.entry)
         .ok_or_else(|| anyhow!("the program has no entry point `{}`", payload.entry))?;

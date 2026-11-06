@@ -32,6 +32,7 @@ impl CompilerDatabase {
         // Set the initial configuration
         db.set_config(config);
         db.set_fuel_instrumentation(false);
+        db.set_frame_allocation(false);
         db.set_keep_function_symbols(false);
         db.set_hardware_safety(codira_codegen::HardwareSafety::NONE);
         db.set_no_hot_reload(false);

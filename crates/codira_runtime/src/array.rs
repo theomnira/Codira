@@ -85,7 +85,9 @@ impl<'array, T: Marshal<'array> + 'array> ArrayRef<'array, T> {
         self.len() == 0
     }
 
-    /// Returns the length of the array
+    /// Returns how many elements the array can hold before it grows: at
+    /// least [`Self::len`], more after Codira code pushed onto it (the
+    /// buffer at least doubles when it is full).
     pub fn capacity(&self) -> usize {
         self.runtime
             .gc
@@ -96,6 +98,11 @@ impl<'array, T: Marshal<'array> + 'array> ArrayRef<'array, T> {
     }
 
     /// Returns an iterator to iterate over the elements of the array.
+    ///
+    /// The iterator reads the elements where they are when it is created:
+    /// do not run Codira code that grows or shrinks this array (`push`,
+    /// `insert`, `remove`, ...) while it is in use, because growing moves
+    /// the elements to a new buffer and frees the old one.
     pub fn iter(&self) -> impl Iterator<Item = T> + 'array
     where
         T: 'array,

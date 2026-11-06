@@ -1,0 +1,97 @@
+// What kept format results cost (see "String Fabric" in
+// agents/USING_CODIRA.md): three loops that keep some of the strings they
+// format. Each runs 7 rounds and prints `<name> <median nanoseconds> <check
+// value>`. Run one with the heap statistics, or under a heap limit to find
+// the least it fits in:
+//
+//     codira run keep_all -O 3 --runtime-stats \
+//         --manifest-path examples/string_retention/codira.toml
+//     codira run keep_some -O 3 --heap-limit 9MiB \
+//         --manifest-path examples/string_retention/codira.toml
+//
+// `main` runs all three.
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+// The median of seven times.
+func median(times: [u64]) -> u64 {
+    times.sort()
+    times[3]
+}
+
+// Every result kept: 1M `f"{i:08}"` pushed into an array.
+public func keep_all() {
+    var times: [u64] = []
+    var total = 0
+    for run in 0..7 {
+        let start = codira_time_monotonic_ns()
+        var kept: [String] = []
+        var i = 0
+        while i < 1000000 {
+            kept.push(f"{i:08}")
+            i += 1
+        }
+        times.push(codira_time_monotonic_ns() - start)
+        total = kept.len() + kept[999999].len()
+    }
+    println("keep_all ", median(times), " ", total)
+}
+
+// 1M temporaries, and one result in 16 kept.
+public func keep_some() {
+    var times: [u64] = []
+    var total = 0
+    for run in 0..7 {
+        let start = codira_time_monotonic_ns()
+        var kept: [String] = []
+        var i = 0
+        while i < 1000000 {
+            let j = i * 7
+            let t = f"tmp {i}: {j}"
+            total += t.len()
+            if i % 16 == 0 {
+                kept.push(f"k{i}")
+            }
+            i += 1
+        }
+        times.push(codira_time_monotonic_ns() - start)
+        total += kept.len()
+    }
+    println("keep_some ", median(times), " ", total)
+}
+
+// A short string made by a function of its own and returned.
+func label(i: i64) -> String {
+    let j = i * 31 % 977
+    f"item-{i}-{j}"
+}
+
+// 1M calls of `label`, the last 100K results kept in a table.
+public func returned() {
+    var times: [u64] = []
+    var total = 0
+    for run in 0..7 {
+        let start = codira_time_monotonic_ns()
+        var table: [String] = []
+        var i = 0
+        while i < 100000 {
+            table.push(label(i))
+            i += 1
+        }
+        while i < 1000000 {
+            table[i % 100000] = label(i)
+            i += 1
+        }
+        times.push(codira_time_monotonic_ns() - start)
+        total = table[5].len()
+    }
+    println("returned ", median(times), " ", total)
+}
+
+public func main() {
+    keep_all()
+    keep_some()
+    returned()
+}

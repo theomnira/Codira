@@ -72,7 +72,7 @@ impl Heap for New {
         GcRuntime::root(self, handle);
     }
     fn collect(&self) -> bool {
-        MarkSweep::collect(self)
+        MarkSweep::collect_blocking(self).is_ok_and(|report| report.reclaimed_anything())
     }
 }
 

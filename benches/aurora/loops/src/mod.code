@@ -1,0 +1,183 @@
+// AURORA: numeric loops and calls. What a safepoint poll, a bounds check,
+// a reload of an array's length or a call frame costs shows up here first:
+// summing, copying and storing over 10M elements (the three loops of
+// `examples/collections_loop_cost`, each in the `for` form and the indexed
+// form), recursion, a sieve, a float escape-time loop, a matrix product and
+// a branchy integer loop. `loops.rs` and `loops.cpp` do the same arithmetic
+// and print the same check values. Indexing is checked in Codira and Rust
+// and not in C++ (`operator[]`).
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+func N() -> usize { 10000000 }
+
+func ramp() -> [i64] {
+    let xs = array_filled(0i64, N())
+    var i: usize = 0
+    while i < N() { xs[i] = (i as i64) * 3 - 7; i += 1 }
+    xs
+}
+
+class Acc { total: i64 }
+
+public func sum_for() {
+    let xs = ramp()
+    let start = now()
+    var t: i64 = 0
+    for x in xs { t += x }
+    report(start, t as u64)
+}
+
+public func sum_indexed() {
+    let xs = ramp()
+    let start = now()
+    var t: i64 = 0
+    var i: usize = 0
+    while i < xs.len() { t += xs[i]; i += 1 }
+    report(start, t as u64)
+}
+
+func store_into(xs: [i64], acc: Acc) {
+    for x in xs { acc.total += x }
+}
+
+// Adding into a field of an object on the heap.
+public func store_field() {
+    let xs = ramp()
+    let acc = Acc { total: 0 }
+    let start = now()
+    store_into(xs, acc)
+    report(start, acc.total as u64)
+}
+
+func copy_into(xs: [i64], ys: [i64]) {
+    var k: usize = 0
+    for x in xs { ys[k] = x + 1; k += 1 }
+}
+
+// Storing into another array (the length is reloaded after each store
+// unless the compiler knows the arrays do not alias).
+public func copy_plus_one() {
+    let xs = ramp()
+    let ys = array_filled(0i64, N())
+    let start = now()
+    copy_into(xs, ys)
+    report(start, (ys[7] + ys[N() - 1]) as u64)
+}
+
+func fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+// 7M calls.
+public func fib_32() {
+    let start = now()
+    report(start, fib(32) as u64)
+}
+
+// The primes below 20M.
+public func sieve_20m() {
+    let n: usize = 20000000
+    let start = now()
+    let composite = array_filled(false, n)
+    var count: u64 = 0
+    var i: usize = 2
+    while i < n {
+        if !composite[i] {
+            count += 1
+            var j = i * i
+            while j < n { composite[j] = true; j += i }
+        }
+        i += 1
+    }
+    report(start, count)
+}
+
+// Escape-time iteration over a 600 x 400 grid, at most 200 steps a point.
+public func mandelbrot() {
+    let start = now()
+    var inside: u64 = 0
+    var steps: u64 = 0
+    var py = 0
+    while py < 400 {
+        var px = 0
+        while px < 600 {
+            let cx = (px as f64) / 200.0 - 2.0
+            let cy = (py as f64) / 200.0 - 1.0
+            var x = 0.0
+            var y = 0.0
+            var k = 0
+            while k < 200 && x * x + y * y <= 4.0 {
+                let t = x * x - y * y + cx
+                y = 2.0 * x * y + cy
+                x = t
+                k += 1
+            }
+            steps += k as u64
+            if k == 200 { inside += 1 }
+            px += 1
+        }
+        py += 1
+    }
+    report(start, inside * 1000000000 + steps)
+}
+
+// A 200 x 200 float matrix product, row-major arrays.
+public func matmul_200() {
+    let n: usize = 200
+    let a = array_filled(0.0, n * n)
+    let b = array_filled(0.0, n * n)
+    let c = array_filled(0.0, n * n)
+    var i: usize = 0
+    while i < n * n {
+        a[i] = ((i % 17) as f64) * 0.25
+        b[i] = ((i % 13) as f64) * 0.5
+        i += 1
+    }
+    let start = now()
+    i = 0
+    while i < n {
+        var k: usize = 0
+        while k < n {
+            let aik = a[i * n + k]
+            var j: usize = 0
+            while j < n {
+                c[i * n + j] = c[i * n + j] + aik * b[k * n + j]
+                j += 1
+            }
+            k += 1
+        }
+        i += 1
+    }
+    var s = 0.0
+    for v in c { s += v }
+    report(start, s as u64)
+}
+
+// The longest Collatz sequence starting below 1M: unpredictable branches.
+public func collatz_1m() {
+    let start = now()
+    var best: u64 = 0
+    var at: u64 = 0
+    var n: u64 = 1
+    while n < 1000000 {
+        var x = n
+        var steps: u64 = 0
+        while x != 1 {
+            if (x & 1) == 0 { x = x >> 1 } else { x = 3 * x + 1 }
+            steps += 1
+        }
+        if steps > best { best = steps; at = n }
+        n += 1
+    }
+    report(start, at * 1000 + best)
+}

@@ -133,7 +133,8 @@ impl InferenceResultBuilder<'_> {
                     Pat::TupleStruct { args, .. } => args.clone(),
                     _ => Vec::new(),
                 };
-                let field_tys = variant.field_types(self.db);
+                let enum_args = crate::mono::enum_args(&self.normalize(&ty));
+                let field_tys = variant.field_types_at(self.db, &enum_args);
                 let fields = field_tys
                     .iter()
                     .enumerate()
@@ -168,11 +169,12 @@ impl InferenceResultBuilder<'_> {
         match (ctor, self.normalize(ty).interned()) {
             (Ctor::Some, TyKind::Optional(payload)) => vec![payload.clone()],
             (Ctor::Tuple, TyKind::Tuple(_, elements)) => elements.iter().cloned().collect(),
-            (Ctor::Variant(tag), TyKind::Enum(e, _)) => e
+            (Ctor::Variant(tag), TyKind::Enum(e, args)) => e
                 .variants(self.db)
                 .get(*tag as usize)
-                .map(|variant| variant.field_types(self.db))
+                .map(|variant| variant.field_types_at(self.db, args))
                 .unwrap_or_default(),
+
             _ => Vec::new(),
         }
     }

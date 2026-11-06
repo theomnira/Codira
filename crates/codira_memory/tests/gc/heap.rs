@@ -97,7 +97,10 @@ fn struct_field_holding_an_array_keeps_the_array_alive() {
         gc.alloc(&leaf);
     }
 
-    assert!(gc.collect(), "the unreachable leaves are collected");
+    assert!(
+        gc.collect_blocking().unwrap().reclaimed_anything(),
+        "the unreachable leaves are collected"
+    );
     for (index, element) in elements.iter().enumerate() {
         assert_eq!(unsafe { read::<i64>(*element, 0) }, 100 + index as i64);
     }
@@ -110,10 +113,10 @@ fn struct_field_holding_an_array_keeps_the_array_alive() {
     );
 
     // Nothing else is reclaimable
-    assert!(!gc.collect());
+    assert!(!gc.collect_blocking().unwrap().reclaimed_anything());
 
     drop(root);
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(gc.stats().allocated_memory, 0);
 }
 
@@ -146,7 +149,7 @@ fn references_inside_inline_value_structs_are_traced() {
     }
 
     assert!(
-        !gc.collect(),
+        !gc.collect_blocking().unwrap().reclaimed_anything(),
         "both leaves are reachable through value structs"
     );
     assert_eq!(unsafe { read::<i64>(a, 0) }, 7);
@@ -174,9 +177,9 @@ fn arrays_of_value_structs_trace_their_references() {
     }
     unsafe { array.set_length(4) };
 
-    assert!(!gc.collect());
+    assert!(!gc.collect_blocking().unwrap().reclaimed_anything());
     drop(root);
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(gc.stats().allocated_memory, 0);
 }
 
@@ -199,13 +202,13 @@ fn large_objects_are_allocated_and_freed() {
 
     let committed = gc.committed_bytes();
     assert!(committed >= 3 * 4000);
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     assert!(gc.committed_bytes() < committed);
     assert_eq!(unsafe { read::<i64>(rooted.handle(), 4792) }, 0x5eed);
     assert_eq!(gc.stats().allocated_memory, big.value_layout().size());
 
     drop(rooted);
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(gc.stats().allocated_memory, 0);
 }
 
@@ -217,14 +220,14 @@ fn freed_cells_are_reused() {
     for _ in 0..10_000 {
         gc.alloc(&node);
     }
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     let committed = gc.committed_bytes();
 
     for _ in 0..10 {
         for _ in 0..10_000 {
             gc.alloc(&node);
         }
-        assert!(gc.collect());
+        assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     }
     assert_eq!(
         gc.committed_bytes(),
@@ -277,7 +280,7 @@ fn allocation_from_many_threads() {
         THREADS * PER_THREAD * object_bytes
     );
 
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     let kept: usize = rooted.iter().map(Vec::len).sum();
     assert_eq!(kept, THREADS * PER_THREAD / 10);
     assert_eq!(gc.stats().allocated_memory, kept * object_bytes);
@@ -288,7 +291,7 @@ fn allocation_from_many_threads() {
     }
 
     drop(rooted);
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(gc.stats().allocated_memory, 0);
 }
 
@@ -308,7 +311,7 @@ fn heap_outlives_thread_caches_and_vice_versa() {
             for _ in 0..1000 {
                 second.alloc(&node);
             }
-            assert!(second.collect());
+            assert!(second.collect_blocking().unwrap().reclaimed_anything());
         });
     });
 
@@ -323,7 +326,7 @@ fn heap_outlives_thread_caches_and_vice_versa() {
             }
         });
     });
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(gc.stats().allocated_memory, 0);
 }
 
@@ -382,7 +385,7 @@ fn heap_limit_exhaustion_is_an_error() {
 
     // Releasing the roots makes room again
     drop(kept);
-    assert!(gc.collect());
+    assert!(gc.collect_blocking().unwrap().reclaimed_anything());
     gc.try_alloc(&leaf)
         .expect("memory is available after a collection");
 

@@ -23,13 +23,21 @@ use crate::{
         op, Substitution, Ty, TyKind, TypableDef, TypeWalk,
     },
     type_ref::LocalTypeRefId,
-    BinaryOp, BuiltinFn, CallableDef, Function, HirDatabase, HirDisplay, Name, Path, Trait,
+    BinaryOp, BuiltinFn, CallableDef, Function, HirDatabase, HirDisplay, Name, Path, StringOp,
+    Trait,
 };
 
+mod array_methods;
 mod closures;
 mod effects;
 mod exhaustive;
+mod format;
+mod pipelines;
 mod place_expr;
+mod propagate;
+pub use propagate::{error_conversions, main_result, result_variants, MainResult};
+pub use tasks::{group_shape, GroupShape};
+mod strings;
 mod tasks;
 mod type_variable;
 mod unify;
@@ -99,6 +107,9 @@ pub struct InferenceResult {
     /// `T` used where a `T?` is expected. Maps each such expression to the
     /// optional type it becomes; the expression's own type stays `T`.
     pub(crate) optional_wraps: FxHashMap<ExprId, Ty>,
+    /// `str` expressions used where a `String` is expected, which become a
+    /// `String` copy of the text. The expression's own type stays `str`.
+    pub(crate) string_conversions: FxHashSet<ExprId>,
 
     /// The enum variant each `Shape.Circle(..)`/`Shape.Point` expression
     /// constructs.
@@ -107,6 +118,12 @@ pub struct InferenceResult {
     /// The enum variant each `Shape.Circle(..)`/`Shape.Point` pattern
     /// matches.
     pub(crate) variant_pats: FxHashMap<PatId, EnumVariant>,
+    /// For each `x?`, the type its early return produces: the result type
+    /// of the function or closure it returns from.
+    pub(crate) propagations: FxHashMap<ExprId, Ty>,
+    /// For each `x?` whose error is wrapped on the way out, the variant of
+    /// the function's error enum that wraps it (see `infer::propagate`).
+    pub(crate) propagation_wraps: FxHashMap<ExprId, EnumVariant>,
     /// For each call of a generic function -- a free function, a method or
     /// an associated function -- the types its generic parameters stand for
     /// at that call, in the order of the callee's
@@ -118,6 +135,13 @@ pub struct InferenceResult {
     /// caller's instance into them (see [`InferenceResult::map_types`])
     /// makes them concrete.
     pub(crate) instantiations: FxHashMap<ExprId, Substitution>,
+
+    /// For each use of an object as an iterator -- `for x in it`, keyed by
+    /// the `for` expression, and `it.iter()`, keyed by that call -- the
+    /// `next(self) -> T?` method each element is pulled with. Its
+    /// instantiation, for a generic class, is in `instantiations` under the
+    /// same expression.
+    pub(crate) iterator_nexts: FxHashMap<ExprId, FunctionId>,
 
     /// Interned Unknown to return references to.
     standard_types: InternedStandardTypes,
@@ -231,6 +255,19 @@ impl InferenceResult {
             .map(|(_, ty)| ty)
             .chain(self.type_of_pat.iter().map(|(_, ty)| ty))
             .chain(self.optional_wraps.values())
+            .chain(self.propagations.values())
+    }
+
+    /// The type `x?` returns early with (the enclosing result type), if
+    /// `expr` is an `x?`.
+    pub fn propagation(&self, expr: ExprId) -> Option<&Ty> {
+        self.propagations.get(&expr)
+    }
+
+    /// The variant of the enclosing function's error enum that `expr`, an
+    /// `x?`, wraps `x`'s error in, if it is wrapped.
+    pub fn propagation_wrap(&self, expr: ExprId) -> Option<EnumVariant> {
+        self.propagation_wraps.get(&expr).copied()
     }
 
     /// The enum variant `expr` constructs, if it is `Shape.Circle(..)` or
@@ -250,12 +287,37 @@ impl InferenceResult {
         self.optional_wraps.get(&expr)
     }
 
+    /// Whether `expr`, a `str`, is converted to a `String` where it is
+    /// used (see `string_conversions`).
+    pub fn is_string_conversion(&self, expr: ExprId) -> bool {
+        self.string_conversions.contains(&expr)
+    }
+
     /// The types a call of a generic function instantiated the callee's
     /// generic parameters with, in the order of the callee's
     /// [`Function::generic_environment`]. `None` when `call` does not call
     /// a generic function.
     pub fn instantiation(&self, call: ExprId) -> Option<&Substitution> {
         self.instantiations.get(&call)
+    }
+
+    /// The `next` method an iterator object is pulled with, when `expr` is
+    /// a `for` loop over such an object or `it.iter()` on one (see
+    /// `ty::infer::pipelines`).
+    pub fn iterator_next(&self, expr: ExprId) -> Option<Function> {
+        self.iterator_nexts.get(&expr).map(|&id| Function::from(id))
+    }
+
+    /// Every use of an object as an iterator, with its `next` method, in
+    /// arena order.
+    pub fn iterator_nexts(&self) -> Vec<(ExprId, Function)> {
+        let mut uses: Vec<_> = self
+            .iterator_nexts
+            .iter()
+            .map(|(&e, &f)| (e, Function::from(f)))
+            .collect();
+        uses.sort_by_key(|(e, _)| e.into_raw());
+        uses
     }
 
     /// This result with `f` applied to every type it records: the type of
@@ -294,8 +356,15 @@ impl InferenceResult {
                 .iter()
                 .map(|(expr, ty)| (*expr, f(ty)))
                 .collect(),
+            string_conversions: self.string_conversions.clone(),
             variant_exprs: self.variant_exprs.clone(),
             variant_pats: self.variant_pats.clone(),
+            propagations: self
+                .propagations
+                .iter()
+                .map(|(expr, ty)| (*expr, f(ty)))
+                .collect(),
+            propagation_wraps: self.propagation_wraps.clone(),
             standard_types: InternedStandardTypes::default(),
             closures: self
                 .closures
@@ -312,6 +381,7 @@ impl InferenceResult {
             fn_values: self.fn_values.clone(),
             indirect_calls: self.indirect_calls.clone(),
             field_calls: self.field_calls.clone(),
+            iterator_nexts: self.iterator_nexts.clone(),
         }
     }
 
@@ -436,14 +506,20 @@ struct InferenceResultBuilder<'a> {
     field_calls: FxHashSet<ExprId>,
     /// Expressions implicitly wrapped into an optional
     optional_wraps: FxHashMap<ExprId, Ty>,
+    string_conversions: FxHashSet<ExprId>,
 
     /// Variant constructions and variant patterns (see `InferenceResult`).
     variant_exprs: FxHashMap<ExprId, EnumVariant>,
     pat_variants: FxHashMap<PatId, EnumVariant>,
+    /// See [`InferenceResult::propagations`].
+    propagations: FxHashMap<ExprId, Ty>,
+    propagation_wraps: FxHashMap<ExprId, EnumVariant>,
     /// See [`InferenceResult::instantiations`]; the callee is kept until
     /// `resolve_all` so that a parameter no argument determined can be
     /// reported by name.
     instantiations: FxHashMap<ExprId, (Function, Substitution)>,
+    /// See [`InferenceResult::iterator_nexts`].
+    iterator_nexts: FxHashMap<ExprId, FunctionId>,
 
     /// The bounds that hold in the body: what its type parameters
     /// implement (see `crate::traits`).
@@ -475,9 +551,13 @@ impl<'a> InferenceResultBuilder<'a> {
             field_calls: FxHashSet::default(),
 
             optional_wraps: FxHashMap::default(),
+            string_conversions: FxHashSet::default(),
             variant_exprs: FxHashMap::default(),
             pat_variants: FxHashMap::default(),
+            propagations: FxHashMap::default(),
+            propagation_wraps: FxHashMap::default(),
             instantiations: FxHashMap::default(),
+            iterator_nexts: FxHashMap::default(),
             bounds: match body.owner() {
                 DefWithBodyId::FunctionId(f) => db.function_bounds(f),
             },
@@ -682,6 +762,9 @@ impl InferenceResultBuilder<'_> {
         if let Some(wrapped) = self.try_wrap_optional(expr, &ty, &expected.ty) {
             return wrapped;
         }
+        if let Some(converted) = self.try_convert_to_string(expr, &ty, &expected.ty) {
+            return converted;
+        }
         let ty = if !self.coerce(&ty, &expected.ty) {
             self.diagnostics.push(InferenceDiagnostic::MismatchedTypes {
                 expected: expected.ty.clone(),
@@ -791,6 +874,12 @@ impl InferenceResultBuilder<'_> {
                         self.check_captured_assignment(tgt_expr, *lhs);
                         self.check_immutable_assignment(tgt_expr, *lhs);
                     };
+                    // `+`, `+=` and comparisons on `String` and `str`.
+                    if let Some(ty) = self.infer_string_binary_op(tgt_expr, *op, *rhs, &lhs_ty) {
+                        let ty = self.resolve_ty_as_far_as_possible(ty);
+                        self.set_expr_type(tgt_expr, ty.clone());
+                        return ty;
+                    }
                     let rhs_expected = op::binary_op_rhs_expectation(*op, lhs_ty.clone());
                     if matches!(lhs_ty.interned(), TyKind::TypeParam(..))
                         && rhs_expected.is_unknown()
@@ -810,7 +899,7 @@ impl InferenceResultBuilder<'_> {
                     }
                     let lhs_is_optional =
                         matches!(self.normalize(&lhs_ty).interned(), TyKind::Optional(_));
-                    let rhs_ty = if lhs_is_optional {
+                    let rhs_ty = if lhs_is_optional || lhs_ty.is_string() {
                         self.infer_expr_coerce(*rhs, &Expectation::has_type(rhs_expected))
                     } else {
                         self.infer_expr(*rhs, &Expectation::has_type(rhs_expected))
@@ -818,8 +907,8 @@ impl InferenceResultBuilder<'_> {
                     if lhs_is_optional {
                         self.check_optional_comparison(tgt_expr, *op, &lhs_ty, *rhs);
                     }
-                    if let TyKind::Enum(e, _) = self.normalize(&lhs_ty).interned() {
-                        self.check_enum_comparison(tgt_expr, *op, *e);
+                    if let TyKind::Enum(e, args) = self.normalize(&lhs_ty).interned().clone() {
+                        self.check_enum_comparison(tgt_expr, *op, e, &args);
                     }
                     op::binary_op_return_ty(*op, rhs_ty)
                 }
@@ -895,10 +984,17 @@ impl InferenceResultBuilder<'_> {
                 pat,
                 iterable,
                 body,
-            } => self.infer_for_expr(*pat, *iterable, *body),
+            } => self.infer_for_expr(tgt_expr, *pat, *iterable, *body),
             Expr::Match { expr, arms, source } => {
                 self.infer_match(tgt_expr, *expr, arms, *source, expected)
             }
+            Expr::Propagate { expr } => self.infer_propagate(tgt_expr, *expr),
+            Expr::Format {
+                value,
+                width,
+                precision,
+                ..
+            } => self.infer_format(*value, *width, *precision),
             Expr::Unwrap { expr } => {
                 let inner_ty = self.infer_expr(*expr, &Expectation::none());
                 match self.normalize(&inner_ty).interned() {
@@ -929,7 +1025,9 @@ impl InferenceResultBuilder<'_> {
                 self.infer_range_bounds(*start, *end);
                 self.diagnostics.push(InferenceDiagnostic::ExprError {
                     id: tgt_expr.into(),
-                    message: "a range can only be used as the iterable of a `for` loop for now; there is no range value type yet"
+                    message: "a range can only be used as the iterable of a `for` loop or as the \
+                              source of a pipeline (`(0..n).map(f).sum()`) for now; there is no \
+                              range value type yet"
                         .to_string(),
                 });
                 error_type()
@@ -994,7 +1092,7 @@ impl InferenceResultBuilder<'_> {
             }
             Expr::Field { expr, name } => {
                 if let Some(e) = self.enum_named_by(tgt_expr, *expr) {
-                    self.infer_variant_construction(tgt_expr, *expr, e, name, None)
+                    self.infer_variant_construction(tgt_expr, *expr, e, name, None, expected)
                 } else {
                     let receiver_ty = self.infer_expr(*expr, &Expectation::none());
                     if let Some((field_ty, is_visible)) =
@@ -1116,8 +1214,19 @@ impl InferenceResultBuilder<'_> {
 
                 TyKind::Tuple(elem_tys.len(), elem_tys.into_iter().collect()).intern()
             }
+            Expr::Index { base, index } if matches!(self.body[*index], Expr::Range { .. }) => {
+                let Expr::Range { start, end, .. } = self.body[*index] else {
+                    unreachable!("matched above")
+                };
+                self.infer_array_slice(*base, start, end, expected)
+            }
             Expr::Index { base, index } => {
-                let elem_ty = if expected.ty.is_unknown() {
+                // An optional expected type is reached by wrapping the
+                // element afterwards (`xs[i]` where an `i64?` is expected),
+                // not by an array of optionals.
+                let expects_optional =
+                    matches!(self.normalize(&expected.ty).interned(), TyKind::Optional(_));
+                let elem_ty = if expected.ty.is_unknown() || expects_optional {
                     self.type_variables.new_type_var()
                 } else {
                     expected.ty.clone()
@@ -1141,6 +1250,7 @@ impl InferenceResultBuilder<'_> {
             Expr::Handle { body, arms } => self.infer_handle(tgt_expr, *body, arms, expected),
             Expr::Resume { value } => self.infer_resume(tgt_expr, *value),
             Expr::Scope { body } => self.infer_expr_coerce(*body, expected),
+            Expr::Group { body } => self.infer_group(tgt_expr, *body),
             Expr::Spawn { call } => self.infer_spawn(*call),
             Expr::ChannelSend { channel, value } => {
                 self.infer_channel_send(tgt_expr, *channel, *value)
@@ -1297,7 +1407,7 @@ impl InferenceResultBuilder<'_> {
         receiver: ExprId,
         args: &[ExprId],
         method_name: &Name,
-        _expected: &Expectation,
+        expected: &Expectation,
     ) -> Ty {
         // If the method name is missing from the AST we simply return an error type
         // since an error would have already been emitted by the AST generation.
@@ -1317,8 +1427,19 @@ impl InferenceResultBuilder<'_> {
         // is inferred as a value: a record struct's name is not a value, so
         // inferring it would report a spurious "mismatched struct literal"
         // and then a "method does not exist" on top of it.
-        if let Some(ty) = self.infer_static_member_call(tgt_expr, receiver, args, method_name) {
+        if let Some(ty) =
+            self.infer_static_member_call(tgt_expr, receiver, args, method_name, expected)
+        {
             return ty;
+        }
+
+        // `(a..b).map(f)`: a range is the source of a pipeline.
+        if let (Expr::Range { start, end, .. }, Some(op)) = (
+            &self.body[receiver],
+            method_name.as_str().and_then(crate::PipelineOp::from_name),
+        ) {
+            let bounds = (*start, *end);
+            return self.infer_range_pipeline_call(tgt_expr, receiver, bounds, op, args);
         }
 
         let receiver_ty = self.infer_expr(receiver, &Expectation::none());
@@ -1361,6 +1482,18 @@ impl InferenceResultBuilder<'_> {
                     AssociationMode::WithSelf,
                 ) {
                     crate::traits::BoundMethod::Found(method) => method.id,
+                    // Every type has a debug form, generated per
+                    // instantiation.
+                    crate::traits::BoundMethod::NotFound(_)
+                        if matches!(method_name.as_str(), Some("debug_string" | "type_name")) =>
+                    {
+                        let op = if method_name.as_str() == Some("type_name") {
+                            crate::StringOp::TypeName
+                        } else {
+                            crate::StringOp::DebugString
+                        };
+                        return self.infer_string_method(tgt_expr, op, &receiver_ty, args);
+                    }
                     other => {
                         for &arg in args {
                             self.infer_expr(arg, &Expectation::none());
@@ -1410,6 +1543,20 @@ impl InferenceResultBuilder<'_> {
                 }
             }
             Err(None) => {
+                // `s.split(sep).map(f).count()`: the pieces of a string as
+                // a pipeline, when the chain needs one.
+                if self.starts_text_pipeline(tgt_expr, receiver) {
+                    let op = method_name
+                        .as_str()
+                        .and_then(crate::PipelineOp::from_name)
+                        .expect("a pipeline operation");
+                    return self.infer_pipeline_method(
+                        tgt_expr,
+                        op,
+                        &TyKind::String.intern(),
+                        args,
+                    );
+                }
                 // `len()` and friends on arrays and `str` are builtins.
                 if let Some(ty) =
                     self.infer_builtin_method(tgt_expr, &receiver_ty, method_name, args)
@@ -1500,6 +1647,7 @@ impl InferenceResultBuilder<'_> {
         receiver: ExprId,
         args: &[ExprId],
         method_name: &Name,
+        expected: &Expectation,
     ) -> Option<Ty> {
         let Expr::Path(path) = &self.body[receiver] else {
             return None;
@@ -1521,7 +1669,7 @@ impl InferenceResultBuilder<'_> {
             let is_assoc_fn = e.variant(self.db, method_name).is_none()
                 && lookup_method(
                     self.db,
-                    &e.ty(),
+                    &e.ty(self.db),
                     self.module(),
                     method_name,
                     Some(AssociationMode::WithoutSelf),
@@ -1534,6 +1682,7 @@ impl InferenceResultBuilder<'_> {
                     e,
                     method_name,
                     Some(args),
+                    expected,
                 ));
             }
         }
@@ -1544,7 +1693,7 @@ impl InferenceResultBuilder<'_> {
             TypeNs::TypeAliasId(id) => type_for_def(TypableDef::TypeAlias(id.into())),
             TypeNs::PrimitiveType(id) => type_for_def(TypableDef::PrimitiveType(id.into())),
             TypeNs::SelfType(id) => self.db.type_for_impl_self(id),
-            TypeNs::EnumId(id) => Enum::from(id).ty(),
+            TypeNs::EnumId(id) => Enum::from(id).ty(self.db),
             // `T.assoc(..)`: an associated function a bound of `T`
             // declares, such as `T.default()` for `T: Defaultable`.
             TypeNs::GenericParam(param, _) => {
@@ -1935,7 +2084,7 @@ impl InferenceResultBuilder<'_> {
                         self.diagnostics.push(InferenceDiagnostic::ExprError {
                             id: arg.into(),
                             message: format!(
-                                "`{}` cannot print a value of type `{}`: only integers, floats, `bool` and `str` are printable",
+                                "`{}` cannot print a value of type `{}`: only integers, floats, `bool`, `str` and `String` are printable",
                                 builtin.name(),
                                 ty.display(self.db)
                             ),
@@ -1993,6 +2142,18 @@ impl InferenceResultBuilder<'_> {
                 ty
             }
             BuiltinFn::Channel => self.infer_channel_new(tgt_expr, args),
+            BuiltinFn::Cancelled => {
+                if !args.is_empty() {
+                    self.diagnostics.push(InferenceDiagnostic::ExprError {
+                        id: tgt_expr.into(),
+                        message: format!("`cancelled` takes no arguments, found {}", args.len()),
+                    });
+                }
+                for &arg in args {
+                    self.infer_expr(arg, &Expectation::none());
+                }
+                TyKind::Bool.intern()
+            }
             BuiltinFn::ArrayFilled => {
                 if args.len() != 2 {
                     self.diagnostics.push(InferenceDiagnostic::ExprError {
@@ -2007,21 +2168,15 @@ impl InferenceResultBuilder<'_> {
                     }
                     return error_type();
                 }
+                // Any element type: the array holds `n` copies of the value
+                // (of the reference, for a class), written before its length
+                // is, so the collector never sees an unwritten element.
                 let elem_ty = self.infer_expr(args[0], &Expectation::none());
                 self.infer_expr(
                     args[1],
                     &Expectation::has_type(TyKind::Int(IntTy::usize()).intern()),
                 );
                 let elem_ty = self.normalize(&elem_ty);
-                if !is_plain_scalar(&elem_ty) && !elem_ty.is_unknown() {
-                    self.diagnostics.push(InferenceDiagnostic::ExprError {
-                        id: tgt_expr.into(),
-                        message: format!(
-                            "`array_filled` makes an array of integers, floats or `bool`s, not of `{}`",
-                            elem_ty.display(self.db)
-                        ),
-                    });
-                }
                 TyKind::Array(elem_ty).intern()
             }
             BuiltinFn::Select => {
@@ -2104,7 +2259,15 @@ impl InferenceResultBuilder<'_> {
                 }
                 ty
             }
-            BuiltinFn::ArrayLen | BuiltinFn::ArrayUncheckedGet | BuiltinFn::StrLen => {
+            BuiltinFn::String(op @ (StringOp::FromUtf8 | StringOp::TakeUtf8)) => {
+                self.infer_string_free_fn(tgt_expr, op, args)
+            }
+            BuiltinFn::ArrayLen
+            | BuiltinFn::ArrayUncheckedGet
+            | BuiltinFn::StrLen
+            | BuiltinFn::Array(_)
+            | BuiltinFn::String(_)
+            | BuiltinFn::Pipeline(_) => {
                 unreachable!("method builtins are resolved by `infer_builtin_method`")
             }
         }
@@ -2121,7 +2284,23 @@ impl InferenceResultBuilder<'_> {
         args: &[ExprId],
     ) -> Option<Ty> {
         let receiver_ty = self.normalize(receiver_ty);
+        if let Some(op) = strings::string_method(&receiver_ty, method_name.as_str()?) {
+            return Some(self.infer_string_method(tgt_expr, op, &receiver_ty, args));
+        }
         let builtin = match (receiver_ty.interned(), method_name.as_str()?) {
+            (TyKind::Array(elem), name) if crate::ArrayMethod::from_name(name).is_some() => {
+                let method = crate::ArrayMethod::from_name(name).expect("matched above");
+                let elem = elem.clone();
+                return Some(self.infer_array_method(tgt_expr, method, &elem, args));
+            }
+            (TyKind::Iter(elem), name) if crate::PipelineOp::from_name(name).is_some() => {
+                let op = crate::PipelineOp::from_name(name).expect("matched above");
+                let elem = elem.clone();
+                return Some(self.infer_pipeline_method(tgt_expr, op, &elem, args));
+            }
+            (TyKind::Array(_) | TyKind::Struct(..), "iter") => {
+                return self.infer_iter_source(tgt_expr, &receiver_ty, args);
+            }
             (TyKind::Array(_), "len") => BuiltinFn::ArrayLen,
             (TyKind::Array(_), "unchecked_get") => BuiltinFn::ArrayUncheckedGet,
             (TyKind::Str, "len") => BuiltinFn::StrLen,
@@ -2259,7 +2438,7 @@ impl InferenceResultBuilder<'_> {
             // An enum's associated functions come from `extend` blocks; its
             // variants are reached through `Expr::Field`/`Expr::MethodCall`
             // (see `infer_variant_construction`), never through here.
-            TypeNs::EnumId(id) => Enum::from(id).ty(),
+            TypeNs::EnumId(id) => Enum::from(id).ty(self.db),
             // `T.method(..)` on an unconstrained type parameter needs bound
             // resolution (`where T: Trait`) to know what methods exist.
             // Bounds parse but are not yet resolved, so there is nothing to
@@ -2389,11 +2568,18 @@ impl InferenceResultBuilder<'_> {
     fn resolve_all(mut self) -> InferenceResult {
         // FIXME resolve obligations as well (use Guidance if necessary)
         //let mut tv_stack = Vec::new();
+        // An unknown type nested in another (a channel no operation uses
+        // is `Channel[?]`) is reported only when the body has no other
+        // error: then nothing else stops code generation from meeting it,
+        // while after an error it is usually that error's echo.
+        let clean = self.diagnostics.is_empty();
         let mut expr_types = std::mem::take(&mut self.type_of_expr);
         for (expr, ty) in expr_types.iter_mut() {
             let was_unknown = ty.is_unknown() || contains_unknown(ty);
             let resolved = self.type_variables.resolve_ty_completely(ty.clone());
-            if !was_unknown && is_ambiguous(&resolved) {
+            if !was_unknown
+                && (is_ambiguous(&resolved) || (clean && contains_unknown(&resolved)))
+            {
                 self.report_expr_inference_failure(expr);
             }
             *ty = resolved;
@@ -2412,16 +2598,25 @@ impl InferenceResultBuilder<'_> {
         for ty in optional_wraps.values_mut() {
             *ty = self.type_variables.resolve_ty_completely(ty.clone());
         }
+        let mut propagations = std::mem::take(&mut self.propagations);
+        for ty in propagations.values_mut() {
+            *ty = self.type_variables.resolve_ty_completely(ty.clone());
+        }
         let mut pat_types = std::mem::take(&mut self.type_of_pat);
         for (pat, ty) in pat_types.iter_mut() {
             let was_unknown = ty.is_unknown() || contains_unknown(ty);
             let resolved = self.type_variables.resolve_ty_completely(ty.clone());
-            if !was_unknown && is_ambiguous(&resolved) {
+            if !was_unknown
+                && (is_ambiguous(&resolved) || (clean && contains_unknown(&resolved)))
+            {
                 self.report_pat_inference_failure(pat);
             }
             *ty = resolved;
         }
         self.check_capture_types(&closures, &pat_types);
+        self.check_array_methods(&expr_types);
+        self.check_pipelines(&expr_types, &closures);
+        self.check_formats(&expr_types);
         let instantiations = self.resolve_instantiations();
         InferenceResult {
             //            field_resolutions: self.field_resolutions,
@@ -2440,9 +2635,13 @@ impl InferenceResultBuilder<'_> {
             field_calls: self.field_calls,
 
             optional_wraps,
+            string_conversions: self.string_conversions,
             variant_exprs: self.variant_exprs,
             variant_pats: self.pat_variants,
+            propagations,
+            propagation_wraps: self.propagation_wraps,
             instantiations,
+            iterator_nexts: self.iterator_nexts,
         }
     }
 
@@ -2574,6 +2773,13 @@ impl InferenceResultBuilder<'_> {
                     let ty = if let Some(expr) = initializer {
                         self.infer_expr_coerce(*expr, &Expectation::has_type(decl_ty))
                     } else {
+                        // Neither a type nor a value: nothing can say what
+                        // the binding holds. Its type is the error type, so
+                        // nothing later reports it, and code generation
+                        // used to meet it.
+                        if type_ref.is_none() {
+                            self.report_pat_inference_failure(*pat);
+                        }
                         decl_ty
                     };
 
@@ -2927,8 +3133,19 @@ impl InferenceResultBuilder<'_> {
         e: Enum,
         name: &Name,
         args: Option<&[ExprId]>,
+        expected: &Expectation,
     ) -> Ty {
-        let enum_ty = e.ty();
+        // `Result.Ok(1)` names `Result`, which is `Result[T, E]` with the
+        // enum's own parameters; each construction gets fresh variables for
+        // them, which the payload and the expected type then decide
+        // (`Result.Err(e)` returned from a `-> Result[i64, str]` learns its
+        // `T` only from the return type).
+        let enum_ty = self.instantiate_type(&e.ty(self.db));
+        if matches!(self.normalize(&expected.ty).interned(), TyKind::Enum(other, _) if *other == e)
+        {
+            self.unify(&enum_ty, &expected.ty);
+        }
+        let enum_args = crate::mono::enum_args(&enum_ty);
         // The receiver names the type; give it that type so no later stage
         // sees `Unknown` there.
         self.set_expr_type(receiver, enum_ty.clone());
@@ -2943,7 +3160,7 @@ impl InferenceResultBuilder<'_> {
             }
             return error_type();
         };
-        let field_tys = variant.field_types(self.db);
+        let field_tys = variant.field_types_at(self.db, &enum_args);
         let shown = variant.display(self.db).to_string();
         match (args, variant.kind(self.db)) {
             (None, VariantKind::Unit) | (Some(_), VariantKind::Tuple | VariantKind::Record)
@@ -3054,9 +3271,17 @@ impl InferenceResultBuilder<'_> {
                 return;
             }
         };
-        match ty.interned() {
-            TyKind::Enum(e, _) if *e == variant.parent() => {}
-            TyKind::Unknown => {}
+        // The value's type decides the payload types: in a `Result[i64,
+        // str]`, `Result.Ok(n)` binds an `i64`. A value whose type is not
+        // known yet is given the enum's type, with fresh arguments.
+        let enum_args = match self.normalize(ty).interned().clone() {
+            TyKind::Enum(e, args) if e == variant.parent() => args,
+            TyKind::Unknown => Substitution::empty(),
+            TyKind::InferenceVar(InferTy::Type(_)) => {
+                let fresh = self.instantiate_type(&variant.parent().ty(self.db));
+                self.unify(&fresh, ty);
+                crate::mono::enum_args(&fresh)
+            }
             _ => {
                 self.diagnostics.push(InferenceDiagnostic::ExprError {
                     id: pat.into(),
@@ -3071,9 +3296,9 @@ impl InferenceResultBuilder<'_> {
                 }
                 return;
             }
-        }
+        };
         let shown = variant.display(self.db).to_string();
-        let field_tys = variant.field_types(self.db);
+        let field_tys = variant.field_types_at(self.db, &enum_args);
         let unit = variant.kind(self.db) == VariantKind::Unit;
         if has_parens && unit {
             self.diagnostics.push(InferenceDiagnostic::ExprError {
@@ -3107,7 +3332,14 @@ impl InferenceResultBuilder<'_> {
     /// `==` and `!=` on enums: equal when the variants are and their
     /// payloads are. Only enums whose payloads are all numbers or `bool`s
     /// compare (see `Enum::is_comparable`); enums are not ordered.
-    fn check_enum_comparison(&mut self, tgt_expr: ExprId, op: BinaryOp, e: Enum) {
+    fn check_enum_comparison(
+        &mut self,
+        tgt_expr: ExprId,
+        op: BinaryOp,
+        e: Enum,
+        args: &Substitution,
+    ) {
+        let args: Substitution = args.iter().map(|arg| self.normalize(arg)).collect();
         let BinaryOp::CmpOp(cmp) = op else {
             return;
         };
@@ -3119,7 +3351,12 @@ impl InferenceResultBuilder<'_> {
                     "enums (`{name}`) are not ordered; compare them with `==`/`!=` or `match` on them"
                 ),
             });
-        } else if !e.is_comparable(self.db) {
+        } else if !e.is_comparable(self.db, &args, |ty| {
+            matches!(
+                ty.interned(),
+                TyKind::InferenceVar(InferTy::Int(_) | InferTy::Float(_))
+            )
+        }) {
             self.diagnostics.push(InferenceDiagnostic::ExprError {
                 id: tgt_expr.into(),
                 message: format!(
@@ -3166,27 +3403,40 @@ impl InferenceResultBuilder<'_> {
     /// Infers `for pat in iterable { body }`.
     ///
     /// The iterable is a range, whose element is its bounds' integer type,
-    /// or an array, whose element is the array's. The pattern must be
-    /// irrefutable -- a binding, `_` or a tuple of those -- because there is
-    /// no "skip this element" path for a pattern that fails to match.
-    fn infer_for_expr(&mut self, pat: PatId, iterable: ExprId, body: ExprId) -> Ty {
+    /// an array, whose element is the array's, a lazy pipeline (`Iter[T]`)
+    /// or an iterator object (a class with `next(self) -> T?`; see
+    /// `pipelines`). The pattern must be irrefutable -- a binding, `_` or a
+    /// tuple of those -- because there is no "skip this element" path for a
+    /// pattern that fails to match.
+    fn infer_for_expr(
+        &mut self,
+        tgt_expr: ExprId,
+        pat: PatId,
+        iterable: ExprId,
+        body: ExprId,
+    ) -> Ty {
         let elem_ty = if let Expr::Range { start, end, .. } = self.body[iterable] {
             self.infer_range_bounds(start, end)
         } else {
             let iterable_ty = self.infer_expr(iterable, &Expectation::none());
-            match self.normalize(&iterable_ty).interned() {
-                TyKind::Array(elem) => elem.clone(),
+            let iterable_ty = self.normalize(&iterable_ty);
+            match iterable_ty.interned() {
+                TyKind::Array(elem) | TyKind::Iter(elem) => elem.clone(),
                 TyKind::Unknown => error_type(),
-                _ => {
-                    self.diagnostics.push(InferenceDiagnostic::ExprError {
-                        id: iterable.into(),
-                        message: format!(
-                            "cannot iterate over a value of type `{}`: a `for` loop iterates over a range (`a..b`, `a..=b`) or an array",
-                            iterable_ty.display(self.db)
-                        ),
-                    });
-                    error_type()
-                }
+                _ => match self.infer_iterator_object(tgt_expr, &iterable_ty) {
+                    pipelines::IteratorObject::Yields(elem) => elem,
+                    pipelines::IteratorObject::Refused => error_type(),
+                    pipelines::IteratorObject::No => {
+                        self.diagnostics.push(InferenceDiagnostic::ExprError {
+                            id: iterable.into(),
+                            message: format!(
+                                "cannot iterate over a value of type `{}`: a `for` loop iterates over a range (`a..b`, `a..=b`), an array, a pipeline (`xs.iter().map(f)`) or an object of a class with a method `next(self) -> T?`",
+                                iterable_ty.display(self.db)
+                            ),
+                        });
+                        error_type()
+                    }
+                },
             }
         };
 
@@ -3254,6 +3504,7 @@ fn is_printable(ty: &Ty) -> bool {
             | TyKind::Float(_)
             | TyKind::Bool
             | TyKind::Str
+            | TyKind::String
             | TyKind::Unknown
             | TyKind::InferenceVar(InferTy::Int(_) | InferTy::Float(_))
     )
@@ -3388,6 +3639,7 @@ mod diagnostics {
         type_ref::LocalTypeRefId,
         ExprId, Function, HirDatabase, IntTy, Name, PatId, Ty,
     };
+    use codira_syntax::{AstNode, SyntaxNodePtr};
 
     #[derive(Debug, PartialEq, Eq, Clone)]
     pub(crate) enum InferenceDiagnostic {
@@ -3537,8 +3789,27 @@ mod diagnostics {
             owner: Function,
             sink: &mut DiagnosticSink<'_>,
         ) {
-            let file = owner.source(db).file_id;
+            let source = owner.source(db);
+            let file = source.file_id;
             let body = owner.body_source_map(db);
+            // An expression or type the compiler made itself (desugaring,
+            // `self` types, error recovery after a syntax error) has no
+            // syntax of its own. Its diagnostic is still an error, so it is
+            // reported on the function rather than dropped (or unwrapped).
+            let owner_node = SyntaxNodePtr::new(source.value.syntax());
+            let expr_node = |id: ExprId| -> SyntaxNodePtr {
+                body.expr_syntax(id).map_or_else(
+                    || owner_node.clone(),
+                    |ptr| {
+                        ptr.value
+                            .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr())
+                    },
+                )
+            };
+            let type_node = |id: LocalTypeRefId| -> SyntaxNodePtr {
+                body.type_ref_syntax(id)
+                    .map_or_else(|| owner_node.clone(), |type_ref| type_ref.syntax_node_ptr())
+            };
             match self {
                 InferenceDiagnostic::UnresolvedValue { id } => {
                     let expr = match id {
@@ -3575,15 +3846,21 @@ mod diagnostics {
                         sink.push(TypeAnnotationNeeded { file, expr });
                     }
                 }
-                InferenceDiagnostic::UnresolvedType { id } => {
-                    let type_ref = body.type_ref_syntax(*id).expect("If this is not found, it must be a type ref generated by the library which should never be unresolved.");
-                    sink.push(UnresolvedType { file, type_ref });
-                }
+                InferenceDiagnostic::UnresolvedType { id } => match body.type_ref_syntax(*id) {
+                    Some(type_ref) => sink.push(UnresolvedType { file, type_ref }),
+                    // A type the compiler wrote: `self` where no type is
+                    // being extended.
+                    None => sink.push(ExprError {
+                        file,
+                        node: owner_node.clone(),
+                        message: "undefined type".to_string(),
+                    }),
+                },
                 InferenceDiagnostic::TraitAsType { id } => {
-                    let type_ref = body.type_ref_syntax(*id).expect("If this is not found, it must be a type ref generated by the library which should never be unresolved.");
+                    let type_ref = type_node(*id);
                     sink.push(crate::diagnostics::TraitError {
                         file,
-                        node: type_ref.syntax_node_ptr(),
+                        node: type_ref,
                         message: "a trait is not a type: values of a trait type (dynamic dispatch) are not \
                           supported; take a generic parameter bounded by the trait instead \
                           (`[T: Trait]`)"
@@ -3591,34 +3868,32 @@ mod diagnostics {
                     });
                 }
                 InferenceDiagnostic::DualOfNonSession { id } => {
-                    let type_ref = body.type_ref_syntax(*id).expect("If this is not found, it must be a type ref generated by the library which should never be unresolved.");
+                    let type_ref = type_node(*id);
                     sink.push(crate::diagnostics::SessionError {
                         file,
-                        node: type_ref.syntax_node_ptr(),
+                        node: type_ref,
                         message: "`dual` applies to a session type: `dual S` is the other \
                                   endpoint's view of session `S`"
                             .to_string(),
                     });
                 }
-                InferenceDiagnostic::CyclicType { id } => {
-                    let type_ref = body.type_ref_syntax(*id).expect("If this is not found, it must be a type ref generated by the library which should never be unresolved.");
-                    sink.push(CyclicType { file, type_ref });
-                }
+                InferenceDiagnostic::CyclicType { id } => match body.type_ref_syntax(*id) {
+                    Some(type_ref) => sink.push(CyclicType { file, type_ref }),
+                    None => sink.push(ExprError {
+                        file,
+                        node: owner_node.clone(),
+                        message: "cyclic type".to_string(),
+                    }),
+                },
                 InferenceDiagnostic::TypeIsPrivate { id } => {
-                    let type_ref = body.type_ref_syntax(*id).expect("If this is not found, it must be a type ref generated by the library which should never be unresolved.");
+                    let type_ref = type_node(*id);
                     sink.push(PrivateAccess {
                         file,
-                        expr: type_ref.syntax_node_ptr(),
+                        expr: type_ref,
                     });
                 }
                 InferenceDiagnostic::PathIsPrivate { id } => {
-                    let expr_syntax = body
-                        .expr_syntax(*id)
-                        .map(|ptr| {
-                            ptr.value
-                                .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr())
-                        })
-                        .expect("could not resolve expression to syntax node");
+                    let expr_syntax = expr_node(*id);
                     sink.push(PrivateAccess {
                         file,
                         expr: expr_syntax,
@@ -3629,11 +3904,7 @@ mod diagnostics {
                     expected,
                     found,
                 } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(ParameterCountMismatch {
                         file,
                         expr,
@@ -3642,11 +3913,7 @@ mod diagnostics {
                     });
                 }
                 InferenceDiagnostic::ExpectedFunction { id, found } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(ExpectedFunction {
                         file,
                         expr,
@@ -3658,11 +3925,7 @@ mod diagnostics {
                     found,
                     expected,
                 } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(MismatchedType {
                         file,
                         expr,
@@ -3675,11 +3938,7 @@ mod diagnostics {
                     then_ty,
                     else_ty,
                 } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(IncompatibleBranch {
                         file,
                         if_expr: expr,
@@ -3688,11 +3947,7 @@ mod diagnostics {
                     });
                 }
                 InferenceDiagnostic::MissingElseBranch { id, then_ty } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(MissingElseBranch {
                         file,
                         if_expr: expr,
@@ -3700,11 +3955,7 @@ mod diagnostics {
                     });
                 }
                 InferenceDiagnostic::CannotApplyBinaryOp { id, lhs, rhs } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(CannotApplyBinaryOp {
                         file,
                         expr,
@@ -3713,11 +3964,7 @@ mod diagnostics {
                     });
                 }
                 InferenceDiagnostic::CannotApplyUnaryOp { id, ty } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(CannotApplyUnaryOp {
                         file,
                         expr,
@@ -3730,11 +3977,7 @@ mod diagnostics {
                     to,
                     reason,
                 } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(InvalidCast {
                         file,
                         expr,
@@ -3744,16 +3987,8 @@ mod diagnostics {
                     });
                 }
                 InferenceDiagnostic::InvalidLhs { id, lhs } => {
-                    let id = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
-                    let lhs = body
-                        .expr_syntax(*lhs)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let id = expr_node(*id);
+                    let lhs = expr_node(*lhs);
                     sink.push(InvalidLhs {
                         file,
                         expr: id,
@@ -3761,33 +3996,21 @@ mod diagnostics {
                     });
                 }
                 InferenceDiagnostic::ReturnMissingExpression { id } => {
-                    let id = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let id = expr_node(*id);
                     sink.push(ReturnMissingExpression {
                         file,
                         return_expr: id,
                     });
                 }
                 InferenceDiagnostic::BreakOutsideLoop { id } => {
-                    let id = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let id = expr_node(*id);
                     sink.push(BreakOutsideLoop {
                         file,
                         break_expr: id,
                     });
                 }
                 InferenceDiagnostic::BreakWithValueOutsideLoop { id } => {
-                    let id = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let id = expr_node(*id);
                     sink.push(BreakWithValueOutsideLoop {
                         file,
                         break_expr: id,
@@ -3798,11 +4021,7 @@ mod diagnostics {
                     receiver_ty,
                     name,
                 } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(AccessUnknownField {
                         file,
                         expr,
@@ -3815,11 +4034,7 @@ mod diagnostics {
                     expected,
                     found,
                 } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(FieldCountMismatch {
                         file,
                         expr,
@@ -3832,11 +4047,7 @@ mod diagnostics {
                     struct_ty,
                     names,
                 } => {
-                    let fields = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let fields = expr_node(*id);
 
                     sink.push(MissingFields {
                         file,
@@ -3850,11 +4061,7 @@ mod diagnostics {
                     expected,
                     found,
                 } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(MismatchedStructLit {
                         file,
                         expr,
@@ -3882,11 +4089,7 @@ mod diagnostics {
                     });
                 }
                 InferenceDiagnostic::NoFields { id, found } => {
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(NoFields {
                         file,
                         receiver_expr: expr,
@@ -3936,16 +4139,27 @@ mod diagnostics {
                     field_with_same_name,
                     associated_function_with_same_name,
                 } => {
-                    let method_call = body
+                    let source = body
                         .expr_syntax(*id)
-                        .expect("expression missing from source map")
-                        .map(|expr_src| {
-                            expr_src
-                                .left()
-                                .expect("could not retrieve expression from ExprSource")
-                                .cast()
-                                .expect("could not cast expression to method call")
+                        .expect("expression missing from source map");
+                    // A call the compiler wrote -- the `to_string()` of a hole
+                    // in an interpolated literal -- points at the literal,
+                    // which is not a method call: blame the literal.
+                    let cast = source.value.clone().left().and_then(|ptr| ptr.cast());
+                    let Some(cast) = cast else {
+                        sink.push(ExprError {
+                            file,
+                            node: source
+                                .value
+                                .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr()),
+                            message: format!(
+                                "method `{method_name}` does not exist on `{}`",
+                                crate::HirDisplay::display(receiver_ty, db)
+                            ),
                         });
+                        return;
+                    };
+                    let method_call = source.map(|_| cast);
                     sink.push(MethodNotFound {
                         method_call,
                         receiver_ty: receiver_ty.clone(),
@@ -3956,11 +4170,7 @@ mod diagnostics {
                 }
                 InferenceDiagnostic::AccessPrivateField { id, .. } => {
                     // TODO: Add dedicated diagnostic for this
-                    let expr = body
-                        .expr_syntax(*id)
-                        .unwrap()
-                        .value
-                        .either(|it| it.syntax_node_ptr(), |it| it.syntax_node_ptr());
+                    let expr = expr_node(*id);
                     sink.push(PrivateAccess { file, expr });
                 }
                 InferenceDiagnostic::ExprError { id, message } => {

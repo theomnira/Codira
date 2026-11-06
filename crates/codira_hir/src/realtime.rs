@@ -27,13 +27,23 @@
 //!
 //! # Where each effect comes from (today's code generator and runtime)
 //!
+//! Each construct below lowers to calls of runtime functions, and what those
+//! calls can do is read from the runtime function catalogue
+//! (`codira_abi::runtime_functions`, see [`runtime_function_effects`]), the
+//! same declarations both code generators import and the runtime is tested
+//! to register. Marking a runtime function as allocating or blocking there
+//! changes the effects of every construct that calls it here.
+//!
 //! Alloc -- every one of these is a call into the runtime that can also take
 //! the GC heap's lock (Block) and aborts the process when the heap limit or
 //! the machine's memory is exhausted (Panic):
 //!
 //! * constructing a `class` (any garbage-collected struct): a record literal, a
 //!   tuple-constructor call, or a unit value -- the `new` intrinsic;
-//! * an array literal -- `new_array`. Arrays cannot grow today;
+//! * an array literal -- `new_array`; `xs.push(..)`, `insert`, `reserve` and
+//!   `append`, which grow the buffer when it is full (`codira.array_grow`);
+//!   `copy`, `map`, `filter` and slicing `xs[lo..hi]`, which make a new
+//!   array;
 //! * `print`/`println`: the runtime formats numbers into a heap string and
 //!   writes under standard output's lock;
 //! * `channel(n)`, `scope { .. }` (its task bookkeeping; its end waits for
@@ -53,6 +63,8 @@
 //!
 //! Panic (anything that ends the call abnormally):
 //!
+//! * `xs.insert(i, x)` and `xs.remove(i)`, which check `i` like indexing;
+//!   slicing `xs[lo..hi]`, which checks `lo <= hi <= len`;
 //! * `a[i]` and `a[i] = v`: the bounds check calls
 //!   `codira.panic_index_out_of_bounds`. `a.unchecked_get(i)` has no check and
 //!   is the documented escape hatch (an out-of-range index there reads
@@ -105,6 +117,7 @@
 
 use std::sync::Arc;
 
+use codira_abi::runtime_functions::{self as rt, RuntimeFunction};
 use codira_syntax::{
     ast::{self, AstNode, AttributeOwner, NameOwner},
     SyntaxNodePtr,
@@ -201,11 +214,6 @@ impl EffectSet {
     /// The four effects the `@noalloc`/`@nopanic`/`@noblock`/`@realtime`
     /// attributes are about: Alloc, Block, Panic and Unbounded.
     pub const CLASSIC: EffectSet = EffectSet(0b1111);
-    /// A GC allocation: it can take the heap lock and aborts when memory
-    /// runs out.
-    const GC_ALLOC: EffectSet = EffectSet(0b0111);
-    /// `scope` and `spawn`: an allocation that starts concurrent work.
-    const TASKS: EffectSet = EffectSet(0b0010_0111);
     /// Everything that comes from code the analysis cannot see, except
     /// handling secrets: a secret can only reach such code through a
     /// function that itself mentions `secret`, which is counted there.
@@ -248,6 +256,50 @@ impl EffectSet {
             [init @ .., last] => format!("{} and {last}", init.join(", ")),
         }
     }
+}
+
+/// What a call to the runtime function `function` can do, read from the
+/// runtime function catalogue (`codira_abi::runtime_functions`), which also
+/// declares it to both code generators: Alloc when it allocates (on the GC
+/// heap or, on the program's behalf, the system heap), Block when it can wait
+/// for another thread (a lock, a channel, a collection), Panic when it can
+/// end the program, Spawn when it starts tasks. A function that never
+/// returns -- a panic -- is Panic alone: what it does on the way out cannot
+/// affect the program.
+pub fn runtime_function_effects(function: &RuntimeFunction) -> EffectSet {
+    if function.never_returns() {
+        return EffectSet::of(&[Effect::Panic]);
+    }
+    let mut effects = EffectSet::NONE;
+    for (has, effect) in [
+        (function.allocates(), Effect::Alloc),
+        (function.blocks, Effect::Block),
+        (function.can_panic(), Effect::Panic),
+        (function.spawns, Effect::Spawn),
+    ] {
+        if has {
+            effects = effects.union(EffectSet::of(&[effect]));
+        }
+    }
+    effects
+}
+
+/// What a construct that calls these runtime functions can do.
+fn runtime(functions: &[&RuntimeFunction]) -> EffectSet {
+    functions.iter().fold(EffectSet::NONE, |all, f| {
+        all.union(runtime_function_effects(f))
+    })
+}
+
+/// What a construct that calls one of the allocating runtime functions of
+/// `group` can do (every `print` calls some of the print functions, a string
+/// operation that allocates one of the allocating string functions).
+fn runtime_group(group: rt::Group) -> EffectSet {
+    rt::group(group)
+        .filter(|f| f.allocates())
+        .fold(EffectSet::NONE, |all, f| {
+            all.union(runtime_function_effects(f))
+        })
 }
 
 /// One thing a function's own body does that has effects.
@@ -391,6 +443,13 @@ struct Attributes {
     /// The first `@envelope`; later ones are in `extra_envelopes`.
     envelope: Option<(Envelope, ast::Attribute)>,
     extra_envelopes: Vec<ast::Attribute>,
+}
+
+/// The effects `func`'s own attributes rule out (`@noalloc`, `@noblock`, an
+/// `@envelope`, ..): proven for a function with a body, trusted for an
+/// `extern` declaration.
+pub fn declared_forbidden(db: &dyn HirDatabase, func: Function) -> EffectSet {
+    Attributes::of(db, func).forbidden()
 }
 
 impl Attributes {
@@ -576,6 +635,13 @@ impl Collector<'_> {
 
     fn visit(&mut self, expr: ExprId) {
         let body = Arc::clone(&self.frame.body);
+        if self.frame.infer.is_string_conversion(expr) {
+            self.source(
+                expr,
+                runtime(&[&rt::STRING_FROM_BYTES]),
+                "a `str` used as a `String` is copied to the heap",
+            );
+        }
         match &body[expr] {
             // Nothing of their own; their operands are visited below.
             Expr::Missing
@@ -597,13 +663,22 @@ impl Collector<'_> {
             // no arm matches, which only a hot reload that removed an enum
             // variant can produce.) A string-literal arm compares bytes in
             // the runtime without allocating or blocking.
-            | Expr::Match { .. }
+            | Expr::Match { .. } => {}
             // Bounded by construction: the iteration count is fixed before
             // the first iteration, and the counter is not the program's.
-            | Expr::For { .. } => {}
+            // Over an iterator object it is not.
+            Expr::For { .. } => self.iterator_object(expr),
+            // `x?` returns early (a `Result`'s `Err`, or `nil`): an ordinary
+            // return, not a panic. Passing its error on through an
+            // `@error_conversion` calls the conversion on the way out.
+            Expr::Propagate { .. } => {
+                if let Some(conversion) = self.frame.infer.method_resolution(expr) {
+                    self.call(expr, Function::from(conversion));
+                }
+            }
             Expr::Path(_) if self.frame.infer.function_value(expr).is_some() => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::NEW]),
                 "a function used as a value allocates its function value object",
             ),
             Expr::Path(path) => self.unit_struct(expr, path),
@@ -611,9 +686,14 @@ impl Collector<'_> {
             // through a function value is unknown (below); what the literal
             // itself does is allocate. Its body is still visited, which can
             // only over-approximate.
+            // A closure literal an array method compiles in place
+            // (`xs.map(func(x) { .. })`) is no function value: its body is
+            // part of this function, and is visited below.
+            Expr::Closure { .. }
+                if crate::is_inlined_closure_arg(&self.frame.body, &self.frame.infer, expr) => {}
             Expr::Closure { .. } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::NEW]),
                 "a closure allocates its function value object",
             ),
             Expr::Call { .. } | Expr::MethodCall { .. }
@@ -652,7 +732,7 @@ impl Collector<'_> {
             {
                 self.source(
                     expr,
-                    EffectSet::GC_ALLOC,
+                    runtime(&[&rt::SESSION_OPEN]),
                     "opening a session allocates its two channels",
                 );
             }
@@ -662,7 +742,7 @@ impl Collector<'_> {
             {
                 self.source(
                     expr,
-                    EffectSet::of(&[Effect::Block]),
+                    runtime(&[&rt::SESSION_SEND]),
                     "`choose` waits while the other endpoint has not taken the previous message",
                 );
             }
@@ -716,18 +796,38 @@ impl Collector<'_> {
                 {
                     self.division(expr, *lhs, *rhs, *op);
                 }
+                self.string_operator(expr, *lhs, *op);
             }
             Expr::Unwrap { .. } => self.source(
                 expr,
-                EffectSet::of(&[Effect::Panic]),
+                runtime(&[&rt::PANIC]),
                 "postfix `!` panics when the optional is `nil`",
             ),
+            Expr::Format { spec, .. } => self.source(
+                expr,
+                runtime(&[
+                    &rt::STRING_APPEND_FORMAT_INT,
+                    &rt::STRING_APPEND_FORMAT_FLOAT,
+                    &rt::STRING_APPEND_FORMAT_TEXT,
+                ]),
+                format!(
+                    "formatting a hole (`{{..:{}}}`) builds a new `String` on the heap",
+                    spec.text
+                ),
+            ),
+            Expr::Index { index, .. } if matches!(body[*index], Expr::Range { .. }) => {
+                self.source(
+                    expr,
+                    runtime(&[&rt::NEW_ARRAY, &rt::PANIC]),
+                    "slicing allocates a new array, and panics when the range is out of bounds",
+                );
+            }
             Expr::Index { .. } => self.source(
                 expr,
-                EffectSet::of(&[Effect::Panic]),
+                runtime(&[&rt::PANIC_INDEX_OUT_OF_BOUNDS]),
                 "indexing panics when the index is out of range (`unchecked_get` skips the check)",
             ),
-            Expr::Array(_) => self.source(expr, EffectSet::GC_ALLOC, "array literal allocated"),
+            Expr::Array(_) => self.source(expr, runtime(&[&rt::NEW_ARRAY]), "array literal allocated"),
             Expr::Loop { .. } | Expr::While { .. } => self.loop_bound(expr),
             Expr::Perform { .. } => self.source(
                 expr,
@@ -736,29 +836,35 @@ impl Collector<'_> {
             ),
             Expr::Scope { .. } => self.source(
                 expr,
-                EffectSet::TASKS,
+                runtime(&[&rt::SCOPE_BEGIN, &rt::SCOPE_SPAWN, &rt::SCOPE_END]),
                 "`scope` allocates its task bookkeeping and waits for its tasks at the end",
+            ),
+            Expr::Group { .. } => self.source(
+                expr,
+                runtime(&[&rt::GROUP_BEGIN, &rt::GROUP_SPAWN, &rt::GROUP_END, &rt::GROUP_FREE, &rt::NEW_ARRAY]),
+                "`group` waits for its tasks at the end, and allocates its bookkeeping and \
+                 the array of their results",
             ),
             Expr::Spawn { .. } => self.source(
                 expr,
-                EffectSet::TASKS,
+                runtime(&[&rt::SCOPE_SPAWN]),
                 "`spawn` copies the task's arguments to the heap and queues it",
             ),
             Expr::ChannelSend { .. } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::CHANNEL_SEND]),
                 "channel send waits while the channel is full (and may grow its queue)",
             ),
             Expr::ChannelReceive { .. } => self.source(
                 expr,
-                EffectSet::of(&[Effect::Block]),
+                runtime(&[&rt::CHANNEL_RECEIVE]),
                 "channel receive waits while the channel is empty",
             ),
             // Even with `default` a select takes its channels' locks; it
             // also builds its wait list on the heap.
             Expr::Select { arms } => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime(&[&rt::CHANNEL_SELECT]),
                 if arms
                     .iter()
                     .any(|arm| matches!(arm.op, crate::SelectOp::Default))
@@ -771,7 +877,7 @@ impl Collector<'_> {
             ),
             Expr::Offer { .. } => self.source(
                 expr,
-                EffectSet::of(&[Effect::Block]),
+                runtime(&[&rt::SESSION_RECEIVE]),
                 "`offer` waits for the other endpoint's choice",
             ),
         }
@@ -787,7 +893,7 @@ impl Collector<'_> {
         match builtin {
             BuiltinFn::Print | BuiltinFn::Println => self.source(
                 expr,
-                EffectSet::GC_ALLOC,
+                runtime_group(rt::Group::Print),
                 format!(
                     "`{}` formats its arguments on the heap and writes them under standard \
                      output's lock",
@@ -797,14 +903,14 @@ impl Collector<'_> {
             BuiltinFn::Channel => {
                 self.source(
                     expr,
-                    EffectSet::GC_ALLOC,
+                    runtime(&[&rt::CHANNEL_NEW]),
                     "`channel(..)` allocates a channel",
                 );
             }
             BuiltinFn::ArrayFilled => {
                 self.source(
                     expr,
-                    EffectSet::GC_ALLOC,
+                    runtime(&[&rt::NEW_ARRAY]),
                     "`array_filled(..)` allocates an array",
                 );
             }
@@ -813,7 +919,10 @@ impl Collector<'_> {
                 EffectSet::of(&[Effect::Secret]),
                 "`declassify` releases a `secret` value",
             ),
-            BuiltinFn::CtSelect
+            // A load of the running task's cancellation state: no wait, no
+            // allocation.
+            BuiltinFn::Cancelled
+            | BuiltinFn::CtSelect
             | BuiltinFn::Select
             | BuiltinFn::Likely
             | BuiltinFn::Unlikely
@@ -821,6 +930,165 @@ impl Collector<'_> {
             | BuiltinFn::ArrayLen
             | BuiltinFn::ArrayUncheckedGet
             | BuiltinFn::StrLen => {}
+            BuiltinFn::Array(method) => self.array_method(expr, method),
+            BuiltinFn::String(op) => self.string_op(expr, op),
+            BuiltinFn::Pipeline(op) => self.pipeline_op(expr, op),
+        }
+    }
+
+    /// An operation of a lazy pipeline. The fused loop itself neither
+    /// allocates nor panics: only `collect` allocates (the array it
+    /// returns), a closure literal adds what its body does (it is visited
+    /// as part of this function), and a function value passed instead is
+    /// called through. A pipeline over an array or a range is bounded by
+    /// its source; one over an iterator object calls its `next` until it
+    /// returns `nil`, which nothing bounds.
+    fn pipeline_op(&mut self, expr: ExprId, op: crate::PipelineOp) {
+        if op.allocates() {
+            self.source(
+                expr,
+                runtime(&[&rt::NEW_ARRAY, &rt::ARRAY_GROW]),
+                format!("`{}` allocates the array it returns", op.name()),
+            );
+        }
+        if op == crate::PipelineOp::Iter && self.frame.infer.iterator_next(expr).is_some() {
+            self.iterator_object(expr);
+        }
+        if let (Some(index), Expr::MethodCall { args, .. }) =
+            (op.closure_arg(), &self.frame.body[expr])
+        {
+            if let Some(&arg) = args.get(index) {
+                if !crate::is_inlined_closure_literal(&self.frame.body, arg) {
+                    self.source(
+                        expr,
+                        EffectSet::ALL,
+                        format!(
+                            "`{}` calls a function value, whose code the analysis cannot see \
+                             (a closure literal without `return` is compiled in place instead)",
+                            op.name()
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    /// A loop that pulls elements from an iterator object (`for x in it`,
+    /// `it.iter()`): a call of its `next` per element, until it returns
+    /// `nil`.
+    fn iterator_object(&mut self, expr: ExprId) {
+        let Some(next) = self.frame.infer.iterator_next(expr) else {
+            return;
+        };
+        self.call(expr, next);
+        self.source(
+            expr,
+            EffectSet::of(&[Effect::Unbounded]),
+            "a loop over an iterator object runs until its `next` returns `nil`, which \
+             nothing bounds",
+        );
+    }
+
+    /// A method of `[T]`: growing the buffer or making a new array
+    /// allocates (and so can block and panic), `insert` and `remove` check
+    /// their index. A closure argument compiled in place adds nothing of its
+    /// own (its body is visited as part of this function); a function value
+    /// passed instead is called through, which the analysis cannot see.
+    fn array_method(&mut self, expr: ExprId, method: crate::ArrayMethod) {
+        if method.allocates() {
+            let what = match method {
+                crate::ArrayMethod::Copy | crate::ArrayMethod::Map | crate::ArrayMethod::Filter => {
+                    format!("`{}` allocates a new array", method.name())
+                }
+                _ => format!(
+                    "`{}` can grow the array, which allocates a new buffer",
+                    method.name()
+                ),
+            };
+            self.source(expr, runtime(&[&rt::NEW_ARRAY, &rt::ARRAY_GROW]), what);
+        }
+        if method.checks_index() {
+            self.source(
+                expr,
+                runtime(&[&rt::PANIC_INDEX_OUT_OF_BOUNDS]),
+                format!("`{}` panics when the index is out of range", method.name()),
+            );
+        }
+        if let (Some(index), Expr::MethodCall { args, .. }) =
+            (method.closure_arg(), &self.frame.body[expr])
+        {
+            if let Some(&arg) = args.get(index) {
+                if !crate::is_inlined_closure_literal(&self.frame.body, arg) {
+                    self.source(
+                        expr,
+                        EffectSet::ALL,
+                        format!(
+                            "`{}` calls a function value, whose code the analysis cannot see \
+                             (a closure literal without `return` is compiled in place instead)",
+                            method.name()
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    /// A builtin string operation (see [`crate::StringOp`]).
+    fn string_op(&mut self, expr: ExprId, op: crate::StringOp) {
+        let receiver = match &self.frame.body[expr] {
+            Expr::MethodCall { receiver, .. } => Some(self.frame.infer[*receiver].clone()),
+            _ => None,
+        };
+        if op.allocates(receiver.as_ref().map(crate::Ty::interned)) {
+            self.source(
+                expr,
+                runtime_group(rt::Group::String),
+                format!("`{}` allocates a new string or array", op.name()),
+            );
+        } else if op.panics() {
+            let (check, what) = if op == crate::StringOp::Slice {
+                (
+                    &rt::STRING_CHECK_SLICE,
+                    "`slice` panics on a range out of bounds or off a character boundary",
+                )
+            } else {
+                (
+                    &rt::PANIC_INDEX_OUT_OF_BOUNDS,
+                    "`byte_at` panics on an index out of bounds",
+                )
+            };
+            self.source(expr, runtime(&[check]), what);
+        }
+    }
+
+    /// `a + b` and `s += t` on strings allocate the result; comparing
+    /// strings has no effect. An append whose bytes fit the buffer's room
+    /// allocates nothing at run time (the inline fast path of String
+    /// Fabric), but whether they fit is known only then -- the capacity is
+    /// a property of the buffer, which the compiler does not track -- so an
+    /// append counts as allocating, as do the pieces of an `f"..."` literal
+    /// and a number appended with `s += n.to_string()`.
+    fn string_operator(&mut self, expr: ExprId, lhs: ExprId, op: Option<BinaryOp>) {
+        let text = matches!(
+            self.frame.infer[lhs].interned(),
+            TyKind::String | TyKind::Str
+        );
+        if text
+            && matches!(
+                op,
+                Some(
+                    BinaryOp::ArithOp(ArithOp::Add)
+                        | BinaryOp::Assignment {
+                            op: Some(ArithOp::Add)
+                        }
+                )
+            )
+        {
+            self.source(
+                expr,
+                runtime(&[&rt::STRING_CONCAT, &rt::STRING_APPEND]),
+                "string concatenation allocates (or grows) a buffer",
+            );
         }
     }
 
@@ -844,7 +1112,7 @@ impl Collector<'_> {
     fn construct(&mut self, expr: ExprId, s: crate::Struct) {
         if s.data(self.db).memory_kind == StructMemoryKind::Gc {
             let what = format!("class `{}` constructed", s.name(self.db));
-            self.source(expr, EffectSet::GC_ALLOC, what);
+            self.source(expr, runtime(&[&rt::NEW]), what);
         }
     }
 
@@ -864,21 +1132,25 @@ impl Collector<'_> {
         let Some(sig) = callee.ty(self.db).callable_sig(self.db) else {
             return;
         };
-        let boxed = sig
-            .params()
-            .iter()
-            .chain(std::iter::once(sig.ret()))
+        let mut values = sig.params().iter().chain(std::iter::once(sig.ret()));
+        let boxed = values
+            .clone()
             .filter_map(crate::Ty::as_struct)
-            .find(|s| s.data(self.db).memory_kind == StructMemoryKind::Value);
-        if let Some(s) = boxed {
+            .find(|s| s.data(self.db).memory_kind == StructMemoryKind::Value)
+            .map(|s| format!("the struct `{}`", s.name(self.db)))
+            .or_else(|| {
+                values
+                    .any(crate::Ty::is_string)
+                    .then(|| "a `String`".to_string())
+            });
+        if let Some(boxed) = boxed {
             let what = format!(
                 "the call to `{}` in another module goes through the runtime's dispatch table, \
-                 which boxes the struct `{}` on the GC heap",
+                 which boxes {boxed} on the GC heap",
                 callee.name(self.db),
-                s.name(self.db)
             );
             self.out.sources.push(Source {
-                effects: EffectSet::GC_ALLOC,
+                effects: runtime(&[&rt::NEW]),
                 site,
                 what,
             });
@@ -951,7 +1223,7 @@ impl Collector<'_> {
                 "non-zero"
             }
         );
-        self.source(expr, EffectSet::of(&[Effect::Panic]), what);
+        self.source(expr, runtime(&[&rt::PANIC]), what);
     }
 
     fn loop_bound(&mut self, expr: ExprId) {

@@ -37,6 +37,7 @@ pub(super) fn binary_op_rhs_expectation(op: BinaryOp, lhs_ty: Ty) -> Ty {
             | TyKind::Function(_)
             | TyKind::Optional(_)
             | TyKind::Str
+            | TyKind::String
             | TyKind::Tuple(..)
             | TyKind::Enum(..)
             // Storing is one of the few things every type supports, so a

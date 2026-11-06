@@ -93,6 +93,9 @@ struct super true trait uses var where while
 
 The path separator is **`.`** (like Python/Swift), not `::`.
 
+`f"..."` (an `f` directly before the quote) is an interpolated string
+literal, `f"x = {x}"`: see "Strings".
+
 ### Functions
 
 ```codira
@@ -141,6 +144,18 @@ function returning `never` can still come back when a handler aborts it,
 and is not `noreturn`. The Cranelift `--jit` backend compiles a call to one
 as a trap after the call.
 
+`@inline` before a function asks for every call of it to be inlined
+(LLVM's `alwaysinline`). It matters most across modules: a call into
+another module's library is otherwise an indirect call through the
+dispatch table, which LLVM can never inline, while a public `@inline`
+function is compiled into each library that calls it, like an instance of
+a generic function, and inlined there. Use it for small functions on hot
+paths (`std.text.ascii`'s `parse_i64`, `std.hashlib.hash`'s integer
+hashes, `std.collections.map`'s lookups). As for generic instances, a hot
+reload of the function's module reaches the callers when they are rebuilt.
+(`inline_functions_of_other_modules_are_compiled_in`,
+`crates/codira/tests/hash_map.rs`.)
+
 ### Bindings
 
 ```codira
@@ -161,6 +176,15 @@ binding *refers to* but does not hold: a field of a class instance
 (`c.n = 3`) and an element of an array (`a[0] = 5`). Parameters are
 mutable local copies.
 
+An assignment evaluates each operand of its place once. For a number or a
+`bool` (`xs[i] = v`, `xs[f()] += 1`, `make().n *= 2`) the order is: the
+place's operands (the array and the index, the instance), left to right;
+an element's index is checked; for a compound assignment the old value is
+read; then the right operand; then the store, with the index checked again
+against the array as it is then. For other types (`String`, arrays,
+classes, value structs, optionals) the right operand comes first and then
+the place.
+
 Bindings exist only inside functions. A module-level `let` or `var`
 (`public let LIMIT: i64 = 10;`) is rejected ("module-level `let` is not
 supported yet"): write a function returning the value instead, as
@@ -173,6 +197,8 @@ for i in 0..10 { }            // 0, 1, ..., 9
 for i in 1..=n { }            // 1, ..., n (stops at the type's max, never wraps)
 for x in xs { }               // each element of the array `xs`
 for (a, b) in pairs { }       // tuple patterns destructure each element
+for x in xs.iter().filter(f)  // a lazy pipeline (see "Lazy pipelines")
+for x in it { }               // an object of a class with `next(self) -> T?`
 while cond { if skip { continue } }
 loop { if done { break } }
 
@@ -182,14 +208,1734 @@ xs[i]                         // bounds-checked: an out-of-range index panics
 xs.unchecked_get(i)           // no check, for hot loops with a proven index
 ```
 
-A range (`a..b`, `a..=b`) is only valid as a `for` loop's iterable for now --
-there is no range value type. `continue` is a contextual keyword: it means
+A range (`a..b`, `a..=b`) is only valid as a `for` loop's iterable or as the
+start of a lazy pipeline (`(0..n).map(f).sum()`) for now -- there is no range
+value type. `continue` is a contextual keyword: it means
 "next iteration" only when it stands alone (before `}`, `;` or a line break).
 `&&` and `||` short-circuit.
 
 An out-of-range index prints `panic at mod.code:7:13: index out of bounds: the
 length is 3 but the index is -1` to stderr and ends the program with exit
 status 101. A panic cannot be caught from Codira yet.
+
+### Growable arrays and collections
+
+`[T]` itself grows: it is Codira's `Vec`. There is no separate list type.
+
+```codira
+let xs: [i64] = []                 // empty: the object, no element buffer yet
+for i in 0..10 { xs.push(i * i) }  // amortized O(1): a full buffer doubles
+let last = xs.pop()                // i64?: nil when empty
+xs.insert(0, 100)                  // 0 <= i <= len, shifts the rest up
+let gone = xs.remove(3)            // i < len, shifts the rest down
+xs.append([7, 8])                  // another array's elements (`extend` is a keyword)
+xs.reserve(1000)                   // room for 1000 more without growing
+xs.clear()                         // length 0, capacity kept
+xs.len(); xs.capacity(); xs.is_empty(); xs.last()   // last: T?
+
+xs.contains(49); xs.index_of(49)   // bool; usize? (first match)
+xs.sort(); xs.reverse()            // in place
+xs.binary_search(49)               // usize? in a sorted array
+let part = xs[2..5]                // a copy of elements 2, 3, 4 (`..=` includes the end)
+let copy = xs.copy()
+
+let doubled = xs.map(func(x) { x * 2 })           // [i64]
+let big = xs.filter(func(x) { x > 10 })           // [i64]
+let total = xs.fold(0, func(acc, x) { acc + x })  // i64
+xs.any(func(x) { x == 4 }); xs.all(func(x) { x >= 0 })  // stop early
+xs.sum(); xs.min(); xs.max()                      // T, T?, T?
+for (i, x) in xs.enumerate() { }                  // index and element
+```
+
+- **Every index is checked**, with the source location: `insert`, `remove`
+  and slicing panic like `xs[i]` does (`panic at mod.code:5:13: index out of
+  bounds: the length is 2 but the index is 2`; a slice whose start is after
+  its end says `slice starts after its end`), exit status 101.
+- **Slicing copies.** `xs[lo..hi]` is a new array, so it can never dangle
+  when `xs` later grows or shrinks, and writing to it leaves `xs` alone. It
+  costs O(hi - lo). There is no view type.
+- **What the element type needs.** `push`, `pop`, `insert`, `remove`,
+  `append`, `map`, `filter`, `fold`, `any`, `all`, `copy`, `reverse` and
+  slicing take any `T`, in generic code too. `contains`/`index_of` need
+  integers, floats (IEEE `==`: `NaN` is never found), `bool` or `str`
+  (bytes); `sort`/`binary_search` integers, floats, `bool` or `str`;
+  `min`/`max` integers, floats or `bool` (a float `NaN` is skipped, unless
+  it is the first element); `sum` integers (wrapping) or floats (added in
+  order from 0). `binary_search` returns the index of some equal element
+  when there are several. Anything else is a compile error saying what is
+  needed. These are builtin, not trait-bounded: operators are not resolved
+  through traits, so on a type parameter they are errors too; generic code
+  uses `Eq`/`Ord` from `std.cmp.cmp` and writes the loop.
+- **`sort` is unstable** (pattern-defeating quicksort, in place, no
+  allocation, O(n log n) worst case: the runtime's Rust `sort_unstable`).
+  Floats sort by IEEE 754 total order (`-NaN < -inf < .. < -0.0 < 0.0 < ..
+  < inf < NaN`). There is no `sort_by` with a comparator yet.
+- **Closures are compiled in place.** When the argument of `map`, `filter`,
+  `fold`, `any` or `all` is a closure literal without `return`, its body is
+  generated inside the loop: no function value is created and nothing is
+  called, so `xs.fold(0, func(a, x) { a + x })` is the loop written by hand
+  (measured below). A named function (`xs.map(square)`) is called directly.
+  Any other function value is evaluated once and called through on every
+  element. A closure with `return` is an ordinary function value (`return`
+  leaves the closure).
+- **These are eager.** `xs.map(f).filter(g).sum()` builds the mapped and
+  the filtered arrays (one allocation per stage, none per element), and
+  runs `f` on every element before `g` sees any. The lazy form,
+  `xs.iter().map(f).filter(g).sum()`, is one loop with no array in between
+  (see "Lazy pipelines" below).
+- **Changing an array while a loop runs over it** is memory-safe and
+  bounded: `for x in xs`, and the closure-taking methods, read the length
+  once before the first iteration and stop at the smaller of it and the
+  current length. An element pushed during the loop is not visited; when
+  the loop shortens the array it ends at the new end. Loop with
+  `while i < xs.len()` to see the pushed elements too.
+- **Sharing.** An array is a reference: `let ys = xs` shares one array, and
+  a function that pushes onto its parameter grows the caller's array. Use
+  `copy()` or a slice for an independent array.
+- **Effects.** `push`, `insert`, `reserve`, `append` (which can grow the
+  buffer), `copy`, `map`, `filter` and slicing (a new array) allocate, so
+  `@noalloc` rejects them; `insert`, `remove` and slicing can panic. `pop`,
+  `clear`, `contains`, `sort`, `sum`, `fold`, `any`, `all` and the rest do
+  neither, and a closure compiled in place adds only what its body does: a
+  `@noalloc @nopanic` function may call `xs.fold(0, func(a, x) { a + x })`.
+  A function value passed instead counts as unknown (every effect).
+- **Byte buffers.** A `[u8]` has three more methods, for what a serializer
+  writes most, each appending at the end and growing the array as `push`
+  does: `b.push_str(s)` (the UTF-8 bytes of a `String` or `str`, one
+  copy), `b.push_int(n)` (an integer of up to 64 bits as `to_string()`
+  writes it; a bare literal is an `i64`) and `b.push_json_float(x)` (an
+  `f64` as `std.json` prints it: the shortest text that reads back, in
+  `ryu`'s form, which `serde_json` writes, and `null` for a NaN or an
+  infinity). The numbers are written straight into the array's spare
+  capacity -- the integer digits by the same generated writer `+=` uses,
+  the float by the runtime -- with no `String` in between. Other element
+  types get a compile error (`` `push_str` needs an array of `u8` (a byte
+  buffer) ``), as does a 128-bit `push_int`. `string_take_utf8(b)` (see
+  "Strings") turns the bytes into a `String` without a second buffer.
+  Tests: `crates/codira/tests/byte_buffers.rs`.
+- `codira run --jit` (Cranelift) compiles array literals, indexing and
+  assignment through an index (same bounds check and panic), `len()`,
+  `is_empty()`, `push(..)`, `unchecked_get(..)` and `for` loops over arrays;
+  the other methods, slicing and `array_filled` it refuses, saying so, and
+  the program runs on LLVM.
+
+**Collections in the standard library** (`import std.collections.<module>`),
+built on `[T]`, all classes (assigning one shares it):
+
+```codira
+import std.collections.map.{Map}
+import std.collections.set.{Set}
+
+let ages: Map[str, i64] = Map.new()
+ages.insert("ada", 36);                  // returns the replaced value, i64?
+if let age = ages.get("ada") { println(age) }
+ages.get_or("bob", 0); ages.contains_key("ada"); ages.remove("ada")
+ages.len(); ages.keys(); ages.values(); ages.entries(); ages.clear()
+for (name, age) in ages.iter() { println(name, " ", age) }
+let big: Map[i64, i64] = Map.with_capacity(10000)   // no growth up to 10000
+big.reserve(5000); big.capacity(); big.shrink_to_fit()
+
+let seen: Set[i64] = Set.from_array([1, 2, 3])
+seen.insert(4); seen.contains(2); seen.remove(1)   // bool each
+seen.union(other); seen.intersection(other); seen.difference(other)
+```
+
+- `Map[K, V]` (`std.collections.map`) is a **Swiss table**: `8 * G` slots
+  in `G` groups of 8 (a power of two), each slot a `(K, V)` pair, and one
+  control byte per slot packed into a `u64` per group -- EMPTY (`0xFF`),
+  DELETED (`0x80`, a tombstone), or FULL with the top 7 bits of the key's
+  hash. A lookup reads the group the hash's low bits pick and tests its 8
+  control bytes at once with word arithmetic (SWAR, as hashbrown's portable
+  implementation does: the language has no vector types, so no SSE2/NEON
+  16-byte groups); the bytes equal to the 7-bit tag give the few slots
+  whose key is compared, and a group with an EMPTY byte ends the search.
+  Groups are probed in triangular order. The table holds at most 7/8 of
+  its slots and doubles when full; a removal leaves a tombstone only when
+  its group has no EMPTY byte (a probe could pass through it), and a full
+  table whose live entries are at most half its capacity is rebuilt at its
+  size, which clears the tombstones.
+- **Keys** need `Hashable` (`std.hashlib.hash`) and `Eq`
+  (`std.cmp.cmp`), which every integer and float type, `bool`, `str` and
+  `String` have; implement both for a type of your own.
+- **Hashing, DoS-resistant by default.** `Map.new()` hashes with
+  SipHash-1-3 under a secret 128-bit key of its own, drawn from the
+  runtime's entropy service with the map's first insertion (see
+  `std.hashlib.hash` below for why SipHash-1-3): whoever does not know the
+  key cannot choose keys that collide. `Map.with_key(HashKey.new(k0, k1))`
+  uses a key you give (the same iteration order every run, as resistant as
+  the key is secret). `Map.unkeyed()` uses the keys' fast `hash_value()`
+  (the MurmurHash3 finalizer for integers, FNV-1a for strings) and is
+  **not DoS-resistant**: hash-flooding keys make it quadratic
+  (`flooding_keys_slow_the_unkeyed_hash_and_not_the_keyed_default`
+  computes 20,000 such keys by inverting the hash: 393 ms to insert and
+  find them unkeyed, 1.5 ms keyed, 1.5 ms for random keys).
+- **Custom hashers** are the key type's: wrap the key in a struct whose
+  `Hashable` implementation (`hash_keyed` for `new`/`with_key`,
+  `hash_value` for `unkeyed`) hashes what you want, for instance strings
+  equal up to case (`custom_key_types_bring_their_own_hash`); every call is
+  resolved at compile time and inlined. A hasher held as a function value
+  was measured first and dropped: the indirect call it put into the probe
+  loop of every map, custom or not, stopped LLVM from keeping the table in
+  registers across lookups (2 ns more per lookup in a 1K-entry map).
+- **Small maps**: a map of at most 7 entries is one group; with integer,
+  float or `bool` keys (`compares_cheaply()`) it is scanned without
+  hashing, which costs less than SipHash (`map_small5_secure_get` below).
+- **Capacity**: `Map.new()` allocates only the map object; the key, the
+  control words and the slot array come with the first insertion. The
+  slot array is filled with copies of a key and value at hand (an array of
+  a type parameter has no default value), so `with_capacity`/`reserve`
+  allocate the control words at once and the slots on the first insertion.
+  A removed entry's key and value stay in its slot until it is reused.
+- **Iteration** (`m.iter()`, an iterator object over `(key, value)`
+  pairs, in table order, which differs between maps): replacing the value
+  of a present key and removing keys during an iteration are allowed --
+  an entry removed before the iterator reaches it is not produced, and
+  every entry present throughout is produced exactly once; an entry
+  inserted under a new key may or may not be produced; an insertion that
+  grows or rebuilds the table, and `reserve`, `shrink_to_fit` and `clear`,
+  make the iterator's next step panic ("the map was resized or cleared
+  while being iterated"). `keys()`, `values()` and `entries()` are copies.
+  Nothing is ever memory-unsafe. (`iteration_follows_the_documented_mutation_rules`)
+- `Set[T]` (`std.collections.set`) and `Counter[T]`
+  (`std.collections.counter`: `add`, `count`, `most_common`, ...) are on
+  `Map` and hash as it does; both have `unkeyed()`, `Set` also
+  `with_capacity`, `with_key` and `reserve`.
+- `Deque[T]` (`std.collections.deque`): a ring buffer, `push_front`,
+  `push_back`, `pop_front`, `pop_back` (`T?`), `front`, `back`, `get`.
+- `BinaryHeap[T]` (`std.collections.binary_heap`): a max-heap, elements
+  need `Ord`; `push`, `pop` (largest first, `T?`), `peek`,
+  `to_sorted_array`, `from_array` (O(n)).
+- The static constructors take their type arguments from the expected type:
+  `let m: Map[i64, i64] = Map.new()`.
+- A `for` body, like any block, is checked against `()`: write
+  `m.insert(k, v);` (with the `;`) as the last statement of a loop body,
+  because `insert` returns the old value.
+- Tests: `std_collections_map_matches_rust_hash_map` (`tests/std_imports.rs`)
+  replays random sequences -- removals, re-insertions, growth to 50,000
+  keys, `reserve`/`shrink_to_fit`/`clear`, tombstone churn over 48 and
+  2,000 keys -- on every hasher, on `String` keys and on `Set`, against
+  Rust's `HashMap`/`HashSet`; `tests/hash_map.rs` has the rest.
+
+**Measured** (x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores; Codira at `-O 2`
+with a release build of the compiler and runtime, Rust 1.97 at `-C
+opt-level=3`; median of 5 alternating runs, milliseconds). The programs
+were `examples/collections_bench`; they are now kernels of the AURORA
+benchmark suite, `benches/aurora/collections` and `benches/aurora/hashmap`
+(every map operation at 1K, 100K and 1M keys under both hashers; Codira,
+Rust and C++, all printing the same checksums): `python3 scripts/bench.py
+--only collections. --only hashmap.` reruns them, and
+`benches/aurora/RESULTS.md` has the current numbers with confidence
+intervals.
+
+| work | Codira | Rust |
+|---|---:|---:|
+| push 10M `i64` onto an empty array (no `reserve`) | 42.8 | 43.2 (`Vec::push`) |
+| sum 10M: `xs.sum()` | 9.6 | 9.4 (`iter().sum()`) |
+| sum 10M: `xs.fold(0, func(a, x) { a + x })` | 9.5 | 9.4 (`iter().fold`) |
+| sum 10M: `for x in xs` | 9.0 | 9.5 (`for x in &v`) |
+| `xs.map(x * 2).filter(x % 3 == 0).sum()` | 78.9 | 15.9 (lazy chain) |
+| the same as one `fold` | 16.1 | 15.9 |
+| sort 1M random `i64` | 19.5 | 19.7 (`sort_unstable`; `sort` 29.9) |
+
+The map, at 1K, 100K and 1M keys (`i64` keys random, `String` keys
+`"key-<n>"`); every 1K and 100K measurement repeats the operation on fresh
+maps so that each is at least a million operations. Same machine, method
+and checksums as above, `codira start` with its default heap limit; load
+average about 2 on the 4 cores during the runs (other builds), so
+differences under 10% are noise.
+
+*Same hash on both sides* (`Map.unkeyed()` against `HashMap` with a `BuildHasher` computing the same function: the MurmurHash3 finalizer for `i64`, FNV-1a over the bytes for strings; neither is DoS-resistant):
+
+| keys | operation | Codira ns/op | Rust ns/op | Codira / Rust |
+|---|---|---:|---:|---:|
+| 1K `i64` | insert into a new map | 62.4 | 17.9 | 3.49x |
+| 1K `i64` | lookup, hit | 4.3 | 3.0 | 1.43x |
+| 1K `i64` | lookup, miss | 3.7 | 3.0 | 1.23x |
+| 1K `i64` | iterate | 2.9 | 0.9 | 3.11x |
+| 1K `i64` | remove | 6.4 | 5.8 | 1.09x |
+| 100K `i64` | insert into a new map | 28.1 | 17.3 | 1.62x |
+| 100K `i64` | lookup, hit | 10.4 | 6.8 | 1.52x |
+| 100K `i64` | lookup, miss | 13.6 | 8.8 | 1.54x |
+| 100K `i64` | iterate | 3.9 | 1.6 | 2.45x |
+| 100K `i64` | remove | 19.7 | 15.7 | 1.25x |
+| 1M `i64` | insert into a new map | 65.7 | 63.9 | 1.03x |
+| 1M `i64` | lookup, hit | 27.5 | 25.5 | 1.08x |
+| 1M `i64` | lookup, miss | 10.5 | 9.5 | 1.10x |
+| 1M `i64` | iterate | 6.1 | 3.9 | 1.54x |
+| 1M `i64` | remove | 33.8 | 24.3 | 1.39x |
+| 1K `String` | insert into a new map | 88.8 | 47.0 | 1.89x |
+| 1K `String` | lookup, hit | 19.6 | 20.7 | 0.95x |
+| 1K `String` | lookup, miss | 15.8 | 15.3 | 1.03x |
+| 1K `String` | iterate | 3.2 | 0.9 | 3.39x |
+| 1K `String` | remove | 24.4 | 25.5 | 0.96x |
+| 100K `String` | insert into a new map | 94.9 | 52.9 | 1.79x |
+| 100K `String` | lookup, hit | 34.9 | 34.6 | 1.01x |
+| 100K `String` | lookup, miss | 37.0 | 31.8 | 1.16x |
+| 100K `String` | iterate | 3.9 | 1.8 | 2.19x |
+| 100K `String` | remove | 45.3 | 46.5 | 0.97x |
+| 1M `String` | insert into a new map | 241.2 | 164.9 | 1.46x |
+| 1M `String` | lookup, hit | 105.9 | 90.1 | 1.18x |
+| 1M `String` | lookup, miss | 42.8 | 44.5 | 0.96x |
+| 1M `String` | iterate | 10.5 | 6.7 | 1.58x |
+| 1M `String` | remove | 106.6 | 103.0 | 1.04x |
+
+*The DoS-resistant defaults* (`Map.new()` against `HashMap::new()`: SipHash-1-3 under a random key on both sides):
+
+| keys | operation | Codira ns/op | Rust ns/op | Codira / Rust |
+|---|---|---:|---:|---:|
+| 1K `i64` | insert into a new map | 91.0 | 39.5 | 2.30x |
+| 1K `i64` | lookup, hit | 11.1 | 10.8 | 1.02x |
+| 1K `i64` | lookup, miss | 9.9 | 12.2 | 0.81x |
+| 1K `i64` | iterate | 3.6 | 0.9 | 3.79x |
+| 1K `i64` | remove | 14.6 | 14.5 | 1.01x |
+| 100K `i64` | insert into a new map | 42.2 | 35.6 | 1.18x |
+| 100K `i64` | lookup, hit | 20.1 | 19.7 | 1.02x |
+| 100K `i64` | lookup, miss | 20.9 | 18.2 | 1.15x |
+| 100K `i64` | iterate | 3.7 | 1.6 | 2.35x |
+| 100K `i64` | remove | 28.6 | 29.4 | 0.97x |
+| 1M `i64` | insert into a new map | 96.0 | 97.3 | 0.99x |
+| 1M `i64` | lookup, hit | 73.3 | 67.5 | 1.09x |
+| 1M `i64` | lookup, miss | 21.6 | 23.5 | 0.92x |
+| 1M `i64` | iterate | 7.2 | 4.8 | 1.52x |
+| 1M `i64` | remove | 68.2 | 88.3 | 0.77x |
+| 1K `String` | insert into a new map | 93.8 | 60.6 | 1.55x |
+| 1K `String` | lookup, hit | 18.2 | 23.8 | 0.77x |
+| 1K `String` | lookup, miss | 14.8 | 21.0 | 0.71x |
+| 1K `String` | iterate | 3.4 | 1.2 | 2.89x |
+| 1K `String` | remove | 21.4 | 26.5 | 0.81x |
+| 100K `String` | insert into a new map | 91.0 | 64.8 | 1.40x |
+| 100K `String` | lookup, hit | 36.3 | 38.6 | 0.94x |
+| 100K `String` | lookup, miss | 34.0 | 32.4 | 1.05x |
+| 100K `String` | iterate | 4.1 | 1.8 | 2.34x |
+| 100K `String` | remove | 39.3 | 46.7 | 0.84x |
+| 1M `String` | insert into a new map | 293.6 | 263.4 | 1.11x |
+| 1M `String` | lookup, hit | 108.6 | 124.6 | 0.87x |
+| 1M `String` | lookup, miss | 52.0 | 54.6 | 0.95x |
+| 1M `String` | iterate | 11.1 | 6.9 | 1.61x |
+| 1M `String` | remove | 115.4 | 136.4 | 0.85x |
+
+*Small maps* (five `i64` keys):
+
+| work | hasher | Codira ns | Rust ns |
+|---|---|---:|---:|
+| build a map of 5 (per insert, map creation included) | default (SipHash) | 42.5 | 28.5 |
+| look up in it (half hits) | default (SipHash) | 3.7 | 12.2 |
+| build a map of 5 (per insert, map creation included) | same unkeyed hash | 60.4 | 22.8 |
+| look up in it (half hits) | same unkeyed hash | 3.8 | 3.8 |
+
+- **Lookups and removals** run at Rust's speed or faster with the default
+  hasher (0.71x to 1.15x Rust's time across sizes and key types), and
+  within 0.95x to 1.54x with the same unkeyed hash. What is left: a probe
+  tests 8 control bytes per word where hashbrown tests 16 with SSE2, and
+  the table is reached through the map object and two arrays (each a
+  handle to its payload) where Rust's sits in registers.
+- **Insertion into a new map** takes 1.0x to 3.5x Rust's time, the most
+  for small maps grown from nothing: a map of 1,000 entries grows 8 times
+  and every table is a new GC allocation, where `malloc` reuses the last
+  one. Measured on the same build, outside the benchmark: 1,000 insertions
+  into a fresh unkeyed map take 29 ns each, 12 ns with the table reserved
+  first (`with_capacity`), and 15 ns per insert-and-remove into an
+  existing table.
+- **Iteration** is 1.5x to 3.8x slower: `next()` of an iterator object,
+  whose state lives in its heap object, per entry; Rust's iterator stays
+  in registers. `keys()`, `values()` and `entries()` copy at memory speed.
+- **Small maps**: looking up in a map of five integer keys is 3.3 times as
+  fast as Rust's with SipHash (the keys are compared, never hashed) and
+  the same with the unkeyed hash. Building one costs 1.5x to 2.6x Rust's:
+  the map object, its control word and its slot array are three GC
+  allocations, and a keyed map draws its key from the runtime.
+- Against the map this replaced (open addressing, a state byte, a key and
+  a value in three bounds-checked arrays; measured on this machine as
+  106.2 ms to insert 1M random `i64` keys and 48.1 ms to look them up,
+  1.6x Rust's with the same hash): 65.7 and 27.5 ms here, 1.03x and 1.08x
+  Rust's, with every hash inlined (`mix64` used to be a call through the
+  dispatch table) and, by default, DoS-resistant.
+
+- Pushing, sorting and the closure-based reductions run at Rust's speed;
+  the sums are bound by memory bandwidth (80 MB). The `fold` with a closure
+  literal compiles to the same vectorized loop as the `for` loop (checked
+  on the IR in `closure_literals_are_compiled_in_place`,
+  `crates/codira/tests/collections.rs`).
+- The eager chain is about 5 times slower than Rust's because each stage
+  builds its array (10M and then 10M elements allocated, zeroed and
+  written); fused into one `fold` it is on par, and so is the lazy
+  pipeline `xs.iter().map(..).filter(..).sum()` (see "Lazy pipelines").
+- What growth cost existing loops: `for x in xs` now also tests the current
+  length on every iteration. Measured against the old lowering written out
+  by hand, a loop that only reads is unchanged (9.4 vs 9.4 ms over 10M
+  elements: LLVM hoists the second length load), a loop storing to a class
+  field is within noise (29.6 vs 29.3 ms), and a loop storing into another
+  array is 6% slower (22.4 vs 21.2 ms) because the length is reloaded after
+  each store; with `CODIRA_ARRAY_TBAA=1` that loop is unchanged (17.0 vs
+  17.3 ms). Program: the `store_field` and `copy_plus_one` kernels of
+`benches/aurora/loops/src/mod.code`.
+
+### Hashing: `std.hashlib.hash`
+
+```codira
+import std.hashlib.hash.{Hashable, HashKey, SipHasher13, siphash13_str}
+
+let key = HashKey.random()                 // 128 bits, fresh on every call
+let h = "ada".hash_keyed(key)             // SipHash-1-3 of the bytes
+let same = siphash13_str(key, "ada") == h
+let fast = "ada".hash_value()             // FNV-1a: unkeyed, not DoS-resistant
+let mine = SipHasher13.new(key).write_u64(7).write_str("x").finish()
+```
+
+- **Two kinds of hash.** `hash_keyed(key)` is SipHash under a secret
+  128-bit key: what `Map`, `Set` and `Counter` use by default, each under
+  a key of its own. `hash_value()` is fixed: the MurmurHash3 finalizer for
+  integers, FNV-1a for `str` and `String`; anyone who chooses the keys can
+  make them collide, so it is for trusted data (`Map.unkeyed()`).
+- **Why SipHash-1-3.** SipHash (Aumasson and Bernstein, "SipHash: a fast
+  short-input PRF", INDOCRYPT 2012) was designed as the keyed hash for
+  hash tables: fast on short inputs, and its outputs cannot be predicted by
+  whoever does not hold the key, so colliding keys cannot be computed
+  offline. SipHash-2-4 is the variant its authors claim to be a PRF
+  (`siphash24_*` here); SipHash-1-3, with one compression and three
+  finalization rounds, is the default table hash of Rust's `HashMap` and of
+  Python since 3.11. It gives up part of the security margin for about
+  twice the speed, which suits a hash table, where an attacker sees at most
+  timing and iteration order, never a hash. The faster seeded hashes
+  (aHash, wyhash and the like) have no published analysis under a secret
+  key, and some of their kind (MurmurHash2 and 3, CityHash64) were shown by
+  SipHash's authors to have multicollisions that work for every seed.
+- **Keys.** `HashKey.random()` calls the runtime's entropy service: the
+  process draws a 128-bit secret from the operating system once
+  (`getrandom`), and key `n` is `(PRF(secret, 2n), PRF(secret, 2n + 1))`
+  with SipHash-2-4 as the PRF, so each map's key is independent of every
+  other's, and one map's iteration order tells nothing about another's
+  (copying a map into another in iteration order does not cluster it, as it
+  can with one shared hash). `HashKey.new(k0, k1)` is a fixed key, for
+  tests and reproducible orders.
+- **A type of your own** gets `hash_keyed` by default as SipHash of its
+  `hash_value`, which is only as collision-resistant as `hash_value` is
+  injective (a `combine_hash` of fields is not). Override it by writing the
+  fields to a `SipHasher13` (`write_u64`, `write_i64`, `write_str`,
+  `write_string`, `write_bytes`): SipHash-1-3 over an injective encoding
+  (a string's bytes in words, padded, then its length), so `("ab", "c")`
+  and `("a", "bc")` do not collide.
+- **Speed.** An integer's keyed hash is one SipHash block and the length
+  block, straight-line and inlined (the implementations are `@inline`, so a
+  map's probe loop has no call); a string's is a loop over 8-byte words
+  (`string_data` gives a `String`'s bytes without a call). Bytes are read
+  as little-endian words, on the little-endian targets Codira supports.
+- Tests: `std_siphash_matches_the_reference` (every length 0 to 40, random
+  keys, through every entry point) against a reference implementation
+  that `the_reference_siphash_is_siphash` checks against the paper's
+  vector, Rust's `SipHasher` (2-4) and Rust's `DefaultHasher` (1-3);
+  `keyed_maps_differ_between_maps_and_between_runs`;
+  `codira_runtime`'s `native_random` unit tests (the entropy service and
+  the key derivation against the authors' vector).
+
+### Lazy pipelines: `xs.iter().map(f).filter(g).sum()`
+
+```codira
+class Countdown { n: i64 }
+extend Countdown {
+    func next(self) -> i64? {            // an iterator: `nil` when done
+        if self.n == 0 { return nil }
+        self.n -= 1
+        self.n
+    }
+}
+
+let xs: [i64] = [3, 1, 4, 1, 5, 9, 2, 6]
+let ws: [f64] = [0.5, 1.5]
+let total = xs.iter().map(func(x) { x * 2 }).filter(func(x) { x % 3 == 0 }).sum()
+let hits = xs.iter().enumerate().filter(func(p) { p.0 % 2 == 0 }).count()   // usize
+let dot = ws.iter().zip(ws).fold(0.0, func(acc, p) { acc + p.0 * p.1 })
+let head = xs.iter().take_while(func(x) { x < 5 }).collect()               // [i64]
+let squares = (0..10).map(func(i) { i * i }).collect()                     // a range is a source
+let last_big = xs.iter().rev().find(func(x) { x > 4 })                     // i64?
+for (i, x) in xs.iter().skip(2).enumerate() { }
+let down = Countdown { n: 3 }
+for x in down { }                                                          // 2, 1, 0
+let c = Countdown { n: 5 }
+println(c.iter().chain(0..2).sum())                                        // 4+3+2+1+0+0+1
+```
+
+- **Sources.** `xs.iter()` on an array; a range, directly (`(0..n).map(f)`)
+  or as `(0..n).iter()`; `it.iter()` on an *iterator object* -- an object of
+  a class with a method `next(self) -> T?` taking nothing else, which is
+  called until it returns `nil` (`for x in it` loops over one directly);
+  the pieces of a string, `s.lines()` and `s.split(sep)`, read as they are
+  found with no array (`s.split(",").map(f).count()`, `s.lines().iter()..`,
+  `for line in s.lines()`; see "Strings"). `iter()` on a pipeline changes
+  nothing.
+- **Adapters**, each returning a pipeline: `map(f)`, `filter(f)`,
+  `take(n)`, `skip(n)` (`n: usize`), `take_while(f)`, `skip_while(f)`,
+  `enumerate()` (`(usize, T)` pairs), `zip(ys)` (`(T, U)` pairs, ending with
+  the shorter side; `ys` an array, a range or a bare `ys.iter()`),
+  `chain(ys)` (these elements, then those of an array, a range or any other
+  pipeline of the same element type) and `rev()`.
+- **Terminals**, each running the pipeline: `sum()` (integers, wrapping;
+  floats, added in order from `0.0`), `fold(init, f)`, `count()` (`usize`),
+  `any(f)`, `all(f)`, `find(f)` (`T?`), `position(f)` (`usize?`), `min()`,
+  `max()` (`T?`; integers, floats or `bool`, with the arrays' rules: a
+  float `NaN` is skipped unless it comes first), `collect()` (a new `[T]`),
+  and `for x in pipeline { .. }` (with `break`, `continue` and `return`).
+
+#### The design, and why
+
+A pipeline has the type `Iter[T]`, and that type has no run-time
+representation: the compiler sees the whole chain, from its source to its
+terminal or the `for` loop it feeds, and compiles it into **one loop**. Each
+element is pushed through the stages in order; every closure literal is
+generated in place (no function value, no call -- as for the eager array
+methods), the state of `take`, `skip`, `enumerate` and `zip` is a counter
+in a register, and nothing is allocated except the array `collect`
+returns. This is a guarantee, not an optimization that inlining may or may
+not achieve: it holds at every `-O` level, and `pipelines_compile_to_one_loop`
+(`crates/codira/tests/pipelines.rs`) checks at `-O 2` that the loops of
+`map`/`filter`/`sum`, `enumerate`/`filter`/`count`, a `zip`/`fold` dot
+product, `take_while`, a range, `rev`/`position`, `skip`/`take`/`max` and a
+`for` loop over `chain`/`enumerate` contain no call (other than LLVM
+intrinsics), no allocation and no function value.
+
+The price is that **a pipeline cannot leave the expression that builds
+it**. Storing one in a variable (`let p = xs.iter().map(f)`), returning it,
+passing it to a function, putting it in an array, a tuple or the branches
+of an `if`, or leaving it unused (`xs.iter().map(f);` does nothing) is a
+compile error that says to end it with a terminal or `for`, or to
+`collect()` it. A real iterator object, the alternative, would need either
+a generic `Iterator[T]` trait with trait objects (neither exists: traits are
+not generic yet and there are no trait objects) or one class per adapter,
+and every stage would be a call through a closure value the optimizer may
+or may not inline -- the cost the eager methods were measured to avoid.
+Iterator objects with `next` cover the other direction: a type can be
+*iterated* (and be a source) without the compiler knowing its insides, at
+the cost of a direct call of its `next` per element.
+
+#### Semantics
+
+Exactly Rust's iterator semantics, which the tests use as the oracle
+(`random_pipelines_match_rust_iterators`: random pipelines over random
+arrays and ranges, whose closures log every element they see, must print
+the results *and the logs* that the same pipelines built from Rust's
+iterators print):
+
+- The source, then the arguments of each stage left to right, then the
+  terminal's, are evaluated once, before the first element. A function value
+  passed to a stage is evaluated then; a named function is called directly.
+- Each element passes through all the stages before the next is pulled,
+  so the closures' side effects interleave as in Rust:
+  `xs.iter().map(f).filter(g)` calls `f(x0)`, `g(f(x0))`, `f(x1)`, ...
+- Nothing is pulled after a stage has ended: `take(n)` checks its count
+  before pulling, so the stages before it never see an `n + 1`-th element
+  (and `take(0)` pulls nothing); `take_while` stops at the first rejected
+  element, which it has seen; `zip` pulls its own side first and stops when
+  the other side is exhausted; `any`, `all`, `find`, `position` and `break`
+  stop the whole pipeline. `chain(ys)` starts on `ys` when its first part is
+  exhausted (or ended by a `take` before the `chain`).
+- An array source is read as `for x in xs` reads it: its length once, and
+  the loop also stops at the current length, so a closure that pushes onto
+  the array does not extend the pipeline and one that shortens it ends it
+  there (memory-safe either way). `rev()` reads from the last element down
+  and ends if the array has been shortened below the next index.
+- A range counts like `for i in a..b`; an inclusive range ending at its
+  type's maximum stops instead of wrapping (`(0u8..=255u8).count()` is
+  256), and so does a reversed one starting at the minimum.
+- Closures capture by value as everywhere, but a closure compiled in place
+  reads the variable when each element reaches it. A `for` body therefore
+  may not assign a variable that a stage's closure reads (compile error),
+  so the difference never shows.
+- `sum()` of floats starts from `0.0`, like the arrays' `sum()`; Rust's
+  starts from `-0.0`, so an empty sum (or a sum of `-0.0`s) is `0.0` here
+  and `-0.0` in Rust. Everything else agrees bit for bit.
+- The eager array methods are unchanged: `xs.map(f).filter(g)` still builds
+  both arrays and runs `f` on every element first.
+
+`rev()` needs a source it can walk backwards: an array or a range, with
+only `map` and `filter` (and `rev`) before it -- `xs.iter().filter(f).rev()`,
+`(0..n).map(f).rev()`. After `take`, `skip`, `enumerate`, `zip`, `chain` or
+on an iterator object it is an error (Rust allows some of these through
+`ExactSizeIterator`/`DoubleEndedIterator`; here, `collect()` first). `zip`
+takes an array, a range or a bare `ys.iter()`, read by position; to zip with
+a pipeline that has stages, `collect()` it first.
+
+A value struct with `next` is refused ("`next(self)` would get a copy and
+could never advance"), as are a `next` with other parameters or one not
+returning `T?`. A class can be generic (`class Cycle[T]` with `next(self) ->
+T?`). A class's own `iter` method, if it declares one, is called instead.
+
+#### Effects
+
+A pipeline over an array or a range with closure literals and a terminal
+other than `collect` neither allocates nor panics nor blocks, and is
+bounded by its source: a `@noalloc @nopanic` (or `@realtime`) function may
+use it (`effects_of_pipelines`, `crates/codira_hir/src/builtin/pipeline.rs`).
+A closure adds what its body does. `collect` allocates its array (with the
+exact length when it is known: no `filter`, `take_while`, `skip_while` or
+iterator object in the pipeline; otherwise it grows as `push` does). A
+function value passed to a stage counts as unknown (every effect). A
+pipeline or `for` loop over an iterator object adds what its `next` does,
+and is unbounded for `@realtime`.
+
+#### Measured
+
+x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores (shared: load average about 2
+during the runs); Codira at `-O 2` with a release build of the compiler and
+runtime, Rust 1.97 at `-C opt-level=3`; median of 5 alternating runs,
+milliseconds, 10M elements. The programs are
+now kernels of `benches/aurora/collections` (Codira, Rust and C++; all
+print the same checksums); see `benches/aurora/RESULTS.md` for the current
+numbers.
+
+| work | Codira | Rust |
+|---|---:|---:|
+| `xs.iter().map(x * 2).filter(x % 3 == 0).sum()` | 15.0 | 16.2 |
+| the same, eager: `xs.map(..).filter(..).sum()` | 76.6 | -- |
+| the same as one `fold` | 15.1 | -- |
+| `rs.iter().enumerate().filter((i + x) % 5 == 0).count()`, random `rs` | 15.5 | 15.3 |
+| dot product: `fs.iter().zip(gs).fold(0.0, acc + a * b)` | 16.5 | 16.4 |
+| `xs.iter().take_while(x < n - 1000).sum()` | 13.5 | 14.0 |
+| `xs.iter().map(x * 3 + 1).collect()` | 42.6 | 41.2 |
+| `rs.iter().filter(x % 3 == 0).collect()` (a third kept) | 58.1 | 55.9 |
+| `(0..n).filter(i % 3 == 0).map(i ^ (i >> 3)).sum()` | 5.3 | 6.6 |
+| `xs.iter().chain(rs).filter(x % 7 == 1).count()` (20M) | 36.4 | 36.0 |
+
+- The chain that took 78.9 ms eager (76.6 here) is now at Rust's speed,
+  and as fast as the hand-fused `fold`. The other reductions are within
+  noise of Rust (runs vary by 1-2 ms on this machine); the range pipeline is
+  faster, from a different loop LLVM made of it.
+- `collect` is 3-4% slower: both sides are dominated by writing 80 MB (the
+  mapped array) or growing the filtered one, and Codira's array comes zeroed
+  from the GC heap. With the exact length known (`map`), Codira allocates the
+  array once and its loop vectorizes; a filtered `collect` grows by doubling
+  like `push`.
+- A pipeline whose closures only compute (no call, assignment, allocation
+  or string operation) reads its arrays like a Rust slice iterator: length
+  and element buffer once. When a closure could change an array, the loop
+  re-checks the current length per element, as `for x in xs` does (see
+  "What growth cost existing loops" above for that cost).
+
+#### Back ends and what is not done
+
+- `codira run --jit` (Cranelift) does not compile pipelines; it says so
+  ("does not compile a lazy pipeline") and the program runs on LLVM.
+- No `Iter[T]` values: no storing, returning or passing a pipeline, no
+  functions generic over iterators, no `Iterator[T]` trait (traits are not
+  generic yet). A function that wants to hand out a sequence returns an
+  array or an iterator object.
+- Not provided: `flat_map`, `step_by`, `peekable`, `last`, `nth`,
+  `sum`/`min`/`max` with a key or a comparator, `rev` after the adapters
+  above, `zip` with a staged pipeline, `rev()` over the pieces of a
+  string, other `str`/`String` sources (bytes or characters).
+- A `for` loop over a pipeline with `chain` compiles its body once per
+  part of the chain (two copies for one `chain`), like the stages after the
+  `chain`: code size, not time.
+
+### Arrays: layout, growth and the host
+
+An array value is a handle to a GC object whose first word points at the
+payload -- length, capacity, then the elements (references for class
+elements). Growing moves the payload to a buffer at least twice as big
+(the runtime's `codira.array_grow`, through the GC heap: a safepoint that
+collects at the heap limit like an allocation) and frees an old out-of-line
+buffer; the handle, so every reference to the array, stays the same.
+
+- **Why `[T]` and not a new `List[T]`:** the layout already had a capacity
+  and the handle indirection hot reload needs, so growth only replaces the
+  payload pointer. `ArrayRef` in the host API reads the same layout and is
+  unchanged (`len()`, and `capacity()`, which may now exceed it); the
+  runtime type info is unchanged; there is one array type to learn.
+- **Safety under growth:** generated code never keeps an element address
+  across anything that can grow the array -- every access reloads the
+  payload pointer after the last user code it depends on -- and the
+  collector, heap snapshots and hot-reload migration all stop at the
+  length (slots past it are never read). A host holding an `ArrayRef`
+  iterator must not call Codira code that grows that array while iterating.
+- **Hot reload, heap snapshots:** a grown array migrates and saves like any
+  array; a migration or a restore gives it a capacity equal to its length.
+- **Alias classes** (`CODIRA_ARRAY_TBAA=1`, see
+  `crates/codira_codegen/src/ir/array_tbaa.rs`) stay sound with growth and
+  are not made more conservative: lengths are now also written by `push`,
+  `pop`, `insert`, `remove`, `clear` and `append`, but with the length tag,
+  into the payload header; element accesses are still tagged only below the
+  capacity, and the handle is still written only by runtime calls, after
+  which LLVM reloads it. The capacity is loaded with the length tag (it is
+  the payload header's other word).
+
+### Strings: `str` and `String`
+
+```codira
+let lit = "héllo"                     // str: static bytes, allocates nothing
+let s = lit.to_string()               // String: owned, on the GC heap
+let t: String = "converted"           // a str converts where a String is expected
+var log = "".to_string()
+for i in 0..3 { log += f"[{i}]" }     // "[0][1][2]", appended in place
+let parts = "a,b,,c".split(",")       // [String]: ["a", "b", "", "c"]
+if let n = parts[0].parse_i64() { println(n) } else { println("not a number") }
+println(s.len(), " bytes, ", s.char_count(), " chars")   // 6 bytes, 5 chars
+println(s.slice(0, 3))                // "hé" (byte range; panics off a char boundary)
+```
+
+There are two string types:
+
+- **`str`** is a literal: an address and a byte length of static bytes in
+  the program image. It allocates nothing, ever. It has `len()`, can be
+  printed, compared (`==`, `<`) and passed to the runtime with
+  `str_data`/`str_len`; every other method first copies it into a
+  `String`.
+- **`String`** is the owned string, always valid UTF-8. It is the one string
+  type a program builds, stores, returns and passes around; there is no
+  separate borrowed type and no lifetime to write. The intrinsic
+  `string_data(s: String) -> usize` (declared in `extern
+  "codira-intrinsic"`) is the address of a non-empty `String`'s first byte,
+  for reading its `s.len()` bytes with the `load_*` intrinsics, as
+  `std.hashlib.hash` and `std.cmp.cmp` do; an empty `String` may have no
+  buffer, so check the length first.
+
+#### The design, and why
+
+`String` is known to the compiler and backed by the runtime, not written in
+`std`: every program has it without an import, literals convert to it, it
+has operators and interpolation, and its operations are direct calls into
+Rust code in the runtime (validation, search, splitting and number parsing
+are Rust's own `str` implementations).
+
+A `String` value is three words: a reference to a buffer on the GC heap
+(an ordinary `[u8]` array object), the offset of the string's first byte in
+it, and its length. That gives one type the roles Rust splits between
+`String` and `&str`:
+
+- **Values, not references.** The bytes a `String` covers are never
+  written again. `let b = a` copies three words, and nothing done through
+  `a` can change `b`, so a string is safe to keep as a map key, to store in
+  a class, or to hand to another module.
+- **Cheap views.** `slice`, `trim`, `trim_start`, `trim_end`, and the pieces
+  of `split` and `lines` are new values over the same buffer: no bytes are
+  copied, and the GC keeps the buffer alive while any view of it exists. Rust
+  needs `&str` and a lifetime for this; here the collector does that job.
+- **Appending in place.** `s += t` (and `s + t`) writes into the buffer only
+  past the end of every existing value: when `s` ends exactly at the
+  buffer's fill and there is room, the bytes go there and the fill rises;
+  otherwise the bytes are copied into a new buffer, which doubles the
+  capacity when `s` was at the fill (it is being built up) and is exact
+  otherwise. A loop of `s += piece` is amortized O(1) per byte, as Rust's
+  `push_str` is, with no builder type. Appending to a value that does not
+  end at the fill (an older copy, a view in the middle) copies.
+
+#### String Fabric: appends and formatting without a call
+
+The AURORA memory architecture asks three things of string building, and
+the compiler and runtime do them as follows (`codira_codegen`'s
+`ir::body::fabric`, `codira_runtime`'s `string` module).
+
+- **An append with room is a check, a copy and a store.** `s += t` is
+  compiled inline:
+
+  ```text
+  payload = *s.buf                       ; fill, capacity, owner word
+  if owner == thread pointer && fill == s.start + s.len && capacity - fill >= n:
+      memcpy(payload + 16 + fill, t.data, n);  payload.fill = fill + n
+  else:
+      call codira.string_append          ; copies, or grows
+  ```
+
+  No allocation, no call through the dispatch table, no atomic
+  read-modify-write; `string_fabric.rs`'s
+  `the_common_append_path_calls_nothing` checks the `-O 2` IR.
+- **Numbers go straight into the destination.** `s += n.to_string()` (and
+  a `{n}` hole) writes the digits of an integer of at most 64 bits in
+  place, with a digit writer generated into the module (two digits per
+  step from a table); no temporary string exists. A float, a 128-bit
+  integer, or an append without room calls the runtime, which writes the
+  text into the destination's buffer (or the one it grows into).
+- **Static format strings are compiled into a plan.** Interpolation
+  already parses and checks every spec at compile time; an `f"..."`
+  literal (and any `a + b + c` chain whose first piece makes new text) is
+  then compiled as one plan: its pieces evaluated left to right, one buffer
+  sized for the whole result (the literal pieces' lengths, the strings'
+  lengths, an upper bound per number), and one append per piece. A literal
+  piece is an inline copy; a decimal integer with a constant width and an
+  ASCII fill (`{n:08}`, `{n:>6}`, `{n:*^9}`) is written inline, padding
+  and sign included; any other spec is one call of
+  `codira.string_append_format_int`, `_float` or `_text` with the spec as
+  constant arguments, which writes into the destination; `{x:?}` is the
+  type's generated debug function writing into it. The template text is
+  not in the program, and nothing is parsed, boxed or collected into an
+  argument array at run time (`a_static_format_plan_parses_nothing_at_run_time`).
+  `s += f"..."` appends the pieces to `s` itself. `std.format.format`
+  (a template known only at run time) stays the general path.
+- **A plan usually allocates nothing.** A function keeps the result of its
+  last plan in a stack slot, and the next plan starts as the empty string
+  at that result's end, in the same buffer, when the buffer is this
+  thread's, the result still ends at its fill and the room is there. The
+  earlier results lie below the fill and are never written again. A loop
+  of `f"{n:08}"` or `n.to_string()` allocates once per few dozen results.
+- **What a program keeps costs what it holds.** A `String` is a view, so
+  a result that is kept keeps its whole buffer, and every other result in
+  it, alive. So a function has two such slots, and each plan uses the one
+  the compiler picks for it (`codira_hir`'s `string_escape`):
+  - a *temporary* -- read, compared, printed, copied into another string,
+    or passed to a function that does no more with it -- continues in the
+    temporaries' buffer, and a new one is at least 256 bytes;
+  - a *kept* result -- returned, stored in a field, an array or a map,
+    captured by a closure, sent, or passed to a function that does any of
+    these -- continues only after other kept results. Its plan counts the
+    digits of each integer first (inline, a few instructions) and sets
+    aside exactly the text's length, so the first kept result of a call
+    gets a buffer of just its size, and a later one that does not fit gets
+    one of up to twice the last, at most 256 bytes. A function that returns
+    one formatted string allocates what it returns; a loop that keeps every
+    result packs them as densely as a loop of temporaries.
+
+  The analysis follows a value through locals, branches, views
+  (`slice`, `trim`, `lines`, `split`) and a chain that starts with an
+  existing `String`, and into the bodies of the functions it is passed to,
+  up to 8 calls deep (`map.insert(f"k{i}", v)` is kept because `insert`
+  stores its key; `check(f"{n:08}")` is not when `check` only reads its
+  argument). It keeps whatever it cannot see into: an `extern` function, a
+  call through a function value, anything deeper. A trait method called
+  on a generic type (`key.eq(other)` in a generic map) is taken to read
+  its arguments. It is separate from the escape analysis behind
+  `--frame-alloc` (`codira_hir`'s `escape`), which must treat every string
+  operation as handing the value to the runtime and every call into
+  another module as unknown; here a wrong answer changes only where bytes
+  go, never what a program computes, so reading a string's bytes keeps
+  nothing and a hot reload cannot make it unsound.
+
+**Who may raise the fill, and why no atomic is needed.** Two values on
+one buffer can both end at its fill (`let b = a`); if both were appended
+to at the same time, both could write the same bytes. Within one thread
+that cannot happen: appends run one after the other, and the second sees
+the fill the first raised and copies. So every buffer carries, in its
+first eight bytes (the *owner word*; a string's bytes start after it), the
+identity of the one thread that may raise its fill: the thread pointer of
+the thread that allocated it (`fs:0` on x86-64 Linux, `TPIDR_EL0` on
+AArch64 Linux, `llvm.thread.pointer` in compiled code). That thread
+appends in place with plain loads and stores; **any other thread
+appending to a value on the buffer copies**, so it never writes the
+buffer at all. The argument that this is sound:
+
+1. The owner word is written before the buffer is reachable from anything
+   and never changes, so every thread reads the same owner.
+2. No two live threads have the same thread pointer, so at most one thread
+   passes the check: the fill, and the bytes above it, are written by that
+   thread alone. Other threads read only the bytes of values they were
+   given, which lie below the fill and are never written again.
+3. A thread pointer is reused only after its thread has exited, and the C
+   library hands the memory to a new thread under a lock, after the old one
+   is gone, so the new owner sees everything the old one wrote.
+4. A value reaches another thread only through something that
+   synchronises: Codira tasks share nothing but channels of scalars, so in
+   practice the host (`Runtime::invoke` from two threads with one
+   `StringRef`, or a class instance both reach).
+5. A buffer whose owner word is stale -- restored from a heap snapshot of
+   another process -- is still matched by at most one thread, which is all
+   the argument needs.
+
+Where the thread pointer is not known (other targets) buffers are marked
+*shared* (owner word zero) and every thread claims the fill with a
+compare-and-swap, as before; compiled code there makes the same inline
+check with a `cmpxchg`. A thread that cannot prove ownership takes the
+safe path: it copies. Reuse never shows: no `String` value changes after it
+is made, which the runtime's property tests check under random appends,
+aliases and views and with two threads appending at once to values on one
+buffer (`no_value_changes_under_random_appends_and_aliases`,
+`two_threads_appending_on_one_buffer_change_no_value`).
+
+**Measured: kept results.** Before the two slots every plan continued in
+one chunk of at least 256 bytes per call, so a short result that was kept
+kept a chunk alive: `examples/gc_churn` (each live entry holds a
+`label(i)`, `"item-" + i.to_string() + ..`) held 728 KiB live after a
+collection in its `quick` run, where it had held about 250 KB before plans
+reused their buffers. The candidates, measured:
+
+- *One exact buffer per kept result* (and the shared chunk for the rest)
+  fixes `gc_churn`, but a loop that keeps every result
+  (`kept.push(f"{i:08}")`, 1M) took 153 ms instead of 28 ms and held
+  98.7 MiB instead of 32.7 MiB: each 8-byte string paid a 56-byte object
+  and owner word of its own and an allocation. Rejected.
+- *Copying a kept result out of a shared chunk where it escapes* is that
+  plus a copy; the compiler already knows at the plan whether the result is
+  kept, so it can size the buffer then instead. Not built.
+- *Compacting mostly dead buffers during a collection* needs the collector
+  to relocate objects and rewrite the views into them, which it does not
+  do. Not built.
+- *Two slots, kept results sized and packed with each other* (the design
+  above): measured below.
+
+On one machine (Intel Xeon @ 2.10 GHz, 4 vCPUs, Linux 6.18, shared with
+other builds), `codira run -O 3 --runtime-stats` with a release `codira`,
+medians of 5 alternating runs; "fits in" is the smallest `--heap-limit`
+under which the run completes, found by bisection (to 1/128 of the range;
+for `gc_churn` the same in 3 of 3 runs at each end). Before is main just
+before this change; every check value is the same before and after.
+
+| workload | live after a collection | peak heap | fits in | allocated | time |
+|---|---:|---:|---:|---:|---:|
+| `gc_churn` (50,000 live, 2M steps), before | 17.9 MiB | 45.8 MiB | 23.8 MiB | 2.38 GiB | 2.51 s |
+| `gc_churn`, after | 6.41 MiB | 24.7 MiB | 12.4 MiB | 732 MiB | 1.89 s |
+| `gc_churn quick` (2,000 live), before | 728 KiB | 5.14 MiB | 1.04 MiB | 242 MiB | 97 ms |
+| `gc_churn quick`, after | 256 KiB | 8.08 MiB | 632 KiB | 67.1 MiB | 82 ms |
+| 1M `kept.push(f"{i:08}")`, before | 32.7 MiB | 68.0 MiB | 68.1 MiB | 396 MiB | 25.8 ms |
+| same, after | 46.9 MiB | 82.6 MiB | 68.1 MiB | 394 MiB | 26.4 ms |
+| 1M temporaries, one in 16 kept (`kept.push(f"k{i}")`), before | 33.5 MiB | 80.8 MiB | 41.7 MiB | 171 MiB | 30.4 ms |
+| same, after | 3.86 MiB | 8.88 MiB | 8.97 MiB | 167 MiB | 18.1 ms |
+| 1M calls of a `label(i)` returning `f"item-{i}-{j}"`, 100K kept, before | 59.4 MiB | 136 MiB | 67.5 MiB | 1.87 GiB | 121 ms |
+| same, after | 13.4 MiB | 49.1 MiB | 22.9 MiB | 301 MiB | 60.7 ms |
+
+(The last three are `examples/string_retention`; their time is the median
+of 7 rounds inside the program.) Two rows rise, and both are the
+collector's pacing, not what is held: it collects after an amount of
+*payload* has been allocated (at least 4 MiB), and its heap is cells with
+a 32-byte header each. `gc_churn quick` now allocates small objects, whose
+cells are about twice their payload rather than 1.1 times a 256-byte
+chunk's, so its default run peaks higher between collections while it
+fits in 40% less; the keep-everything loop holds the same bytes (it fits in
+the same limit) and its last collection simply fell at a different point.
+Temporaries are unchanged: the String and format benchmarks (below) build
+to byte-identical libraries before and after.
+
+Not done: a float's text length is not counted before it is written, so a
+kept plan sets aside the most a float can take (24 bytes) and keeps the
+rest when nothing follows it; a view taken with `slice` or `trim` still
+keeps its whole buffer (copy it to let the buffer go); and the collector
+still paces on payload rather than on the cells it carves.
+
+**No builder type.** A builder would compile to the same check, copy and
+store as `+=` does now, so it would not be faster; there is no
+`StringBuilder`.
+
+**No small-string optimisation.** Measured before the plans reused their
+buffers: a small `String` cost one GC allocation of about 65-70 ns on the
+benchmark machine (about 420 instructions, 265 of them in the collector's
+allocator), which was most of `f"{n:08}"` (85 ns) and `n.to_string()`
+(80 ns). With plans continuing in their function's buffer those are 16 ns
+and 12 ns, so an inline representation for short strings -- a second
+layout every string operation would have to test for -- would now save
+little on these workloads, and is not done.
+
+Considered and not chosen: a *mutable* growable string shared by reference
+(as arrays and classes are) needs no offset word, but `let b = a;
+a.push_str(..)` would change `b`, which is a classic source of bugs with
+string keys; an *immutable* string with a separate builder type is one more
+concept, and without the in-place append every `+=` copies (quadratic
+loops); a `std` type over a byte array would need an import in every
+program and could not have literals convert to it.
+
+What this costs: a `String` is 24 bytes rather than 8; a small view keeps
+its whole buffer alive (as a Go slice or an old Java substring does: copy
+it, `s.slice(a, b).to_upper()` or `f"{v}"`, to let the buffer go); and a
+call to a function of *another module* boxes a `String` argument or result
+on the GC heap, as it boxes a value struct.
+
+#### Operations
+
+Construction and conversion:
+
+- `x.to_string()` on a `str`, any integer, float or `bool` (formatted as
+  `print` writes them: `1.0`, `-0.0`, `NaN`), or a `String` (itself, no
+  copy).
+- A `str` used where a `String` is expected -- an argument, a `let` with a
+  type, a field, an array element, a return value, an assignment to a
+  `String` -- converts implicitly (a copy).
+- `string_from_utf8(bytes: [u8]) -> String?`: a copy of the bytes if they
+  are valid UTF-8, else `nil`.
+- `string_take_utf8(bytes: [u8]) -> String?`: the bytes as a `String`
+  without a second buffer, if they are valid UTF-8 (Rust's
+  `String::from_utf8(vec)`); `bytes` is left empty, and so is every alias
+  of it, so no program can write those bytes again -- which is what makes
+  them a string's. Once the array has grown its elements live in a buffer
+  of their own, which becomes the string's (the collector re-owns it:
+  `MarkSweep::try_take_array_payload`); the bytes then move up 8 bytes
+  within it, one `memmove`, to make room for the owner word every string
+  buffer starts with (see "String Fabric"), and a buffer with more than an
+  eighth of its room unused is shrunk to fit. A small array that never
+  grew is copied, and emptied the same way. Not UTF-8: `nil`, and
+  `bytes` is unchanged. A printer builds its text in a `[u8]` with the
+  byte-buffer methods (see "Growable arrays") and takes it at the end.
+- Interpolation: `f"x = {x}, p.y = {p.y}, {self.name}"` is a `String`. A
+  hole is a variable optionally followed by fields, as in Rust's
+  `format!("{x}")` -- no calls, no operators -- and is converted with
+  `to_string()`, so it type-checks like that call (a hole of a type without
+  `to_string` is an error at the literal; a type's own `to_string(self) ->
+  String` method counts). `{{` and `}}` are literal braces. The literal is
+  compiled as a format plan (see "String Fabric" above): one buffer, one
+  append per piece. A hole may carry a format spec, `{x:>8.3}`, and `{x:?}`
+  writes any value: see "Format specs and the debug form" below.
+
+Operators: `a + b` (either side a `String` or a `str`; the result is a new
+`String`), `s += t` (`s` a `String` place, `t` a `String` or `str`), and
+`==`, `!=`, `<`, `<=`, `>`, `>=` between any mix of `String` and `str`, by
+bytes -- which for UTF-8 is code-point order. `print`/`println` print a
+`String` like a `str`.
+
+Methods (text arguments take a `String` or a `str`, so a literal argument
+costs nothing):
+
+| method | result | notes |
+|---|---|---|
+| `len()`, `is_empty()` | `usize`, `bool` | bytes; inline |
+| `char_count()` | `usize` | code points (one pass) |
+| `chars()` | `[u32]` | the code points, a new array |
+| `bytes()` | `[u8]` | a **copy**: changing it changes no string |
+| `byte_at(i)` | `u8` | bounds-checked like `a[i]` |
+| `find(p)`, `rfind(p)` | `usize?` | byte offset of the first / last match |
+| `contains(p)`, `starts_with(p)`, `ends_with(p)` | `bool` | |
+| `split(sep)` | `[String]` | Rust's `str::split`; views; an empty `sep` panics; lazy where no array is needed (below) |
+| `lines()` | `[String]` | Rust's `str::lines` (`\n`, `\r\n`, no empty last line); views; lazy likewise |
+| `trim()`, `trim_start()`, `trim_end()` | `String` | Unicode `White_Space`, as Rust; views |
+| `slice(start, end)` | `String` | the byte range; a view |
+| `to_upper()`, `to_lower()` | `String` | ASCII letters only (see below) |
+| `replace(from, to)` | `String` | Rust's `str::replace` |
+| `repeat(n)` | `String` | a negative `n` repeats nothing |
+| `parse_i64()`, `parse_f64()` | `i64?`, `f64?` | Rust's `from_str`: no white space, `+`/`-` sign, `inf`, `NaN` |
+| `hash()` | `u64` | FNV-1a 64 of the bytes |
+| `find_json_escape(from)` | `usize` | the first `"`, `\` or control byte (U+0000..U+001F) at or after `from` (clamped), else `len()`; inline, 16 bytes per step (below) |
+| `to_string()` | `String` | itself |
+
+`slice` checks its range and the two character boundaries inline (the
+range compared as unsigned, so a negative index fails; a boundary byte must
+not be a UTF-8 continuation byte) and calls the runtime only for a slice
+that fails, to panic with the message below. `==` and `!=` compare the
+lengths inline and call the runtime only for equal lengths.
+
+`find_json_escape` is the string-end and escape search of a JSON parser
+and printer: one unaligned 16-byte vector load and three compares per step
+(LLVM lowers the vector compares to SSE2 on x86-64 and NEON on AArch64,
+and to scalar code where there is no vector unit), then a byte loop for
+the last bytes; no load reaches past the string. `std.json` uses it in the
+parser (twitter parse 128-130 to 125 ms) and the printer (twitter print 62
+to 55 ms; see "JSON").
+
+**`lines()` and `split()` without the array.** Where the `[String]` would
+be a temporary nothing else sees, the pieces are read as they are found,
+in one loop, with no array: `for line in text.lines() { .. }`, `for p in
+text.split(",") { .. }`, `text.lines().iter()..` (any pipeline), and a
+chain on `text.split(sep)` or `text.lines()` that uses a pipeline
+operation arrays do not have -- `text.split(",").map(f).count()`,
+`.enumerate()`, `.take(n)`, `.find(f)`; see "Lazy pipelines". The string
+and the separator are evaluated once, before the first piece, as the call
+would be; a line break or a one-byte separator (always ASCII in UTF-8) is
+found with `memchr`, a longer separator with `str::find`; an empty
+separator panics before the first piece, with `split`'s message. A chain
+of only methods arrays have (`text.split(",").map(f)`,
+`.filter(g).sum()`) keeps the eager arrays, so no program changes meaning,
+and `let parts = text.split(",")` is an array as always. The eager
+`split` on one byte and `lines()` scan with `memchr` too and fill the
+array with no list in between.
+
+`std.collections.string` adds what is written in Codira on top: `join`,
+`insert`, `remove`, `reverse`, `count`, `compare`, `split_whitespace`,
+`string_from_code_point(s)`. `std.format.format` has `format(template,
+[args])`, `format_int(value, base)`, `hex`/`bin`/`oct` and padding.
+
+#### Format specs and the debug form
+
+```codira
+let x = 3.14159
+let n = 42
+let w = 9
+let name = "héllo"
+f"[{x:>10.3}]"          // "[     3.142]"
+f"[{n:08}] [{n:+}]"      // "[00000042] [+42]"
+f"[{n:*^9}] [{n:#x}]"    // "[***42****] [0x2a]"
+f"[{x:>{w}.2}]"         // "[     3.14]": a width (or precision) from a variable
+f"{x:e} {n:b}"           // "3.14159e0 101010"
+f"[{name:-<8.3}]"        // "[hél-----]": at most 3 chars, left-aligned in 8
+
+struct Point { x: i64, y: f64 }
+let p = Point { x: 1, y: 2.0 }
+f"{p:?}"                 // "Point { x: 1, y: 2.0 }"
+f"{p:#?}"                // the same, one field per line (Rust's `{:#?}`)
+p.debug_string()         // what `{p:?}` writes
+```
+
+A hole may carry a **format spec** after a colon, in Rust's grammar
+(`std::fmt`), with Python's braces for a width or precision held in a
+variable:
+
+```text
+spec      := [[fill] align] [sign] ['#'] ['0'] [width] ['.' precision] [type]
+fill      := any character but '{' and '}'
+align     := '<' | '^' | '>'
+sign      := '+'
+width     := integer | '{' name '}'
+precision := integer | '{' name '}'
+type      := '' | '?' | 'x' | 'X' | 'o' | 'b' | 'e' | 'E'
+```
+
+- What each part means is what it means in Rust: `<`, `^`, `>` align left,
+  centred (an odd fill character goes right) or right within `width`
+  characters, padding with `fill` (a space unless given); numbers align
+  right and everything else left by default. `+` prints the sign of a
+  non-negative number. `0` pads a number with zeros between its sign (and
+  prefix) and its digits, whatever the fill and alignment say. `#` adds
+  `0x`, `0o` or `0b` to `x`/`X`, `o`, `b` (`0x` for `X` too, as in Rust),
+  and makes `?` the pretty form `#?`. A float's precision is its digits
+  after the point, rounded as Rust's `format!` rounds (to nearest, ties to
+  even, on the exact binary value); a string's is the number of characters
+  kept. `e`/`E` is the exponent form of a float or an integer, with a
+  precision if given. The radix forms of a negative integer print its
+  type's bits (an `i8` holding -1 is `ff` under `x`), as Rust does.
+- Without a precision a float has the digits `to_string()` gives it
+  (`1.0`, `1e21`, shortest round trip: Rust's `{:?}`), so `{x:>8}` pads what
+  `{x}` writes.
+- A width or precision `{w}` names a variable, then fields (`{self.width}`),
+  of any integer type; a negative value counts as zero.
+- **Checked at compile time.** A spec that does not parse, or does not
+  apply to the hole's type, is an error at the literal that names the spec
+  and the type: ``the format spec `.2` does not apply to a `i64`: integers
+  have no precision``, ``invalid format spec: `>8z`: unknown format type
+  `z` ``. Integers take the radix and exponent forms but no precision;
+  floats take a precision and the exponent forms but no radix; strings and
+  `bool` take a fill, an alignment and a width (strings a precision too)
+  but no `+`, `0` or `#`; any other type takes only `?`. A value of a
+  generic type `T` takes only `?` (what else applies depends on `T`).
+- **The debug form, `{x:?}`, `{x:#?}` and `x.debug_string()`, exists for
+  every type** with nothing to write: numbers as `to_string()` writes them,
+  `bool`, strings quoted and escaped (`"tab\there \"q\""`: `\n`, `\r`,
+  `\t`, `\0`, `\\`, `\"`, other ASCII control characters as `\xNN`, the
+  rest as it is, so the text reads back as a Codira literal), `nil` or the
+  value of an optional, arrays `[1, 2]`, tuples `(1, true)` and `(7,)`,
+  structs and classes `Point { x: 1, y: 2.0 }` (a tuple struct `Pair(1,
+  2)`, a unit struct by its name), enums `Shape.Circle(2.0)` and
+  `Shape.Dot`, generic instantiations by their name (`Box { value: 3 }`),
+  a function value `<func>`, a channel `<channel>`. The text is the Codira
+  expression that builds the value. For structs, arrays and tuples of
+  numbers, `bool`s and strings that need no `\xNN` escape it is exactly
+  what Rust's `#[derive(Debug)]` writes, compact and pretty (the tests
+  compare the two); enums are written qualified, as Codira writes them
+  (Rust writes `Circle(2.0)`), an optional as its value or `nil` (Rust
+  writes `Some(..)`/`None`), and a string's control characters as `\xNN`
+  (Rust writes `\u{1}`). A user method called `debug_string` takes
+  precedence over the builtin one.
+- `{x:>20?}` pads the whole debug text (Rust pads each leaf field instead);
+  the debug form takes a fill, an alignment and a width, and `#`, but no
+  `+`, `0` or precision.
+- **Reference cycles**: a class instance met again while its own fields are
+  being written prints as `Node { .. }` instead of looping. An instance
+  reached twice without a cycle (shared, not nested) is written both times.
+  The runtime keeps the instances in progress on a per-thread stack.
+- **How it is built**: the compiler generates one debug function per type
+  in the module that needs it (`codira.debug:<type>`, private), from the
+  type alone, and a type that contains itself (through an array, a class
+  or an optional) gets a function that calls itself. Nothing at run time
+  inspects a type; the debug function appends straight into the string
+  being built (numbers with the inline digit writer). A spec hole is a
+  piece of the literal's format plan (see "String Fabric"): a decimal
+  integer with a constant width and an ASCII fill is padded inline; any
+  other is one call to `codira.string_append_format_int`, `_float` or
+  `_text`, chosen by the type, with the spec passed as four constant
+  scalars; Rust's formatter makes the digits of floats and radix forms,
+  and the runtime pads them on the stack and appends them to the
+  destination.
+- `x.type_name()` is the name of `x`'s type as a `str` constant (`FileError`,
+  `Box[i64]`, `[u8]`), chosen per instantiation; `std.error.error` records
+  it.
+- Tests: `crates/codira/tests/formatting.rs` prints every spec for seeded
+  random `i64`, `i8`, `u64`, `f64`, `f32`, `String` and `bool` values with
+  random widths and precisions and compares each line with Rust's
+  `format!` of the same spec; the runtime's own unit tests do the same on
+  thousands of values. Golden tests cover the debug form of nested types,
+  cycles and a type from another module; `codira_hir`'s
+  `builtin::format` and `ty::infer::format` tests cover the grammar and the
+  misuse errors.
+
+#### Safety
+
+- **Always valid UTF-8.** Literals are checked by the compiler;
+  `string_from_utf8` validates; slicing checks character boundaries; every
+  other operation (concatenation, case mapping, replacing, splitting,
+  trimming, number formatting) maps valid UTF-8 to valid UTF-8. There is no
+  unchecked constructor.
+- **Every index is checked.** `slice(start, end)` panics unless `0 <= start
+  <= end <= len()` and both are character boundaries; `byte_at(i)` panics
+  out of range. The report names the call: `panic at mod.code:4:13: byte
+  index 2 is not a char boundary; it is inside 'é' (bytes 1..3)`, `string
+  slice -1..2 is out of range for a string of length 3`, `index out of
+  bounds: the length is 3 but the index is 3`; exit status 101.
+- **Bytes are a copy.** `bytes()` returns a new `[u8]`; `string_from_utf8`
+  copies its input. Nothing gives a program a mutable view of a string's
+  buffer.
+- The UTF-8 validation and the slice check are tested against Rust's
+  `std::str` with seeded random byte arrays and ranges (property tests in
+  `crates/codira_runtime/src/string.rs`), and so are search, split, lines,
+  trim, case mapping, replace, repeat, parse and format; a random tree of
+  appends checks that no existing value ever changes.
+
+#### Unicode: what is and is not handled
+
+A "char" is a Unicode scalar value (a code point, `u32`), as in Rust: there
+is no `char` type and no grapheme clusters (`"é"` written as `e` plus a
+combining accent is two chars). `to_upper`/`to_lower` change ASCII letters
+only (`"Wörld".to_upper()` is `"WöRLD"`); full Unicode case mapping, which
+can change the length (`ß` to `SS`), is not done. Ordering is by code point,
+not by any locale's collation. `trim` uses Unicode's `White_Space`
+property, as Rust's does.
+
+`hash()` (and `std.hashlib.string_hash`) is FNV-1a: fast and deterministic,
+and **not resistant to hash flooding** -- an attacker who chooses the keys
+of a table hashed with it can make them all collide.
+
+#### Effects, the GC, hot reload and the host
+
+- **Allocates** (so rejected by `@noalloc`): `to_string()` on anything but a
+  `String`, the implicit `str`-to-`String` conversion, `+` and `+=`
+  (counted as allocating even when the append fits: whether it fits is a
+  property of the buffer at run time, which the compiler does not track,
+  so the inline fast path that allocates nothing is not proved and the
+  effect stays), `chars`, `bytes`,
+  `split`, `lines`, `to_upper`/`to_lower`, `replace`, `repeat`,
+  `string_from_utf8`, interpolation (a hole with a format spec and the
+  debug form included), `debug_string()`, and every method called on a
+  `str`.
+  `len`, `is_empty`, comparisons, `find`/`rfind`/`contains`/
+  `starts_with`/`ends_with`, `char_count`, `hash`, `parse_*` and the views
+  (`trim*`, `slice`) allocate nothing. **Panics** (`@nopanic`): `slice` and
+  `byte_at`, besides every allocation.
+- The buffer is a GC array, so the collector traces it, conservatively from
+  the stack (a view keeps its buffer alive). `Runtime::save_heap` /
+  `restore_heap` carry strings with the objects that hold them, and a hot
+  reload keeps a `String` field's value across layout changes like any
+  value-struct field. Tests: `crates/codira_runtime/tests/strings.rs`
+  (collections under a 2 MB heap cap while strings are built, sliced and
+  compared; a snapshot; a reload that reorders and adds fields) and
+  `strings_host_gc.rs` (a host thread calls `collect_blocking` back to back,
+  with no pause of its own, while strings are built; the collector's
+  fairness rule keeps the rounds about as fast as without it, see "Memory:
+  heap limit, pacing, `--runtime-stats`").
+- **Host API**: `codira_runtime::StringRef` is a `String` held by the host,
+  like `StructRef` and `ArrayRef`: returned by `Runtime::invoke`, read from
+  a field with `StructRef::get::<StringRef>("name")` or from a
+  `[String]` with `ArrayRef<StringRef>`, made with `StringRef::new(&runtime,
+  "text")` to pass as an argument, read with `as_str()`, and kept alive
+  across calls with `root()` (`RootedString`). Unrooted, it is not
+  protected from a collection.
+- Strings cannot be sent between tasks (only scalars and channels cross).
+
+#### Back ends
+
+The LLVM back end compiles all of the above. The Cranelift back end
+(`codira run --jit`) compiles `str` literals and values, the conversion of a `str` to a `String`, printing, `+`, `+=` (on a
+local, an element or a field), the comparisons, `to_string()` of numbers,
+`bool`s and text, `len`, `is_empty`, `char_count`, `hash`, `contains`,
+`starts_with`, `ends_with`, `to_upper`, `to_lower`, `replace` and `repeat`,
+and strings in fields, arrays, parameters and results, calling the same
+runtime functions in the same order as LLVM. The other methods (`split`,
+`slice`, `find`, `parse_*`, `byte_at`, ...), `string_from_utf8` and
+interpolated literals run on LLVM instead, with a note naming them.
+
+#### Performance
+
+Measured against Rust's `String` and `format!` on the same algorithms
+(the programs are now the `strings` and `format` workloads of the AURORA
+suite, `benches/aurora/strings/` and `benches/aurora/format/`, with C++
+baselines; all print the same check values, and `benches/aurora/RESULTS.md`
+has current numbers with intervals). Medians of 11 alternating runs of each
+program (format specs: 5 runs, each the median of 7 rounds of 1M
+formats), on an Intel Xeon @ 2.10 GHz VM (4 vCPUs, Linux 6.18) shared with
+other builds (load average 4 to 5 during the runs, so single runs vary by
+up to 30%); Codira built with `codira build -O 3` and run by
+a host with the runtime in release mode (now `benches/aurora/host`), Rust 1.97.1 with
+`rustc -C opt-level=3`.
+
+| benchmark | before | Codira | Rust | Codira / Rust |
+|---|---:|---:|---:|---:|
+| 1M short appends (`s += "word "`) | 17.3 ms | 7.5 ms | 5.3 ms | 1.42x |
+| 1M `s += i.to_string()` and `"\n"` | 112.6 ms | 12.0 ms | 26.1 ms | 0.46x |
+| `lines()` of 10.5 MB into an array | 10.3 ms | 6.5 ms | 5.7 ms | 1.15x |
+| `for line in text.lines()`, lazily | -- | 2.3 ms | 4.2 ms | 0.56x |
+| `text.split(",").filter(..).count()`, lazily, 10.5 MB | -- | 16.3 ms | 22.1 ms | 0.74x |
+| `find` in 10 MB | 1.8 ms | 1.4 ms | 1.7 ms | 0.80x |
+| `parse_i64` of 1M fields | 11.5 ms | 6.8 ms | 6.5 ms | 1.05x |
+| `f"{x:>10.3}"`, a float, 1M | 261.2 ms | 197.4 ms | 187.9 ms | 1.05x |
+| `f"{n:08}"`, an integer, 1M | 102.7 ms | 18.6 ms | 43.4 ms | 0.43x |
+| `f"{p:?}"`, `Point { x: i64, y: f64 }`, 1M | 553.1 ms | 164.7 ms | 273.6 ms | 0.60x |
+
+What still loses, and why:
+
+- **1M short appends, 1.4x.** Most of the gap is memory, not the append:
+  100 strings of 10,000 appends each took 6.5 ms against Rust's 2.7 ms,
+  and Rust's own time rose to 5.1 ms when its strings were leaked instead
+  of freed -- which is what happens here, since nothing is collected while
+  the benchmark runs and every new buffer is fresh memory. Growth adds to
+  it: each doubling allocates a new buffer on the GC heap and copies into
+  it, where Rust's `realloc` of a large block remaps pages without
+  copying.
+- **`lines()` into an array, 1.15x**: the `[String]` (24-byte views,
+  4.9 MB) is allocated and filled on the GC heap after a counting pass.
+- **A float with a precision, 1.05x**: the digits are Rust's own
+  `{:.3}`; the rest is the call into the runtime and the padding.
+
+Each of these used to be a call through the runtime's dispatch table per
+append and, for numbers and specs, a new GC string per piece.
+
+Not done yet: inline digits for a float (it is one runtime call per
+hole or `to_string()`); a plan buffer shared across functions (each
+function has its own); growing a buffer in place on the heap (`realloc`);
+a `push_str` method (write `+=`); `match` on a `String`
+scrutinee; iterating a string directly (`for c in s.chars()` iterates the
+array of code points); a `char` type; Unicode case mapping and
+normalization; expressions in holes (a hole is a name and fields); a
+user-defined debug form (the generated one cannot be overridden except by
+a method named `debug_string`, which `{x:?}` does not call); a precision
+for the debug form (`{x:.2?}`); `x?`/`X?` (hex debug); a `Display` trait
+(`to_string` is found by name); formatting in `codira run --jit` (such a
+program runs on LLVM, as every `String` program does).
+
+### JSON: `std.json.json`
+
+```codira
+import std.json.json.{Json, JsonObject, JsonError, parse, to_string, to_pretty_string}
+import std.result.result.{Result}
+
+func born(text: String) -> Result[i64, JsonError] {
+    let doc = parse(text)?                         // a JsonError leaves with `?`
+    if let year = doc.get("born") {
+        if let n = year.as_i64() { return Result.Ok(n) }
+    }
+    Result.Ok(0)
+}
+
+let doc = parse("{\"name\": \"Ada\", \"tags\": [\"math\"], \"born\": 1815}").unwrap()
+doc.get("name")!.as_str()!                         // "Ada"
+doc.get("tags")!.at(0)!.as_str()!                  // "math"
+doc.get("born")!.as_i64()!                         // 1815
+let o = JsonObject.new().with("n", Json.Int(3)).with("x", Json.Float(0.5))
+to_string(Json.Obj(o))                             // {"n":3,"x":0.5}
+to_pretty_string(doc)                              // two-space indentation
+```
+
+**The value.** `Json` is an enum: `Null`, `Bool(bool)`, `Int(i64)`,
+`Float(f64)`, `Str(String)`, `Arr([Json])`, `Obj(JsonObject)`.
+
+- Numbers keep the distinction the text makes: a number with neither a
+  fraction nor an exponent that fits an `i64` is an `Int`, exact; every
+  other number is a `Float`, the correctly rounded nearest `f64` (also an
+  integer beyond the `i64` range). `-0` is `Float(-0.0)`, so the sign
+  survives. `as_i64` is `nil` on a `Float` (even `1.0`); `as_f64` converts
+  an `Int`.
+- **Objects keep insertion order**: a `JsonObject` holds its members in
+  one array, in the order the text (or `set`) gave them, so printing a
+  parsed document gives its members back in the same order and a round
+  trip changes nothing a diff would see. Lookups hash the key (FNV-1a) and
+  scan the hashes of objects of up to 8 members; larger objects keep an
+  open-addressing index, so `get` is O(1) expected either way. Chosen over
+  `Map` (which does not keep order) and over a sorted map (which reorders
+  what a person wrote).
+- Accessors return optionals: `get(key)`, `at(i)`, `as_bool`, `as_i64`,
+  `as_f64`, `as_str`, `as_array` and `as_object` (the shared array or
+  object, not a copy), `len` (elements or members, 0 otherwise), the
+  `is_*` tests and `kind_name()`. Construction: the variants themselves,
+  `Json.string(..)`, `Json.int(..)`, `Json.float(..)`, `Json.boolean(..)`,
+  `Json.array(..)`, `Json.object()`, and `JsonObject.new()` with `set(key,
+  value) -> Json?` (replaces in place, keeping the position), `with` (set
+  and return the object), `remove` (keeps the order; O(n)), `get`,
+  `contains_key`, `keys`, `values`, `key_at(i)`, `value_at(i)`.
+- **Equality** (`equals(a, b)`, `a.equals(b)`) is structural: arrays
+  element by element, objects as sets of members (order ignored), numbers
+  by kind and value (`Int(1)` and `Float(1.0)` differ, as their texts
+  do; IEEE for floats). `==` on `Json` is not available (an enum with
+  non-scalar payloads).
+
+**Parsing.** `parse(text: String) -> Result[Json, JsonError]`,
+`parse_with(text, ParseOptions { max_depth, duplicate_keys })`, and
+`parse_bytes(bytes: [u8])` / `parse_bytes_with` for bytes (`read_file`'s),
+which reports bytes that are not UTF-8 as an `InvalidUtf8` error at the
+first bad byte. The grammar is ECMA-404 / IETF RFC 8259 and nothing
+more:
+
+- No comments, trailing commas, single quotes, unquoted keys, leading
+  zeros, `+` signs, `.5`, `NaN` or `Infinity`, no byte order mark. White
+  space is space, tab, line feed and carriage return. Any value may be the
+  top level; only white space may follow it.
+- Strings: the escapes `\" \\ \/ \b \f \n \r \t \uXXXX` (either case of
+  hex digits), with `\uD83D\uDE00` surrogate pairs decoded; a lone or
+  mismatched surrogate, any other escape, and an unescaped control
+  character (U+0000..U+001F) are errors. DEL and every other character
+  are accepted as written.
+- A number too large for an `f64` (`1e400`) is an error
+  (`NumberOutOfRange`), not an infinity; one too small rounds to zero.
+- **Duplicate keys** are an error (`DuplicateKey`, at the second key) by
+  default: parsers that disagree about which value wins have been used to
+  get data past a check. `DuplicateKeys.KeepLast` keeps the last value at
+  the position of the first key, as JavaScript's `JSON.parse` and
+  `serde_json` do.
+- **Errors** are a `JsonError { kind, offset, line, column }`: the
+  `JsonErrorKind` (19 reasons: `UnexpectedEnd`, `ExpectedValue`,
+  `TrailingComma`, `InvalidNumber`, `LoneSurrogate`, `DepthLimit`, ...),
+  the byte offset, the 1-based line (lines end at line feeds) and the
+  1-based column in characters. `reason()` is the phrase, `message()`
+  says `trailing comma at line 1, column 7 (byte 6)`.
+- **Limits.** Arrays and objects nest at most `max_depth` deep (128 by
+  default, as `serde_json`'s, which admits 127; `[[1]]` is 2 deep), and a
+  larger `max_depth` is clamped to `MAX_DEPTH_LIMIT()`, 1000: a level costs
+  up to about 900 bytes of stack in the parser, and parsing, printing and
+  comparing 1000 levels was measured to run in a 1 MiB stack and not in
+  768 KiB (the main thread and Codira's task threads have 8 MiB). The size
+  of the input is not limited.
+- **The parser never panics.** Every input gives a value or an error; the
+  tests feed it random bytes and every prefix of valid documents. It is
+  written in Codira, recursive descent over the `String`; the runtime
+  parses floats (Rust's `f64::from_str`, correctly rounded).
+
+**Printing.** `to_string(v)` is compact; `to_pretty_string(v)` puts each
+element and member on a line of its own with two spaces per level and
+`"key": value` (the layout of `serde_json`'s `to_string_pretty`);
+`to_pretty_string_with(v, indent)` takes the width; `to_bytes_into(v, b)`
+and `to_pretty_bytes_into(v, indent, b)` append the text to a `[u8]` the
+program keeps and `clear()`s between documents, so nothing else is
+allocated once it has room. Strings escape `"`, `\` and the control
+characters (`\b \f \n \r \t`, else `\u00XX`) and nothing else: every other
+character is written as itself, in UTF-8. Floats are written in the
+shortest form that reads back as the same `f64` (`ryu`), always with a
+`.` or an exponent (`1.0`, `1e300`, `-0.0`), so they read back as a
+`Float`; a NaN or an infinity, which JSON cannot express, is written as
+`null`. For every value without one, `parse(to_string(v))` equals `v`, and
+so does the pretty text: the tests check this on random values, and that
+both texts are byte for byte the ones `serde_json` prints.
+
+How it is built: the text goes into one growable `[u8]` -- punctuation
+with `push`, each string copied whole between its escapes (found 16 bytes
+at a time by `find_json_escape`) with `push_str`, numbers formatted
+straight into the array's spare capacity by `push_int` and
+`push_json_float` -- and the buffer becomes the `String`'s
+(`string_take_utf8`: no second buffer, one in-place move for the owner
+word). The printer before this one filled a 64 KiB chunk
+byte by byte and copied every chunk three more times on its way into the
+result (a slice, `string_from_utf8`, a doubling append); taking that path
+out alone took twitter's print from 63 to 40 ms and deep's pretty print
+from 345 to 110 ms (measured by discarding each chunk instead of copying
+it, before pacing).
+
+**Streaming output: `JsonWriter`.** One document, token by token, with no
+tree:
+
+```codira
+import std.json.json.{JsonWriter, JsonWriteError}
+
+let w = JsonWriter.new()                 // or JsonWriter.pretty(2)
+w.begin_object()
+w.key("ids")
+w.begin_array()
+for id in ids { w.int(id) }
+w.end_array()
+w.key("name")
+w.string(name)
+w.end_object()
+let text = w.finish()?                   // Result[String, JsonWriteError]
+```
+
+- Values: `null()`, `bool(b)`, `int(n)`, `float(x)`, `string(s)`, and
+  `value(v)` for a whole `Json` tree; `begin_array`/`end_array`,
+  `begin_object`/`key(k)`/`end_object`.
+- **It checks what the parser checks**, so what it writes `parse` reads
+  with the default options: a key before each member's value and nowhere
+  else, ends that close what is open, one top-level value, no key twice in
+  one object (the keys of each open object are kept, as the parser keeps
+  them), nesting up to `max_depth` (128; `set_max_depth`, clamped to
+  1000). The first call that does not fit is kept -- `JsonWriteError {
+  kind, call, offset }`: `ExpectedKey`, `UnexpectedKey`, `MismatchedEnd`,
+  `ValueAfterEnd`, `Unfinished`, `DuplicateKey`, `DepthLimit`, `Io(code)`;
+  the call's position and the bytes of valid text before it -- and every
+  later call does nothing (`error()` reads it). Calls return nothing, so
+  an encoder is a plain sequence of calls; `finish` reports the error.
+- Sinks: `finish()` hands the buffer to a `String` (`string_take_utf8`);
+  `finish_into(b)` appends them to a `[u8]`; `JsonWriter.to_file(fd)` (and
+  `pretty_to_file`) sends them to a file opened with std.fs.fs every
+  64 KiB, and `finish_file()` writes the rest and returns the document's
+  size. Every `finish` leaves the writer empty for the next document, its
+  buffers kept, after an error too.
+
+**Streaming input: `JsonReader`.** A pull parser: the events of one
+document, one call at a time, with no tree.
+
+```codira
+import std.json.json.{JsonReader, JsonEvent}
+
+let r = JsonReader.new(text)             // with_options(text, opts); from_bytes(bytes, opts)
+loop {
+    match r.next_event()? {              // Result[JsonEvent, JsonError]
+        JsonEvent.Key(k) -> { .. },
+        JsonEvent.Int(n) -> { .. },
+        JsonEvent.End -> break,
+        _ -> {},
+    }
+}
+```
+
+- Events: `BeginObject`, `EndObject`, `BeginArray`, `EndArray`, `Key`,
+  `Null`, `Bool`, `Int`, `Float`, `Str`, and `End` once the value is
+  complete and only white space follows (then `End` again). `peek()`
+  reads one event ahead; `offset()` is where the last event starts;
+  `depth()` how many arrays and objects are open.
+- **It is the tree parser run one token at a time** -- the same code
+  scans strings, numbers and literals, and a state machine replaces the
+  recursion -- so it accepts exactly the texts `parse_with` accepts with
+  the same options and stops at the same first error (kind, offset, line,
+  column), with the same nesting limit; after an error every call returns
+  it again. Duplicate keys are refused as there (an object's keys are
+  remembered while it is open; with `DuplicateKeys.KeepLast` both members
+  are read, in order). Strings without escapes are views of the text.
+  `from_bytes` checks UTF-8 first (an `InvalidUtf8` error, as
+  `parse_bytes` reports it) and copies the bytes once.
+- Tests: the JSON harness runs every case of every suite in
+  `crates/codira/tests/json.rs` -- the conformance texts, random values,
+  4,000 mutated texts, random bytes and every truncation of valid texts,
+  the nesting limits and the duplicate keys -- through the reader too, and
+  requires the tree rebuilt from its raw events to equal `parse`'s, or the
+  first error to be identical; it replays every accepted value through
+  `JsonWriter`, compact and pretty, and requires the printer's exact bytes.
+
+**Typed decoding and encoding.** There is no derive and there are no
+generic traits, so a program writes a decoder per type over `JsonReader`
+and an encoder over `JsonWriter`:
+
+```codira
+import std.json.json.{JsonReader, JsonWriter, DecodeError}
+
+struct Point { x: i64, y: f64, tag: String? }
+
+func decode_point(r: JsonReader) -> Result[Point, DecodeError] {
+    var x: i64? = nil
+    var y = 0.0
+    var tag: String? = nil
+    r.begin_object()?
+    while let key = r.next_key()? {      // nil at the `}`
+        if key == "x" {
+            x = r.read_i64()?
+        } else if key == "y" {
+            y = r.read_f64()?            // an integer converts
+        } else if key == "tag" {
+            tag = if r.read_if_null()? { nil } else { r.read_string()? }
+        } else {
+            r.skip()?                    // or: return Result.Err(r.unknown_field(key))
+        }
+    }
+    if x == nil { return Result.Err(r.missing_field("x")) }
+    Result.Ok(Point { x: x!, y: y, tag: tag })
+}
+
+func encode_point(w: JsonWriter, p: Point) {
+    w.begin_object()
+    w.key("x")
+    w.int(p.x)
+    w.key("y")
+    w.float(p.y)
+    w.key("tag")
+    if let t = p.tag { w.string(t) } else { w.null() }
+    w.end_object()
+}
+```
+
+- The reader's typed methods: `begin_object`, `next_key` (`String?`),
+  `begin_array`, `next_element` (`bool`: another element follows),
+  `read_null`, `read_bool`, `read_i64`, `read_int_in(lo, hi)` (for a
+  narrower field), `read_f64`, `read_string`, `read_if_null`, `skip` (any
+  value, however deep), `read_value` (a `Json` tree, for a field of any
+  shape) and `finish` (only white space after the value). The procedural
+  ones return `Result[(), DecodeError]`, so `r.skip()?` fits any branch.
+- **Errors name the value exactly.** A `DecodeError { kind, path, offset,
+  line, column }`: the kind (`Syntax(JsonErrorKind)`, `WrongType(expected,
+  found)`, `MissingField(name)`, `UnknownField(name)`, `OutOfRange`,
+  `Custom(text)`), the JSONPath of the value (`$[0].user.name`; a key that
+  is not an identifier as `["we ird"]`), and where the value starts (for a
+  syntax error, where the text goes wrong; for a missing field, the
+  object's `}`). `message()` says `expected a string, found a boolean at
+  $[0].user.name, line 1, column 51 (byte 50)`. `r.path()` and
+  `r.error_here(kind)` give the same for a decoder's own checks.
+- Tests (`crates/codira/tests/json_typed.rs`): 400 random records with
+  unknown members (nested), `null` optionals, shuffled member order and
+  random white space decode into structs and encode back to the value
+  `serde_json` holds; in 120 random documents a wrong-typed value, an
+  out-of-range number, a missing member or a syntax error is injected at a
+  random place, and the reported kind, path, byte offset, line and column
+  must be the ones the test recorded while writing the text.
+
+*Why hand-written, and what a generated form would take.* The debug form
+`{x:?}` shows the compiler can generate a function per type from the type
+alone, with no annotation, and a JSON encoder could be generated the same
+way (`codira.json:<type>`, a struct as an object of its fields in order,
+an array as an array, an optional as its value or `null`, numbers and
+strings as themselves). It was not done, for these reasons:
+
+- A schema is rarely the struct's own shape. Real documents rename
+  fields (`screen_name` against `screenName`), leave some out, give others
+  defaults, keep or reject unknown members, and spell enums one of several
+  ways (`"Circle"`, `{"Circle": {..}}`, `{"type": "Circle", ..}`). Rust's
+  serde needs attributes for each of these; Codira has no field attributes
+  to say them with, and a generator that picks one mapping would encode
+  and decode the wrong JSON for most real schemas without a word.
+- Decoding is the hard half. A generated decoder must build a struct from
+  members in any order, decide what a missing member means (an error, or
+  `nil` for an optional, or a default), and construct classes (whose
+  sharing and cycles JSON cannot express). Each of those is a decision a
+  person should make per type.
+- What a generator would buy is boilerplate, not speed or safety: it would
+  emit the calls written above (`next_key`, `read_*`), so the error
+  locations -- path and byte offset -- would be the same, and the reader's
+  per-call cost would stay.
+- If it is added, the shape is the debug form's: generated per type in the
+  module that needs it, a user's own `to_json`/`from_json` method taking
+  precedence by name (as `debug_string` does), and the field attributes
+  above added to the language first.
+
+**Safety, effects and memory.**
+
+- Hostile input: nesting is bounded, the parser does not panic, and every
+  index it uses is checked. Not bounded: the input size, the size of the
+  tree (64 bytes per array element, 96 per object member, plus an object
+  header per array and object) and the time for a large
+  object whose keys an attacker chose to collide in FNV-1a, which is
+  unseeded (**not DoS-resistant**, unlike `Map.new()`: see "Not done").
+- A string without escapes is a view of the input text (no copy): the
+  value keeps the whole input buffer alive. Copy what you keep
+  (`f"{s}"`) to let the input go.
+- Parsing and printing allocate (GC arrays and objects; the parser keeps
+  each array's and object's elements on a stack of its own and allocates
+  the result once, at its exact size); both may panic only on running out
+  of memory. The printer and `equals` recurse: a value nested more deeply
+  than any parse allows, built by a program, can overflow the stack.
+- `codira run` collects as the program allocates (pacing) under a finite
+  heap limit, half of the available memory by default (see "Memory: heap
+  limit, pacing, `--runtime-stats`"). The measurements below ran under a
+  host with a 1 GiB limit and the default pacing.
+- The streaming reader and writer allocate nothing per event beyond what
+  the program keeps: the strings of events are views, the reader's stacks
+  and the writer's buffer are reused, and a file writer holds at most
+  64 KiB before it writes.
+- Values are not sendable between tasks (they hold strings).
+
+**Measured** against Rust's `serde_json` (1.0.133) on the same machine:
+an x86-64 VM, Intel Xeon @ 2.10 GHz, 4 vCPUs, 16 GB, Linux 6.18, Rust
+1.97.1. These numbers were taken with the former `examples/json_bench`
+harness (in the history at c2e477fae3; its workloads are now kernels of
+the benchmark suite, below). Codira: `codira build -O 3` with a release
+build of the compiler, run by that harness's host (the runtime in release
+mode, a 1 GiB heap limit and the default pacing). Rust: `cargo build --release` with
+`serde_json`'s `preserve_order` (insertion order, as here) and
+`float_roundtrip` (correctly rounded floats, as here), default target
+CPU. Each program runs each phase 11 times and reports the median; the
+table is the median of 5 alternating runs of both, in milliseconds, and
+both print the same check values on every row (node count, string bytes,
+sums of the integers and of the floats' bits, output lengths; for
+`typed`, sums over every decoded field). The inputs are written by
+`benches/aurora/json/gen_inputs.py` (seeded): `twitter`, an array of
+20,000 records of a social network's API (16.9 MB); `canada`, GeoJSON
+polygons of 300,000 17-digit coordinate pairs (11.8 MB); `deep`, 4,000
+trees of objects and arrays 100 deep (7.0 MB; its pretty text is 149 MB of
+mostly indentation). "Before" is the previous `std.json.json` and
+compiler (main at f8b145c6a1) measured the same way on the same machine
+the same day.
+
+| input | phase | before | Codira | Rust | Codira / Rust |
+|---|---|---:|---:|---:|---:|
+| twitter | parse | 129.6 | 116.0 | 141.8 | 0.82x |
+| twitter | print | 115.5 | 53.8 | 62.0 | 0.87x |
+| twitter | pretty | 132.1 | 64.3 | 74.5 | 0.86x |
+| canada | parse | 57.4 | 59.2 | 56.9 | 1.04x |
+| canada | print | 57.4 | 36.9 | 32.6 | 1.13x |
+| canada | pretty | 115.0 | 53.3 | 60.9 | 0.88x |
+| deep | parse | 71.6 | 72.0 | 102.3 | 0.70x |
+| deep | print | 47.4 | 45.3 | 34.4 | 1.32x |
+| deep | pretty | 512.0 | 296.3 | 355.4 | 0.83x |
+| twitter | stream (no tree) | -- | 71.9 | 35.2 | 2.04x |
+| canada | stream (no tree) | -- | 48.8 | 26.7 | 1.83x |
+| deep | stream (no tree) | -- | 52.2 | 33.2 | 1.57x |
+| twitter | typed (into structs) | -- | 135.5 | 30.4 | 4.45x |
+
+The Codira and Rust columns are one run (load average 1.1 to 2.5: the
+machine was not idle, and Rust's times were 6-13% above an earlier quiet
+run); "before" is a separate run the same day at a load average of about
+1, so compare it with care -- in the quiet run this branch measured
+twitter 50.2 / 58.1, canada 32.0 / 46.3 and deep 41.3 / 242.2 ms for print
+/ pretty. Per round, parse + print + pretty together (where a collection
+falls depends on what the phase before allocated, so the sum is steadier
+than each phase): twitter 233.7 against 277.1 ms (0.84x), canada 153.8
+against 149.5 (1.03x), deep 413.6 against 494.2 (0.84x). `simd-json`
+0.14, built for the host CPU, parsed into its `OwnedValue` in
+63.7 (twitter), 35.6 (canada) and 61.4 ms (deep), with the same check
+values (quiet run).
+
+- **Printing is at parity or faster** but for `canada`'s compact print
+  (1.13x: 600,000 floats, each a call into the runtime's `ryu`) and
+  `deep`'s (1.32x): every tree node there is a small object or array, and the time
+  goes to walking a tree whose nodes are 64 bytes (an object member 96)
+  where `serde_json`'s are 32. The "before" column shows what the old
+  printer cost once pacing ran collections during printing: each output
+  byte was allocated about four times on its way into the `String` (a
+  64 KiB chunk, a slice of it, `string_from_utf8`, a doubling append), and
+  that garbage made the collector run in the middle of printing.
+- **Parsing** is at Rust's speed or faster; its time includes the
+  collections pacing runs while the tree is built (with two trees alive
+  in the benchmark: the previous round's and the new one).
+- **Streaming is 1.5x to 2x slower than `serde`'s visitor.** The reader
+  hands out one event per call (a `Result` of an enum), checks each
+  object's keys for duplicates as the tree parser does (hashing every key,
+  and indexing objects of more than 8 members), and keeps a JSONPath;
+  `serde`'s visitor is monomorphised into the parser and checks nothing of
+  the kind. (Before an empty-string allocation per array and object was
+  taken out of the path bookkeeping, it was another 1.1x to 1.3x slower.)
+- **Typed decoding is 4x slower than `#[derive(Deserialize)]`.** A
+  profile (callgrind, twitter) puts 57% of the instructions in the
+  reader's state machine and its key, value and string scanning, 7% in the
+  duplicate-key check (hashing each key, indexing objects of more than 8
+  members), and most of the rest in allocation (strings with escapes, the
+  decoded arrays) and the program's own decoder, whose keys are matched by
+  a chain of comparisons (serde's derive matches them in generated code
+  and does not reject a repeated unknown key). A call from the program
+  into the reader, another module, was measured at about 2 ns. Not
+  optimised further.
+- Not measured: the pull parser on pretty-printed input (white space is
+  skipped a byte at a time).
+
+**In the benchmark suite.** The workloads are kernels of
+`benches/aurora/json` -- `parse_*`, `print_*`, `pretty_*`, `stream_*` for
+the three inputs and `typed_twitter` -- run by `python3 scripts/bench.py
+--only json.` against Rust (`serde_json`; a `serde` visitor for
+`stream_*`, `#[derive(Deserialize)]` for `typed_twitter`) and C++
+(RapidJSON's DOM, and its SAX `Reader` for `stream_*`; `typed_twitter` has
+no C++ variant), with peak RSS and the collector's figures (the method:
+`benches/aurora/README.md`). A kernel repeats its phase 5 times in one
+process. One run (5 processes per kernel and variant, interleaved; load
+average 3.5 falling to 1.2: not an idle machine), milliseconds, every
+check value the same across the variants but RapidJSON's canada prints,
+whose floats are not always the shortest text:
+
+| kernel | Codira | Rust | C++ | Codira / Rust | Codira / C++ |
+|---|---:|---:|---:|---:|---:|
+| parse_twitter | 971.6 | 1168.5 | 299.3 | 0.83x | 3.25x |
+| parse_canada | 591.7 | 468.5 | 200.7 | 1.26x | 2.95x |
+| parse_deep | 1062.8 | 953.4 | 169.1 | 1.11x | 6.28x |
+| print_twitter | 297.5 | 308.4 | 246.6 | 0.96x | 1.21x |
+| print_canada | 224.2 | 165.0 | 243.1 | 1.36x | 0.92x |
+| print_deep | 311.6 | 166.0 | 145.4 | 1.88x | 2.14x |
+| pretty_twitter | 425.4 | 407.0 | 402.1 | 1.05x | 1.06x |
+| pretty_canada | 408.9 | 332.7 | 333.0 | 1.23x | 1.23x |
+| pretty_deep | 994.7 | 1510.7 | 1063.5 | 0.66x | 0.94x |
+| stream_twitter | 458.3 | 163.3 | 239.7 | 2.81x | 1.91x |
+| stream_canada | 290.0 | 134.7 | 167.7 | 2.15x | 1.73x |
+| stream_deep | 367.0 | 157.2 | 108.8 | 2.33x | 3.37x |
+| typed_twitter | 920.5 | 183.0 | -- | 5.03x | -- |
+
+The suite's kernels differ from the harness above (five repetitions of one
+phase per process, so each kernel's own garbage drives the collections,
+where the harness alternated parse, print and pretty), and the gaps are
+wider there for compact printing of canada and deep and for streaming;
+peak RSS is 1.1x to 2.8x Rust's for the tree kernels (a Codira value is 64
+bytes, an object member 96) and 2x to 4.5x for the streaming ones. Taken
+on a loaded machine; rerun with `scripts/bench.py` before quoting a ratio.
+
+**Not done:** generated typed decoders and encoders (see above: decoders
+and encoders are written by hand over `JsonReader` and `JsonWriter`); a
+reader over a file or a stream of chunks (`JsonReader` reads a whole
+`String` or `[u8]` in memory); vector code for skipping white space (only
+the string scan uses it: the benchmark inputs are compact); reading a number's exact text (an integer beyond `i64` is a
+float, a decimal is rounded to an `f64`); JSON Pointer and JSON Patch; a
+limit on input or tree size; a seeded or flooding-resistant key hash (an
+object keeps its own index rather than a `std.collections.map`: its
+members stay in insertion order, which `Map` does not keep, the parser
+builds every object from one shared stack of members and allocates it
+once at its size, and an object of up to 8 members has no index at all;
+keying that index with SipHash costs a SipHash per key of every object
+above 8 members, which has not been measured against the `serde_json`
+numbers above);
+printing keys sorted; comments or trailing commas as an option.
 
 ### Integer arithmetic, shifts and casts
 
@@ -252,9 +1998,12 @@ let y  = fma(x, w, acc)              // x * w + acc, rounded once (f32 or f64)
 if unlikely(i >= limit) { .. }       // branch weights for the optimizer
 ```
 
-- `array_filled(v, n)` is the only way to make an array whose length is not
-  written out in the source. `v` is an integer, float or `bool`; the fill is a
-  counted loop that LLVM turns into a `memset` or vector stores. It allocates,
+- `array_filled(v, n)` makes an array of `n` copies of `v` in one
+  allocation. `v` is any value: a number (the fill is a counted loop that
+  LLVM turns into a `memset` or vector stores), a tuple, a value struct, a
+  string, or a class reference (`n` copies of the one reference). Generic
+  code uses it to allocate `n` elements of a type parameter at once
+  (`array_filled((key, value), n)` in `std.collections.map`). It allocates,
   so `@noalloc` rejects it.
 - `select(c, a, b)` takes integers, floats or `bool`s (it is a call; the
   channel statement `select { .. }` is a different construct, told apart by the
@@ -349,10 +2098,11 @@ let same = Shape.Point == p              // `==`/`!=`: see below
 - `extend Shape { func area(self) -> f64 { .. } }` adds methods and
   associated functions (`Shape.unit()` when `unit` is not a variant name).
 - A `let` or parameter pattern must be irrefutable: use `if let`/`match`.
-- Not supported (each a clear error): generic enums (`enum Option[T]`),
-  braced variants (`Circle { radius: f64 }`), an enum containing itself by
-  value (hold the recursion through a `class`), variants as function values
-  (`let f = Shape.Circle`), printing an enum, and enums in
+- Not supported (each a clear error): braced variants
+  (`Circle { radius: f64 }`), an enum containing itself by value (hold the
+  recursion through a `class` or an array), variants as function values
+  (`let f = Shape.Circle`), printing an enum with `print` (format it:
+  `f"{s:?}"` is `Shape.Circle(2.0)`), and enums in
   `codira run --jit`, the MIR/e-graph path and quantum kernels. The verifier
   treats a payload a pattern binds as an unknown value.
 - Hot reload: a stored enum keeps its tag and the slots whose names (`f64.0`,
@@ -360,6 +2110,51 @@ let same = Shape.Point == p              // `==`/`!=`: see below
   end: the tag is the declaration index, so reordering variants changes what
   stored values mean, and a value whose variant was removed makes a later
   `match` stop with "no `match` arm matches this value".
+
+#### Generic enums
+
+```codira
+enum Maybe[T] { Just(T), Nothing }
+enum Tree[T] { Leaf(T), Node([Tree[T]]) }    // recursion through an array
+
+extend Maybe[T] {
+    func or(self, fallback: T) -> T {
+        match self { Maybe.Just(v) -> v, Maybe.Nothing -> fallback }
+    }
+}
+extend Maybe[T: Shape] {                     // only where `T: Shape`
+    func area(self) -> i64 { match self { Maybe.Just(s) -> s.area(), _ -> 0 } }
+}
+
+let a = Maybe.Just(2.5)                      // Maybe[f64], from the payload
+let b: Maybe[i64] = Maybe.Nothing            // from the expected type
+let n = count([Maybe.Just(1), Maybe.Nothing])
+```
+
+- An enum takes type parameters like a struct, and is monomorphised the
+  same way: each instantiation (`Maybe[i64]`, `Maybe[str]`) is a type of
+  its own with its own layout -- a `Result[i64, i64]` needs one `i64`
+  slot, a `Result[i64, f64]` an `i64` and an `f64` slot. No boxing, no
+  allocation.
+- Arguments are written in type position only (`Maybe[i64]`); a
+  construction learns them from its payload and the expected type, a
+  pattern from the value it matches. Everything above -- `match` with
+  exhaustiveness, `if let`, `while let`, `==` when the instantiation's
+  payloads are scalars, fields, arrays, parameters and results, modules,
+  hot reload -- works on an instantiation as on a plain enum.
+- Methods go in `extend Maybe[T] { .. }`; `extend Maybe[T: Trait]` adds
+  methods that exist only where the argument implements the trait (a call
+  on another instantiation is a bound error at the call). Bounds on the
+  enum's own parameters (`enum E[T: Shape]`) are an error: bound the
+  `extend`.
+- A value enum cannot contain itself (`enum Tree[T] { Node(Tree[T], T,
+  Tree[T]) }` has no finite size, and is an error): recurse through an
+  array (`Node([Tree[T]])`) or a `class` (`class Node[T] { value: T, next:
+  Link[T] }` with `enum Link[T] { End, More(Node[T]) }`). This is the same
+  rule as for a plain enum, and what Rust's `Box` is for.
+- To the runtime and to hot reload an instantiation is named with its
+  arguments (`results::Result[i64, str]`) and migrates by the slot rules
+  above.
 
 ### Generics
 
@@ -495,10 +2290,10 @@ func fresh[T: Shape + Make](x: T) -> i64 { T.make().area() + x.area() }
   or constants, no blanket implementations (`extend T: Shape`), no
   negative or specialised implementations, and one type cannot implement
   two traits that declare a method of the same name (a type's methods
-  share one namespace). Generic enums do not exist, so `Option[T]`-style
-  traits cannot be written yet.
-- `codira run --jit` (Cranelift) does not compile method calls or generic
-  functions: it says so, and the program runs on LLVM.
+  share one namespace).
+- `codira run --jit` (Cranelift) compiles calls of methods and associated
+  functions of classes; it does not compile generic functions or trait
+  methods: it says so, and the program runs on LLVM.
 
 ### Optional types
 
@@ -524,6 +2319,248 @@ while let v = next() { }          // loops while present
 `T?` is a value -- a present flag plus the payload, no allocation. A `T` is
 accepted wherever a `T?` is expected. `nil` needs an optional type from
 context (`let x = nil` alone is an error: annotate it).
+
+`codira run --jit` (Cranelift) compiles optionals of the types it compiles:
+`nil`, a `T` where a `T?` is expected, postfix `!` (same panic), `==`/`!=`,
+and optionals in fields, arrays, parameters and results; `if let`,
+`while let`, `match` and `?` run on LLVM, with the note.
+
+`T?` is the standard library's optional; there is no `Option[T]` enum,
+since it would add nothing `T?` lacks (`std.collections.optional`'s older
+`Optional[T]` struct converts with `to_native`/`from_native`). For "a value
+or why not", use `Result[T, E]` (next section).
+
+### Error handling: `Result` and `?`
+
+```codira
+import std.result.result.{Result}
+import std.fs.file.{read_file, FileError}
+import std.text.ascii.{next_word, parse_i64, ParseError}
+
+enum Problem { Io(FileError), Parse(ParseError) }
+
+func sum_file(path: str) -> Result[i64, Problem] {
+    let bytes = read_file(path)?              // FileError -> Problem.Io
+    var total: i64 = 0
+    var at: usize = 0
+    while let (start, end) = next_word(bytes, at) {
+        total += parse_i64(bytes, start, end)?   // ParseError -> Problem.Parse
+        at = end
+    }
+    Result.Ok(total)
+}
+
+func first_word(bytes: [u8]) -> usize? {
+    let (start, _) = next_word(bytes, 0)?     // `nil` returns `nil`
+    start
+}
+```
+
+- `Result[T, E]` (`std.result.result`) is `Ok(T)` or `Err(E)`, a generic
+  enum. Its methods: `is_ok`, `is_err`, `ok` and `err` (to `T?`/`E?`),
+  `unwrap_or`, `unwrap_or_else(func(E) -> T)`, `expect(message)` and
+  `unwrap` (panic on an `Err`), `expect_err`, `map`, `map_err`,
+  `and_then` (taking closures or named functions), `or`; and
+  `from_optional(value, error)`.
+- Postfix `?` on a `Result[T, E]` is the `T` inside an `Ok`; on an `Err`
+  it returns from the enclosing function (or closure). That function must
+  return a `Result[_, F]` of the same `Result` declaration, where either
+  `F` is `E`, or `F` is an enum with exactly one variant whose one payload
+  is an `E` -- then the error leaves wrapped in that variant
+  (`Problem.Io(e)` above). This is what Rust's `From` implementations are
+  written for, read off the declaration instead: nothing to write, decided
+  at compile time, and two variants holding the same type are an error
+  naming both rather than a choice. Or, third, `F` has an
+  `@error_conversion` that takes an `E`: the error leaves converted,
+  `AnyError.from_error(e)` (see "Errors with context" below).
+- On a `T?`, `x?` is the `T`, or returns `nil` from a function that
+  returns an optional (of any payload).
+- Anything else is a compile error saying which rule is broken: `?` on a
+  value that is neither, a function whose result is not a `Result`
+  (resp. an optional), an error type that neither matches nor is wrapped
+  by exactly one variant nor converted.
+- Which enums are a `Result`: any enum declared `Result` with exactly the
+  variants `Ok(T)` and `Err(E)` -- the standard library's, or a program's
+  own of that shape. A program's own `Result` and the standard one are
+  different types; `?` never converts between them.
+- What it costs: a tag test and a branch, the error moved into the
+  caller's `Err` (and its wrapping variant). No allocation, no call, no
+  unwinding. A converting `?` adds the conversion's call on the `Err` path
+  only (measured below). The branch is weighted towards `Ok`
+  (`llvm.expect`): the error path is laid out of line, after the hot code,
+  and calls made only to build the error are not inlined into the success
+  path. When the fallible function is inlined -- one of the same library,
+  an instance of a generic one, or an `@inline` function of another
+  library, which the caller compiles a copy of -- the `Result` is never
+  built: its tag test folds into the callee's own branches. A `Result`
+  that is returned (a call that stays) comes back in two registers when
+  its layout is two words (`Result[i64, i64]`), through memory when it is
+  larger. `crates/codira/tests/error_propagation.rs` checks both on the
+  optimized IR.
+- An early return through `?` is a return, not a panic, for `@nopanic`
+  and the other effect promises. The contract verifier checks
+  `ensures` at every `?` as a return point; a postcondition about a
+  `Result` or optional result is not modelled and is reported as not
+  checkable, never passed. The information-flow checker treats `?` on a
+  secret as a branch and a return.
+- Grammar: `?` is a postfix operator like `!`, binding as tightly as a
+  call or a field access (`f(x)?.len()`). The `??` hole is an atom and can
+  never follow an expression, so after an expression `?` is always this
+  operator (`x??` is `(x?)?`); a `?` that begins a line is not postfix, so
+  a `??` on a line of its own is still a hole. `T?` is a type, parsed by
+  the type grammar.
+- Not yet: a conversion between two different `Result` declarations,
+  and `codira run --jit` (Cranelift refuses `?` and generic enums; the
+  program runs on LLVM).
+
+#### Errors with context: `std.error.error`
+
+```codira
+import std.error.error.{AnyError, Error}
+import std.fs.file.{read_file}
+import std.result.result.{Result}
+
+struct Limit { max: i64, got: i64 }
+extend Limit: Error {                        // any type can be an `Error`
+    func message(self) -> String { f"{self.got} is over the limit of {self.max}" }
+}
+
+func load(path: str) -> Result[[u8], AnyError] {
+    read_file(path).context(f"reading {path}")      // FileError -> AnyError
+}
+
+func setup(path: str) -> Result[i64, AnyError] {
+    let bytes = load(path).context("loading the configuration")?
+    let n = bytes.len() as i64
+    if n > 100 {
+        let over: Result[i64, Limit] = Result.Err(Limit { max: 100, got: n })
+        return Result.Ok(over?)                     // Limit -> AnyError, by `?`
+    }
+    Result.Ok(n)
+}
+
+public func main() -> Result[(), AnyError] {
+    let n = setup("app.toml").context("starting")?
+    println(n)
+    Result.Ok(())
+}
+// With no app.toml, on standard error, and exit status 1:
+// Error: starting: loading the configuration: reading app.toml: file not found
+```
+
+For a function that can fail for many reasons its caller will not tell
+apart -- an application's, a test's -- `Result[T, AnyError]` and `?` say
+what went wrong and what was being done, without an error enum to write.
+Where the caller does decide by the cause, return the concrete error type
+(`FileError`) or an enum of them, as above; `AnyError` describes an error,
+it does not keep it.
+
+- **`Error`** is a trait: `message(self) -> String` says what went wrong
+  (a phrase, no trailing period: `"file not found"`); `source(self) ->
+  String?` (default `nil`) is the message of the error that caused this one,
+  for an error that wraps another; `into_any(self) -> AnyError` (default:
+  the message, the source and the type's name) is what the rest is built
+  on. Implement it with `extend MyError: Error { func message(self) ->
+  String { .. } }`. `std.fs.file`'s `FileError` (`file not found`,
+  `permission denied`, `is a directory`, `I/O error <code>`) and
+  `std.text.ascii`'s `ParseError` (`no digits`, `invalid digit at byte
+  <i>`, `number too large`) implement it.
+- **`AnyError`** is a plain value struct: the root cause's message, the
+  contexts added on the way out, and the name of the type of the error it
+  was made from (`x.type_name()`, a constant). `e.to_string()` (and so
+  `f"{e}"`) writes the chain outermost first, `starting: reading app.toml:
+  file not found`; `e.chain()` is the same as an array, `e.root_cause()` the
+  last part, `e.error_type()` the type's name as a `str?` (`FileError`, or
+  `nil` for `AnyError.new(message)`), and `e.context(what)` adds a context
+  to an `AnyError` itself. `AnyError` implements `Error` too, returning itself
+  from `into_any`, so contexts accumulate rather than nest.
+- **`r.context(what)`** on a `Result[T, E]` where `E: Error` is the
+  `Result[T, AnyError]` whose `Err` is the error with `what` as its
+  outermost context; an `Ok` is passed through. `what` is a `str` or a
+  `String` (anything implementing `ContextText`); a literal is copied into
+  the error only for an `Err`, an `f".."` is built before the call either
+  way. **`r.with_context(f)`** takes a `func() -> String` and calls it only
+  for an `Err`. On another `E` both are an error at the
+  call: ``the type `Oops` does not implement the trait `Error` ..``.
+- **`?` converts.** The third rule of `?`, after "the same type" and "the
+  one wrapping variant": when the function's error type `F` has an
+  associated function marked `@error_conversion` -- one parameter, returning
+  an `F` -- and the error can be passed to it, `?` passes `Err(e)` on as
+  `F.conversion(e)`. `AnyError` declares `@error_conversion func
+  from_error[E: Error](error: E) -> AnyError`, so in a function returning
+  `Result[_, AnyError]`, `?` takes an error of any `Error` type, and an
+  `AnyError` as it is (the first rule). The conversion is an ordinary
+  generic call, instantiated per error type and resolved at compile time;
+  a type its bounds rule out is an error at the `?`: ``?` cannot pass this
+  `Oops` error on as a `AnyError`: `AnyError.from_error` takes errors whose
+  type implements `Error`, and `Oops` does not; implement it with `extend
+  Oops: Error { .. }` ``. A program can declare a conversion for its own
+  type the same way; two marked conversions on one type, or one with the
+  wrong shape, are errors at the `?` that would use them.
+- **Why an attribute**: the rule is keyed on `@error_conversion`, not on a
+  type's name or module, so the compiler names no standard-library path,
+  and an unrelated function that happens to be called `from_error` is never
+  called behind the program's back. A rule keyed on a trait would need a
+  generic trait (`From[E]`), which the language does not have yet; the
+  attribute plus an ordinary generic bound (`[E: Error]`) expresses the
+  same thing, with the bound checked like any other (and reported at the
+  `?`).
+- **`main` may return `Result[T, E]`** (a `main` in the package's root
+  module). On an `Err` the program writes `Error: ` and the error to
+  standard error -- its type's `to_string()` when it has one (`AnyError`'s
+  writes the chain), a number's or string's text, the debug form otherwise
+  (`Error: Why.Code(7)`) -- flushes standard output first, and exits with
+  status 1. On an `Ok` it returns the `Ok` value to the host, which `codira
+  run` prints like any primitive result (nothing for `()`).
+- Effects: making an `AnyError` allocates (its message, its context
+  array), and `?` through a conversion is a call of it, so a function with
+  a converting `?` is not `@noalloc`; a wrapping or same-type `?` still
+  costs nothing.
+- **What it costs**, measured (the programs were `examples/error_bench`;
+  they are now the `result` workload of the AURORA suite,
+  `benches/aurora/result/`, with Rust and C++ baselines: a `parse_i64` that
+  succeeds or fails, passed on by `?` from a function, 1M calls; and
+  `examples/results`' loop -- `next_word`, `parse_i64` and `?` per word --
+  over 1M words in memory; the median of 7 runs in each process and the
+  median of 5 processes, nanoseconds per call or word). `result.rs` is
+  the same work in Rust (the same algorithms, `From` for the wrapping, an
+  `AnyError` of the same shape built the same way), printing the same check
+  values. x86-64 VM, Intel Xeon @ 2.10 GHz, release builds of the compiler
+  from just before and just after the change, Rust 1.97 at `-C
+  opt-level=3`; load average about 4.8 on the 4 cores during the runs (a
+  later run of the final build, at load 1, gave the same `Ok` times within
+  0.3 ns):
+
+  | `?` passing on a `ParseError` | before | now | Rust |
+  |---|---:|---:|---:|
+  | wrapped in an enum variant (`Problem.Parse(e)`), `Ok` | 5.78 | 3.98 | 2.96 |
+  | the same, `Err` | 5.58 | 3.56 | 2.75 |
+  | converted to an `AnyError`, `Ok` | 5.69 | 4.01 | 2.77 |
+  | `.context("parsing the answer")?`, `Ok` | 5.49 | 3.76 | 2.77 |
+  | `examples/results`' loop, per word | 21.5 | 17.4 | 19.0 |
+
+  A conversion's `Err` path, which this work leaves as it was, costs 252
+  ns (`converted`) and 318 ns (`.context`) against Rust's 65 and 89: it
+  builds the message (an `f".."`) and an `AnyError` in the GC heap.
+
+  The tight `?` loop was 1.95x Rust's time (`wrapped`, `Ok`) and is 1.34x.
+  The cause was not the `?`, which was already a tag test and a branch, but
+  what surrounded it: `parse_i64` lives in the standard library's own
+  library, so every call went through the dispatch table -- an indirect
+  call LLVM cannot inline -- and its 32-byte `Result` came back through
+  memory to be tested. Rust inlines the parser, and its `Result` never
+  exists. Now `std.text.ascii`'s functions are `@inline`, the program
+  compiles them in, and the `Result` folds away; the loop over words is
+  faster than Rust's. What remains on the `Ok` path is the array's
+  indirection (a handle to its payload, reloaded per call) and a bounds
+  check per byte. An error is expected to be rare.
+- Not done: keeping the original error inside an `AnyError` (that needs
+  trait objects; only its message and type name are kept, so there is no
+  downcasting), a backtrace, `source` returning an error rather than its
+  message, `?` converting between two different `Result` declarations, and
+  `main` reporting an `Err` when it is not the root module's `main` (an
+  entry run with `codira run other_entry` that returns a `Result` is refused
+  by the host as a non-primitive result, as before).
 
 ### `match`
 
@@ -681,7 +2718,7 @@ Cost: evidence passing. Each `uses` effect is one hidden pointer parameter;
 passed evidence, one load and branch per handler in scope. Code that uses no
 effects pays nothing.
 
-### Structured concurrency: `scope`, `spawn`, channels
+### Structured concurrency: `scope`, `group`, `spawn`, channels
 
 ```codira
 func square(jobs: Channel[i32], results: Channel[i32]) {
@@ -710,11 +2747,21 @@ public func sum_of_squares(n: i32) -> i32 {
   abandoning the computation. `scope` is a contextual keyword (only before
   `{`; `if scope { .. }` still tests a variable).
 - `spawn f(args)` runs a call to a function of the same module on the
-  runtime's worker pool. It must be inside a `scope` (of the same function;
-  a handler arm counts as its own function); `f` takes only integers,
-  floats, `bool` and `Channel[T]` and declares no effects. Arguments are
-  evaluated by the spawner; the result is discarded -- results come back
-  through channels.
+  runtime's scheduler. It must be inside a `scope` or a `group` (of the same
+  function; a handler arm and a closure count as functions of their own),
+  and belongs to the innermost one; `f` takes only integers, floats, `bool`
+  and `Channel[T]` and declares no effects. Arguments are evaluated by the
+  spawner. In a `scope` the result is discarded -- results come back
+  through channels; in a `group` it is the group's value (below).
+- **No task outlives its block.** That is the only task model: there is no
+  unstructured `spawn`. The compiler guarantees it statically (a `spawn`
+  outside a `scope`/`group` of the same function is an error, and the
+  block's every exit joins), and the runtime checks it again: starting a
+  task of a block that has been joined, or freeing a group before joining
+  it, stops the process with a message, and debug builds also check, when
+  each task ends, that its block was not joined while it ran. Unstructured
+  spawning was not added because nothing could then own a task's channels
+  or bound its lifetime, and every guarantee below depends on that.
 - `let ch = channel(capacity)` creates a bounded blocking `Channel[T]` of
   integers, floats or `bool`, owned by the enclosing `scope` and freed when
   it ends. A channel is only *used*: `ch <- v`, `<-ch`, or passed to a
@@ -725,14 +2772,181 @@ public func sum_of_squares(n: i32) -> i32 {
   may allocate; a collection on any thread stops it at its next allocation
   (or finds it parked in a channel operation or join) and scans its stack,
   so its objects stay alive (see "End-to-end status today").
-- The pool keeps `available_parallelism()` workers running and starts a
-  replacement when one blocks on a channel or a nested scope, so blocked
-  tasks cannot starve the ones that would unblock them. Mismatched sends and
-  receives still block forever, as with any blocking channel.
+- Scheduling (`crates/codira_runtime/src/tasks/scheduler.rs`): tasks run to
+  completion on worker threads -- a task is compiled code with native
+  frames, so it is never suspended or moved. Each worker has its own deques
+  (Chase-Lev, via `crossbeam-deque`): a task spawned on a worker goes to its
+  deque, the worker takes the newest, idle workers steal the oldest; a task
+  spawned from the host goes to a global queue. A task waiting for its
+  `scope` or `group` first runs its own children that are still on its
+  deque, and nothing else (an unrelated task could wait for something the
+  joiner does after the join). The scheduler keeps
+  `available_parallelism()` workers active (`CODIRA_TASK_WORKERS=n`
+  overrides it), started lazily.
+- **Waiting never occupies a worker.** A task that waits -- a channel
+  operation, `select`, a join it cannot help with, a sleep
+  (`std.time.time`), file I/O (`std.fs`) -- releases its worker for the
+  duration, and a sleeping worker is woken or a new one started if tasks
+  are queued (Go hands a processor off on a blocking system call the same
+  way). So blocked or blocking tasks cannot starve the ones that would
+  unblock them, and a thousand tasks that each sleep 100 ms finish in a
+  fraction of a second, not 25 s (`fabric_stress.rs`). Workers beyond the
+  target exit when they find no work. There is no upper bound on threads
+  while tasks wait: bounding it could deadlock a correct program. A task
+  that *busy-waits* (`while !flag() {}` without a blocking call) keeps its
+  worker, as in any run-to-completion pool. Mismatched sends and receives
+  still block forever, as with any blocking channel.
+- **Priority classes**: `High`, `Normal` (the default) and `Background`.
+  A task inherits its spawner's class; the host picks the class of the
+  tasks a call spawns with `codira_runtime::tasks::with_priority(Priority::
+  Background, || runtime.invoke(..))`. Each worker starts tasks by a fixed
+  weighted round robin, high, normal and background in the ratio 4 : 2 : 1
+  while all three have work (measured: 0.571 / 0.286 / 0.143 of the first
+  1,400 starts of 9,000 queued tasks, five runs out of five; test
+  `priority_classes_share_starts_four_two_one`), so background work is
+  slowed, never starved. The ratio is about *starts*: tasks are not
+  preempted, so a long background task keeps its worker until it ends.
+- `codira_runtime::tasks::stats()` returns the scheduler's counters (tasks
+  spawned, stolen, run by a joining worker, waits, threads started and
+  peak, starts per class).
 - Output printed by a task is not captured by `capture_output` (it is
   per-thread); a task's `print` goes to standard output.
 - A secret (`secret T`) cannot be sent on a channel: what a channel delivers
   is public.
+- What crosses between tasks today: scalars (arguments, channels, sessions)
+  and a finished group task's result, handed over through the join. Letting
+  a `String` (or any heap value) travel to a *running* task -- as an
+  argument or on a channel -- would need the `String` ownership argument
+  (see "Strings") checked again: a worker that exits can have its thread
+  pointer reused by a new worker, and today no `String` can reach a task on
+  another thread except through a join.
+
+#### `group`: tasks that return values
+
+```codira
+import std.error.error.{AnyError}
+import std.result.result.{Result}
+
+func square(x: i64) -> i64 { x * x }
+
+func check(i: i64) -> Result[i64, AnyError] {
+    if i == 13 { return Result.Err(AnyError.new(f"{i} is unlucky")) }
+    Result.Ok(i * 2)
+}
+
+public func squares(n: i64) -> [i64] {
+    group {                         // [i64]: every task's result, in spawn order
+        var i = 0
+        while i < n { spawn square(i); i += 1 }
+    }
+}
+
+func checked(n: i64) -> Result[i64, AnyError] {
+    let xs = group {                // Result[[i64], AnyError]
+        var i = 0
+        while i < n { spawn check(i); i += 1 }
+    }?                              // the lowest-index error, passed on by `?`
+    Result.Ok(xs.len() as i64)
+}
+```
+
+- `group { .. }` is a `scope` whose tasks return values; `group` is a
+  contextual keyword, promoted under the same condition as `scope`. Its
+  value is the results of the tasks spawned *directly* in it (not in a
+  nested `scope`, `group` or closure), in spawn order: `[R]` when they
+  return `R`, or, when they return a `Result[T, E]` (the `Result` of
+  `?`, with `Ok` holding its type parameter), `Result[[T], E]` -- `Ok` of
+  every `Ok` payload, or one task's `Err`. A group composes with `?`
+  (above) and with `std.error.error`'s `AnyError` like any `Result`.
+- **Errors, deterministically.** When a task fails (returns `Err`), every
+  task spawned *after* it is cancelled; the ones before it are left to
+  finish. The group's value is the `Err` of the **lowest-index** task that
+  failed. That is the value running the tasks one after another and
+  stopping at the first `Err` would give, whatever order they really ran
+  in: the lowest failing task is never cancelled (only a failure before it
+  could cancel it), and every task before it runs to completion. A task
+  cancelled before it started is never started (its result is never
+  read). `tests/groups.rs` checks it with two failures 50 times over, and
+  `crates/codira/tests/task_groups.rs` with `AnyError` and `?`.
+- All tasks must return one type, and not `()` (that is a `scope`), not a
+  `secret`, not a channel or endpoint. They take only integers, floats and
+  `bool` -- no channels: the group does not start the tasks after a failed
+  one, and a task that never runs must not leave a sibling waiting on a
+  channel (a task *may* open a `scope` of its own). A result may hold
+  anything else, `String`s, arrays, objects: a task's arguments are
+  scalars and there is no module-level state, so everything its result
+  refers to was made by the task, which has finished -- the result is moved
+  to the joining task, not shared. Until then the runtime keeps it in
+  memory the collector scans (`codira_memory::gc::root_region`).
+- A group that spawns nothing is an error (its value's type comes from its
+  tasks). Every exit from the block -- its end, `return`, `break`, `?`, a
+  handler aborting -- joins its tasks; only the end reads their results.
+- Cost (measured below): a `group` task is a 16-byte-aligned copy of its
+  arguments, a deque push and a result slot; the value is built with one
+  array allocation.
+
+#### Cancellation
+
+- Every `scope` and `group` records the task that opened it, so they form a
+  tree rooted at the host call. A task is *cancelled* when its group
+  cancelled it (a failure before it, above) or any task above it in the
+  tree is cancelled. `cancelled()` (a builtin, no effects: allowed in
+  `@realtime` code) says whether the running task is; it is `false` outside
+  any task.
+- Cancellation is cooperative: nothing is interrupted, a cancelled task
+  stops where its code checks `cancelled()`, and leaves through its
+  `scope`s and `group`s as usual, which joins their tasks and frees their
+  channels and buffers -- that is how resources are released. A `scope`
+  never cancels or skips its own tasks (they talk through channels, and
+  skipping one could leave another waiting forever); only a group's
+  not-yet-started tasks after a failure are skipped.
+- The host cancels a call with `codira_runtime::tasks::CancelToken`:
+  `token.run(|| runtime.invoke(..))` on one thread, `token.cancel()` on
+  any other; every task below sees `cancelled()`.
+- A blocked channel operation is not woken by cancellation (it would have
+  to return a value it does not have); a task that may wait for a cancelled
+  sibling should check `cancelled()` between waits, or use `select` with
+  `default`.
+
+#### Measured
+
+x86-64 VM, Intel Xeon @ 2.10 GHz, 4 cores, 1 NUMA node (shared: load
+average about 1 to 1.8 during the runs); Codira at `-O 3` with a release
+build of the compiler and runtime, Rust 1.97 at `opt-level = 3` with rayon
+1.10 and crossbeam-channel 0.5, Go 1.24; median of 7 alternating runs,
+milliseconds, each a warm call. Programs:
+`examples/fabric_bench/` (`bench.py` builds and runs them); all three print
+the same check values.
+
+| workload | workers | Codira | Rust | Go |
+|---|---:|---:|---:|---:|
+| spawn/join: 100k tasks returning their index, joined, summed (`group`; `rayon::scope`; goroutines + `WaitGroup`) | 1 | 94.9 | 9.9 | 148.6 |
+| | 4 | 122.4 | 70.3 | 64.4 |
+| fan-out/fan-in map over 1M items in 64 tasks, gathered into one array (`group` + `append`; `par_iter().map().collect()`; goroutines writing slices) | 1 | 13.2 | 6.6 | 13.1 |
+| | 4 | 9.4 | 2.9 | 3.3 |
+| producer/consumer: 1M values over a channel of capacity 64 (`scope` + `channel`; crossbeam `bounded` + a thread; buffered `chan`) | 1 | 182.0 | 70.5 | 48.2 |
+| | 4 | 186.5 | 35.8 | 50.6 |
+| CPU-bound: 64 tasks of 4M xorshift steps | 1 | 491.3 | 485.8 | 493.9 |
+| | 4 | 126.4 | 127.4 | 125.9 |
+
+Speedup from 1 to 4 workers on the CPU-bound workload: Codira 3.89x, Rust
+3.81x, Go 3.92x. What the losses are:
+
+- **Spawn/join** costs Codira about 1 us per task on one worker, ten times
+  rayon's (not profiled further; each task makes a heap copy of its
+  arguments, allocates its record in the task tree and stores its result
+  under the group's lock), and 1.7-1.9x Rust and Go on four, where all
+  three spawn from one thread.
+- **Fan-out/fan-in**: the parallel map itself takes 1.8 ms of the 9.4 (5.2
+  ms on one worker, measured inside the program); gathering the 64 chunks
+  into one fresh 1M-element array -- one copy per chunk, on one thread,
+  first-touching 8 MB -- takes about 5.7 ms. rayon writes its result in
+  place, in parallel.
+- **Channels** are 2.6-5.2x slower than crossbeam's and 3.7x Go's: a
+  channel is a mutex-guarded queue with condition variables (the `select`
+  and GC protocols are built on it); a lock-free channel is not done. A
+  send or receive tries for a few microseconds before it sleeps (before
+  that change the pipeline took 534 ms and 400,000 futex calls; now 68).
 
 #### `select`: wait on several channel operations
 
@@ -1094,18 +3308,30 @@ through a call, is an error that prints the chain.
 
 What counts, exactly (today's code generator and runtime):
 
-- **Allocates** (and so may also block on the heap's lock and abort when the
-  heap limit or memory runs out): constructing a `class`, an array literal,
-  `print`/`println`, `channel(n)`, `scope`, `spawn`, a channel send, `select`
-  (even with `default`), opening a session (`S.open()`), and a
+- **Allocates** (and so may also block on the heap's lock, collect, and end
+  the program with exit status 102 when the heap limit or memory runs out):
+  constructing a `class`, an array literal,
+  `array_filled`, the array methods that can grow the buffer (`push`,
+  `insert`, `reserve`, `append`) or make a new array (`copy`, `map`,
+  `filter`, slicing `xs[lo..hi]`), a pipeline's `collect`, a closure (except
+  one an array method or a pipeline stage compiles in place, see "Growable
+  arrays and collections" and "Lazy pipelines"),
+  `print`/`println`, `channel(n)`, `scope`, `group`, `spawn`, a channel send, `select`
+  (even with `default`), opening a session (`S.open()`), making or
+  growing a `String` (see "Strings" for exactly which operations), and a
   call to a function of *another module* that takes or returns a value
-  struct (the cross-module calling convention boxes it). String literals,
-  value structs, tuples and effect handler records allocate nothing.
+  struct or a `String` (the cross-module calling convention boxes it).
+  String literals, views of a `String` (`slice`, `trim`), value structs,
+  tuples and effect handler records allocate nothing.
 - **Blocks**: channel send and receive (also on a session endpoint, and
-  `ep.choose(..)` and `offer`), `select`, the end of a `scope`, and the
-  allocations above.
+  `ep.choose(..)` and `offer`), `select`, the end of a `scope` or a
+  `group` (`@noblock` and `@realtime` code cannot wait on a group,
+  directly or through a call: "`group` waits for its tasks at the end"),
+  and the allocations above. `cancelled()` does not block.
 - **Panics**: `a[i]` and `a[i] = v` (bounds check; `a.unchecked_get(i)` is
-  the unchecked escape hatch), integer `/` and `%` (and `/=`, `%=`), calling a
+  the unchecked escape hatch), `xs.insert(i, x)`, `xs.remove(i)` and slicing
+  (their index checks), `s.slice(a, b)` and `s.byte_at(i)` on a
+  `String`, integer `/` and `%` (and `/=`, `%=`), calling a
   `@runtime_checked` function that has `requires`, and every allocation.
   An integer division panics on a zero divisor and on a signed `MIN / -1` or
   `MIN % -1` (see "Integer arithmetic, shifts and casts"), so it only counts
@@ -1115,7 +3341,10 @@ What counts, exactly (today's code generator and runtime):
   panic: the amount is taken modulo the width.
 - **May not terminate** (`@realtime` only): a `while` or `loop` without a
   `decreases` measure, or whose measure the verifier does not prove, and
-  recursion, direct or mutual. `for` loops are bounded by construction.
+  recursion, direct or mutual, and a loop over an iterator object (`for x in
+  it`, `it.iter()`: nothing bounds how often its `next` returns a value).
+  Other `for` loops, and pipelines over arrays and ranges, are bounded by
+  construction.
 - **Everything at once**: a call to an `extern` function, a `perform` (its
   handler is chosen at run time), and any call the analysis cannot resolve.
   An `extern` declaration may carry the attributes as a *trusted
@@ -1246,12 +3475,24 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
   (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
   which is not what a program sees).
-- **Importable today** (17 of 89 modules), each run from a program in
+- **Importable today** (36 of 96 modules), each run from a program in
   `crates/codira/tests/std_imports.rs` against independently computed
   values, except `std.memory.page` and `std.builtin.type_aliases` (check,
   build and load; not run):
   - `std.crypto.hash` (SHA-256, SHA-512, BLAKE3), `std.fs.fs`,
     `std.memory.region`, `std.memory.page`.
+  - `std.db.db` (the storage engine's transactions) and `std.ai.runtime`
+    (f32 tensors and a Linear layer): wrappers over the runtime's database
+    and tensor services, run by `crates/codira/tests/db_and_ai.rs`.
+    Experimental; see the runtime section for their limits.
+  - `std.result.result` (`Result[T, E]` and its methods, see "Error
+    handling"), `std.fs.file` (`read_file(path) -> Result[[u8],
+    FileError]`) and `std.text.ascii` (`next_word`, and `parse_i64` with
+    a `ParseError` carrying the offending byte's index).
+  - `std.error.error`: the `Error` trait, `AnyError`, `context` and
+    `with_context` (see "Errors with context"), run by
+    `crates/codira/tests/error_context.rs`. `FileError` and `ParseError`
+    implement `Error`.
   - `std.bit.bit`, `std.bit.mask`: bit counts, reversal, byte swaps,
     rotations, masks and fields on `u64`/`u32`. Exact. `bit_ceil` needs a
     result that fits (`value` at most 2^63).
@@ -1261,33 +3502,65 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     within 7e-5 absolute, `fast_exp` 0.01 % relative, `fast_log` 5.4e-4
     absolute, `fast_sqrt`/`fast_rsqrt` 0.175 % relative; `fast_pow` and
     `fast_tan` have no stated bound).
-  - `std.hashlib.hash`: FNV-1a 64 over `[u8]`, integers, floats and bools,
-    hash combiners, and `hash[T: Hashable]`. **Not cryptographic**: for
-    hash tables and fingerprints of trusted data only.
+  - `std.hashlib.hash`: SipHash-1-3 and SipHash-2-4 under a `HashKey`
+    (`HashKey.random()` from the runtime's entropy service), `SipHasher13`,
+    and `Hashable` with `hash_keyed` (SipHash) beside `hash_value`; FNV-1a
+    64 over `[u8]`, integers, floats and bools, hash combiners, and
+    `hash[T: Hashable]`. SipHash under a secret key is DoS-resistant; FNV-1a
+    and `hash_value` are not, and nothing here is a cryptographic hash for
+    integrity (see "Hashing" below).
   - `std.base64.base64`: base64, base32 and base16 encode and decode over
     `[u8]` (encoded text is its ASCII bytes), standard alphabets with `=`
-    padding; decoding skips bytes outside the alphabet and returns an empty
-    array for invalid input.
+    padding; decoding is lenient: it skips bytes outside the alphabet,
+    returns an empty array only for a few malformed inputs (a base64 group
+    starting with `=`, odd-length or non-hex base16), accepts other
+    malformed input without an error, and is not canonical (`QQ==` and
+    `QR==` both decode to `A`). Not for input that must be validated.
   - `std.random.rng`: xoshiro256** with the state in a `Rng` the caller
     holds, seeded by SplitMix64 (`rng_seeded(seed)`, `rng_next_u64`,
-    `rng_next_f64`, `rng_range_i64`, `rng_next_bool`). **Not
-    cryptographic**: predictable from its output, and seeded only by the
-    caller.
+    `rng_next_f64`, `rng_range_i64`, `rng_next_bool`), or from the system
+    (`rng_from_entropy()`). The generator is **not cryptographic**
+    (predictable from its output); `os_random_u64()` and
+    `os_random_bytes(n)` are the operating system's secure generator,
+    through the runtime's entropy service `codira_random_fill`.
   - `std.builtin.type_aliases` (`Never`).
   - `std.sys.terminate`: `panic` (writes `panic: <message>` to standard
     error and aborts), `exit`, `abort`, `assert`, `unreachable`, `todo`.
+  - `std.cmp.cmp`: the traits `Eq` (`a.eq(b)`) and `Ord` (`a.lt(b)`) for
+    every integer and float type, `bool` and `str`, `str_compare`,
+    `min_of`/`max_of`.
+  - `std.collections.map` (`Map[K, V]`), `std.collections.set` (`Set[T]`),
+    `std.collections.counter` (`Counter[T]`), `std.collections.deque`
+    (`Deque[T]`) and `std.collections.binary_heap` (`BinaryHeap[T]`), on
+    growable arrays (see "Growable arrays and collections"). The hash
+    tables are keyed with SipHash-1-3 by default (DoS-resistant), unkeyed
+    when asked. `std.hashlib.hash` gives every integer and float type,
+    `bool`, `str` and `String` a `Hashable` implementation.
   - What calls `panic`: `std.math.math` (libm-backed `sin`...`atan2`,
     rounding, `gcd`, `factorial`, classification; within 2 ulp of Rust's
     libm in the tests), `std.time.time` (durations, monotonic instants,
     wall clock, sleep), `std.complex.complex`, `std.collections.optional`
-    (a generic `Optional[T]` struct; `unwrap` of an empty one panics).
-- **Waiting for the language**: what is written against `String` (most of
-  `std.format`, `std.os`, `std.pathlib`, `std.testing`, `std.sys.info`, and
-  the `*_string` halves split off from the modules above:
-  `std.base64.base64_string`, `std.hashlib.string_hash`,
-  `std.complex.complex_string`); everything built on `Pointer[T]` (every
-  collection but `optional`, and through `List`, `std.math.sequence` and
-  `std.math.polynomial`); `std.builtin.traits` (generic traits);
+    (a generic `Optional[T]` struct; `unwrap` of an empty one panics;
+    `to_native`/`from_native` convert to and from `T?`).
+  - Built on `String`: `std.collections.string` (`join`, `insert`,
+    `remove`, `reverse`, `count`, `split_whitespace`, code points),
+    `std.format.format` (`format(template, [args])`, `format_int`,
+    `hex`/`bin`/`oct`, padding), `std.hashlib.string_hash`,
+    `std.complex.complex_string`, `std.base64.base64_string` (the encodings
+    of `std.base64.base64` between `[u8]` and `String`) and `std.sys.arg`
+    (the process's arguments and environment variables, as `String`s and
+    `String?`s; under `codira run` they are the `codira` command line's).
+  - `std.json.json`: a JSON value type, a strict parser, printers, a
+    streaming writer and a pull parser, and typed decoding over the reader
+    (see "JSON"); its conformance, property and streaming tests are in
+    `crates/codira/tests/json.rs`, the typed ones in `json_typed.rs`.
+- **Waiting for the language**: what is written against `String` and
+  something else the language lacks (`std.os` and `std.pathlib`: module-level
+  `let`s; `std.testing`: trait objects; `std.sys.info`: module-level `let`s;
+  `std.format.repr`: trait objects); what is still written on `Pointer[T]`
+  (`std.collections.list` and `std.collections.dict`, superseded by `[T]`
+  and `Map`, `span`, `linked_list`, `bitset`, and through `List`,
+  `std.math.sequence` and `std.math.polynomial`); `std.builtin.traits` (generic traits);
   `std.sys.assert_compare` (`assert_eq` and friends: operators on a type
   parameter); `std.random.random` (a global generator: there is no
   module-level state, and a module-level `var` is rejected);
@@ -1327,9 +3600,81 @@ codira start target/mod.codiralib main          # run an already-built library
 ```
 
 `codira run` takes the same `--manifest-path`, `-O 0..3` and `--color`
-options as `build`. If the build reports an error, nothing is run. After the
+options as `build`, and `--heap-limit`, `--gc-growth` and `--runtime-stats`
+(see "Memory: heap limit, pacing, `--runtime-stats`"; `start`, `test` and
+`bench` take the first two, `start` the third too). If the build reports an
+error, nothing is run. After the
 entry point returns, `run`/`start` print its value if it is a primitive
-(`bool`, any integer or float type); a `()` entry point prints nothing.
+(`bool`, any integer or float type); a `()` entry point prints nothing. A
+`main` returning a `Result[T, E]` returns its `Ok` value (printed the same
+way) or ends the program on an `Err` with `Error: ...` on standard error
+and exit status 1 (see "Errors with context").
+
+### Memory: heap limit, pacing, `--runtime-stats`
+
+```bash
+codira run --heap-limit 512MiB            # cap the GC heap (also 2GiB, 1500MB, 25%, unlimited)
+CODIRA_HEAP_LIMIT=1GiB codira run         # the same from the environment
+codira run --gc-growth 50                 # collect when the heap grows 50% over its live data
+codira run --runtime-stats                # print the collector's statistics at exit
+```
+
+```toml
+# codira.toml
+[runtime]
+heap-limit = "512MiB"   # or "25%", or "unlimited"
+gc-growth = 100         # or "off"
+```
+
+- **Every runtime the tool starts has a finite heap limit**: `run`,
+  `start`, `test` and `bench` (and each test's and benchmark's process), and
+  the launcher of `build --exe`. The limit comes from the first of
+  `--heap-limit`, `CODIRA_HEAP_LIMIT`, `heap-limit` in `[runtime]` (not for
+  `start`, which has no manifest; the launcher reads only the environment),
+  and the default: **half of the memory available to the process**, the
+  smaller of physical memory and the cgroup's memory limit (containers), at
+  least 64 MiB, 4 GiB if neither can be read. Sizes take `B`, `K`/`KiB`,
+  `M`/`MiB`, `G`/`GiB`, `T`/`TiB` (binary), `KB`/`MB`/`GB`/`TB` (decimal),
+  fractions (`1.5GiB`), a percentage of the available memory (`25%`) or
+  `unlimited`; less than `64KiB` is refused. A bad value is an error that
+  names its source, before anything is built. `unlimited` prints `warning:
+  the garbage-collected heap has no limit (...)`. The limit caps the GC
+  heap only (blocks, large objects, grown arrays), not region arenas, pages
+  or `codira_alloc`.
+- **Pacing**: the collector runs when the heap has grown by `gc-growth`
+  percent (default 100) over what the previous collection left live, and
+  not below 4 MiB of objects, like Go's `GOGC`; so a program that allocates
+  far more than the limit in total, with a small live set, runs in a small
+  heap. The limit stays the hard cap: an allocation that would exceed it
+  collects first. `gc-growth` takes the same three sources as the limit;
+  `off` collects only at the limit.
+- **Running out**: when an allocation still does not fit after a full
+  collection, the program ends with exit status **102** (a panic is 101)
+  and, after what it printed:
+
+  ```text
+  fatal: out of memory: cannot allocate `Node` (24 bytes)
+    heap limit: 1048576 bytes (1.00 MiB)
+    committed:  1048576 bytes; the allocation needed 65536 more
+    live:       393216 bytes after a full collection
+    the limit is 1.00 MiB, from --heap-limit
+    raise it with --heap-limit <SIZE>, the CODIRA_HEAP_LIMIT environment variable, or `heap-limit` in the [runtime] table of codira.toml
+  ```
+
+  `codira test` reports such a test as `crashed (exit status: 102): fatal:
+  out of memory: ...`.
+- **`--runtime-stats`** (`run`, `start`) prints, to standard error when the
+  entry point returns: the limit and growth and where each came from, heap
+  bytes now and at the peak, live bytes, bytes and objects allocated and
+  reclaimed, collections by cause (paced, at the heap limit, requested,
+  explicit), time with the world stopped, and pause p50/p99/max. Not printed
+  when the program ends early (a panic, `exit`, running out of memory).
+- The design, the measurements on `examples/gc_churn` and what the
+  collector does not do (it stops the world, does not move objects, scans
+  stacks conservatively) are in `crates/codira_memory/README.md`. Tests:
+  `crates/codira/tests/heap.rs` (the real binary),
+  `crates/codira_runtime/tests/heap_limit.rs`,
+  `crates/codira_memory/tests/gc_policy.rs`.
 
 ### How a library is linked
 
@@ -1371,6 +3716,172 @@ targets always use LLD.
   `.codira-tmp` files and treats a file renamed onto a loaded library as a
   change to it.
 
+### Where objects live: `--explain-alloc` and `--frame-alloc` (experimental)
+
+```bash
+codira build --explain-alloc                 # every allocation site and why it is on the heap
+codira build --frame-alloc --explain-alloc   # ... and move the ones that need not be
+codira run --frame-alloc                     # run with frame allocation
+```
+
+```
+mod.code:6:30: in `make`: class `Point`: escapes: returned from `make`
+mod.code:11:17: in `main`: class `Point`: moved to the stack
+mod.code:13:18: in `main`: array literal of 3 elements: moved to the stack
+mod.code:18:16: in `link`: class `Node`: escapes: stored into field `next` of parameter `head`, which may be a heap object
+mod.code:23:13: in `start`: class `Point`: escapes: sent to a task by `spawn`
+mod.code:27:28: in `builder`: empty array literal: escapes: grown by `push`, which the runtime does on the heap
+mod.code:28:36: in `builder`: class `Point`: escapes: stored into an element of a heap object
+```
+
+The compiler's escape analysis decides, for every class instance, array
+literal, `array_filled`, array built by `copy`/`map`/`filter`/slicing/
+`collect`, and closure, whether the object can outlive the call that made it.
+`--explain-alloc` prints its answer for each site of the package (not the
+standard library), then the totals. Without `--frame-alloc` a site that
+could move says `does not escape (moved to the stack with `--frame-alloc`)`.
+
+An object **escapes** when it is returned (also inside a struct, tuple, enum
+or optional, or by `?`), stored into a field or element of an object that is
+or may be on the heap (a parameter counts: it may be), captured by a
+closure, sent on a channel or to a task (`spawn`), passed to `perform`, or
+passed to code the analysis does not see: an `extern` function, a call
+through a function value, a trait method on a generic type, an array method
+that grows the array (`push`, `insert`, `reserve`, `append`), a builtin it
+does not model (`print`, string operations) and **any function of another
+module** (a hot reload can replace that module's code without recompiling
+the caller), unless it and every function it calls are `@inline` or
+generic: those are compiled into the calling library. A call to a function of the same module uses that function's
+summary: whether it keeps, returns, or only reads each argument, computed
+through everything it calls, recursion included.
+
+With `--frame-alloc`, a class instance or an array literal of at most 16
+elements that does not escape lives in its function's stack frame: no
+allocation call, no work for the collector, freed when the function returns.
+Some objects stay on the heap without escaping: one allocated in a loop (or
+in a closure that `map`/`filter`/`fold`/a pipeline compiles in place) that is
+kept past its iteration in something outside the loop (the frame slot is
+reused every iteration), arrays whose length is known only at run time,
+closures, and anything allocated inside a closure body, `handle` or `spawn`.
+
+The program's behaviour does not change: the same results, the same
+`{x:?}` output, hot reload and heap snapshots work as before (a reload only
+runs when no Codira frame is live; no heap object ever refers to a frame
+object, so a snapshot is complete without them). The collector scans stacks
+conservatively, so the GC references a frame object holds keep their objects
+alive. Not combined with `--sanitize=memtag`, and not used by `--jit`.
+
+It is experimental and off by default: it is tested on x86-64 Linux only (a
+differential test runs random programs both ways under a small heap limit,
+and GC stress tests check heap objects held only by frame objects), and a
+deep recursion uses more stack per call than before (the frame objects of
+every active call). The analysis and its correctness contract are documented
+in `crates/codira_hir/src/escape.rs`; its results are the salsa queries
+`escape_summary` and `escape_analysis`.
+
+Measured (`cargo bench -p codira_runtime --bench frame_alloc`; Intel Xeon
+@ 2.10 GHz, 4 cores, Linux x86-64; medians of 21 samples of 2,000,000
+iterations, the same checksum from every build; allocation counts exact,
+from `Runtime::stats().objects_allocated`):
+
+| workload | heap allocs | frame allocs | heap ns/it | heap + GC (16 MiB) | frame ns/it | Rust stack | Rust `Box` |
+|---|---|---|---|---|---|---|---|
+| two temporaries passed to a reader | 4,000,000 | 0 | 63.5 | 63.9 | 0.00 | 1.32 | 25.3 |
+| builder threaded through setters | 2,000,000 | 0 | 33.9 | 34.2 | 0.00 | 0.00 | 12.3 |
+| temporary 4-element array | 2,000,000 | 0 | 45.4 | 46.0 | 0.97 | 0.00 | 17.4 |
+
+With the objects in the frame LLVM keeps their fields in registers and
+reduces the first two loops to closed forms, as it does for the Rust stack
+versions: "0.00" means the whole call took microseconds, not that the
+allocation became free in a loop that still runs. The heap columns are where
+these programs are without the flag: an allocation through the runtime costs
+about two and a half times a Rust `Box`. ("heap ns/it" runs with no
+heap limit, where the collector's pacing still collects; "heap + GC" with a
+16 MiB limit.)
+
+`@noalloc` and `@realtime` still count a class construction or an array
+literal as an allocation even where `--frame-alloc` would move it: the
+attributes do not depend on a build flag. Strings are not analysed (their
+buffers stay on the heap).
+
+#### `@region` functions (experimental)
+
+```codira
+class Node { value: i64 }
+class Box { var item: Node }
+
+func node(v: i64) -> Node { Node { value: v } }   // a heap object: it is returned
+
+@region
+public func summarize(n: i64) -> i64 {
+    var last = Box { item: node(0) }        // in the frame (with --frame-alloc)
+    for i in 0..n {
+        let b = Box { item: node(i) }        // kept past its iteration: in the region
+        if i % 3 == 0 { last = b }
+    }
+    let xs = array_filled(2, n as usize)     // length known at run time: in the region
+    let ys = xs.map(func(x) { x * 3 })       // in the region
+    last.item.value + ys[0]
+}                                            // the region is freed here, all at once
+```
+
+`@region` on a function gives it an arena: the objects its own body
+allocates that do not escape but cannot be in its frame -- kept past their
+loop iteration, array literals of more than 16 elements, arrays built by
+`array_filled`, `copy`, `map`, `filter` or slicing, and whatever another
+region object holds -- are bump-allocated there instead of on the GC heap,
+and the whole arena is freed when the function returns (by any `return`,
+`?` or the end of the body). Without `--frame-alloc`, the objects that
+would be in the frame go to the region too. Functions it calls allocate
+as usual; a recursive `@region` function gets a region per call.
+
+The compiler rejects every object of the function that may outlive the
+call, with the reason, exactly as `--explain-alloc` would give it:
+
+```
+error: `make` is `@region`, but this class `Point` may outlive the region: it is returned from `make`
+error: `grow` is `@region`, but this array literal of 1 element may outlive the region: it is grown by `push`, which the runtime does on the heap
+```
+
+So a `@region` function cannot return its objects, store them into a
+parameter or into anything on the heap, capture them in a closure, send
+them to a task, pass them to a function of another module or grow a region
+array with `push`. Closures, allocations inside closure bodies, `handle`
+and `spawn`, and `collect`'s arrays stay on the heap (and what is stored in
+them counts as stored on the heap). `--explain-alloc` reports each object
+as `moved to the function's region (reason)`.
+
+A region object may hold GC references (a `String` field, a heap object):
+every chunk of an open region is registered with the collector as a root
+range and scanned like a stack. In debug builds of the runtime, or with
+`CODIRA_CHECK_REGIONS=1`, closing a region also stops the world and checks
+that no heap object and no other open region refers into it; a violation
+(a compiler bug) ends the process with a message. `Runtime::region_stats()`
+counts regions, region objects and bytes, and the chunks registered now.
+It is experimental, tested on x86-64 Linux only, and `@noalloc` and
+`@realtime` count region allocations as allocations.
+
+Measured (`cargo bench -p codira_runtime --bench regions`; Intel Xeon @
+2.10 GHz, 4 cores, Linux x86-64; medians of 21 samples of 20,000 calls with
+n = 64, the same checksum from every build; object counts exact, from
+`Runtime::stats()` and `Runtime::region_stats()`; release runtime, so no
+check at close):
+
+| workload (per call) | heap objects | with `@region`: heap / region objects | heap ns | `--frame-alloc` ns | `@region` ns | Rust ns |
+|---|---|---|---|---|---|---|
+| build a 64-cell list in a loop, then sum it | 1,290,000 | 0 / 1,290,000 | 2736 | 2639 | 1225 | 2029 (`Box`) |
+| one `array_filled` of 64 elements | 20,000 | 0 / 20,000 | 90.3 | 89.0 | 142.6 | 33.6 (`Vec`) |
+| `array_filled` and its `map` | 40,000 | 0 / 40,000 | 208.2 | 209.1 | 190.3 | 48.3 (`Vec`) |
+
+A region pays for itself when it holds many objects: the list is 2.2 times
+faster than on the heap (frame allocation cannot take its cells, which
+outlive their iterations), and faster than Rust's `Box`. A region of one
+small array is slower than the heap: opening and closing it (three runtime
+calls, registering the chunk with the collector, zeroing what was used)
+costs more than the one allocation it replaces. The 1,320,000 regions of the
+run used two chunks from the system in all; the rest came from the
+thread's cache of closed chunks.
+
 ### Tests, counterexamples and semantic search
 
 ```bash
@@ -1410,8 +3921,8 @@ public func main() {
 }
 ```
 
-`print`/`println` accept any number of integers (any width), floats, `bool`s
-and `str`s; anything else is a compile error. A program that defines its own
+`print`/`println` accept any number of integers (any width), floats, `bool`s,
+`str`s and `String`s; anything else is a compile error. A program that defines its own
 function named `print` calls its own. See `examples/hello`.
 
 All arguments are evaluated first, left to right, and then printed, so an
@@ -1461,21 +3972,59 @@ instead.
 Hot reload: Codira is designed so a running application can swap function
 bodies without a manual stop/restart cycle.
 
+**Toolchain correctness gates.** GC stress against a shadow model, forced
+allocation failure, sanitizers, a loom model of the safepoints, compiler
+and runtime fuzzing, a long-running service and the backend differential
+run are described in `TESTING.md` and run by `python3
+scripts/aurora_gates.py`. One knob reaches programs: setting
+`CODIRA_TEST_FAIL_NTH_ALLOCATION=N` makes the `N`th GC allocation of any
+`Runtime` (so of `codira run` and standalone executables too) fail and take
+the out-of-memory exit -- for testing that a program fails cleanly; never
+set it in production.
+
 ### Fast development runs: `codira run --jit`
 
 `codira run --jit` compiles the program with the Cranelift backend and runs it
 in the compiler's own process: no LLVM optimization pipeline, no linker. It
 covers the scalar core of the language (integers up to 64 bits, floats,
 `bool`; `let`/`var` and assignment; operators and casts; `if`, `loop`,
-`while`, `break`, `return`; calls; `print`/`println` of scalars and string
-literals). A program that uses anything else runs on the LLVM backend instead,
-with a note naming what Cranelift does not compile yet. What it compiles
-means the same as on LLVM: the same division checks and panic messages,
-shift and cast semantics, argument order and float printing (see "Integer
-arithmetic, shifts and casts"); `crates/codira/tests/differential.rs` runs
-random programs on both and compares. Measured: a
+`while`, `for` over ranges and arrays, `break`, `continue`, `return`; calls,
+methods of classes; `print`/`println` of scalars and string literals) and
+the garbage-collected heap: classes (construction, fields, assignment to
+fields), arrays (literals, indexing, assignment through an index, `len`,
+`is_empty`, `push`, `unchecked_get`), strings (see "Strings") and
+optionals (`nil`, wrapping, `!`, `==`/`!=`). A program that uses anything else
+(value structs, tuples, enums, pattern matching (`match`, `if let`,
+`while let`), `?`, the string methods listed under "Strings", `@region`
+functions, `scope`/`group`/`spawn` and channels, the byte-buffer methods
+(`push_str`, `push_int`, `push_json_float`), closures,
+pipelines, format specs and `{x:?}`, generic functions, the other array
+methods) runs on the LLVM
+backend instead, with a note naming what Cranelift does not compile yet.
+What it compiles means the same as on LLVM: the same object layout, the
+same division and bounds checks and panic messages, shift and cast
+semantics, argument and evaluation order and float printing (see "Integer
+arithmetic, shifts and casts"). Its code calls the same runtime functions
+(allocation, array growth, printing, panics) and allocates in a collector
+that scans its frames like LLVM's; `crates/codira/tests/differential.rs`
+runs random programs on both and compares. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
-build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time.
+build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time and the run time.
+
+`--jit` gets the heap limit and pacing `codira run` gives a runtime
+(`--heap-limit`, `--gc-growth`, the environment and `[runtime]`), and
+running out of memory ends the program with the same report and status.
+
+The collector treats JIT frames as it treats AOT frames: the entry point
+runs registered as a thread running Codira code, every allocation and
+growth is a safepoint, and a stopped thread's stack is scanned
+conservatively. JIT code keeps an object's handle (never only its payload
+address) live across a call that can reach a safepoint, and reads the
+payload address again after it. For precise scanning, JIT frames will need
+the stack slots of the handles live at each such call: Cranelift computes
+them on request (`codira_cranelift::Options::precise_stack_maps`, off by
+default, which nothing consumes yet), and a precise collector would read
+them by return address from the compiled code.
 
 ### Standalone executables: `codira build --exe`
 
@@ -2115,6 +4664,266 @@ after its hash, so `bun --hot` sees rebuilds. Underneath it uses
 `codira bindgen --runtime bun --module <file> --named-exports`, and
 `--print-library` to find the built library.
 
+### Formatting: `codira fmt`
+
+`codira fmt` formats every `.code` file of the enclosing package (or the
+files and directories given) with the one official standard; it has no
+options to configure. `codira fmt --check` writes nothing, lists each file
+that is not formatted with the number of lines that would change, and exits
+with an error if there is any, which is what CI runs; add `--diff` to see the
+changes. `codira fmt --stdin` formats standard input to standard output, for
+editors.
+
+The standard:
+
+- four spaces of indentation per open bracket group (`{`, `(`, `[`), plus one
+  level for a continuation line: one that starts with a binary operator, a
+  `.` of a method chain or a `requires`/`ensures`/`where`/`uses` clause, or
+  that follows a line ending in a binary operator, `=` or `->`; a line that
+  starts with a closing bracket lines up with the line that opened it;
+- one space around binary operators, `=`, compound assignments and `->`,
+  after `,`, `;` and `:`, before `{` and inside `{ }`; no space inside `( )`
+  and `[ ]`, before `,`, `;` and `:`, around `.`, after a prefix operator or
+  `@`, or between a function and its argument list;
+- at most one blank line in a row, none after an opening bracket or before a
+  closing one, none at the start of the file; no trailing whitespace; one
+  newline at the end; `\n` line endings;
+- trailing comments keep the spaces before them, so aligned comments stay
+  aligned.
+
+Line breaks are never added, removed or moved: the grammar is
+newline-sensitive (a line break can end a statement), so where a line breaks
+stays the author's choice. The formatter works on the lossless syntax tree,
+so comments and blank lines are kept. Every result is re-parsed and compared
+with the original before anything is written: the same nodes and tokens in
+the same order (only whitespace may differ) and a line break before exactly
+the same tokens. A file that fails that check, or that has syntax errors, is
+reported and left as it is.
+
+Limits: lines are not wrapped or joined, so there is no maximum width;
+column alignment (of `=` signs or struct fields) is not kept, except for
+trailing comments; the contents of block comments and strings are never
+touched, including their indentation; a pair of tokens no rule covers keeps
+"no space" or becomes one space, whichever it had.
+
+### API documentation: `codira doc`
+
+`codira doc` writes HTML documentation for the enclosing package to
+`target/doc/` (`--out` elsewhere); `codira doc --std` documents the standard
+library this compiler uses (`CODIRA_STD_PATH`, if set). The output is static
+files: open `index.html` directly, no server is needed. It has:
+
+- one page per module (`std.collections.array.html`), with each `public`
+  item (`--private` adds the rest): its signature, attributes, `requires` and
+  `ensures` clauses and doc comment, and the methods of its `extend` blocks;
+- doc comments in Markdown. `///` comments directly above an item are its
+  documentation; an item with none is documented by a plain `//` block
+  directly above it (no blank line between), without decorative rule lines.
+  `//!` comments document the module; without them, the comment block that
+  opens the file does;
+- cross-references: a type name in a signature links to that type, and
+  `[name]` or `[module.name]` in a doc comment links to the item. A name is
+  linked only when it resolves to one documented item (the current module
+  first); an ambiguous one stays text;
+- examples: code blocks in doc comments (unlabelled, or marked `codira`) are
+  highlighted with the compiler's own lexer;
+- for each function, the envelope the effect analysis infers, as badges:
+  "allocates", "may block", "may panic", "may not terminate", "calls foreign
+  code", "spawns tasks", "performs effects", "touches secrets", and a list of
+  what it is free of. Hovering a badge shows the call chain down to the cause.
+  A declared `@envelope` shows as met or NOT MET; on an `extern` function it
+  shows as trusted and unchecked;
+- a highlighted page per source file with line anchors, linked from every
+  item;
+- a search box (press `/`) over every module and item name and summary.
+
+`--undocumented` lists the public items without documentation;
+`--no-envelopes` skips the effect analysis.
+
+Limits: the envelope is the source-level analysis `codira envelope` reports,
+which is conservative: a call it cannot see into, such as a compiler
+intrinsic, counts as every effect. Struct and enum declarations are shown as
+written, private fields included. Method names, and items outside the
+documented sources (a package's documentation does not link into `std`), are
+not cross-referenced. Doc examples are highlighted but not compiled or run.
+
+### Diagnosing the toolchain: `codira doctor`
+
+`codira doctor` checks what this compiler runs with and prints `[ok  ]`,
+`[warn]` or `[FAIL]` per check, with the exact fix under each problem. It
+exits with an error if any check fails.
+
+- LLVM: the version of the LLVM linked into the compiler, asked of the
+  library itself; 22 is required.
+- target: the host's (or `--target <triple>`) must be a supported triple, and
+  the linked LLVM must have a backend for it.
+- Z3: the version of the linked library; 4.8 or later.
+- LLD: linked into the compiler from the same LLVM, so present whenever the
+  compiler runs.
+- C compiler: the clang `[native]` sources are compiled with (`CODIRA_CLANG`,
+  else the one next to the LLVM the compiler was built with, else `clang`);
+  it must run and must not be newer than LLVM 22, whose bitcode readers only
+  read older bitcode. A failure only inside a package with `[native]`
+  sources; elsewhere a warning.
+- std library: the directory the compiler uses (`CODIRA_STD_PATH` first), or
+  why it finds none.
+- inside a checkout of the compiler's own sources, for contributors:
+  `llvm-config` for LLVM 22 (from `LLVM_SYS_221_PREFIX`, then `PATH`), and
+  nightly rustfmt, which CI formats with.
+- disk space where builds go: a warning below 2 GB (20 GB in a compiler
+  checkout, where a debug build takes 10-20 GB), a failure below 0.5 GB
+  (5 GB).
+
+Limits: it checks the toolchain this binary was built with and can run; it
+does not try a build. Free space is measured with `df` on Unix and
+PowerShell on Windows. Fixes name the package manager of the platform
+(`apt-get` on Linux, Homebrew on macOS, winget or Chocolatey on Windows).
+
+### Lints: `codira lint`
+
+`codira lint` reports what the compiler knows about the package beyond
+style. Each lint reports only what the compiler established, never a guess
+from the text; `codira lint --list` lists them:
+
+- `alloc-in-loop`: an allocation the effect analysis finds inside a loop (a
+  `class` constructed, an array literal, `print`, a cross-module call that
+  boxes a value struct), or a call in a loop to a function whose summary
+  allocates, with the chain down to the allocation. Allocations the
+  analysis only assumes, in foreign code or behind a `perform`, are not
+  reported. A `for` loop's iterable is evaluated once and does not count; a
+  closure body is not part of the loop.
+- `large-copy`: a parameter whose type is a value struct or tuple of at
+  least 128 bytes (a lower bound: fields summed without padding), copied on
+  every call. Generic types are not sized and not reported.
+- `unused`: a private function, struct, enum, constant or type alias that
+  nothing in the package names. Items with an attribute other than
+  `@noalloc`, `@nopanic`, `@noblock`, `@realtime`, `@envelope` or `@inline`
+  (they may be entry points), trait implementations, names starting with
+  `_` and `main` are left alone. A method is private unless marked `public`,
+  and method calls check visibility, so a non-public method that nothing in
+  its package calls can be called from nowhere.
+- `extern-assertion`: an `extern "C"` function trusted to be `@noalloc` or
+  `@noblock` (or `@realtime`, or by its `@envelope`) whose C library
+  namesake is documented to allocate or block (`malloc`, `printf`, `sleep`,
+  `read`, `pthread_mutex_lock`, ...).
+- `extern-gc-reference`: an `extern "C"` function that takes or returns a
+  `class`; C code that keeps the pointer holds a reference the collector
+  does not see.
+- `asm`: an `@asm` variant marked `pure: true` that has no output (the
+  optimiser may delete every call) or clobbers memory.
+- `unproven-division`: an integer `/` or `%` whose divisor the compiler did
+  not prove safe, so it is checked at run time and can panic. It is the same
+  decision the code generators follow; a `requires` that proves the divisor
+  non-zero (and, signed, rules out `MIN / -1`) removes the check and the
+  finding.
+- `noalloc-candidate` (off by default, `--warn noalloc-candidate`): a public
+  function the analysis proves never allocates that is not declared
+  `@noalloc`.
+
+Findings are warnings: the command fails only for a lint named with
+`--deny <lint>` (`--deny all` for every one). To silence a lint: `--allow
+<lint>`; a comment `// codira-lint: allow(<lint>, ...)` on the reported line
+or the line above it; `//! codira-lint: allow(<lint>)` for the whole file;
+`allow(all)` for every lint. `--path <dir>` lints a directory of sources,
+such as `std/`, instead of a package.
+
+Limits: `unused` works by name, so an item shadowed by another of the same
+name anywhere in the package counts as used, and it does not see uses from
+other packages (hence only private items). `large-copy` reports parameters,
+not other copies. `extern-assertion` knows a fixed list of C library
+functions, not every one. Lints run on what parses; `codira check` reports
+syntax errors.
+
+### Benchmarks: `codira bench`
+
+```codira
+// benches/work.code
+import root.work
+
+@bench
+public func work_once() -> i64 { work(10) }        // called once per iteration
+
+@bench
+public func work_looped(n: i64) -> i64 {           // runs `n` iterations itself
+    var acc = 0
+    var i = 0
+    while i < n { acc += work(10 + (i & 1)); i += 1 }
+    acc
+}
+```
+
+`codira bench` builds the package with every `.code` file under `benches/`
+(mounted under a `benches` module, as `codira test` mounts `tests/`), at
+`-O3` (`-O` to change), and times every `public` `@bench` function in
+`src/` or `benches/`. `codira bench <text>` runs only the benchmarks whose
+name contains the text. A benchmark returns `()`, `bool`, an integer or a
+float, which the runner receives so the work is not optimised away. With no
+parameters it is called once per iteration, and every iteration includes a
+call through the runtime; the run starts by measuring that call overhead on
+an empty benchmark. With one `i64` parameter it runs that many iterations
+itself, so the overhead is paid once per sample. That is the form for
+anything that takes less than a few microseconds. Keep its loop body from
+being folded to a constant (vary an input with the iteration number, as
+above).
+
+Each benchmark runs in its own processes: `--rounds` of them (3), each
+warming up for `--warm-up-ms` (300), sizing its samples from the warm-up,
+then taking its share of `--samples` (50) over its share of
+`--measurement-ms` (1000). The report per benchmark: the median time per
+iteration, the median absolute deviation, a 95% confidence interval for the
+median (from order statistics, no distribution assumed), the mean without
+severe outliers, the outliers outside Tukey's fences, and the spread of the
+round medians.
+
+`--save-baseline <name>` writes the samples to
+`target/bench/baselines/<name>.json`. `--baseline <name>` compares with
+them. A benchmark is "REGRESSED" or "improved" only when the Mann-Whitney U
+test rejects "no change" (p < 0.05) *and* its median moved by more than both
+`--threshold` percent (2) and the spread between rounds of either run.
+Samples within one process are not independent: frequency scaling, memory
+layout and the machine's load move a whole process. A regression makes the
+command fail, and so does a `@bench` that is not `public` or has another
+signature.
+
+Limits: times are wall-clock, on a machine that is not quiesced by the
+runner (no CPU pinning, no frequency control), so compare baselines taken on
+the same machine. For comparisons with Rust and C++, memory, latency
+percentiles and a CI regression gate, see the AURORA suite
+(`benches/aurora/README.md`, run by `scripts/bench.py`). The call overhead depends on how the `codira` binary
+itself was built (a debug build of the compiler is slower). Allocation and
+memory use are not measured.
+
+### Supply chain: `codira audit`
+
+`codira audit` reports what a package brings in besides its own Codira code
+and what in it is trusted rather than checked:
+
+- licence: `license` (an SPDX expression) and `license-file` from
+  `[package]` in `codira.toml`, with the licence file's SHA-256;
+- each `[native]` source with its language, size, SHA-256 and the
+  `SPDX-License-Identifier` it declares in its first 40 lines; the include
+  directories, defines and flags it is compiled with; and the system
+  libraries linked by name;
+- every `extern` declaration by ABI (`"C"`, `codira-intrinsic`, or none),
+  and its unchecked trusted assertions: `@noalloc`, `@nopanic`, `@noblock`,
+  `@realtime` and `@envelope(..)` on an extern, and each `@asm` variant
+  (whose `pure: true` is an assertion too). The effect analysis takes each
+  one at its word; this is the list a reviewer has to check by hand;
+- the standard-library modules the package imports, directly or through
+  other standard-library modules.
+
+It fails when something the manifest names does not exist (a native source,
+an include directory, the licence file). `--strict` also fails when the
+package declares no licence or a native source declares no SPDX identifier;
+without it those are notes. `--json` prints the report as JSON (schema
+`codira-audit/1`). Nothing is built.
+
+Limits: the SPDX identifier is what a file says, not a licence analysis of
+its contents; system libraries named in `libs` and the symbols an `extern`
+resolves to at link or load time are listed, not inspected; Codira packages
+have no package dependencies today, so the standard library is the only
+Codira code from outside the package.
+
 ---
 
 ## 5. End-to-end status today
@@ -2131,15 +4940,38 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
 - arrays: literals, bounds-checked indexing and element assignment, `len()`,
   `unchecked_get(i)` (arrays of tuples type-check but do not link yet: the
   runtime has no type info for tuple element types)
+- growable arrays: `push`, `pop`, `insert`, `remove`, `clear`, `reserve`,
+  `append`, `contains`, `index_of`, `sort`, `binary_search`, `reverse`,
+  `copy`, slicing `xs[lo..hi]`, `map`/`filter`/`fold`/`any`/`all` with
+  closures compiled in place, `sum`/`min`/`max`, `for (i, x) in
+  xs.enumerate()`, through the GC heap, hot reload and heap snapshots (see
+  "Growable arrays and collections"; tests:
+  `crates/codira/tests/collections.rs`,
+  `crates/codira_runtime/tests/growable_arrays.rs`)
 - `array_filled(v, n)`, `select`, `fma`, `likely`/`unlikely` (see "Hot-loop
   builtins"; not supported by the Cranelift `--jit` backend, which refuses them)
 - `str` literals, and `print`/`println` (`codira run` shows the output)
+- `String`: construction (`to_string()`, the implicit conversion of a
+  `str`, `string_from_utf8`), `+`, `+=`, comparisons, every method in
+  "Strings", interpolated literals `f"..{x}.."`, strings in fields, arrays,
+  optionals, parameters and results, across modules, to and from the host
+  (`StringRef`), through collections, heap snapshots and hot reload
+  (Cranelift `--jit` compiles part of this; see "Strings")
 - optionals (`T?`, `nil`, `if let`, `while let`, postfix `!`, `== nil`) and
   `match` over literals, tuples, strings and optionals, checked exhaustive
 - `enum` with payloads: construction, `match`/`if let`/`while let` with
   nested variant patterns (checked exhaustive), `==`, methods via `extend`,
   enums in fields, arrays, parameters and results, across modules and hot
-  reload (see "Enums & pattern matching" for the limits)
+  reload (see "Enums & pattern matching" for the limits); generic enums,
+  monomorphised per instantiation, with all of the above and bounded
+  `extend` blocks (see "Generic enums")
+- `Result[T, E]` (`std.result.result`) and postfix `?` on `Result`s and
+  optionals, wrapping an error in the caller's error enum or converting it
+  through an `@error_conversion`; `std.error.error`'s `Error`, `AnyError`
+  and `context`; a `main` returning a `Result` (see "Error handling")
+- format specs in interpolation holes (`f"{x:>8.3}"`, checked at compile
+  time) and the debug form of every type (`f"{x:?}"`, `f"{x:#?}"`,
+  `x.debug_string()`), see "Strings"
 - generic functions, structs and classes, monomorphised per instantiation
   (see "Generics" above for the limits; generic functions are not exported
   to the host)
@@ -2155,7 +4987,9 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   `std.math.constants`, `std.math.fast`, `std.hashlib.hash`,
   `std.base64.base64`, `std.random.rng`, `std.sys.terminate`,
   `std.math.math`, `std.time.time`, `std.complex.complex`,
-  `std.collections.optional` (see "Importing the standard library" for
+  `std.collections.optional`, `std.result.result`, `std.fs.file`,
+  `std.text.ascii`, `std.error.error`, `std.cmp.cmp`, and `Map`, `Set`, `Deque`,
+  `BinaryHeap` and `Counter` in `std.collections` (see "Importing the standard library" for
   what is loaded, how it is linked, which modules qualify and why the
   others do not yet)
 - functions returning `never`, called locally, across modules and as
@@ -2182,26 +5016,77 @@ major, minor or patch -- contract changes decided by Z3 implication -- and
 Runtime (hosts embedding `codira_runtime`):
 
 - The GC heap is a segregated size-class allocator with per-thread bump
-  allocation; `Runtime::gc_collect()` collects objects not reachable from
-  host-rooted handles or from a thread running Codira code.
+  allocation; `Runtime::collect_blocking()` collects objects not reachable
+  from host-rooted handles or from a thread running Codira code and returns
+  a `CollectionReport` (objects and bytes reclaimed, the pause, whether it
+  was coalesced); `Runtime::request_collection()` asks for one and returns
+  at once (a thread of the collector's own serves it; `true` if this call
+  queued it, `false` if one was pending).
+- **Fairness:** a collection requested from outside (either call, or
+  `codira_gc_collect`/`codira_gc_request_collection`) first waits, parked,
+  until Codira code has run for the mutator window since the previous
+  collection: 1 ms, or four times the previous pause if longer
+  (`GcPolicy::min_mutator_window`, `pause_multiple`), skipped when no other
+  thread is inside Codira code. A host collecting in a loop therefore stops
+  the world for at most a fifth of the time. A request is satisfied by any
+  collection that starts after it (paced, another thread's), so concurrent
+  requests coalesce into one collection.
+- **Pacing** is on in every runtime, `Runtime::builder` included:
+  `GcPolicy::default()` collects once the heap's objects exceed twice what
+  the previous collection kept, from 4 MiB; `RuntimeBuilder::gc_growth(None)`
+  turns it off, `gc_policy` sets all of it. The check is made where an
+  allocation takes the heap lock; the next allocation by Codira code (or by
+  the host) collects.
 - Collections stop the world (stack capture for x86-64 and AArch64 on
-  Linux, macOS and Windows; tested on x86-64 Linux only). There are no stack maps, so a collection
-  asks every thread running Codira code to park, scans each parked thread's
-  stack and spilled callee-saved registers conservatively, collects, and
-  resumes them. What is guaranteed:
+  Linux, macOS and Windows; tested on x86-64 Linux only). A collection asks
+  every thread running Codira code to park, finds the roots on each parked
+  thread's stack, collects, and resumes them.
+  - **Precise roots** (default): code compiled through LLVM carries *frame
+    records*: every function that makes a call that may reach a
+    collection keeps, in a record on its stack, the values that may hold
+    references across such calls and the stack slots that may hold one,
+    and links the record into a per-thread chain. The collector reads the
+    records precisely and leaves those functions' frames out of the
+    conservative scan; host frames, foreign frames and code without
+    records (the Cranelift JIT) are still scanned conservatively. An
+    integer in a compiled frame that looks like a pointer no longer keeps
+    an object alive -- except while it sits in a callee-saved register at
+    the safepoint (those registers may hold a host frame's references and
+    are scanned conservatively; measured: 5 of 40 such objects retained,
+    at most one per such register, against 40 of 40 with the conservative
+    scan). Frames are left out of
+    the scan on x86-64 Linux only; elsewhere the records are read and the
+    frames are scanned conservatively as well.
+  - `CODIRA_GC_ROOTS=conservative` (or
+    `codira_memory::gc::frames::set_root_mode(RootMode::Conservative)`)
+    scans every stack word conservatively, records included.
+  - `CODIRA_GC_STRESS=<n>` collects at every n-th safepoint of each thread
+    (`1`: every allocation and every poll) -- for testing.
+  - What is guaranteed:
   - **No live object is freed**, whichever thread collects and whatever
-    other threads are doing: `gc_collect` from any thread, an allocation at
-    the heap limit on any thread or task, `codira_gc_collect`. The same stop
+    other threads are doing: `collect_blocking` or `request_collection` from
+    any thread, a paced collection or an allocation at the heap limit on any
+    thread or task, `codira_gc_collect`. The same stop
     protects `save_heap`/`restore_heap` and the heap migration of a hot
     reload.
   - **Which threads count:** a host thread inside `Runtime::invoke`, every
     `spawn`ed task on the worker pool, and any thread holding
     `codira_runtime::enter_codira()` (C: between `codira_thread_enter` and
     `codira_thread_leave`).
-  - **Where threads park:** every GC allocation is a safepoint. A thread
-    waiting in a channel send or receive, a `select`, a scope join or
-    `codira_time_sleep_ns` is already parked and never holds up a
-    collection.
+  - **Where threads park:** every GC allocation is a safepoint, and so is
+    a *poll* on the back-edge of every loop whose trip count the optimizer
+    cannot bound when the loop starts (a load and a branch). On Linux
+    (x86-64, AArch64) a thread that has not parked a millisecond after a
+    collection asked is interrupted with `SIGURG` and parks if it is in
+    Codira code, so counted loops and recursion do not hold a collection
+    up either; a host that uses `SIGURG` itself must not embed the
+    runtime. A thread waiting in a channel
+    send or receive, a `select`, a scope join or `codira_time_sleep_ns` is
+    already parked and never holds up a collection, and so is a thread in
+    a call to an `extern` function declared `@noalloc` (`@noalloc extern
+    func read_sensor(fd: i32) -> i64;`): the assertion, which nothing
+    checks, also promises that the function does not call back into Codira
+    code.
   - **Hot reload:** `Runtime::update` relinks with the world stopped, and
     only while no thread is inside Codira code. Otherwise it returns
     `false` and the next `update` retries, without needing a new file
@@ -2209,13 +5094,19 @@ Runtime (hosts embedding `codira_runtime`):
   - **Cost:** an allocation in Codira code checks one flag; entering
     Codira code from the host costs about 14 ns, a channel operation about
     26 ns more; an allocation made by the host outside Codira code costs
-    about 20 ns more than before (x86-64, measured).
+    about 20 ns more than before (x86-64, measured). A function with a
+    frame record pays an indirect call and a few stores on entry and one
+    store on return; see `crates/codira_memory/README.md` for the
+    benchmark comparison with records and polls off.
 - What is not guaranteed:
   - **Latency:** a collection waits for every running thread to reach a
-    safepoint. A loop that neither allocates nor blocks delays it until the
-    loop ends (there are no safepoints at loop back-edges). Calls to the
-    file, database and tensor services are not safepoints; a collection
-    waits for them to return.
+    safepoint. Outside Linux there is no preemption: a loop the optimizer
+    can bound (a counted loop, a loop over an array or a range) and
+    recursion have no poll, so a collection may wait for them to finish.
+    Everywhere, a thread running host code (a host function called from
+    Codira code) is not interrupted, and calls to `extern` functions
+    without `@noalloc`, and to the file, database and tensor services, are
+    not safepoints; a collection waits for them to return.
   - **Raw function pointers:** a Codira function called through a
     `FunctionDefinition`'s `fn_ptr` (or `codira_function_fn_ptr`) without
     the guard is invisible to the collector, and a reload does not wait for
@@ -2231,17 +5122,41 @@ Runtime (hosts embedding `codira_runtime`):
     runtime pauses threads running another runtime's code, and a reload
     waits until no runtime's code runs.
   - **Unsupported targets:** where a thread's stack cannot be captured, a
-    collection that would need it is refused (`gc_collect` returns `false`,
-    `GarbageCollector::try_collect` returns `CollectRefused`, and an
-    allocation at the heap limit aborts).
-- `Runtime::builder(lib).heap_limit(bytes)` caps the GC heap. An allocation
+    collection that would need it is refused (`collect_blocking` returns
+    `CollectRefused`, and an allocation at the heap limit fails).
+- **Relocation (experimental, off by default):**
+  `Runtime::builder(lib).compaction(true)` or `CODIRA_GC_COMPACT=1`. After
+  a collection's sweep, the live objects of size-class blocks at most a
+  quarter full move into free cells of other blocks of their class and
+  every heap reference to them is rewritten; the emptied blocks are
+  released. Objects a stack refers to, rooted objects and pinned objects
+  never move (`GarbageCollector::pin`/`unpin`, C: `codira_gc_pin` /
+  `codira_gc_unpin`: a pinned object is rooted and keeps its address and
+  its payload's address, for foreign code). Measured on a fragmentation
+  workload: 11.7 MB held instead of 29.7 MB, and it fits a 16 MiB heap
+  limit the non-moving collector cannot. A host that keeps a `GcPtr` it
+  neither roots nor pins must not turn it on.
+- `Runtime::builder(lib).heap_limit(bytes)` caps the GC heap (without it
+  there is no cap; `codira_runtime::heap_policy::default_heap_limit` gives
+  the `codira` tool's default, half of the available memory). An allocation
   that would exceed it first collects, with the world stopped as above, and
-  retries before the other threads resume; if memory is still short the
-  process aborts with a message naming the type and limit. It caps the GC
-  heap only, not raw allocations. Tests:
-  `crates/codira_runtime/tests/gc_threads.rs` (tasks allocating and checking
-  patterned objects under a small cap and under collections from a host
-  thread).
+  retries before the other threads resume. If memory is still short, the
+  `try_alloc`/`try_alloc_array`/`try_grow_array` API and
+  `StringRef::try_new` return `AllocError::LimitExceeded { limit,
+  committed, requested, live }`; an allocation by Codira code ends the
+  process with the diagnostic shown in "Memory: heap limit, pacing,
+  `--runtime-stats`" and exit status 102
+  (`codira_runtime::HEAP_EXHAUSTED_EXIT_STATUS`), its last lines from
+  `RuntimeBuilder::heap_limit_note`. A 256 KiB reserve is released first so
+  reporting has memory. It caps the GC heap only, not raw allocations.
+  Tests: `crates/codira_runtime/tests/gc_threads.rs` (tasks allocating and
+  checking patterned objects under a small cap and under collections from a
+  host thread), `heap_limit.rs` (pacing without a cap, forced failures).
+- `Runtime::stats()` returns `RuntimeStats` (heap bytes now and peak, live
+  bytes, bytes and objects allocated and reclaimed, collections by cause,
+  time with the world stopped, time to safepoint, pause p50/p99/max); its
+  `Display` is what `--runtime-stats` prints. Counting is always on: two
+  thread-local counter updates per allocation.
 - The runtime provides raw memory services a program reaches with
   `extern "C"` declarations (wrapped in `std/memory/region.code` and
   `std/memory/page.code`): region arenas with byte quotas and bulk reset
@@ -2357,8 +5272,8 @@ types").
 
 Parsed but **not yet lowered** -- the compiler stops with "... is not
 supported by the code generator yet" naming the construct: postfix `^`. Not available at
-all yet: generic enums, generic traits, trait objects (dynamic dispatch),
-`String`, module-level `let` and `var` (rejected with "module-level `let`
+all yet: generic traits, trait objects (dynamic dispatch),
+`match` on a `String`, module-level `let` and `var` (rejected with "module-level `let`
 is not supported yet"), in-place parameters (`inout`/`mut`/`out` and
 `mut T`/`&mut T`, rejected with "... are not supported yet"), the
 standard library's

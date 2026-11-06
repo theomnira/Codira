@@ -231,7 +231,7 @@ fn optional_references_are_traced() {
     let runtime = &driver.runtime;
     let list: StructRef<'_> = runtime.invoke("build", (4i32,)).unwrap();
     let list = list.root();
-    runtime.gc_collect();
+    runtime.collect_blocking().unwrap();
     let list = list.as_ref(runtime);
     assert_invoke_eq!(i32, 10, driver, "sum", list.clone());
     assert_invoke_eq!(i32, 7, driver, "firsts", list);

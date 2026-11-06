@@ -134,10 +134,27 @@ impl ExprValidator<'_> {
             | Expr::Field { expr, .. }
             | Expr::Cast { expr, .. }
             | Expr::Scope { body: expr }
+            | Expr::Group { body: expr }
             | Expr::Spawn { call: expr }
             | Expr::ChannelReceive { channel: expr }
-            | Expr::Unwrap { expr } => {
+            | Expr::Unwrap { expr }
+            | Expr::Propagate { expr } => {
                 self.validate_expr_access(sink, initialized_patterns, *expr, ExprKind::Normal);
+            }
+            Expr::Format {
+                value,
+                width,
+                precision,
+                ..
+            } => {
+                for operand in std::iter::once(value).chain(width).chain(precision) {
+                    self.validate_expr_access(
+                        sink,
+                        initialized_patterns,
+                        *operand,
+                        ExprKind::Normal,
+                    );
+                }
             }
             Expr::BinaryOp { lhs, rhs, op } => {
                 let lhs_expr_kind = match op {

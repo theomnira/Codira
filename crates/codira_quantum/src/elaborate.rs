@@ -683,6 +683,8 @@ impl Elaborator<'_> {
             Expr::MethodCall { .. }
             | Expr::Match { .. }
             | Expr::Unwrap { .. }
+            | Expr::Propagate { .. }
+            | Expr::Format { .. }
             | Expr::Index { .. }
             | Expr::Array(_)
             | Expr::Tuple(_)
@@ -696,6 +698,7 @@ impl Elaborator<'_> {
                     .into(),
             )),
             Expr::Scope { .. }
+            | Expr::Group { .. }
             | Expr::Spawn { .. }
             | Expr::ChannelSend { .. }
             | Expr::ChannelReceive { .. }

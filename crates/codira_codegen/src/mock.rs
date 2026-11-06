@@ -50,6 +50,7 @@ impl Default for MockDatabase {
         db.set_optimization_level(OptimizationLevel::Default);
         db.set_eidos_options(EidosOptions::default());
         db.set_fuel_instrumentation(false);
+        db.set_frame_allocation(false);
         db.set_keep_function_symbols(false);
         db.set_hardware_safety(crate::HardwareSafety::NONE);
         db.set_no_hot_reload(false);

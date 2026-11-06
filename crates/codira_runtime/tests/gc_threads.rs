@@ -118,7 +118,7 @@ fn host_collections_while_tasks_run_free_nothing_live() {
     std::thread::scope(|s| {
         s.spawn(|| {
             while !done.load(Ordering::Relaxed) {
-                gc.collect();
+                gc.collect_blocking().unwrap();
                 collections.fetch_add(1, Ordering::Relaxed);
             }
         });
@@ -162,7 +162,7 @@ fn heap_limit_and_host_collections_together() {
     std::thread::scope(|s| {
         s.spawn(|| {
             while !done.load(Ordering::Relaxed) {
-                gc.collect();
+                gc.collect_blocking().unwrap();
                 std::thread::yield_now();
             }
         });
@@ -198,7 +198,7 @@ fn concurrent_host_calls_and_collections() {
     std::thread::scope(|s| {
         s.spawn(|| {
             while !done.load(Ordering::Relaxed) {
-                gc.collect();
+                gc.collect_blocking().unwrap();
                 std::thread::yield_now();
             }
         });

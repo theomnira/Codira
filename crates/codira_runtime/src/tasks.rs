@@ -9,23 +9,38 @@
 //!   the dispatch table under the `codira.scope_*` / `codira.channel_*` names
 //!   `codira_codegen::intrinsics::task_functions` declares.
 //!
-//! # The pool
+//! # Scheduling
 //!
-//! One process-wide pool, started on first use, keeps up to
-//! `available_parallelism()` workers *running*. A worker that blocks -- in a
-//! channel operation, or waiting for a nested scope -- stops counting as
-//! running, and if work is queued and no worker is idle, a replacement is
-//! started. Without that compensation a correct program could deadlock: with
-//! N workers all waiting to receive, the task that would send could sit in
-//! the queue forever. Idle workers beyond the target exit.
+//! Tasks run on the work-stealing scheduler in `scheduler` (per-worker
+//! deques, priority classes, join helping, compensation for waits); see its
+//! documentation. A `group` (see `group`) is a set of tasks whose results
+//! come back when it ends.
+//!
+//! # The task tree and cancellation
+//!
+//! Every `scope` and `group` is a [`TaskSet`] that records the task that
+//! opened it, so the sets form a tree rooted at the host call (or at a
+//! [`CancelToken`]). A task is cancelled when its set cancels it or any
+//! task above it is cancelled; `cancelled()` reads that. Only a group
+//! cancels on its own (the tasks after a failed one); a `scope` never does,
+//! and never skips a task -- its tasks talk through channels, and skipping
+//! one could leave another waiting forever. Nothing is interrupted: a
+//! cancelled task stops where its code checks `cancelled()`, and every
+//! `scope` and `group` on its way out is joined and freed as usual, which is
+//! what releases its channels and buffers.
+//!
+//! In every build, starting a task of a set that has already been joined,
+//! or freeing a group before joining it, stops the process with a message;
+//! debug builds also check, when each task ends, that its set was not
+//! joined while it ran ("a task outlived its scope").
 //!
 //! # Scopes and channels
 //!
 //! A scope counts its unfinished tasks; `codira.scope_end` waits for the
-//! count to reach zero. A channel belongs to the scope that created it and is
-//! freed with it, after every task of the scope has finished -- the compiler
-//! guarantees no code can name the channel after that (see
-//! `codira_hir::expr::validator::tasks`).
+//! count to reach zero (helping first, see the scheduler). A channel belongs to
+//! the scope that created it and is freed with it, after every task of the
+//! scope has finished -- the compiler guarantees no code can name the channel
+//! after that (see `codira_hir::expr::validator::tasks`).
 //!
 //! Elements are scalars of at most 16 bytes, copied in and out by value;
 //! tasks share nothing else. A channel whose senders and receivers do not
@@ -48,7 +63,7 @@
 //! removes its registration from all of them (the ones that did not wake it
 //! included) and tries again; another task may have taken the value first,
 //! in which case it registers and sleeps again. A sleeping select counts as
-//! blocked for the pool, exactly like a blocked send or receive.
+//! blocked for the scheduler, exactly like a blocked send or receive.
 //!
 //! # Collections
 //!
@@ -57,10 +72,13 @@
 //! collection stops it at its next allocation and scans its stack. Every
 //! wait here -- a channel operation, a `select`, a scope join -- runs inside a
 //! blocking region, so a waiting task is already parked and never holds up a
-//! collection (nor can a collection deadlock with it). Channel locks are
-//! taken and released inside those regions, and values received into Codira
-//! stack slots are written after the region ends, so nothing writes a stack
-//! a collector may be scanning.
+//! collection (nor can a collection deadlock with it). A send or receive
+//! first tries a few times without waiting, as a running thread; a channel's
+//! lock is only ever held for a few instructions -- never across a wait, an
+//! allocation or a safepoint -- so a running thread that takes it delays a
+//! collection by no more than that. Values received into Codira stack slots
+//! are written by the running thread, never inside a blocking region, so
+//! nothing writes a stack a collector may be scanning.
 //!
 //! # Sessions
 //!
@@ -70,161 +88,325 @@
 //! operation passes its payload's size, because one session carries
 //! different types at different steps; the compiler has checked that both
 //! sides agree on every step (`codira_hir::expr::session`).
+mod group;
+mod scheduler;
+
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     collections::VecDeque,
-    num::NonZeroUsize,
     sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc, OnceLock,
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+        Arc,
     },
 };
 
-use parking_lot::{Condvar, Mutex};
-
 use codira_memory::gc::safepoint::blocking;
+use parking_lot::{Condvar, Mutex};
+use scheduler::scheduler;
+pub use scheduler::{blocking_io, stats, with_priority, Priority, SchedulerStats};
 
 use crate::{FunctionDefinition, IntoFunctionDefinition};
 
 /// The largest channel element, in bytes: an `i128`.
 const MAX_ELEMENT_SIZE: usize = 16;
 
-/// Stack size of a worker thread. Codira code recurses on the native stack.
-const WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
-
-/// A task's entry point: a compiler-generated trampoline that unpacks its
-/// arguments and calls the spawned function.
+/// A `scope` task's entry point: a compiler-generated trampoline that
+/// unpacks its arguments and calls the spawned function.
 type TaskEntry = extern "C" fn(*mut u8);
 
-struct Job {
-    entry: TaskEntry,
+/// A queued task.
+pub(crate) struct Job {
+    /// The trampoline: a [`TaskEntry`] for a scope's task, a
+    /// [`group::GroupEntry`] for a group's.
+    entry: usize,
     /// The task's argument bytes, 16-byte aligned like any scalar needs.
     args: Box<[u128]>,
-    scope: Arc<ScopeState>,
+    owner: Owner,
+    /// The task's position among its set's tasks, in spawn order.
+    index: usize,
+    priority: Priority,
 }
 
-struct PoolState {
-    queue: VecDeque<Job>,
-    /// Workers waiting for work.
-    idle: usize,
-    /// Workers running a job and not blocked.
-    running: usize,
+/// What a task belongs to. Holding it keeps the set's channels (or result
+/// storage) alive while the task runs.
+enum Owner {
+    Scope(Arc<ScopeState>),
+    Group(Arc<group::GroupState>),
 }
 
-struct Pool {
-    state: Mutex<PoolState>,
-    work_ready: Condvar,
-    /// How many workers should be running at once.
-    target: usize,
+impl Job {
+    fn set(&self) -> &Arc<TaskSet> {
+        match &self.owner {
+            Owner::Scope(scope) => &scope.set,
+            Owner::Group(group) => &group.set,
+        }
+    }
+
+    /// Identifies the set the task belongs to (see `take_own_child`).
+    fn owner_id(&self) -> usize {
+        Arc::as_ptr(self.set()) as usize
+    }
+}
+
+/// The tasks of one `scope` or `group`, and its place in the task tree.
+///
+/// # Cancellation
+///
+/// A task is *cancelled* when its index is at least its set's `cancel_from`,
+/// or when the task that opened its set is cancelled (and so on up the
+/// tree). Only a group lowers `cancel_from`: when its task `i` fails, every
+/// task after it is cancelled. Cancellation is cooperative: `cancelled()`
+/// reports it, and a group does not start a task it has cancelled; nothing
+/// is interrupted (see `group` for why that is what makes it safe).
+pub(crate) struct TaskSet {
+    /// Tasks spawned and not yet finished.
+    pending: AtomicUsize,
+    lock: Mutex<()>,
+    finished: Condvar,
+    /// The task that opened the set; `None` on a thread that is not running
+    /// a task (the host), unless a [`CancelToken`] is in force.
+    parent: Option<Arc<TaskCtx>>,
+    /// Tasks with this index or above are cancelled.
+    cancel_from: AtomicUsize,
+    /// The next task's index.
+    next_index: AtomicUsize,
+    /// The set has been joined; no task of it may run any more.
+    ended: AtomicBool,
+}
+
+/// A running task: which set it belongs to, and its index there.
+pub(crate) struct TaskCtx {
+    set: Arc<TaskSet>,
+    index: usize,
 }
 
 thread_local! {
-    /// Whether this thread is one of the pool's workers.
-    static IS_WORKER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The task running on this thread, innermost (a joining worker that
+    /// runs one of its children replaces it for the duration).
+    static CURRENT: RefCell<Option<Arc<TaskCtx>>> = const { RefCell::new(None) };
 }
 
-fn pool() -> &'static Pool {
-    static POOL: OnceLock<Pool> = OnceLock::new();
-    POOL.get_or_init(|| Pool {
-        state: Mutex::new(PoolState {
-            queue: VecDeque::new(),
-            idle: 0,
-            running: 0,
-        }),
-        work_ready: Condvar::new(),
-        target: std::thread::available_parallelism().map_or(1, NonZeroUsize::get),
+impl TaskCtx {
+    fn is_cancelled(&self) -> bool {
+        let mut task = self;
+        loop {
+            if task.index >= task.set.cancel_from.load(Ordering::Acquire) {
+                return true;
+            }
+            match &task.set.parent {
+                Some(parent) => task = parent,
+                None => return false,
+            }
+        }
+    }
+}
+
+impl TaskSet {
+    /// A set opened by the task running on this thread.
+    fn new() -> Arc<TaskSet> {
+        Arc::new(TaskSet {
+            pending: AtomicUsize::new(0),
+            lock: Mutex::new(()),
+            finished: Condvar::new(),
+            parent: CURRENT.with(|current| current.borrow().clone()),
+            cancel_from: AtomicUsize::new(usize::MAX),
+            next_index: AtomicUsize::new(0),
+            ended: AtomicBool::new(false),
+        })
+    }
+
+    /// Accounts for a new task and returns its index.
+    fn add(&self) -> usize {
+        if self.ended.load(Ordering::Relaxed) {
+            fatal("a task was spawned into a scope that has ended");
+        }
+        self.pending.fetch_add(1, Ordering::AcqRel);
+        self.next_index.fetch_add(1, Ordering::Relaxed)
+    }
+
+    fn finish_one(&self) {
+        if self.pending.fetch_sub(1, Ordering::AcqRel) == 1 {
+            let _lock = self.lock.lock();
+            self.finished.notify_all();
+        }
+    }
+
+    /// Waits until every task of the set has finished, running the ones
+    /// still on top of this worker's deque itself (see the scheduler's
+    /// "Joining"), and marks the set ended.
+    fn join(self: &Arc<Self>) {
+        let id = Arc::as_ptr(self) as usize;
+        while self.pending.load(Ordering::Acquire) > 0 {
+            let Some(job) = scheduler().take_own_child(id) else {
+                break;
+            };
+            run(job);
+        }
+        if self.pending.load(Ordering::Acquire) > 0 {
+            blocking(|| {
+                let mut lock = self.lock.lock();
+                wait_while(&self.finished, &mut lock, |_| {
+                    self.pending.load(Ordering::Acquire) > 0
+                });
+            });
+        }
+        self.ended.store(true, Ordering::Release);
+    }
+}
+
+/// Where task-local allocation regions plug in; today it does nothing.
+///
+/// A region would hold every object a task allocates that escape analysis
+/// (the compiler's, not this module's) proves does not outlive the task,
+/// and be released in one step when the task ends -- the end of
+/// [`run`], after the task's body returned and, for a group's task, after
+/// its result was copied into the group's root region. What a region must
+/// never contain: anything reachable from a task's *result* (a group hands
+/// it to the joining task) or from a channel (only scalars cross them
+/// today). Until the compiler can prove that, no task allocates in a
+/// region, so this stays empty and costs nothing.
+struct TaskRegion;
+
+impl TaskRegion {
+    /// Called as a task's body starts, with a mutator guard held.
+    #[inline(always)]
+    fn begin() -> TaskRegion {
+        TaskRegion
+    }
+
+    /// Called once the task's body (and, in a group, the copy of its
+    /// result) is done, still with the mutator guard held.
+    #[inline(always)]
+    fn end(self) {}
+}
+
+/// Runs `job` on the current thread, as the current task.
+fn run(job: Job) {
+    let set = Arc::clone(job.set());
+    if set.ended.load(Ordering::Acquire) {
+        // The compiler joins every set before leaving it; a task that
+        // starts after that is a runtime bug, and running it could touch
+        // freed channels.
+        fatal("a task outlived its scope");
+    }
+    if job.index >= set.cancel_from.load(Ordering::Acquire) {
+        // A group cancelled it before it started: its result is never read
+        // (see `group`).
+        scheduler::note_skipped();
+    } else {
+        let task = Arc::new(TaskCtx {
+            set: Arc::clone(&set),
+            index: job.index,
+        });
+        let previous = CURRENT.with(|current| current.replace(Some(task)));
+        let previous_priority = scheduler::set_current_priority(job.priority);
+        {
+            let _guard = codira_memory::gc::safepoint::enter();
+            let region = TaskRegion::begin();
+            let mut args = job.args;
+            match &job.owner {
+                Owner::Scope(_) => {
+                    // SAFETY: `scope_spawn` was given a trampoline of this
+                    // signature.
+                    let entry: TaskEntry =
+                        unsafe { std::mem::transmute::<usize, TaskEntry>(job.entry) };
+                    entry(args.as_mut_ptr().cast::<u8>());
+                }
+                Owner::Group(group) => group.run_task(job.entry, &mut args, job.index),
+            }
+            region.end();
+        }
+        scheduler::set_current_priority(previous_priority);
+        CURRENT.with(|current| *current.borrow_mut() = previous);
+        #[cfg(debug_assertions)]
+        if set.ended.load(Ordering::Acquire) {
+            fatal("a task outlived its scope");
+        }
+    }
+    set.finish_one();
+}
+
+/// Whether the task running on this thread has been cancelled (see
+/// [`TaskSet`]). False outside any task, unless a [`CancelToken`] in force
+/// on the thread was cancelled.
+pub fn is_cancelled() -> bool {
+    CURRENT.with(|current| {
+        current
+            .borrow()
+            .as_ref()
+            .is_some_and(|task| task.is_cancelled())
     })
 }
 
-impl Pool {
-    /// Starts a worker, counted as running from the start.
-    fn start_worker(&'static self, state: &mut PoolState) {
-        state.running += 1;
-        std::thread::Builder::new()
-            .name("codira-task".to_string())
-            .stack_size(WORKER_STACK_SIZE)
-            .spawn(move || self.work())
-            .unwrap_or_else(|e| fatal(&format!("could not start a task worker: {e}")));
-    }
+/// Lets the host cancel the tasks a call into Codira code spawns: inside
+/// [`CancelToken::run`], every `scope` and `group` opened on this thread
+/// hangs below the token in the task tree, so after
+/// [`CancelToken::cancel`] (from any thread) `cancelled()` is true in every
+/// task below it.
+#[derive(Clone)]
+pub struct CancelToken {
+    task: Arc<TaskCtx>,
+}
 
-    fn push(&'static self, job: Job) {
-        let mut state = self.state.lock();
-        state.queue.push_back(job);
-        if state.idle > 0 {
-            self.work_ready.notify_one();
-        } else if state.running < self.target {
-            self.start_worker(&mut state);
-        }
-    }
-
-    fn work(&'static self) {
-        IS_WORKER.with(|w| w.set(true));
-        let mut state = self.state.lock();
-        loop {
-            if let Some(job) = state.queue.pop_front() {
-                drop(state);
-                run(job);
-                state = self.state.lock();
-                continue;
-            }
-            state.running -= 1;
-            if state.idle >= self.target {
-                return;
-            }
-            state.idle += 1;
-            self.work_ready.wait(&mut state);
-            state.idle -= 1;
-            state.running += 1;
-        }
-    }
-
-    /// The current thread is about to wait. A worker stops counting as
-    /// running, and is replaced if work would otherwise sit in the queue.
-    fn block_begin(&'static self) {
-        if !IS_WORKER.with(std::cell::Cell::get) {
-            return;
-        }
-        let mut state = self.state.lock();
-        state.running -= 1;
-        if !state.queue.is_empty() {
-            if state.idle > 0 {
-                self.work_ready.notify_one();
-            } else if state.running < self.target {
-                self.start_worker(&mut state);
-            }
-        }
-    }
-
-    /// The current thread has stopped waiting.
-    fn block_end(&'static self) {
-        if IS_WORKER.with(std::cell::Cell::get) {
-            self.state.lock().running += 1;
-        }
+impl Default for CancelToken {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
-fn run(mut job: Job) {
-    {
-        let _guard = codira_memory::gc::safepoint::enter();
-        (job.entry)(job.args.as_mut_ptr().cast::<u8>());
+impl CancelToken {
+    /// A token below the task running on this thread (if any): cancelling
+    /// that task also cancels the token's tasks.
+    pub fn new() -> CancelToken {
+        let set = Arc::new(TaskSet {
+            pending: AtomicUsize::new(0),
+            lock: Mutex::new(()),
+            finished: Condvar::new(),
+            parent: CURRENT.with(|current| current.borrow().clone()),
+            cancel_from: AtomicUsize::new(usize::MAX),
+            next_index: AtomicUsize::new(1),
+            ended: AtomicBool::new(false),
+        });
+        CancelToken {
+            task: Arc::new(TaskCtx { set, index: 0 }),
+        }
     }
-    let mut pending = job.scope.pending.lock();
-    *pending -= 1;
-    if *pending == 0 {
-        job.scope.finished.notify_all();
+
+    /// Cancels every task below the token.
+    pub fn cancel(&self) {
+        self.task.set.cancel_from.store(0, Ordering::Release);
+    }
+
+    /// Whether the token, or a task above it, has been cancelled.
+    pub fn is_cancelled(&self) -> bool {
+        self.task.is_cancelled()
+    }
+
+    /// Runs `f` with the token in force on this thread.
+    pub fn run<R>(&self, f: impl FnOnce() -> R) -> R {
+        struct Restore(Option<Arc<TaskCtx>>);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                CURRENT.with(|current| *current.borrow_mut() = self.0.take());
+            }
+        }
+        let _restore =
+            Restore(CURRENT.with(|current| current.replace(Some(Arc::clone(&self.task)))));
+        f()
     }
 }
 
-/// Waits on `condvar` while `blocked` holds, letting the pool compensate.
+/// Waits on `condvar` while `blocked` holds, letting the scheduler
+/// compensate. Called inside a blocking region.
 fn wait_while<T>(
     condvar: &Condvar,
     guard: &mut parking_lot::MutexGuard<'_, T>,
     mut blocked: impl FnMut(&T) -> bool,
 ) {
     while blocked(guard) {
-        pool().block_begin();
+        scheduler().block_begin();
         condvar.wait(guard);
-        pool().block_end();
+        scheduler().block_end();
     }
 }
 
@@ -236,9 +418,7 @@ fn fatal(message: &str) -> ! {
 }
 
 struct ScopeState {
-    /// Tasks spawned and not yet finished.
-    pending: Mutex<usize>,
-    finished: Condvar,
+    set: Arc<TaskSet>,
     /// The channels created in the scope, freed with it.
     /// Boxed so each channel keeps its address -- compiled code holds it as
     /// the channel's handle -- while the vector grows.
@@ -339,20 +519,14 @@ unsafe fn scope_ref<'a>(scope: usize) -> &'a ScopeState {
 
 extern "C" fn scope_begin() -> usize {
     Arc::into_raw(Arc::new(ScopeState {
-        pending: Mutex::new(0),
-        finished: Condvar::new(),
+        set: TaskSet::new(),
         channels: Mutex::new(Vec::new()),
         endpoints: Mutex::new(Vec::new()),
     })) as usize
 }
 
-extern "C" fn scope_spawn(scope: usize, entry: usize, args: usize, size: usize) {
-    if entry == 0 {
-        fatal("spawned a task without an entry point");
-    }
-    // SAFETY: the compiler passes the address of a task trampoline, which
-    // has exactly this signature.
-    let entry: TaskEntry = unsafe { std::mem::transmute::<usize, TaskEntry>(entry) };
+/// Copies a task's argument bytes.
+fn copy_args(args: usize, size: usize) -> Box<[u128]> {
     let mut copy = vec![0u128; size.div_ceil(16)].into_boxed_slice();
     if size > 0 {
         // SAFETY: the compiler passes the address and size of the stack
@@ -361,29 +535,40 @@ extern "C" fn scope_spawn(scope: usize, entry: usize, args: usize, size: usize) 
             std::ptr::copy_nonoverlapping(args as *const u8, copy.as_mut_ptr().cast::<u8>(), size);
         }
     }
+    copy
+}
+
+extern "C" fn scope_spawn(scope: usize, entry: usize, args: usize, size: usize) {
+    if entry == 0 {
+        fatal("spawned a task without an entry point");
+    }
     // SAFETY: `scope` came from `scope_begin` and its scope has not ended:
     // the compiler only spawns inside an open scope.
     let scope = unsafe {
         Arc::increment_strong_count(scope as *const ScopeState);
         Arc::from_raw(scope as *const ScopeState)
     };
-    *scope.pending.lock() += 1;
-    pool().push(Job {
+    let index = scope.set.add();
+    scheduler().push(Job {
         entry,
-        args: copy,
-        scope,
+        args: copy_args(args, size),
+        owner: Owner::Scope(scope),
+        index,
+        priority: scheduler::current_priority(),
     });
 }
 
 extern "C" fn scope_end(scope: usize) {
     // SAFETY: the compiler ends each scope it began exactly once.
     let scope = unsafe { Arc::from_raw(scope as *const ScopeState) };
-    blocking(|| {
-        let mut pending = scope.pending.lock();
-        wait_while(&scope.finished, &mut pending, |pending| *pending > 0);
-    });
+    scope.set.join();
     // Every task has finished, so nothing uses the scope's channels any
     // more; they are freed with the last reference to the scope.
+}
+
+/// `cancelled()`: 1 if the current task has been cancelled, 0 otherwise.
+extern "C" fn task_cancelled() -> usize {
+    usize::from(is_cancelled())
 }
 
 extern "C" fn channel_new(scope: usize, capacity: usize, element_size: usize) -> usize {
@@ -416,9 +601,52 @@ unsafe fn channel_ref<'a>(channel: usize) -> &'a Channel {
     unsafe { &*(channel as *const Channel) }
 }
 
+/// Tries `attempt` until it succeeds or a short backoff is used up: spins
+/// of 1, 2, 4, .. 64 iterations, then a few yields (as crossbeam's
+/// `Backoff` does). A partner on another worker usually makes room, or a
+/// value, within that, and waiting instead costs a sleep and a wake-up --
+/// two system calls and microseconds of latency -- on each side. Returns
+/// whether `attempt` succeeded. The caller is a running thread: the
+/// backoff is bounded, so it delays a collection by microseconds at most.
+fn with_backoff(mut attempt: impl FnMut() -> bool) -> bool {
+    const SPIN_STEPS: u32 = 6;
+    const YIELD_STEPS: u32 = 4;
+    for step in 0..=SPIN_STEPS + YIELD_STEPS {
+        if attempt() {
+            return true;
+        }
+        if step <= SPIN_STEPS {
+            for _ in 0..1u32 << step {
+                std::hint::spin_loop();
+            }
+        } else {
+            std::thread::yield_now();
+        }
+    }
+    attempt()
+}
+
 extern "C" fn channel_send(channel: usize, value: usize) {
     // SAFETY: the compiler only names a channel inside the scope that owns it.
     let channel = unsafe { channel_ref(channel) };
+    // Without waiting first: the lock is only ever held for a few
+    // instructions, never across a wait or a safepoint, so a running
+    // thread may take it.
+    let sent = with_backoff(|| {
+        let Some(mut state) = channel.state.try_lock() else {
+            return false;
+        };
+        if state.queue.len() >= channel.capacity {
+            return false;
+        }
+        // SAFETY: `value` is the address of a stack slot of the element
+        // type (only read).
+        unsafe { channel.push(&mut state, value) };
+        true
+    });
+    if sent {
+        return;
+    }
     blocking(|| {
         let mut state = channel.state.lock();
         wait_while(&channel.not_full, &mut state, |state| {
@@ -434,14 +662,29 @@ extern "C" fn channel_receive(channel: usize, out: usize) {
     // SAFETY: the compiler only names a channel inside the scope that owns it.
     let channel = unsafe { channel_ref(channel) };
     let mut element = 0u128;
-    blocking(|| {
-        let mut state = channel.state.lock();
-        wait_while(&channel.not_empty, &mut state, |state| {
-            state.queue.is_empty()
-        });
+    let element_at = std::ptr::from_mut(&mut element) as usize;
+    // As for a send: try without waiting first.
+    let received = with_backoff(|| {
+        let Some(mut state) = channel.state.try_lock() else {
+            return false;
+        };
+        if state.queue.is_empty() {
+            return false;
+        }
         // SAFETY: `element` has room for any element.
-        unsafe { channel.pop(&mut state, std::ptr::from_mut(&mut element) as usize) };
+        unsafe { channel.pop(&mut state, element_at) };
+        true
     });
+    if !received {
+        blocking(|| {
+            let mut state = channel.state.lock();
+            wait_while(&channel.not_empty, &mut state, |state| {
+                state.queue.is_empty()
+            });
+            // SAFETY: `element` has room for any element.
+            unsafe { channel.pop(&mut state, element_at) };
+        });
+    }
     // SAFETY: `out` is the address of a stack slot of the element type.
     unsafe {
         std::ptr::copy_nonoverlapping(
@@ -705,7 +948,14 @@ pub(crate) fn functions() -> Vec<FunctionDefinition> {
             session_receive as extern "C" fn(usize, usize, usize),
             "codira.session_receive",
         ),
+        IntoFunctionDefinition::into(
+            task_cancelled as extern "C" fn() -> usize,
+            "codira.task_cancelled",
+        ),
     ]
+    .into_iter()
+    .chain(group::functions())
+    .collect()
 }
 
 #[cfg(test)]
@@ -779,7 +1029,7 @@ mod tests {
     /// replacements, so the task that unblocks them still runs.
     #[test]
     fn blocked_workers_are_compensated() {
-        let workers = pool().target;
+        let workers = scheduler().target();
         let scope = scope_begin();
         let input = channel_new(scope, 1, 4);
         let output = channel_new(scope, 1024, 4);
@@ -993,12 +1243,188 @@ mod tests {
         });
     }
 
+    static ORDER: Mutex<Vec<u8>> = parking_lot::const_mutex(Vec::new());
+
+    extern "C" fn record_class(args: *mut u8) {
+        // SAFETY: the test passes a `u8`.
+        let class = unsafe { *args };
+        ORDER.lock().push(class);
+        // Long enough that the workers keep finding all three classes
+        // queued while the first starts are recorded.
+        std::thread::sleep(std::time::Duration::from_micros(50));
+    }
+
+    /// While every class has work queued, starts follow the 4 : 2 : 1
+    /// weighted round robin, and background work is not starved.
+    #[test]
+    fn priority_classes_share_starts_four_two_one() {
+        with_timeout(|| {
+            ORDER.lock().clear();
+            let per_class = 3000usize;
+            let scope = scope_begin();
+            for i in 0..per_class * 3 {
+                let class = (i % 3) as u8;
+                let priority =
+                    [Priority::High, Priority::Normal, Priority::Background][class as usize];
+                with_priority(priority, || {
+                    scope_spawn(
+                        scope,
+                        record_class as TaskEntry as usize,
+                        std::ptr::from_ref(&class) as usize,
+                        1,
+                    );
+                });
+            }
+            scope_end(scope);
+            let order = ORDER.lock().clone();
+            assert_eq!(order.len(), per_class * 3);
+            // The first 1400 starts: the high class runs out after 3000, so
+            // all three classes are still queued throughout.
+            let window = &order[..1400];
+            let count =
+                |c: u8| window.iter().filter(|&&x| x == c).count() as f64 / window.len() as f64;
+            let (high, normal, background) = (count(0), count(1), count(2));
+            eprintln!("starts: high {high:.3}, normal {normal:.3}, background {background:.3}");
+            assert!(
+                (high - 4.0 / 7.0).abs() < 0.08,
+                "high {high:.3}, normal {normal:.3}, background {background:.3}"
+            );
+            assert!(
+                (normal - 2.0 / 7.0).abs() < 0.08,
+                "high {high:.3}, normal {normal:.3}, background {background:.3}"
+            );
+            assert!(
+                background > 1.0 / 7.0 - 0.06,
+                "background starved: {background:.3}"
+            );
+        });
+    }
+
+    static HELPED_SUM: AtomicUsize = AtomicUsize::new(0);
+
+    extern "C" fn add_to_helped_sum(args: *mut u8) {
+        // SAFETY: the test passes a `usize`.
+        let amount = unsafe { *args.cast::<usize>() };
+        HELPED_SUM.fetch_add(amount, Ordering::SeqCst);
+    }
+
+    extern "C" fn nested_scope(args: *mut u8) {
+        // SAFETY: the test passes a `usize`.
+        let width = unsafe { *args.cast::<usize>() };
+        let scope = scope_begin();
+        for amount in 0..width {
+            scope_spawn(
+                scope,
+                add_to_helped_sum as TaskEntry as usize,
+                std::ptr::from_ref(&amount) as usize,
+                std::mem::size_of::<usize>(),
+            );
+        }
+        scope_end(scope);
+    }
+
+    /// A worker that joins runs its own children: helping shows in the
+    /// counters, and the result is the same.
+    #[test]
+    fn joining_workers_run_their_own_children() {
+        with_timeout(|| {
+            let before = stats();
+            let scope = scope_begin();
+            let width = 64usize;
+            for _ in 0..32 {
+                scope_spawn(
+                    scope,
+                    nested_scope as TaskEntry as usize,
+                    std::ptr::from_ref(&width) as usize,
+                    std::mem::size_of::<usize>(),
+                );
+            }
+            scope_end(scope);
+            let after = stats();
+            assert_eq!(
+                HELPED_SUM.load(Ordering::SeqCst),
+                32 * (width * (width - 1) / 2)
+            );
+            assert!(after.helped > before.helped, "{after:?}");
+            assert!(after.spawned - before.spawned >= 32 * 65);
+        });
+    }
+
+    /// The process-level checks: run in a child process (they abort), which
+    /// runs this test binary again with `CODIRA_TASKS_PROBE` set.
+    fn aborts_with(probe: &str, message: &str) {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "tasks::tests::probes",
+                "--nocapture",
+                "--test-threads",
+                "1",
+            ])
+            .env("CODIRA_TASKS_PROBE", probe)
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !output.status.success(),
+            "the probe `{probe}` did not stop the process"
+        );
+        assert!(stderr.contains(message), "{stderr}");
+    }
+
+    /// Runs the probe named by `CODIRA_TASKS_PROBE`; does nothing without it.
+    #[test]
+    fn probes() {
+        match std::env::var("CODIRA_TASKS_PROBE").as_deref() {
+            Ok("spawn_after_end") => {
+                let scope = scope_begin();
+                // SAFETY: the scope is open.
+                let set = Arc::clone(&unsafe { scope_ref(scope) }.set);
+                scope_end(scope);
+                set.add();
+            }
+            Ok("start_after_end") => {
+                let scope = Arc::new(ScopeState {
+                    set: TaskSet::new(),
+                    channels: Mutex::new(Vec::new()),
+                    endpoints: Mutex::new(Vec::new()),
+                });
+                scope.set.join();
+                run(Job {
+                    entry: add_to_helped_sum as TaskEntry as usize,
+                    args: copy_args(0, 0),
+                    owner: Owner::Scope(scope),
+                    index: 0,
+                    priority: Priority::Normal,
+                });
+            }
+            Ok("free_unjoined_group") => group::group_free(group::group_begin(8)),
+            _ => {}
+        }
+    }
+
+    /// No task can be added to, or started in, a set that has been joined,
+    /// and a group cannot be freed before it is joined: each stops the
+    /// process with a message instead of touching freed memory.
+    #[test]
+    fn a_task_cannot_outlive_its_scope() {
+        aborts_with(
+            "spawn_after_end",
+            "a task was spawned into a scope that has ended",
+        );
+        aborts_with("start_after_end", "a task outlived its scope");
+        aborts_with(
+            "free_unjoined_group",
+            "a group was freed before its tasks were joined",
+        );
+    }
+
     /// More sleeping selects than workers: the pool compensates for them as
     /// for any blocked task, so all of them are eventually served.
     #[test]
     fn sleeping_selects_are_compensated() {
         with_timeout(|| {
-            let workers = pool().target;
+            let workers = scheduler().target();
             let scope = scope_begin();
             let left = channel_new(scope, 1, 8);
             let right = channel_new(scope, 1, 8);

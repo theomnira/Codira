@@ -30,7 +30,7 @@ fn collect_simple() {
     let runtime = MarkSweep::<EventAggregator<Event>>::default();
     let handle = runtime.alloc(i64::type_info());
 
-    runtime.collect();
+    runtime.collect_blocking().unwrap();
 
     let mut events = runtime.observer().take_all().into_iter();
     assert_eq!(events.next(), Some(Event::Allocation(handle)));
@@ -49,16 +49,16 @@ fn collect_rooted() {
     let rooted = GcRootPtr::new(&runtime, runtime.alloc(i64::type_info()));
 
     // Collect unreachable objects, should not collect the root handle
-    runtime.collect();
+    runtime.collect_blocking().unwrap();
 
     // Performing a collection cycle now should not do a thing
-    runtime.collect();
+    runtime.collect_blocking().unwrap();
 
     // Drop the rooted handle which should become collectable now
     let rooted_handle = rooted.unroot();
 
     // Collect unreachable objects, should now collect the rooted handle
-    runtime.collect();
+    runtime.collect_blocking().unwrap();
 
     // See if our version of events matched
     let mut events = runtime.observer().take_all().into_iter();

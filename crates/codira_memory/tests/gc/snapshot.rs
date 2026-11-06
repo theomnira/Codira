@@ -137,7 +137,7 @@ fn a_graph_round_trips_into_a_fresh_heap() {
     }
 
     // The restored root keeps the graph alive and the garbage is collectable
-    assert!(fresh.collect());
+    assert!(fresh.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(
         fresh.stats().allocated_memory,
         gc.stats().allocated_memory - types.node.value_layout().size()
@@ -146,7 +146,7 @@ fn a_graph_round_trips_into_a_fresh_heap() {
 
     // Releasing the restored root frees everything
     fresh.unroot(restored.roots[0].0);
-    assert!(fresh.collect());
+    assert!(fresh.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(fresh.stats().allocated_memory, 0);
     drop(root);
 }

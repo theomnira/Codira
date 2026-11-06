@@ -208,7 +208,7 @@ impl InferenceResultBuilder<'_> {
     /// variable itself, or a field of a value struct (or tuple) stored in
     /// it. A field of a class or an array element is storage of a shared
     /// object, not of the variable, so it has no root binding here.
-    fn place_root_binding(&self, expr: ExprId) -> Option<PatId> {
+    pub(super) fn place_root_binding(&self, expr: ExprId) -> Option<PatId> {
         match &self.body[expr] {
             Expr::Path(path) => {
                 let resolver = resolver_for_expr(self.db, self.body.owner(), expr);
@@ -386,7 +386,7 @@ impl InferenceResultBuilder<'_> {
     }
 }
 
-fn binding_name(body: &crate::expr::Body, pat: PatId) -> String {
+pub(super) fn binding_name(body: &crate::expr::Body, pat: PatId) -> String {
     match &body[pat] {
         Pat::Bind { name } => name.to_string(),
         _ => "_".to_string(),
@@ -409,6 +409,7 @@ fn is_capturable(ty: &Ty) -> bool {
             | TyKind::Optional(_)
             | TyKind::Enum(..)
             | TyKind::Str
+            | TyKind::String
             // Concrete in every instance of a generic function.
             | TyKind::TypeParam(..)
     )

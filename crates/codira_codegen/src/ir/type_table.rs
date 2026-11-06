@@ -165,11 +165,29 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
     fn collect_expr(&mut self, expr_id: ExprId, body: &Arc<Body>, infer: &InferenceResult) {
         let expr = &body[expr_id];
 
+        // String operations allocate `[u8]` buffers and `[String]`/`[u32]`
+        // arrays through the runtime, which needs their types.
+        if crate::ir::strings::needs_string_types(infer, expr_id) {
+            for ty in crate::ir::strings::runtime_types() {
+                self.collect_type(self.hir_types.type_id(&ty));
+            }
+        }
+
         // If this expression is a call, store it in the dispatch table. A
         // builtin call (`print`/`println`) has no callee signature to collect.
         if let Some(builtin) = infer.builtin_call(expr_id) {
             // `array_filled` makes an array, whose type the runtime needs.
             if builtin == codira_hir::BuiltinFn::ArrayFilled {
+                self.collect_type(self.hir_types.type_id(&infer[expr_id]));
+            }
+            // So do `copy`, `map` and `filter`.
+            if let codira_hir::BuiltinFn::Array(
+                codira_hir::ArrayMethod::Copy
+                | codira_hir::ArrayMethod::Map
+                | codira_hir::ArrayMethod::Filter,
+            )
+            | codira_hir::BuiltinFn::Pipeline(codira_hir::PipelineOp::Collect) = builtin
+            {
                 self.collect_type(self.hir_types.type_id(&infer[expr_id]));
             }
         } else if let codira_hir::Expr::Call { callee, .. } = expr {
@@ -182,8 +200,31 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
                 None if infer.is_indirect_call(expr_id) => (),
                 None => panic!("expected a callable expression"),
             }
+        } else if let codira_hir::Expr::MethodCall { .. } = expr {
+            if let Some(hir_fn) = infer.method_resolution(expr_id) {
+                self.maybe_collect_fn_signature(hir_fn.into());
+            }
         } else if let codira_hir::Expr::Array(..) = expr {
             self.collect_type(self.hir_types.type_id(&infer[expr_id]));
+        } else if let codira_hir::Expr::Group { .. } = expr {
+            // A group allocates the array of its tasks' results (inside the
+            // `Result` its value may be).
+            let spawns = codira_hir::direct_spawns(body, expr_id);
+            if let Some(codira_hir::Expr::Spawn { call }) = spawns.first().map(|&s| &body[s]) {
+                match codira_hir::group_shape(self.db, &infer[*call]) {
+                    codira_hir::GroupShape::Array { value } => {
+                        self.collect_type(self.hir_types.type_id(&value));
+                    }
+                    codira_hir::GroupShape::Result { array, .. } => {
+                        self.collect_type(self.hir_types.type_id(&array));
+                    }
+                }
+            }
+        } else if let codira_hir::Expr::Index { index, .. } = expr {
+            // A slice, `xs[lo..hi]`, is a new array.
+            if matches!(body[*index], codira_hir::Expr::Range { .. }) {
+                self.collect_type(self.hir_types.type_id(&infer[expr_id]));
+            }
         }
 
         // Recurse further
@@ -194,8 +235,10 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
     pub fn collect_fn_signature(&mut self, hir_fn: codira_hir::Function) {
         let fn_sig = hir_fn.ty(self.db).callable_sig(self.db).unwrap();
 
-        // Collect argument types
-        for ty in fn_sig.params().iter() {
+        // Collect argument types, a method's receiver first (a value-struct
+        // receiver is boxed for a call through the dispatch table).
+        let receiver = hir_fn.self_param_ty(self.db);
+        for ty in receiver.iter().chain(fn_sig.params().iter()) {
             self.collect_type(self.hir_types.type_id(ty));
         }
 
@@ -232,6 +275,16 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
         if !instance.is_generic() {
             self.maybe_collect_fn_signature(hir_fn);
         }
+        // Reporting `main`'s `Err` makes strings, and may call the error's
+        // `to_string` through the dispatch table.
+        if let Some(report) = codira_hir::main_result(self.db, hir_fn) {
+            // Only the buffer: `[String]` would need `String`'s layout,
+            // which a `main` that mentions no `String` does not export.
+            self.collect_type(self.hir_types.type_id(&crate::ir::strings::byte_array()));
+            if let Some(to_string) = report.to_string {
+                self.maybe_collect_fn_signature(to_string);
+            }
+        }
 
         // Collect used types from body
         let body = hir_fn.body(self.db);
@@ -265,10 +318,12 @@ impl<'db, 'ink, 't> TypeTableBuilder<'db, 'ink, 't> {
         }
     }
 
-    /// Collects an enum's type and the types of its payload slots.
-    pub fn collect_enum(&mut self, hir_enum: codira_hir::Enum) {
-        self.collect_type(self.hir_types.type_id(&hir_enum.ty()));
-        for slot in hir_enum.layout(self.db).slots.iter() {
+    /// Collects an enum type's -- a non-generic enum, or an instantiated
+    /// generic one -- and the types of its payload slots.
+    pub fn collect_enum(&mut self, enum_ty: &codira_hir::Ty) {
+        self.collect_type(self.hir_types.type_id(enum_ty));
+        let layout = codira_hir::mono::enum_layout(self.db, enum_ty).expect("an enum type");
+        for slot in layout.slots.iter() {
             self.collect_type(self.hir_types.type_id(&slot.ty));
         }
     }

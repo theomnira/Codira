@@ -1,0 +1,86 @@
+// AURORA: `@region` functions. The same function, once on the GC heap and
+// once with `@region` (its objects bump-allocated in an arena freed when it
+// returns): a 64-cell list built in a loop and summed, and scratch arrays
+// (`array_filled` and its `map`). `regions.cpp` does the same with `new`
+// and `delete` and with `std::pmr::monotonic_buffer_resource`, the C++
+// standard library's region; `regions.rs` with `Box` and `Vec` (Rust's
+// standard library has no arena, so its rows are the same program twice).
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+class Cell { value: i64, next: Cell? }
+
+func list_sum_heap(n: i64) -> i64 {
+    var head: Cell? = nil
+    for i in 0..n { head = Cell { value: i, next: head } }
+    var sum: i64 = 0
+    var at = head
+    while let c = at { sum += c.value; at = c.next }
+    sum
+}
+
+@region
+func list_sum_region(n: i64) -> i64 {
+    var head: Cell? = nil
+    for i in 0..n { head = Cell { value: i, next: head } }
+    var sum: i64 = 0
+    var at = head
+    while let c = at { sum += c.value; at = c.next }
+    sum
+}
+
+func scratch_heap(n: i64, seed: i64) -> i64 {
+    let xs = array_filled(seed, n as usize)
+    let ys = xs.map(func(x) { x * 3 + 1 })
+    ys.sum() + ys[0]
+}
+
+@region
+func scratch_region(n: i64, seed: i64) -> i64 {
+    let xs = array_filled(seed, n as usize)
+    let ys = xs.map(func(x) { x * 3 + 1 })
+    ys.sum() + ys[0]
+}
+
+// 100k calls, each building a list of 64 or 65 cells and summing it.
+public func list_heap() {
+    let start = now()
+    var check: i64 = 0
+    var i: i64 = 0
+    while i < 100000 { check += list_sum_heap(64 + (i & 1)); i += 1 }
+    report(start, check as u64)
+}
+
+public func list_region() {
+    let start = now()
+    var check: i64 = 0
+    var i: i64 = 0
+    while i < 100000 { check += list_sum_region(64 + (i & 1)); i += 1 }
+    report(start, check as u64)
+}
+
+// 50k calls, each filling an array of 1024 and mapping it.
+public func scratch_arrays_heap() {
+    let start = now()
+    var check: i64 = 0
+    var i: i64 = 0
+    while i < 50000 { check += scratch_heap(1024, i & 7); i += 1 }
+    report(start, check as u64)
+}
+
+public func scratch_arrays_region() {
+    let start = now()
+    var check: i64 = 0
+    var i: i64 = 0
+    while i < 50000 { check += scratch_region(1024, i & 7); i += 1 }
+    report(start, check as u64)
+}

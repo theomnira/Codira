@@ -158,9 +158,13 @@ public func secure_zero(dest: usize, count: usize) {
     __intrinsic_compiler_fence();
 }
 
-// Constant-time comparison: compare `count` bytes without early exit.
-// Returns true if all bytes are equal.  Timing does not depend on the
-// data, preventing timing side-channel attacks.
+// Comparison without early exit: compare `count` bytes, returns true if all
+// bytes are equal. The source has no data-dependent branch, but nothing
+// checks the machine code: it is not `@constant_time` (its values are not
+// `secret`), so neither the compiler's source rules nor
+// `--check-constant-time` cover it, and the optimiser may add a branch.
+// Not yet a defence against timing side channels; see "Secrets and
+// constant-time code" in agents/USING_CODIRA.md for what is checked.
 public func constant_time_eq(a: usize, b: usize, count: usize) -> bool {
     var diff: u8 = 0;
     var i: usize = 0;

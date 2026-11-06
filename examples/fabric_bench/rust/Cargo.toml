@@ -1,0 +1,20 @@
+# The Rust half of the task benchmarks: rayon for the fork/join and
+# data-parallel workloads, crossbeam-channel (a bounded channel and a
+# thread) for the producer/consumer one. Built on its own, outside the
+# workspace:
+#
+#   cargo build --release --manifest-path examples/fabric_bench/rust/Cargo.toml
+[package]
+name = "fabric_bench_rust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+rayon = "=1.10.0"
+crossbeam-channel = "=0.5.17"
+
+[profile.release]
+opt-level = 3

@@ -13,8 +13,8 @@ use clap::{Parser, Subcommand};
 /// `codira-launcher` binary runs.
 pub use ops::exe;
 use ops::{
-    api_diff, attest, bindgen, build, certify, check, daemon, envelope, import_c, init,
-    language_server, new, quantum, query, run, start, synth, test,
+    api_diff, attest, audit, bench, bindgen, build, certify, check, daemon, doc, doctor, envelope,
+    fmt, import_c, init, language_server, lint, new, quantum, query, run, start, synth, test,
 };
 
 #[derive(Parser)]
@@ -45,6 +45,28 @@ enum Command {
     /// Type-checks Codira sources and reports diagnostics, emitting nothing
     Check(check::Args),
 
+    /// Format `.code` files with the official standard; `--check` lists
+    /// the files that are not formatted (for CI)
+    Fmt(fmt::Args),
+
+    /// Generate static, searchable HTML API documentation for the package
+    /// (or `--std`), with each function's inferred envelope
+    Doc(doc::Args),
+
+    /// Check the toolchain (LLVM, Z3, LLD, the C compiler, the target, the
+    /// standard library, disk space) and print the fix for each problem
+    Doctor(doctor::Args),
+
+    /// Lints that use what the compiler knows: allocations in loops, large
+    /// copies, unused code, suspicious `extern`/`@asm`, unproven divisions,
+    /// `@noalloc` candidates
+    Lint(lint::Args),
+
+    /// Supply-chain report: licence fields, native sources with their
+    /// hashes, extern declarations and their unchecked trusted assertions,
+    /// and the standard-library modules used
+    Audit(audit::Args),
+
     /// Run or control the build daemon, which keeps a compiler warm between
     /// builds
     Daemon(daemon::Args),
@@ -74,6 +96,11 @@ enum Command {
     /// Build the package with its `tests/` and run every `@test` function,
     /// each in its own process
     Test(test::Args),
+
+    /// Build the package with its `benches/` optimised and time every
+    /// `@bench` function: median, MAD and confidence interval, with a saved
+    /// baseline and regression detection
+    Bench(bench::Args),
 
     /// Find the functions that can satisfy a predicate over `result` and
     /// their parameters (e.g. "result < 0"), with a witness input for each
@@ -121,6 +148,11 @@ where
         Command::Certify(args) => certify::certify(args),
         Command::Check(args) => check::check(args),
         Command::Daemon(args) => daemon::daemon(args),
+        Command::Fmt(args) => fmt::fmt(args),
+        Command::Doc(args) => doc::doc(args),
+        Command::Doctor(args) => doctor::doctor(args),
+        Command::Lint(args) => lint::lint(args),
+        Command::Audit(args) => audit::audit(args),
         Command::Bindgen(args) => bindgen::bindgen(args),
         Command::LanguageServer(args) => language_server::language_server(args),
         Command::New(args) => new::new(args),
@@ -130,6 +162,7 @@ where
         Command::Quantum(args) => quantum::quantum(args),
         Command::Attest(args) => attest::attest(args),
         Command::Test(args) => test::test(args),
+        Command::Bench(args) => bench::bench(args),
         Command::Query(args) => query::query(args),
         Command::Envelope(args) => envelope::envelope(args),
         Command::Synth(args) => synth::synth(args),

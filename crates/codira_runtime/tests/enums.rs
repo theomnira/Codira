@@ -234,7 +234,7 @@ fn enums_in_fields_arrays_and_the_heap() {
     let runtime = &driver.runtime;
     let root: StructRef<'_> = runtime.invoke("build", ()).unwrap();
     let root = root.root();
-    runtime.gc_collect();
+    runtime.collect_blocking().unwrap();
     assert_invoke_eq!(i32, 15, driver, "total", root.as_ref(runtime));
     assert_invoke_eq!(f64, 11.0, driver, "shapes");
 }
@@ -387,4 +387,71 @@ fn methods_on_enums() {
     "#,
     );
     assert_invoke_eq!(i32, 30, driver, "cycle");
+}
+
+/// An instantiated generic enum held by a class survives a hot reload that
+/// appends a variant with a payload of a new type: the instantiation is a
+/// type of its own to the runtime, named with its arguments, and migrates
+/// by the same rules (tag kept, slots matched by name, new ones zero).
+#[test]
+fn hot_reload_of_a_class_holding_a_generic_enum() {
+    let mut driver = driver(
+        r#"
+    public enum Outcome[T, E] {
+        Done(T)
+        Failed(E)
+    }
+
+    public class Holder {
+        result: Outcome[i64, f64],
+        count: i32,
+    }
+
+    public func make() -> Holder {
+        Holder { result: Outcome.Done(41), count: 7 }
+    }
+    "#,
+    );
+    let holder: StructRef<'_> = driver.runtime.invoke("make", ()).unwrap();
+    let holder = holder.root();
+    {
+        let result = holder
+            .as_ref(&driver.runtime)
+            .get::<StructRef<'_>>("result")
+            .unwrap();
+        assert_eq!(result.get::<u32>("tag").unwrap(), 0);
+        assert_eq!(result.get::<i64>("i64.0").unwrap(), 41);
+        assert_eq!(result.get::<f64>("f64.0").unwrap(), 0.0);
+    }
+
+    driver.update_file(
+        "mod.code",
+        r#"
+    public enum Outcome[T, E] {
+        Done(T)
+        Failed(E)
+        Pending(bool)
+    }
+
+    public class Holder {
+        result: Outcome[i64, f64],
+        count: i32,
+    }
+
+    public func value(h: Holder) -> i64 {
+        match h.result {
+            Outcome.Done(v) -> v + 1,
+            Outcome.Failed(e) -> e as i64,
+            Outcome.Pending(_) -> -1,
+        }
+    }
+    "#,
+    );
+    assert_invoke_eq!(i64, 42, driver, "value", holder.as_ref(&driver.runtime));
+    let holder = holder.as_ref(&driver.runtime);
+    assert_eq!(holder.get::<i32>("count").unwrap(), 7);
+    let result = holder.get::<StructRef<'_>>("result").unwrap();
+    assert_eq!(result.get::<u32>("tag").unwrap(), 0);
+    assert_eq!(result.get::<i64>("i64.0").unwrap(), 41);
+    assert_eq!(result.get::<bool>("bool.0").unwrap(), false);
 }

@@ -32,6 +32,19 @@
 //! * A `select` has at least one arm -- with none it would wait forever -- and
 //!   at most one `default`. Every other arm is a channel operation (`name =
 //!   <-ch`, `<-ch` or `ch <- value`), and only a receive binds a name.
+//! * `group { .. }` is a `scope` whose tasks return values. A `spawn` belongs
+//!   to the innermost `scope` or `group` around it. A group's tasks take only
+//!   integers, floats and `bool` -- no channels or endpoints: the group does
+//!   not start the tasks after a failed one, and a task that never runs must
+//!   not leave a sibling waiting on a channel. A group spawns at least one task
+//!   (its value's type comes from them), and its tasks return a value -- not
+//!   `()` (that is a `scope`), not a `secret` (the value crosses to the joining
+//!   task outside the secrecy checker's sight), not a channel or endpoint. Any
+//!   other result type is allowed: a task's arguments are scalars and there is
+//!   no module-level state, so everything its result refers to was made by the
+//!   task, which has finished when the result is read -- the result is moved,
+//!   never shared. Channels and sessions are still created only inside a
+//!   `scope` (the one that owns them), which may enclose the group.
 //! * A closure is a function of its own: a `scope` around the literal does not
 //!   cover a `spawn` in its body. `spawn` never runs a function *value* (a
 //!   closure, or a named function passed around as a value): a closure carries
@@ -55,6 +68,26 @@ fn is_scalar(ty: &Ty) -> bool {
     )
 }
 
+/// The innermost `scope` or `group` around an expression, in the same
+/// function.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TaskOwner {
+    None,
+    Scope,
+    Group,
+}
+
+/// Whether `ty` mentions a type that may not be a group task's result.
+fn bad_group_result(ty: &Ty) -> Option<&'static str> {
+    let mut found = None;
+    crate::TypeWalk::walk(ty, &mut |ty: &Ty| {
+        if matches!(ty.interned(), TyKind::Channel(_) | TyKind::Session(..)) {
+            found = Some("a channel or session endpoint");
+        }
+    });
+    found
+}
+
 /// Whether values of `ty` may be passed to a task.
 fn is_task_argument(ty: &Ty) -> bool {
     match ty.interned() {
@@ -71,6 +104,7 @@ impl ExprValidator<'_> {
             matches!(
                 e,
                 Expr::Scope { .. }
+                    | Expr::Group { .. }
                     | Expr::Spawn { .. }
                     | Expr::ChannelSend { .. }
                     | Expr::ChannelReceive { .. }
@@ -109,7 +143,13 @@ impl ExprValidator<'_> {
             return;
         }
         let mut allowed = FxHashSet::default();
-        self.validate_task_exprs(self.body.body_expr(), false, &mut allowed, sink);
+        self.validate_task_exprs(
+            self.body.body_expr(),
+            false,
+            TaskOwner::None,
+            &mut allowed,
+            sink,
+        );
 
         // Every channel-typed expression must be one of the uses collected
         // above.
@@ -154,42 +194,52 @@ impl ExprValidator<'_> {
     }
 
     /// Walks the executable tree. `in_scope` tells whether a `scope` of this
-    /// function encloses `expr`; `allowed` collects the channel-typed
+    /// function encloses `expr`, and `owner` what the innermost `scope` or
+    /// `group` around it is; `allowed` collects the channel-typed
     /// expressions that are legitimate uses.
     fn validate_task_exprs(
         &self,
         expr: ExprId,
         in_scope: bool,
+        owner: TaskOwner,
         allowed: &mut FxHashSet<ExprId>,
         sink: &mut DiagnosticSink<'_>,
     ) {
         let mut in_scope = in_scope;
+        let mut owner = owner;
         match &self.body[expr] {
-            Expr::Scope { .. } => in_scope = true,
+            Expr::Scope { .. } => {
+                in_scope = true;
+                owner = TaskOwner::Scope;
+            }
+            Expr::Group { .. } => {
+                owner = TaskOwner::Group;
+                self.validate_group(expr, sink);
+            }
             Expr::Handle { body, arms } => {
                 // An arm is a function of its own: a scope around the
                 // `handle` cannot join a task the arm spawns.
-                self.validate_task_exprs(*body, in_scope, allowed, sink);
+                self.validate_task_exprs(*body, in_scope, owner, allowed, sink);
                 for arm in arms {
-                    self.validate_task_exprs(arm.body, false, allowed, sink);
+                    self.validate_task_exprs(arm.body, false, TaskOwner::None, allowed, sink);
                 }
                 return;
             }
             Expr::Closure { body, .. } => {
-                self.validate_task_exprs(*body, false, allowed, sink);
+                self.validate_task_exprs(*body, false, TaskOwner::None, allowed, sink);
                 return;
             }
             Expr::Spawn { call } => {
-                if !in_scope {
+                if owner == TaskOwner::None {
                     self.push_task_error(
                         expr,
-                        "`spawn` must be inside a `scope { .. }` block: the scope is what waits \
-                         for the task to finish"
+                        "`spawn` must be inside a `scope { .. }` or `group { .. }` block: the \
+                         block is what waits for the task to finish"
                             .to_string(),
                         sink,
                     );
                 }
-                self.validate_spawned_call(*call, sink);
+                self.validate_spawned_call(*call, owner == TaskOwner::Group, sink);
             }
             Expr::ChannelSend { channel, .. } | Expr::ChannelReceive { channel } => {
                 if matches!(self.body[*channel], Expr::Path(_)) {
@@ -269,8 +319,74 @@ impl ExprValidator<'_> {
             }
             _ => {}
         }
-        self.body[expr]
-            .walk_child_exprs(|child| self.validate_task_exprs(child, in_scope, allowed, sink));
+        self.body[expr].walk_child_exprs(|child| {
+            self.validate_task_exprs(child, in_scope, owner, allowed, sink);
+        });
+    }
+
+    /// The function `spawn` runs, when `call` names one directly.
+    fn spawned_function(&self, call: ExprId) -> Option<crate::Function> {
+        match &self.body[call] {
+            Expr::Call { callee, .. } => match &self.body[*callee] {
+                Expr::Path(path) => resolver_for_expr(self.db, self.body.owner(), *callee)
+                    .resolve_path_as_value_fully(self.db, path)
+                    .and_then(|(ns, _)| match ns {
+                        ValueNs::FunctionId(id) => Some(crate::Function::from(id)),
+                        _ => None,
+                    }),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// A `group` spawns at least one task, and what its tasks return can be
+    /// handed to the joining task (see the module documentation).
+    fn validate_group(&self, group: ExprId, sink: &mut DiagnosticSink<'_>) {
+        let spawns = crate::expr::direct_spawns(&self.body, group);
+        if spawns.is_empty() {
+            self.push_task_error(
+                group,
+                "a `group` spawns at least one task directly in its block: its value is their \
+                 results"
+                    .to_string(),
+                sink,
+            );
+            return;
+        }
+        for spawn in spawns {
+            let Expr::Spawn { call } = self.body[spawn] else {
+                continue;
+            };
+            let result = &self.infer[call];
+            if result.is_unknown() {
+                continue;
+            }
+            let secret = self
+                .spawned_function(call)
+                .is_some_and(|f| crate::verify::flow::secret_signature(self.db, f).result);
+            let problem = if secret {
+                Some("a `secret`, which would reach the joining task as a public value".to_string())
+            } else if matches!(result.interned(), TyKind::Tuple(0, _)) {
+                Some("nothing (`()`): spawn it in a `scope` instead".to_string())
+            } else {
+                bad_group_result(result).map(|what| {
+                    format!(
+                        "{what} (`{}`), which cannot be handed to the task that joins the group",
+                        result.display(self.db)
+                    )
+                })
+            };
+            if let Some(problem) = problem {
+                self.push_task_error(
+                    call,
+                    format!(
+                        "a task in a `group` returns its result, and this one returns {problem}"
+                    ),
+                    sink,
+                );
+            }
+        }
     }
 
     /// The `select`-specific rules; collects each arm's channel as a use.
@@ -327,21 +443,10 @@ impl ExprValidator<'_> {
     }
 
     /// `spawn f(args)`: a direct call to a module-local, non-generic,
-    /// effect-free function whose parameters can cross between tasks.
-    fn validate_spawned_call(&self, call: ExprId, sink: &mut DiagnosticSink<'_>) {
-        let function = match &self.body[call] {
-            Expr::Call { callee, .. } => match &self.body[*callee] {
-                Expr::Path(path) => resolver_for_expr(self.db, self.body.owner(), *callee)
-                    .resolve_path_as_value_fully(self.db, path)
-                    .and_then(|(ns, _)| match ns {
-                        ValueNs::FunctionId(id) => Some(crate::Function::from(id)),
-                        _ => None,
-                    }),
-                _ => None,
-            },
-            _ => None,
-        };
-        let Some(function) = function else {
+    /// effect-free function whose parameters can cross between tasks (only
+    /// scalars for a group's task).
+    fn validate_spawned_call(&self, call: ExprId, in_group: bool, sink: &mut DiagnosticSink<'_>) {
+        let Some(function) = self.spawned_function(call) else {
             if let Expr::Call { callee, .. } = &self.body[call] {
                 if matches!(self.infer[*callee].interned(), TyKind::Function(_)) {
                     self.push_task_error(
@@ -398,6 +503,20 @@ impl ExprValidator<'_> {
             return;
         };
         for param in sig.params() {
+            if in_group && !is_scalar(param) && !param.is_unknown() {
+                self.push_task_error(
+                    call,
+                    format!(
+                        "a task in a `group` can only be given integers, floats and `bool`, but \
+                         `{name}` takes a `{}`: the group does not start the tasks after a \
+                         failed one, and one that never runs must not leave another waiting on \
+                         a channel (spawn it in a `scope` instead)",
+                        param.display(self.db)
+                    ),
+                    sink,
+                );
+                break;
+            }
             if !is_task_argument(param) {
                 self.push_task_error(
                     call,
@@ -460,7 +579,114 @@ mod tests {
     fn spawn_outside_a_scope() {
         assert_reports(
             "func work(x: i32) {}\nfunc main() { spawn work(1) }",
-            "`spawn` must be inside a `scope { .. }` block",
+            "`spawn` must be inside a `scope { .. }` or `group { .. }` block",
+        );
+    }
+
+    #[test]
+    fn well_formed_groups_are_clean() {
+        assert_clean(
+            r"
+    enum Result[T, E] { Ok(T) Err(E) }
+    func square(x: i64) -> i64 { x * x }
+    func check(x: i64) -> Result[i64, i64] {
+        if x < 0 { Result.Err(x) } else { Result.Ok(x) }
+    }
+    func label(x: i64) -> String { x.to_string() }
+    func squares(n: i64) -> [i64] {
+        group {
+            var i = 0;
+            while i < n { spawn square(i); i += 1; }
+        }
+    }
+    func checked(n: i64) -> Result[[i64], i64] {
+        group {
+            var i = 0;
+            while i < n { spawn check(i); i += 1; }
+        }
+    }
+    func labels() -> [String] {
+        group { spawn label(1); spawn label(2); }
+    }
+    func both() -> i64 {
+        // A group inside a scope: the channel belongs to the scope.
+        scope {
+            let ch = channel(1);
+            let xs = group { spawn square(2); };
+            ch <- xs[0];
+            <-ch
+        }
+    }
+    ",
+        );
+    }
+
+    #[test]
+    fn group_tasks_take_only_scalars() {
+        assert_reports(
+            r"
+    func relay(ch: Channel[i64]) -> i64 { <-ch }
+    func main() -> i64 {
+        scope {
+            let ch = channel(1);
+            let xs = group { spawn relay(ch); };
+            xs[0]
+        }
+    }
+    ",
+            "a task in a `group` can only be given integers, floats and `bool`",
+        );
+    }
+
+    #[test]
+    fn group_tasks_return_a_value() {
+        assert_reports(
+            "func work(x: i64) {}\nfunc main() { let xs = group { spawn work(1); }; }",
+            "a task in a `group` returns its result, and this one returns nothing",
+        );
+    }
+
+    #[test]
+    fn group_task_results_are_not_secret() {
+        assert_reports(
+            "func work(x: i64) -> secret i64 { x }\nfunc main() { let xs = group { spawn work(1); }; }",
+            "this one returns a `secret`",
+        );
+    }
+
+    #[test]
+    fn a_group_spawns_something() {
+        assert_reports(
+            "func main() { let xs = group { 1 }; }",
+            "a `group` spawns at least one task",
+        );
+    }
+
+    #[test]
+    fn group_tasks_return_one_type() {
+        assert_reports(
+            r"
+    func a(x: i64) -> i64 { x }
+    func b(x: i64) -> bool { x > 0 }
+    func main() { let xs = group { spawn a(1); spawn b(2); }; }
+    ",
+            "mismatched type",
+        );
+    }
+
+    #[test]
+    fn a_spawn_in_a_closure_in_a_group_is_outside_it() {
+        assert_reports(
+            r"
+    func a(x: i64) -> i64 { x }
+    func main() {
+        let xs = group {
+            spawn a(1);
+            let f = func() { spawn a(2); };
+        };
+    }
+    ",
+            "`spawn` must be inside a `scope { .. }` or `group { .. }` block",
         );
     }
 

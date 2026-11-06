@@ -72,6 +72,36 @@ impl<'ink> RuntimeArrayValue<'ink> {
         data
     }
 
+    /// Generate code to load the pointer to the array's payload (length,
+    /// capacity, elements) from its object header, once, for several
+    /// accesses with no call in between: see [`Self::length_ptr_in`] and
+    /// [`Self::elements_in`].
+    pub fn get_payload_ptr(&self, builder: &Builder<'ink>) -> PointerValue<'ink> {
+        self.get_array_ptr(builder)
+    }
+
+    /// The address of the length in the payload at `payload`.
+    pub fn length_ptr_in(
+        &self,
+        builder: &Builder<'ink>,
+        payload: PointerValue<'ink>,
+    ) -> PointerValue<'ink> {
+        builder
+            .build_struct_gep(self.array_data_ty(), payload, 0, "length")
+            .expect("could not get `length` from array struct")
+    }
+
+    /// The address of the first element in the payload at `payload`.
+    pub fn elements_in(
+        &self,
+        builder: &Builder<'ink>,
+        payload: PointerValue<'ink>,
+    ) -> PointerValue<'ink> {
+        builder
+            .build_struct_gep(self.array_data_ty(), payload, 2, "elements")
+            .expect("could not get `elements` from array struct")
+    }
+
     /// Generate code to fetch the length of the array.
     pub fn get_length_ptr(&self, builder: &Builder<'ink>) -> PointerValue<'ink> {
         let array_ptr = self.get_array_ptr(builder);

@@ -209,6 +209,7 @@ fn classify(ty: &Ty) -> Class {
         | TyKind::Tuple(..)
         | TyKind::Array(_)
         | TyKind::Channel(_)
+        | TyKind::Iter(_)
         | TyKind::Session(..)
         | TyKind::Optional(_)
         | TyKind::Enum(..)
@@ -225,6 +226,7 @@ fn classify(ty: &Ty) -> Class {
         // that the language has not chosen. `Other` rejects it rather than
         // picking.
         | TyKind::Str
+        | TyKind::String
         | TyKind::Never => Class::Other,
     }
 }

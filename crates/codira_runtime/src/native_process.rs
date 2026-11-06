@@ -5,6 +5,8 @@
 //! - The termination hooks of `std/sys/terminate.code` (`panic`, `exit`,
 //!   `abort`, `assert`) for programs the runtime loads: writing to
 //!   standard error, aborting, exiting, and whether this is a debug build.
+//! - The process's command-line arguments and environment, a byte at a
+//!   time, for `std/sys/arg.code`.
 //!
 //! `codira_runtime_capi` exports the same four as C symbols, for a C host
 //! that links it. A program run by `codira run` or `Runtime::builder` has no
@@ -57,6 +59,78 @@ extern "C" fn is_debug() -> bool {
     cfg!(debug_assertions)
 }
 
+/// The process's command-line arguments as UTF-8 (a byte that is not is
+/// replaced by U+FFFD), read once.
+fn arguments() -> &'static [String] {
+    static ARGS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    ARGS.get_or_init(|| {
+        std::env::args_os()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
+    })
+}
+
+/// The number of command-line arguments (the program's name included), for
+/// `std/sys/arg.code`.
+extern "C" fn args_count() -> i64 {
+    arguments().len() as i64
+}
+
+/// The byte length of argument `index`, or -1 when there is none.
+extern "C" fn arg_len(index: i64) -> i64 {
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| arguments().get(index))
+        .map_or(-1, |arg| arg.len() as i64)
+}
+
+/// Byte `at` of argument `index`, or -1 when either is out of range.
+extern "C" fn arg_byte(index: i64, at: i64) -> i32 {
+    let arg = usize::try_from(index)
+        .ok()
+        .and_then(|index| arguments().get(index));
+    let at = usize::try_from(at).ok();
+    match (arg, at) {
+        (Some(arg), Some(at)) => arg.as_bytes().get(at).map_or(-1, |&b| i32::from(b)),
+        _ => -1,
+    }
+}
+
+/// The process's environment as `NAME=value` entries in UTF-8 (lossy),
+/// read once: a variable set later is not seen.
+fn environment() -> &'static [String] {
+    static ENV: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    ENV.get_or_init(|| {
+        std::env::vars_os()
+            .map(|(name, value)| format!("{}={}", name.to_string_lossy(), value.to_string_lossy()))
+            .collect()
+    })
+}
+
+/// The number of environment entries.
+extern "C" fn env_count() -> i64 {
+    environment().len() as i64
+}
+
+/// The byte length of environment entry `index`, or -1.
+extern "C" fn env_entry_len(index: i64) -> i64 {
+    usize::try_from(index)
+        .ok()
+        .and_then(|index| environment().get(index))
+        .map_or(-1, |entry| entry.len() as i64)
+}
+
+/// Byte `at` of environment entry `index`, or -1.
+extern "C" fn env_entry_byte(index: i64, at: i64) -> i32 {
+    let entry = usize::try_from(index)
+        .ok()
+        .and_then(|index| environment().get(index));
+    match (entry, usize::try_from(at).ok()) {
+        (Some(entry), Some(at)) => entry.as_bytes().get(at).map_or(-1, |&b| i32::from(b)),
+        _ => -1,
+    }
+}
+
 /// Returns the definitions of every function in this module, for the
 /// runtime's dispatch table.
 pub(crate) fn functions() -> Vec<FunctionDefinition> {
@@ -68,6 +142,21 @@ pub(crate) fn functions() -> Vec<FunctionDefinition> {
         IntoFunctionDefinition::into(abort as extern "C" fn(), "codira_abort"),
         IntoFunctionDefinition::into(exit as extern "C" fn(i32), "codira_exit"),
         IntoFunctionDefinition::into(is_debug as extern "C" fn() -> bool, "codira_is_debug"),
+        IntoFunctionDefinition::into(args_count as extern "C" fn() -> i64, "codira_args_count"),
+        IntoFunctionDefinition::into(arg_len as extern "C" fn(i64) -> i64, "codira_arg_len"),
+        IntoFunctionDefinition::into(
+            arg_byte as extern "C" fn(i64, i64) -> i32,
+            "codira_arg_byte",
+        ),
+        IntoFunctionDefinition::into(env_count as extern "C" fn() -> i64, "codira_env_count"),
+        IntoFunctionDefinition::into(
+            env_entry_len as extern "C" fn(i64) -> i64,
+            "codira_env_entry_len",
+        ),
+        IntoFunctionDefinition::into(
+            env_entry_byte as extern "C" fn(i64, i64) -> i32,
+            "codira_env_entry_byte",
+        ),
     ]
 }
 

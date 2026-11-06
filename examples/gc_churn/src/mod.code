@@ -1,0 +1,80 @@
+// A churn workload for the garbage collector: lots of short-lived strings
+// and objects, with a moderate live set that changes as it goes.
+//
+// `churn(rounds, live)` keeps a table of `live` entries (each an object
+// holding two strings). Every step builds a few strings and an object that
+// die at once, and replaces one entry of the table, so the old entry and
+// its strings die too. The live set stays at `live` entries while
+// `rounds * live` steps allocate far more than that in total. The result is
+// a check value that depends on every entry's contents, so a collection
+// that freed or reused a live object would change it.
+//
+//     codira run -O 3 --runtime-stats --heap-limit 256MiB \
+//         --manifest-path examples/gc_churn/codira.toml
+//
+// `main` is the measured run (50,000 live entries, 2,000,000 steps); `quick`
+// is a small one for the tests. Both print the check value and the time.
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+public class Entry {
+    key: String,
+    value: i64,
+    tag: String,
+}
+
+// A short-lived string built from `i`.
+func label(i: i64) -> String {
+    "item-" + i.to_string() + "-" + (i * 31 % 977).to_string()
+}
+
+public func churn(rounds: i64, live: i64) -> i64 {
+    var table: [Entry] = []
+    var i = 0
+    while i < live {
+        table.push(Entry { key: label(i), value: i, tag: "init".to_string() })
+        i += 1
+    }
+    var check = 0
+    var step = 0
+    let total = rounds * live
+    while step < total {
+        // Garbage: two strings, their concatenation and an object.
+        let tmp = label(step) + "/" + label(step + 1)
+        let e = Entry { key: tmp, value: step, tag: label(step * 7) }
+        check += e.key.len() as i64 + e.tag.len() as i64
+        // Replace one live entry; the old one becomes garbage.
+        let slot = (step * 7919) % live
+        table[slot] = Entry { key: label(step), value: step, tag: "live".to_string() }
+        step += 1
+    }
+    // Every live entry must still hold what was written into it.
+    var j = 0
+    while j < live {
+        let entry = table[j]
+        if entry.key == label(entry.value) {
+            check += entry.value % 7
+        } else {
+            check -= 1000000
+        }
+        j += 1
+    }
+    check
+}
+
+func timed(rounds: i64, live: i64) {
+    let start = codira_time_monotonic_ns()
+    let check = churn(rounds, live)
+    let ms = (codira_time_monotonic_ns() - start) / 1000000
+    println("churn ", live, " live, ", rounds * live, " steps: check ", check, ", ", ms, " ms")
+}
+
+public func main() {
+    timed(40, 50000)
+}
+
+public func quick() {
+    timed(100, 2000)
+}

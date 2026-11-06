@@ -67,7 +67,10 @@ use std::{
 
 use parking_lot::{const_mutex, Condvar, Mutex};
 
-use super::stack_scan;
+use super::{
+    frames::{self, ParkedStack, StackRoots},
+    stack_scan,
+};
 
 /// Set while a collection (or another stop-the-world operation) is
 /// requested or in progress.
@@ -106,7 +109,31 @@ struct Record {
     low: AtomicUsize,
     /// The base (highest address) of the thread's stack, 0 if unknown.
     high: usize,
+    /// The address of the thread's frame-record chain head
+    /// (`frames::codira_gc_chain_slot`).
+    chain: usize,
+    /// The thread parked at a poll of compiled code: its frame records'
+    /// spill words need not be up to date, so its whole stack is scanned
+    /// conservatively. Only the thread itself writes it, while running.
+    at_poll: AtomicBool,
+    /// While the thread is in a foreign call (`enter_foreign`): the
+    /// callee-saved registers at the transition, which may hold the calling
+    /// frames' references. Only the thread itself writes them, while
+    /// running; the collector reads them while it is parked.
+    foreign_registers: std::cell::UnsafeCell<[usize; 16]>,
+    /// `low` before `enter_foreign`.
+    foreign_previous_low: AtomicUsize,
+    /// The thread is in a foreign call.
+    in_foreign: AtomicBool,
+    /// The thread's handle for preemption (`preempt::interrupt`), 0 where
+    /// threads are not interrupted.
+    thread: usize,
 }
+
+// Safety: `foreign_registers` is written only by the owning thread while it
+// is running and read only by a collector while that thread is parked (the
+// handshake orders the two).
+unsafe impl Sync for Record {}
 
 /// [`Record::low`] of a thread parked on a platform whose stacks cannot be
 /// scanned.
@@ -181,6 +208,12 @@ fn registered_or_new() -> Option<Arc<Record>> {
                     active: AtomicBool::new(false),
                     low: AtomicUsize::new(0),
                     high: stack_scan::stack_base().unwrap_or(0),
+                    chain: frames::chain_slot_address(),
+                    at_poll: AtomicBool::new(false),
+                    foreign_registers: std::cell::UnsafeCell::new([0; 16]),
+                    foreign_previous_low: AtomicUsize::new(0),
+                    in_foreign: AtomicBool::new(false),
+                    thread: super::preempt::current_thread(),
                 });
                 REGISTRY.lock().records.push(record.clone());
                 *holder = Some(Holder(record));
@@ -189,6 +222,38 @@ fn registered_or_new() -> Option<Arc<Record>> {
         })
         .ok()
         .flatten()
+}
+
+/// Sets the poll word compiled code checks: a stop is requested, or stress
+/// mode is on.
+///
+/// Callers race (`set_stop` with the registry locked, `frames::set_stress`
+/// without it, and the lazy read of `CODIRA_GC_STRESS` from inside this
+/// function), so a store computed from flags another caller has changed
+/// since could land last. Each caller therefore re-reads both flags after
+/// its store and stores again until what it stored matches them. Whichever
+/// store is last overall was followed by a read of both flags made after
+/// every change to them (a change is always followed by its own refresh,
+/// whose store would otherwise come later), so the poll word ends equal to
+/// `STOP || stress`. No lock is taken, so this cannot deadlock with the
+/// registry lock `set_stop` holds.
+pub(crate) fn refresh_poll_word() {
+    let wanted = || u8::from(STOP.load(Ordering::SeqCst) || frames::stress());
+    let mut on = wanted();
+    loop {
+        frames::store_poll_word(on);
+        let now = wanted();
+        if now == on {
+            return;
+        }
+        on = now;
+    }
+}
+
+/// Sets or clears the stop flag, and the poll word with it.
+fn set_stop(on: bool) {
+    STOP.store(on, Ordering::SeqCst);
+    refresh_poll_word();
 }
 
 /// Waits, with the registry locked, until no stop is in progress.
@@ -314,6 +379,51 @@ fn park() {
     blocking(|| {});
 }
 
+/// Called by the preemption signal's handler when it interrupted compiled
+/// code (see `preempt`): parks the thread if a stop is requested, its whole
+/// stack scanned conservatively.
+pub(crate) fn park_preempted() {
+    if MODE.with(Cell::get) != RUNNING || !STOP.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(record) = record() else {
+        return;
+    };
+    let previous = record.at_poll.swap(true, Ordering::Relaxed);
+    park();
+    record.at_poll.store(previous, Ordering::Relaxed);
+}
+
+/// A poll of compiled code (a loop back-edge; see
+/// `frames::codira_gc_poll`): parks if a collection is waiting, collects in
+/// stress mode. The thread's stack is scanned conservatively throughout
+/// while it is parked here.
+#[cold]
+#[inline(never)]
+pub(crate) fn poll_from_code() {
+    if MODE.with(Cell::get) != RUNNING {
+        return;
+    }
+    let Some(record) = record() else {
+        return;
+    };
+    let previous = record.at_poll.swap(true, Ordering::Relaxed);
+    /// Clears the flag even if the collection unwinds.
+    struct Clear<'a>(&'a Record, bool);
+    impl Drop for Clear<'_> {
+        fn drop(&mut self) {
+            self.0.at_poll.store(self.1, Ordering::Relaxed);
+        }
+    }
+    let _clear = Clear(record, previous);
+    if frames::stress_due() && frames::stress_collect_all() {
+        return;
+    }
+    if STOP.load(Ordering::Relaxed) {
+        park();
+    }
+}
+
 /// Runs `f` with the current thread parked: a collection may run while `f`
 /// runs, scanning this thread's stack above this call. `f` must not touch
 /// the GC heap or Codira values, which is what makes it the right place for
@@ -369,10 +479,77 @@ pub fn blocking<R>(f: impl FnOnce() -> R) -> R {
     result
 }
 
+/// Parks the current thread for a call into foreign code: until the
+/// matching [`leave_foreign`], a collection runs without waiting for it,
+/// scanning its stack from `low` (the stack pointer of the calling frame at
+/// the call) up, plus the callee-saved registers at this transition.
+///
+/// The foreign code must not touch the GC heap or Codira values, nor call
+/// back into Codira code except through [`enter`] (which makes the thread
+/// running again for the duration). Compiled code brackets calls to
+/// `extern` functions declared `@noalloc` with this pair; does nothing on a
+/// thread that is not running Codira code.
+pub fn enter_foreign(low: usize) {
+    if MODE.with(Cell::get) != RUNNING {
+        return;
+    }
+    let Some(record) = record() else {
+        return;
+    };
+    if record.in_foreign.load(Ordering::Relaxed) || record.high == 0 || low == 0 {
+        return;
+    }
+    let mut registers = [0usize; 16];
+    if !stack_scan::capture_callee_saved_registers(&mut registers) {
+        return;
+    }
+    // Safety: only this thread writes the registers, and no collector
+    // reads them while it is running.
+    unsafe { *record.foreign_registers.get() = registers };
+    let word = std::mem::size_of::<usize>();
+    let previous = record.low.swap(low & !(word - 1), Ordering::Relaxed);
+    record.foreign_previous_low.store(previous, Ordering::Relaxed);
+    record.in_foreign.store(true, Ordering::Relaxed);
+    make_idle(record);
+}
+
+/// Ends the foreign call [`enter_foreign`] began: waits for a collection in
+/// progress to end, and makes the thread running again.
+pub fn leave_foreign() {
+    let Some(record) = record() else {
+        return;
+    };
+    if !record.in_foreign.load(Ordering::Relaxed) || MODE.with(Cell::get) != IDLE {
+        return;
+    }
+    make_running(record);
+    record.in_foreign.store(false, Ordering::Relaxed);
+    record
+        .low
+        .store(record.foreign_previous_low.load(Ordering::Relaxed), Ordering::Relaxed);
+}
+
+/// `codira.gc.foreign_enter`: see [`enter_foreign`].
+pub extern "C" fn codira_gc_foreign_enter(low: *const u8) {
+    enter_foreign(low as usize);
+}
+
+/// `codira.gc.foreign_leave`: see [`leave_foreign`].
+pub extern "C" fn codira_gc_foreign_leave() {
+    leave_foreign();
+}
+
 /// What a stop-the-world operation sees: every other thread is parked.
 pub(crate) struct World {
-    /// The stack ranges `[low, high)` of the parked threads.
-    stacks: Vec<(usize, usize)>,
+    /// When this thread asked the others to stop (after any stop already in
+    /// progress had ended).
+    pub(crate) requested_at: std::time::Instant,
+    /// When every other thread had parked.
+    pub(crate) stopped_at: std::time::Instant,
+    /// The parked threads' stacks.
+    stacks: Vec<ParkedStack>,
+    /// The callee-saved registers of threads parked in a foreign call.
+    foreign_registers: Vec<usize>,
     /// Some thread holds Codira frames that cannot be scanned.
     unscannable: bool,
     /// Some thread other than the current one has Codira frames.
@@ -382,12 +559,15 @@ pub(crate) struct World {
 }
 
 impl World {
-    fn snapshot(registry: &Registry) -> Self {
+    fn snapshot(registry: &Registry, requested_at: std::time::Instant) -> Self {
         // Called with the registry locked: look at the current thread's
         // record without registering it.
         let current = CURRENT.with(Cell::get);
         let mut world = World {
+            requested_at,
+            stopped_at: std::time::Instant::now(),
             stacks: Vec::new(),
+            foreign_registers: Vec::new(),
             unscannable: false,
             others_in_codira: false,
             self_in_codira: false,
@@ -405,7 +585,24 @@ impl World {
             match record.low.load(Ordering::Relaxed) {
                 0 => world.unscannable |= active,
                 UNSCANNABLE => world.unscannable = true,
-                low => world.stacks.push((low, record.high)),
+                low => {
+                    if record.in_foreign.load(Ordering::Relaxed) {
+                        // Safety: the thread is parked in a foreign call, so
+                        // it does not write them.
+                        world
+                            .foreign_registers
+                            .extend_from_slice(unsafe { &*record.foreign_registers.get() });
+                    }
+                    world.stacks.push(ParkedStack {
+                    low,
+                    high: record.high,
+                    // Safety: `chain` is the address of the thread's chain
+                    // head, which lives as long as the thread, and the
+                    // thread is registered (so alive) and parked.
+                    head: unsafe { *(record.chain as *const *const frames::FrameRecord) },
+                    conservative: record.at_poll.load(Ordering::Relaxed),
+                    })
+                }
             }
         }
         world
@@ -424,28 +621,38 @@ impl World {
         self.others_in_codira
     }
 
-    /// Returns every pointer-aligned word of every parked thread's frozen
-    /// stack range (callee-saved registers included: they were spilled into
-    /// it). Empty when no thread is parked with Codira frames.
-    pub(crate) fn stack_words(&self) -> Vec<usize> {
-        let word = std::mem::size_of::<usize>();
-        let total: usize = self
-            .stacks
-            .iter()
-            .map(|(low, high)| high.saturating_sub(*low) / word)
-            .sum();
-        let mut words = Vec::with_capacity(total);
-        for &(low, high) in &self.stacks {
-            let mut address = low;
-            while address + word <= high {
-                // Safety: `[low, high)` is the part of a parked thread's
-                // stack that holds its caller frames. The thread is blocked
-                // below it until the stop ends, so the memory is mapped and
-                // nothing writes it.
-                words.push(unsafe { std::ptr::read_volatile(address as *const usize) });
-                address += word;
-            }
+    /// Returns the roots of every parked thread's frozen stack range
+    /// (callee-saved registers included: they were spilled into it): the
+    /// slots of compiled frames' records, read precisely, and every other
+    /// word, read conservatively. Empty when no thread is parked with
+    /// Codira frames.
+    pub(crate) fn stack_roots(&self) -> StackRoots {
+        let mode = frames::root_mode();
+        let mut roots = StackRoots::default();
+        for stack in &self.stacks {
+            // Safety: `[low, high)` is the part of a parked thread's stack
+            // that holds its caller frames, and its frame records are in it.
+            // The thread is blocked below it until the stop ends, so the
+            // memory is mapped and nothing writes it.
+            unsafe { stack.roots(mode, &mut roots) };
         }
+        roots
+            .conservative
+            .extend_from_slice(&self.foreign_registers);
+        // Results of finished tasks waiting to be joined, region arenas, and
+        // anything else the runtime keeps off the stacks (see `root_region`):
+        // conservative, so what they refer to is pinned and never moves.
+        super::root_region::collect_words(&mut roots.conservative);
+        roots
+    }
+
+    /// Every word the conservative scan of the old protocol saw: both
+    /// kinds of roots.
+    #[cfg(test)]
+    pub(crate) fn stack_words(&self) -> Vec<usize> {
+        let roots = self.stack_roots();
+        let mut words = roots.conservative;
+        words.extend(roots.precise);
         words
     }
 }
@@ -456,7 +663,7 @@ impl World {
 /// other thread's. Reentrant on the thread that holds the stop.
 pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
     if MODE.with(Cell::get) == OWNER {
-        let world = World::snapshot(&REGISTRY.lock());
+        let world = World::snapshot(&REGISTRY.lock(), std::time::Instant::now());
         return f(&world);
     }
     blocking(|| {
@@ -465,7 +672,9 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
             CHANGED.wait(&mut registry);
         }
         registry.stopped = true;
-        STOP.store(true, Ordering::SeqCst);
+        set_stop(true);
+        let requested_at = std::time::Instant::now();
+        let mut next_preempt = super::preempt::PREEMPT_AFTER;
         while registry
             .records
             .iter()
@@ -474,8 +683,22 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
             // Woken when a thread parks; the timeout covers a wake-up a
             // thread could not know was needed (see `make_idle`).
             CHANGED.wait_for(&mut registry, STOP_POLL);
+            // A thread that has not parked by now may be in code that
+            // never polls (recursion that neither loops nor allocates):
+            // interrupt it (see `preempt`), again every `PREEMPT_AFTER`.
+            if requested_at.elapsed() >= next_preempt {
+                next_preempt = requested_at.elapsed() + super::preempt::PREEMPT_AFTER;
+                let current = CURRENT.with(Cell::get);
+                for record in &registry.records {
+                    if record.running.load(Ordering::SeqCst)
+                        && !std::ptr::eq(current, Arc::as_ptr(record))
+                    {
+                        super::preempt::interrupt(record.thread);
+                    }
+                }
+            }
         }
-        let world = World::snapshot(&registry);
+        let world = World::snapshot(&registry, requested_at);
         drop(registry);
 
         /// Ends the stop even if `f` unwinds.
@@ -485,7 +708,7 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
                 MODE.with(|mode| mode.set(self.0));
                 let mut registry = REGISTRY.lock();
                 registry.stopped = false;
-                STOP.store(false, Ordering::SeqCst);
+                set_stop(false);
                 CHANGED.notify_all();
             }
         }
@@ -503,6 +726,16 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
 /// frame of the old code may be live anywhere.
 pub fn exclusive<R>(f: impl FnOnce() -> R) -> Option<R> {
     stop_the_world(|world| (!world.others_in_codira && !world.self_in_codira).then(f))
+}
+
+/// Returns true if some thread other than the current one has Codira frames
+/// on its stack (holds a [`MutatorGuard`]), whether it is running or parked.
+pub(crate) fn other_threads_in_codira() -> bool {
+    let registry = REGISTRY.lock();
+    let current = CURRENT.with(Cell::get);
+    registry.records.iter().any(|record| {
+        !std::ptr::eq(current, Arc::as_ptr(record)) && record.active.load(Ordering::Relaxed)
+    })
 }
 
 /// Returns true if the current thread holds the stop (it is collecting or
@@ -526,6 +759,7 @@ pub struct ThreadCheckpoint {
     mode: u8,
     depth: usize,
     low: usize,
+    chain: *const frames::FrameRecord,
 }
 
 /// Saves the current thread's mutator state; see [`ThreadCheckpoint`].
@@ -534,6 +768,7 @@ pub fn checkpoint() -> ThreadCheckpoint {
         mode: MODE.with(Cell::get),
         depth: DEPTH.with(Cell::get),
         low: record().map_or(0, |record| record.low.load(Ordering::Relaxed)),
+        chain: frames::chain_head(),
     }
 }
 
@@ -555,7 +790,7 @@ pub unsafe fn restore(checkpoint: ThreadCheckpoint) {
         MODE.with(|mode| mode.set(IDLE));
         let mut registry = REGISTRY.lock();
         registry.stopped = false;
-        STOP.store(false, Ordering::SeqCst);
+        set_stop(false);
         CHANGED.notify_all();
     }
     let mode = MODE.with(Cell::get);
@@ -567,6 +802,10 @@ pub unsafe fn restore(checkpoint: ThreadCheckpoint) {
     DEPTH.with(|depth| depth.set(checkpoint.depth));
     record.active.store(checkpoint.depth > 0, Ordering::Relaxed);
     record.low.store(checkpoint.low, Ordering::Relaxed);
+    // A checkpoint is never taken inside a foreign call.
+    record.in_foreign.store(false, Ordering::Relaxed);
+    // The frames whose records were linked since are gone.
+    frames::set_chain_head(checkpoint.chain);
 }
 
 /// Runs `f` with the registry locked, so no stop can begin while it runs;
@@ -687,6 +926,45 @@ mod tests {
         tx.send(()).unwrap();
         worker.join().unwrap();
         assert!(exclusive(|| ()).is_some());
+    }
+
+    /// `set_stress` (no lock) racing `set_stop` (registry locked) once left
+    /// the poll word 0 while a stop was requested. After any race the poll
+    /// word must equal `STOP || stress`.
+    #[test]
+    fn the_poll_word_follows_the_stop_and_stress_flags_under_races() {
+        let _serial = SERIAL.lock();
+        let previous = frames::stress_period_for_tests();
+        for round in 0..2000 {
+            let barrier = Arc::new(Barrier::new(2));
+            let toggler = {
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    for k in 0..4 {
+                        frames::set_stress(usize::from((round + k) % 2 == 0));
+                    }
+                    frames::set_stress(0);
+                })
+            };
+            barrier.wait();
+            {
+                let _registry = REGISTRY.lock();
+                set_stop(true);
+            }
+            toggler.join().unwrap();
+            assert_eq!(
+                frames::POLL_WORD.load(Ordering::SeqCst),
+                1,
+                "round {round}: the poll word is clear while a stop is requested"
+            );
+            {
+                let _registry = REGISTRY.lock();
+                set_stop(false);
+            }
+            assert_eq!(frames::POLL_WORD.load(Ordering::SeqCst), 0, "round {round}");
+        }
+        frames::set_stress(previous);
     }
 
     #[test]

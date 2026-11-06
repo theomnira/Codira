@@ -5,21 +5,35 @@
 //! Functionality:
 //! - Part of the Codira compiler and runtime toolchain.
 mod array;
+pub mod cascade;
+pub mod frames;
+mod preempt;
 mod heap;
 mod mark_sweep;
+mod policy;
 mod ptr;
+mod region;
 mod root_ptr;
+pub mod root_region;
 pub mod safepoint;
 mod snapshot;
 mod stack_scan;
+mod stats;
 
 use std::{marker::PhantomData, ptr::NonNull};
 
 pub use heap::AllocError;
 pub use mark_sweep::{CollectRefused, MarkSweep};
+pub use policy::GcPolicy;
+pub use mark_sweep::RelocationReport;
 pub use ptr::{GcPtr, HasIndirectionPtr, RawGcPtr};
+pub use region::{Region, RegionLeak, RegionStats};
 pub use root_ptr::GcRootPtr;
 pub use snapshot::{RestoredHeap, SnapshotError};
+pub use stats::{
+    format_bytes, format_duration, CollectionCounts, CollectionReport, GcStats, PauseSummary,
+    Trigger,
+};
 
 use crate::r#type::Type;
 

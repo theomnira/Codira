@@ -21,6 +21,28 @@ pub struct Manifest {
     eidos: EidosSettings,
     native: NativeSources,
     envelope: Option<EnvelopeTable>,
+    runtime: RuntimeSettings,
+}
+
+/// How the runtime runs the package, from the manifest's `[runtime]` table:
+///
+/// ```toml
+/// [runtime]
+/// heap-limit = "512MiB"   # or "25%", or "unlimited"
+/// gc-growth = 100         # or "off"
+/// ```
+///
+/// The values are kept as written; `codira run`, `codira test` and `codira
+/// bench` read them with the same rules as their `--heap-limit` and
+/// `--gc-growth` flags, which take precedence, as does the environment
+/// (`CODIRA_HEAP_LIMIT`, `CODIRA_GC_GROWTH`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RuntimeSettings {
+    /// `heap-limit`: the cap on the garbage-collected heap.
+    pub heap_limit: Option<String>,
+    /// `gc-growth`: how much the heap may grow over its live data before
+    /// the collector runs.
+    pub gc_growth: Option<String>,
 }
 
 /// The package's semantic envelope, from the manifest's `[envelope]` table
@@ -82,6 +104,10 @@ impl NativeSources {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ManifestMetadata {
     pub authors: Vec<String>,
+    /// `license` in `[package]`: an SPDX license expression, as written.
+    pub license: Option<String>,
+    /// `license-file` in `[package]`, relative to the manifest's directory.
+    pub license_file: Option<PathBuf>,
 }
 
 /// The package's `[eidos]` table: bounds on the mid-level optimizer. A key
@@ -150,6 +176,12 @@ impl Manifest {
     pub fn envelope(&self) -> Option<&EnvelopeTable> {
         self.envelope.as_ref()
     }
+
+    /// Returns the package's `[runtime]` settings (empty if it has no such
+    /// table)
+    pub fn runtime(&self) -> &RuntimeSettings {
+        &self.runtime
+    }
 }
 
 impl PackageId {
@@ -208,6 +240,25 @@ mod tests {
         assert_eq!(format!("{}", manifest.package_id()), "test v0.2.0");
         assert_eq!(manifest.eidos(), &crate::EidosSettings::default());
         assert!(manifest.native().is_empty());
+        assert_eq!(manifest.metadata().license, None);
+        assert_eq!(manifest.metadata().license_file, None);
+    }
+
+    #[test]
+    fn license_fields() {
+        let manifest = Manifest::from_str(
+            "[package]\nname = \"t\"\nversion = \"0.1.0\"\nlicense = \"Apache-2.0 OR MIT\"\n\
+             license-file = \"LICENSE\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            manifest.metadata().license.as_deref(),
+            Some("Apache-2.0 OR MIT")
+        );
+        assert_eq!(
+            manifest.metadata().license_file.as_deref(),
+            Some(std::path::Path::new("LICENSE"))
+        );
     }
 
     fn with_eidos(table: &str) -> Result<Manifest, anyhow::Error> {
@@ -353,5 +404,33 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("includes"), "{error}");
+    }
+
+    #[test]
+    fn runtime_table() {
+        let manifest = Manifest::from_str(
+            "[package]\nname=\"test\"\nversion=\"0.2.0\"\n\n[runtime]\nheap-limit = \
+             \"512MiB\"\ngc-growth = 50\n",
+        )
+        .unwrap();
+        assert_eq!(manifest.runtime().heap_limit.as_deref(), Some("512MiB"));
+        assert_eq!(manifest.runtime().gc_growth.as_deref(), Some("50"));
+
+        let plain = Manifest::from_str("[package]\nname=\"test\"\nversion=\"0.2.0\"\n").unwrap();
+        assert_eq!(plain.runtime(), &super::RuntimeSettings::default());
+
+        let misspelt = Manifest::from_str(
+            "[package]\nname=\"test\"\nversion=\"0.2.0\"\n\n[runtime]\nheap_limit = \"1GiB\"\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(misspelt.contains("heap_limit"), "{misspelt}");
+
+        let wrong_type = Manifest::from_str(
+            "[package]\nname=\"test\"\nversion=\"0.2.0\"\n\n[runtime]\nheap-limit = true\n",
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(wrong_type.contains("[runtime] heap-limit"), "{wrong_type}");
     }
 }

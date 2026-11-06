@@ -57,11 +57,11 @@ div.nonzero:                                      ; preds = %body
   %div.min = icmp eq i64 %0, -9223372036854775808
   %div.minus_one = icmp eq i64 %1, -1
   %div.overflow = and i1 %div.min, %div.minus_one
-  br i1 %div.overflow, label %div.overflow3, label %div.ok
+  br i1 %div.overflow, label %div.overflow2, label %div.ok
 
-div.overflow3:                                    ; preds = %div.nonzero
-  %codira.panic_ptr4 = load ptr, ptr @dispatchTable, align 8
-  tail call void %codira.panic_ptr4(ptr nonnull @codira.str.2, i64 31, ptr nonnull @codira.str.7, i64 8, i32 18, i32 5)
+div.overflow2:                                    ; preds = %div.nonzero
+  %codira.panic_ptr3 = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr3(ptr nonnull @codira.str.2, i64 31, ptr nonnull @codira.str.7, i64 8, i32 18, i32 5)
   unreachable
 
 div.ok:                                           ; preds = %div.nonzero
@@ -83,11 +83,11 @@ div.nonzero:                                      ; preds = %body
   %div.min = icmp eq i64 %0, -9223372036854775808
   %div.minus_one = icmp eq i64 %1, -1
   %div.overflow = and i1 %div.min, %div.minus_one
-  br i1 %div.overflow, label %div.overflow3, label %div.ok
+  br i1 %div.overflow, label %div.overflow2, label %div.ok
 
-div.overflow3:                                    ; preds = %div.nonzero
-  %codira.panic_ptr4 = load ptr, ptr @dispatchTable, align 8
-  tail call void %codira.panic_ptr4(ptr nonnull @codira.str.6, i64 48, ptr nonnull @codira.str.7, i64 8, i32 22, i32 5)
+div.overflow2:                                    ; preds = %div.nonzero
+  %codira.panic_ptr3 = load ptr, ptr @dispatchTable, align 8
+  tail call void %codira.panic_ptr3(ptr nonnull @codira.str.6, i64 48, ptr nonnull @codira.str.7, i64 8, i32 22, i32 5)
   unreachable
 
 div.ok:                                           ; preds = %div.nonzero
