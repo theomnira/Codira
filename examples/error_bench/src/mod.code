@@ -1,0 +1,95 @@
+// The cost of passing an error on: `?` wrapping a `ParseError` in an enum
+// variant (no allocation), `?` converting it to an `AnyError` through its
+// `@error_conversion`, and the same with a `context` added. Each is timed
+// on 1M calls that succeed and 1M that fail; each benchmark runs 7 times
+// and the line printed is `<name> <median nanoseconds> <check value>`. Run
+// with a release `codira`:
+//
+//     codira run -O 3 --manifest-path examples/error_bench/codira.toml
+
+import std.error.error.{AnyError}
+import std.result.result.{Result}
+import std.text.ascii.{parse_i64, ParseError}
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+enum Problem { Parse(ParseError) }
+
+// `bytes[0..end]`: "42" parses, "42x" does not.
+func wrapped(bytes: [u8], end: usize) -> Result[i64, Problem] {
+    let v = parse_i64(bytes, 0, end)?
+    Result.Ok(v + 1)
+}
+
+func converted(bytes: [u8], end: usize) -> Result[i64, AnyError] {
+    let v = parse_i64(bytes, 0, end)?
+    Result.Ok(v + 1)
+}
+
+func with_context(bytes: [u8], end: usize) -> Result[i64, AnyError] {
+    let v = parse_i64(bytes, 0, end).context("parsing the answer")?
+    Result.Ok(v + 1)
+}
+
+func median(times: [u64]) -> u64 {
+    times.sort()
+    times[3]
+}
+
+public func main() {
+    let bytes = "42x".bytes()
+    let count = 1000000
+    for end in [2, 3] {
+        let outcome = if end == 2 { "ok" } else { "err" }
+        var times: [u64] = []
+        var check: u64 = 0
+        for run in 0..7 {
+            check = 0
+            let start = codira_time_monotonic_ns()
+            var i = 0
+            while i < count {
+                match wrapped(bytes, end as usize) {
+                    Result.Ok(v) -> check += v as u64,
+                    Result.Err(_) -> check += 1,
+                }
+                i += 1
+            }
+            times.push(codira_time_monotonic_ns() - start)
+        }
+        println("wrapped_", outcome, " ", median(times), " ", check)
+
+        times = []
+        for run in 0..7 {
+            check = 0
+            let start = codira_time_monotonic_ns()
+            var i = 0
+            while i < count {
+                match converted(bytes, end as usize) {
+                    Result.Ok(v) -> check += v as u64,
+                    Result.Err(e) -> check += e.root_cause().len() as u64,
+                }
+                i += 1
+            }
+            times.push(codira_time_monotonic_ns() - start)
+        }
+        println("converted_", outcome, " ", median(times), " ", check)
+
+        times = []
+        for run in 0..7 {
+            check = 0
+            let start = codira_time_monotonic_ns()
+            var i = 0
+            while i < count {
+                match with_context(bytes, end as usize) {
+                    Result.Ok(v) -> check += v as u64,
+                    Result.Err(e) -> check += e.root_cause().len() as u64,
+                }
+                i += 1
+            }
+            times.push(codira_time_monotonic_ns() - start)
+        }
+        println("context_", outcome, " ", median(times), " ", check)
+    }
+}
