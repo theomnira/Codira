@@ -260,6 +260,9 @@ pub enum Reason {
     /// Allocated inside a closure body, a `handle` or a `spawn`, which the
     /// analysis treats as separate, unknown code.
     InsideOpaque { what: &'static str },
+    /// Held by an object in the function's region, which lives until the
+    /// function returns (`@region` functions only).
+    HeldByRegionObject,
 }
 
 impl Reason {
@@ -273,6 +276,7 @@ impl Reason {
                 | Reason::RuntimeLength
                 | Reason::ClosureObject
                 | Reason::InsideOpaque { .. }
+                | Reason::HeldByRegionObject
         )
     }
 
@@ -315,6 +319,7 @@ impl Reason {
             ),
             Reason::RuntimeLength => "its length is known only at run time".to_string(),
             Reason::ClosureObject => "function value objects stay on the heap".to_string(),
+            Reason::HeldByRegionObject => "held by an object in the function's region".to_string(),
             Reason::InsideOpaque { what } => {
                 format!("allocated inside {what}, which is analysed as separate code")
             }
@@ -327,6 +332,10 @@ impl Reason {
 pub enum Placement {
     /// In the stack frame of the function that allocates it.
     Frame,
+    /// In the region arena of the `@region` function that allocates it,
+    /// freed when the function returns. Only in `@region` functions, for an
+    /// object that does not escape but cannot be in the frame (`reason`).
+    Region(Reason),
     /// On the GC heap, for this reason.
     Heap(Reason),
 }
@@ -335,6 +344,9 @@ impl fmt::Display for Placement {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Placement::Frame => write!(f, "moved to the stack"),
+            Placement::Region(reason) => {
+                write!(f, "moved to the function's region ({})", reason.phrase())
+            }
             Placement::Heap(reason) if reason.is_escape() => {
                 write!(f, "escapes: {}", reason.phrase())
             }
@@ -656,6 +668,8 @@ fn analyze(db: &dyn HirDatabase, func: Function, oracle: &mut Oracle<'_>) -> Fun
         site_of: FxHashMap::default(),
         contents: Vec::new(),
         heap: Vec::new(),
+        arena: Vec::new(),
+        arena_fn: is_region_function(db, func),
         env: FxHashMap::default(),
         decl: FxHashMap::default(),
         params: vec![ParamEscape::NoEscape; arity],
@@ -698,9 +712,10 @@ fn analyze(db: &dyn HirDatabase, func: Function, oracle: &mut Oracle<'_>) -> Fun
         .map(|(i, info)| Allocation {
             expr: info.expr,
             kind: info.kind.clone(),
-            placement: match &a.heap[i] {
-                Some(reason) => Placement::Heap(reason.clone()),
-                None => Placement::Frame,
+            placement: match (&a.heap[i], &a.arena[i]) {
+                (Some(reason), _) => Placement::Heap(reason.clone()),
+                (None, Some(reason)) => Placement::Region(reason.clone()),
+                (None, None) => Placement::Frame,
             },
             site: a.frame.site(info.expr),
         })
@@ -711,6 +726,65 @@ fn analyze(db: &dyn HirDatabase, func: Function, oracle: &mut Oracle<'_>) -> Fun
             params: a.params,
             names,
         },
+    }
+}
+
+/// Whether `func` carries `@region`: the objects its own body allocates that
+/// do not escape and cannot be in its frame come from an arena freed when
+/// it returns, and an object that would escape is an error
+/// ([`region_diagnostics`]).
+pub fn is_region_function(db: &dyn HirDatabase, func: Function) -> bool {
+    use crate::HasSource;
+    use codira_syntax::ast::AttributeOwner;
+    func.source(db).value.attribute_list().is_some_and(|list| {
+        list.attributes().any(|attr| {
+            attr.path()
+                .and_then(|p| p.segment())
+                .is_some_and(|s| matches!(s.kind(), Some(codira_syntax::ast::PathSegmentKind::Name(n)) if n.text() == "region"))
+        })
+    })
+}
+
+/// The errors of a `@region` function: every object its body allocates
+/// that may escape the call (and so would outlive the region), with the
+/// reason.
+pub fn region_diagnostics(
+    db: &dyn HirDatabase,
+    func: Function,
+    sink: &mut crate::diagnostics::DiagnosticSink<'_>,
+) {
+    if !is_region_function(db, func) {
+        return;
+    }
+    if func.is_extern(db) {
+        use crate::HasSource;
+        let site = func.source(db);
+        sink.push(crate::diagnostics::RegionEscape {
+            file: site.file_id,
+            site: SyntaxNodePtr::new(codira_syntax::ast::AstNode::syntax(&site.value)),
+            message: format!("`{}` is `extern`: `@region` needs a body", func.name(db)),
+        });
+        return;
+    }
+    let analysis = db.escape_analysis(func);
+    for allocation in &analysis.allocations {
+        let (Placement::Heap(reason), Some(site)) = (&allocation.placement, &allocation.site)
+        else {
+            continue;
+        };
+        if !reason.is_escape() {
+            continue;
+        }
+        sink.push(crate::diagnostics::RegionEscape {
+            file: site.file_id,
+            site: site.value.clone(),
+            message: format!(
+                "`{}` is `@region`, but this {} may outlive the region: it is {}",
+                func.name(db),
+                allocation.kind,
+                reason.phrase()
+            ),
+        });
     }
 }
 
@@ -781,6 +855,11 @@ struct Analysis<'a, 'o> {
     contents: Vec<Objs>,
     /// Why each site's objects are on the heap, once they are.
     heap: Vec<Option<Reason>>,
+    /// In a `@region` function: why each site's objects cannot be in the
+    /// frame but may be in the region (see [`Analysis::to_arena`]).
+    arena: Vec<Option<Reason>>,
+    /// Whether the function is `@region`.
+    arena_fn: bool,
     /// What each local binding may hold.
     env: FxHashMap<PatId, Objs>,
     /// Where each local binding is declared.
@@ -827,9 +906,10 @@ impl Analysis<'_, '_> {
         self.site_of.insert(expr, index);
         self.contents.push(Objs::new());
         self.heap.push(None);
+        self.arena.push(None);
         self.changed = true;
         if let Some(reason) = fixed {
-            self.heap[index as usize] = Some(reason);
+            self.escape(&Objs::from([Obj::Site(index)]), reason);
         }
         Obj::Site(index)
     }
@@ -847,6 +927,13 @@ impl Analysis<'_, '_> {
     fn escape(&mut self, objs: &Objs, reason: Reason) {
         for obj in objs {
             match *obj {
+                Obj::Site(s) if self.to_arena(s, &reason) => {
+                    let slot = &mut self.arena[s as usize];
+                    if slot.is_none() && self.heap[s as usize].is_none() {
+                        *slot = Some(reason.clone());
+                        self.changed = true;
+                    }
+                }
                 Obj::Site(s) => {
                     let slot = &mut self.heap[s as usize];
                     let replace = match slot {
@@ -870,6 +957,30 @@ impl Analysis<'_, '_> {
                 Obj::Unknown => {}
             }
         }
+    }
+
+    /// Whether, in a `@region` function, site `s` kept out of the frame for
+    /// `reason` goes to the region instead of the heap: the reason is a
+    /// placement limit, not an escape, and code generation can allocate the
+    /// site's kind in a region (not a closure, and not an array the runtime
+    /// may grow, like `collect`'s).
+    fn to_arena(&self, s: u32, reason: &Reason) -> bool {
+        self.arena_fn
+            && matches!(
+                reason,
+                Reason::OutlivesIteration { .. }
+                    | Reason::TooLong { .. }
+                    | Reason::RuntimeLength
+                    | Reason::HeldByRegionObject
+            )
+            && match &self.sites[s as usize].kind {
+                AllocKind::Class { .. } | AllocKind::ArrayLiteral { .. } => true,
+                AllocKind::BuiltArray { by } => {
+                    matches!(*by, "array_filled" | "copy" | "map" | "filter" | "slice")
+                }
+                AllocKind::Closure => false,
+            }
+            && self.sites[s as usize].context.region.is_none()
     }
 
     /// Marks `objs` as returned from the function.
@@ -902,6 +1013,19 @@ impl Analysis<'_, '_> {
                 let held = self.contents[s].clone();
                 let container = format!("an object of {}", self.sites[s].kind);
                 self.escape(&held, Reason::InsideHeapObject { container });
+            }
+            // An object in the region lives until the function returns, so
+            // what it holds cannot be in a frame slot a loop reuses.
+            for s in 0..self.sites.len() {
+                if self.arena[s].is_none() || self.heap[s].is_some() {
+                    continue;
+                }
+                let held: Objs = self
+                    .reach(&self.contents[s].clone())
+                    .into_iter()
+                    .filter(|o| matches!(o, Obj::Site(t) if self.arena[*t as usize].is_none()))
+                    .collect();
+                self.escape(&held, Reason::HeldByRegionObject);
             }
             let progressed = self.changed;
             self.changed |= outer;
@@ -1926,6 +2050,8 @@ pub struct ReportEntry {
     pub function: String,
     pub kind: AllocKind,
     pub placement: Placement,
+    /// Whether the function is `@region`.
+    pub region_function: bool,
 }
 
 /// Every allocation of `functions`, in source order.
@@ -1946,6 +2072,7 @@ pub fn allocation_report(db: &dyn HirDatabase, functions: &[Function]) -> Vec<Re
                 function: func.name(db).to_string(),
                 kind: allocation.kind.clone(),
                 placement: allocation.placement.clone(),
+                region_function: is_region_function(db, func),
             });
         }
     }
@@ -1965,10 +2092,14 @@ pub fn format_allocation_report(
 ) -> String {
     use std::fmt::Write as _;
     let mut out = String::new();
-    let (mut frame, mut escapes, mut kept) = (0, 0, 0);
+    let (mut frame, mut region, mut escapes, mut kept) = (0, 0, 0, 0);
     for entry in entries {
         let position = db.line_index(entry.file_id).line_col(entry.offset);
         let verdict = match &entry.placement {
+            Placement::Frame if !frame_allocation && entry.region_function => {
+                region += 1;
+                "moved to the function's region (to the stack with `--frame-alloc`)".to_string()
+            }
             Placement::Frame => {
                 frame += 1;
                 if frame_allocation {
@@ -1976,6 +2107,10 @@ pub fn format_allocation_report(
                 } else {
                     "does not escape (moved to the stack with `--frame-alloc`)".to_string()
                 }
+            }
+            Placement::Region(_) => {
+                region += 1;
+                entry.placement.to_string()
             }
             Placement::Heap(reason) => {
                 if reason.is_escape() {
@@ -1996,10 +2131,15 @@ pub fn format_allocation_report(
             entry.kind,
         );
     }
+    let regions = if region > 0 {
+        format!(" {region} moved to a region,")
+    } else {
+        String::new()
+    };
     let _ = writeln!(
         out,
-        "{} allocation sites: {frame} {}, {escapes} escape, {kept} stay on the heap for another \
-         reason",
+        "{} allocation sites: {frame} {},{regions} {escapes} escape, {kept} stay on the heap for \
+         another reason",
         entries.len(),
         if frame_allocation {
             "moved to the stack"

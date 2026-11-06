@@ -311,6 +311,44 @@ extern "C" fn new_array(
     }
 }
 
+/// Opens a region arena for a `@region` function.
+extern "C" fn region_open(alloc_handle: *mut ffi::c_void) -> *mut ffi::c_void {
+    // Safety: see `new`.
+    let allocator = ManuallyDrop::new(unsafe { get_allocator(alloc_handle) });
+    Box::into_raw(allocator.region_open()).cast()
+}
+
+/// Allocates an object with a zeroed `size`-byte payload in `region`.
+extern "C" fn region_alloc(
+    region: *mut ffi::c_void,
+    size: usize,
+    align: usize,
+    alloc_handle: *mut ffi::c_void,
+) -> *const *mut ffi::c_void {
+    // Safety: see `new`; `region` came from `region_open` and is open.
+    let allocator = ManuallyDrop::new(unsafe { get_allocator(alloc_handle) });
+    let region = unsafe { &mut *region.cast::<gc::Region>() };
+    let layout = std::alloc::Layout::from_size_align(size, align.max(1))
+        .expect("generated code passes a valid layout");
+    allocator.region_alloc(region, layout).into()
+}
+
+/// Closes `region`. With region checks on, ends the process if anything
+/// still refers into it: that would be a compiler bug, and the memory is
+/// about to be freed.
+extern "C" fn region_close(region: *mut ffi::c_void, alloc_handle: *mut ffi::c_void) {
+    // Safety: see `new`; `region` came from `region_open`, and generated
+    // code closes it exactly once.
+    let allocator = ManuallyDrop::new(unsafe { get_allocator(alloc_handle) });
+    let region = unsafe { Box::from_raw(region.cast::<gc::Region>()) };
+    if let Err(leak) = allocator.region_close(region) {
+        use std::io::Write;
+        let _ignored = std::io::stdout().flush();
+        eprintln!("fatal: {leak}");
+        std::process::abort()
+    }
+}
+
 /// A builder for the [`Runtime`].
 pub struct RuntimeBuilder {
     options: RuntimeOptions,
@@ -506,6 +544,26 @@ impl Runtime {
                     *mut ffi::c_void,
                 ) -> *const *mut ffi::c_void,
             "new_array",
+        ));
+
+        // The region arenas of `@region` functions.
+        options.user_functions.push(IntoFunctionDefinition::into(
+            region_open as extern "C" fn(*mut ffi::c_void) -> *mut ffi::c_void,
+            "codira.region_open",
+        ));
+        options.user_functions.push(IntoFunctionDefinition::into(
+            region_alloc
+                as extern "C" fn(
+                    *mut ffi::c_void,
+                    usize,
+                    usize,
+                    *mut ffi::c_void,
+                ) -> *const *mut ffi::c_void,
+            "codira.region_alloc",
+        ));
+        options.user_functions.push(IntoFunctionDefinition::into(
+            region_close as extern "C" fn(*mut ffi::c_void, *mut ffi::c_void),
+            "codira.region_close",
         ));
 
         // The functions compiled `print`/`println` calls lower to.
@@ -838,6 +896,13 @@ impl Runtime {
     /// in `GarbageCollector` is dependent on the `Runtime`.
     pub fn gc(&self) -> &GarbageCollector {
         self.gc.as_ref()
+    }
+
+    /// What the region arenas of `@region` functions did: regions opened
+    /// and closed, the objects and bytes allocated in them, and the chunks
+    /// registered with the collector now.
+    pub fn region_stats(&self) -> gc::RegionStats {
+        self.gc.region_stats()
     }
 
     /// Collects all memory that is no longer referenced by rooted objects or

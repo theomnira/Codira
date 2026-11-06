@@ -87,7 +87,7 @@ fn assert_escape(source: &str, name: &str, expected: &str) {
             assert!(reason.is_escape(), "not an escape: {reason:?}");
             assert_eq!(reason.phrase(), expected);
         }
-        Placement::Frame => panic!("expected an escape ({expected}), got the frame"),
+        other => panic!("expected an escape ({expected}), got {other}"),
     }
 }
 
@@ -595,7 +595,10 @@ fn inline_functions_of_another_module_use_their_summary() {
     // reload of `geometry` can change without rebuilding the caller.
     let via = db.escape_analysis(function(&db, "via_helper"));
     assert!(
-        matches!(&via.allocations[0].placement, Placement::Heap(Reason::Unknown { .. })),
+        matches!(
+            &via.allocations[0].placement,
+            Placement::Heap(Reason::Unknown { .. })
+        ),
         "{:?}",
         via.allocations
     );
@@ -617,4 +620,95 @@ fn groups_and_cancelled_leave_local_objects_in_the_frame() {
          }",
     );
     assert_eq!(placement_of(&source, "start"), Placement::Frame);
+}
+
+#[test]
+fn a_region_function_places_kept_objects_in_its_region() {
+    let source = with_classes(
+        "@region
+        func last(n: i64) -> i64 {
+            var keep = Point { x: 0, y: 0 }
+            var total = 0
+            for i in 0..n {
+                let p = Point { x: i, y: i }
+                total += p.x
+                let q = Point { x: i, y: 0 }
+                keep = q
+            }
+            let xs = array_filled(0, n)
+            let big = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+            let ys = xs.map(func(x) { x + 1 })
+            total + keep.x + xs.len() as i64 + big[0] + ys[0]
+        }",
+    );
+    assert_eq!(
+        placements(&source, "last"),
+        "Point { x: 0, y: 0 }: moved to the stack\n\
+         Point { x: i, y: i }: moved to the stack\n\
+         Point { x: i, y: 0 }: moved to the function's region (kept past its loop iteration in \
+         `keep` (its frame slot is reused each iteration))\n\
+         array_filled(0, n): moved to the function's region (its length is known only at run \
+         time)\n\
+         [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]: moved to the function's \
+         region (17 elements; arrays of at most 16 elements are moved to the stack)\n\
+         xs.map(func(x) { x + 1 }): moved to the function's region (its length is known only at \
+         run time)"
+    );
+}
+
+#[test]
+fn what_a_region_object_holds_is_not_in_a_reused_frame_slot() {
+    let source = with_classes(
+        "@region
+        func hold(n: i64) -> i64 {
+            var last = Holder { p: Point { x: 0, y: 0 } }
+            for i in 0..n {
+                let p = Point { x: i, y: 1 }
+                let h = Holder { p: p }
+                last = h
+            }
+            last.p.x
+        }",
+    );
+    let out = placements(&source, "hold");
+    assert!(
+        out.contains("Holder { p: p }: moved to the function's region"),
+        "{out}"
+    );
+    assert!(
+        out.contains(
+            "Point { x: i, y: 1 }: moved to the function's region (held by an object \
+                       in the function's region)"
+        ),
+        "{out}"
+    );
+}
+
+#[test]
+fn an_object_escaping_a_region_function_is_an_error() {
+    let diags = crate::utils::tests::diagnostics(&with_classes(
+        "@region
+        func make() -> Point { Point { x: 1, y: 2 } }
+        @region
+        func keep(h: Holder) { h.p = Point { x: 1, y: 2 } }
+        @region
+        func fine() -> i64 { let p = Point { x: 1, y: 2 }; p.x }
+        func not_annotated() -> Point { Point { x: 1, y: 2 } }",
+    ));
+    insta::assert_snapshot!(diags);
+}
+
+#[test]
+fn a_region_function_s_array_grown_by_push_is_an_error() {
+    let diags = crate::utils::tests::diagnostics(&with_classes(
+        "@region
+        func grow(n: i64) -> i64 { let xs = [1]; xs.push(n); xs.len() as i64 }",
+    ));
+    assert!(
+        diags.contains(
+            "`grow` is `@region`, but this array literal of 1 element may outlive \
+                        the region: it is grown by `push`"
+        ),
+        "{diags}"
+    );
 }

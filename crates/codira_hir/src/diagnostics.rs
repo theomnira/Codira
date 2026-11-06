@@ -910,6 +910,29 @@ impl Diagnostic for EffectAttributeViolation {
     }
 }
 
+/// An object a `@region` function allocates that may escape the call (see
+/// `crate::escape`).
+#[derive(Debug)]
+pub struct RegionEscape {
+    pub file: FileId,
+    pub site: SyntaxNodePtr,
+    pub message: String,
+}
+
+impl Diagnostic for RegionEscape {
+    fn message(&self) -> String {
+        self.message.clone()
+    }
+
+    fn source(&self) -> InFile<SyntaxNodePtr> {
+        InFile::new(self.file, self.site.clone())
+    }
+
+    fn as_any(&self) -> &(dyn Any + Send + 'static) {
+        self
+    }
+}
+
 /// A synthesis hole (`??` or `choose`) that has not been filled: the
 /// program has no code there until `codira synth` writes some.
 #[derive(Debug)]

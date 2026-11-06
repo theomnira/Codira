@@ -283,6 +283,16 @@ pub(crate) fn gen_file_group_ir<'ink>(
             &f.body(code_gen.db),
             &unit.infer,
         );
+        // A `@region` function opens, allocates in and closes its arena
+        // through the runtime.
+        if codira_hir::escape::is_region_function(code_gen.db, f) {
+            intrinsics::collect_region(
+                code_gen.context,
+                code_gen.target_machine.get_target_data(),
+                &mut intrinsics_map,
+            );
+            needs_alloc = true;
+        }
         intrinsics::collect_main_result(
             code_gen.context,
             code_gen.target_machine.get_target_data(),

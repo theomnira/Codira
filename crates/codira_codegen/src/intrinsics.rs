@@ -35,6 +35,25 @@ intrinsics! {
 }
 
 runtime_functions! {
+    /// Opens a region arena for a `@region` function (see
+    /// `codira_memory::gc::region`).
+    pub fn region_open(alloc: *mut ffi::c_void) -> *mut ffi::c_void = "codira.region_open";
+
+    /// Allocates an object with a zeroed payload of `size` bytes aligned to
+    /// `align` in `region`; returns its handle (a header whose first word
+    /// points to the payload).
+    pub fn region_alloc(region: *mut ffi::c_void, size: usize, align: usize, alloc: *mut ffi::c_void) -> *const *mut ffi::c_void = "codira.region_alloc";
+
+    /// Closes `region`, freeing every object in it.
+    pub fn region_close(region: *mut ffi::c_void, alloc: *mut ffi::c_void) -> () = "codira.region_close";
+}
+
+/// The runtime functions a `@region` function calls.
+pub fn region_functions() -> [&'static dyn Intrinsic; 3] {
+    [&region_open, &region_alloc, &region_close]
+}
+
+runtime_functions! {
     /// Writes `len` bytes of UTF-8 starting at `data` to standard output.
     pub fn print_str(data: *const u8, len: usize) -> () = "codira.print_str";
 

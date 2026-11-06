@@ -120,9 +120,15 @@ pub(crate) struct BodyIrGenerator<'db, 'ink, 't> {
     /// The slot holding the last result of a format plan in the function
     /// being generated, from which the next plan continues (see `fabric`).
     plan_arena: Option<(FunctionValue<'ink>, PointerValue<'ink>)>,
-    /// The escape analysis of `hir_function` when frame allocation is on.
-    /// See `frame`.
+    /// The escape analysis of `hir_function` when frame allocation is on or
+    /// the function is `@region`. See `frame`.
     escapes: Option<Arc<codira_hir::escape::FunctionEscapes>>,
+    /// Whether frame allocation is on.
+    frame_enabled: bool,
+    /// Whether `hir_function` is `@region`, and the entry-block slot that
+    /// holds its open region once the body opens it. See `frame`.
+    region_function: bool,
+    region_slot: Option<PointerValue<'ink>>,
 }
 
 impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
@@ -151,12 +157,15 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let body_ir = context.append_basic_block(ir_function, "body");
         builder.position_at_end(body_ir);
 
-        let escapes = external_globals
-            .frame_allocation
-            .then(|| db.escape_analysis(hir_function));
+        let frame_enabled = external_globals.frame_allocation;
+        let region_function = codira_hir::escape::is_region_function(db, hir_function);
+        let escapes = (frame_enabled || region_function).then(|| db.escape_analysis(hir_function));
 
         BodyIrGenerator {
             escapes,
+            frame_enabled,
+            region_function,
+            region_slot: None,
             context,
             module,
             db,
@@ -294,6 +303,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         // Every call costs one unit of fuel (when instrumented)
         self.gen_fuel_check();
 
+        // A `@region` function opens its arena first (see `frame`).
+        self.gen_region_open();
+
         // Generate code for the body of the function
         let ret_value = self.gen_expr(self.body.body_expr());
 
@@ -318,6 +330,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         self.finish_safety();
         // One return block for an aggregate result (see `merge`).
         self.unify_aggregate_returns();
+        // Close the region before every return.
+        self.finish_region();
         // A `main` returning a `Result` ends the program on an `Err`.
         self.gen_main_result_check();
     }
@@ -1473,6 +1487,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
             codira_hir::StructMemoryKind::Value => struct_lit.into(),
             codira_hir::StructMemoryKind::Gc if self.is_frame_allocation(expr) => {
                 self.gen_struct_alloc_in_frame(expr, hir_ty, struct_lit)
+            }
+            codira_hir::StructMemoryKind::Gc if self.is_region_allocation(expr) => {
+                self.gen_struct_alloc_in_region(hir_ty, struct_lit)
             }
             codira_hir::StructMemoryKind::Gc => self.gen_struct_alloc_on_heap(hir_ty, struct_lit),
         }
@@ -4321,6 +4338,9 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         expr: ExprId,
         length_value: inkwell::values::IntValue<'ink>,
     ) -> RuntimeArrayValue<'ink> {
+        if self.is_region_allocation(expr) {
+            return self.alloc_array_in_region(expr, length_value);
+        }
         let array_ty = self.infer[expr].clone();
         self.alloc_array_of(&array_ty, length_value)
     }

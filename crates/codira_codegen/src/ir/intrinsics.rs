@@ -296,6 +296,17 @@ pub fn collect_fn_body<'ink>(
     );
 }
 
+/// Collects the runtime functions a `@region` function calls.
+pub fn collect_region<'ink>(
+    context: &'ink Context,
+    target: TargetData,
+    intrinsics: &mut IntrinsicsMap<'ink>,
+) {
+    for intrinsic in intrinsics::region_functions() {
+        collect_intrinsic(context, &target, intrinsic, intrinsics);
+    }
+}
+
 /// Collects the runtime functions fuel-instrumented code calls.
 pub fn collect_fuel<'ink>(
     context: &'ink Context,

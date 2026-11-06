@@ -623,6 +623,7 @@ impl Function {
         infer.add_diagnostics(db, self, sink);
         let validator = ExprValidator::new(self, db);
         validator.validate_body(sink);
+        crate::escape::region_diagnostics(db, self, sink);
     }
 }
 
