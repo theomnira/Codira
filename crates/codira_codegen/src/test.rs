@@ -987,6 +987,25 @@ fn intrinsic_load_and_store() {
 }
 
 #[test]
+fn intrinsic_string_data() {
+    // `string_data(s)` is the address of a `String`'s first byte: the
+    // buffer handle's payload pointer, plus the 16-byte array header, plus
+    // the string's start offset. No call: the keyed hashes read through it.
+    test_snapshot_unoptimized(
+        "intrinsic_string_data",
+        r#"
+    extern "codira-intrinsic" {
+        func string_data(s: String) -> usize;
+        func load_u8(addr: usize) -> u8;
+    }
+    public func first(s: String) -> u8 {
+        load_u8(string_data(s))
+    }
+    "#,
+    );
+}
+
+#[test]
 fn intrinsic_bit_counting() {
     // `ctlz_u32` must lower to `@llvm.ctlz.i32`, which becomes a single
     // `LZCNT`/`CLZ`. The second argument is the is-zero-poison flag and must

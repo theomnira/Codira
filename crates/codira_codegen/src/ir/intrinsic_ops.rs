@@ -369,6 +369,9 @@ fn gen_str_accessor<'ink>(
     context: &'ink Context,
     builder: &Builder<'ink>,
 ) -> Result<Option<BasicValueEnum<'ink>>, IntrinsicError> {
+    if name == "string_data" {
+        return gen_string_data(args, context, builder).map(Some);
+    }
     let field = match name {
         "str_data" => 0,
         "str_len" => 1,
@@ -399,6 +402,60 @@ fn gen_str_accessor<'ink>(
         )
         .expect("could not build address cast for a string literal");
     Ok(Some(address.into()))
+}
+
+/// Emits `string_data(s: String) -> usize`: the address of the first byte
+/// of a `String`, for reading its bytes with the `load_*` intrinsics (the
+/// keyed hashes of `std.hashlib.hash` read eight at a time).
+///
+/// A `String` value is `{ ptr buf, usize start, usize len }`, where `buf` is
+/// the handle of a `[u8]` array object: its first word points at the
+/// payload, `{ usize len, usize capacity, u8 elements[] }`. The bytes are
+/// at `payload + 16 + start`. The address is valid while the `String` is
+/// live and nothing appends to its buffer; the length is `s.len()`. An
+/// empty `String` may have no buffer at all (`buf` null), so this must only
+/// be called on a non-empty one: the load of the payload would fault.
+fn gen_string_data<'ink>(
+    args: &[BasicMetadataValueEnum<'ink>],
+    context: &'ink Context,
+    builder: &Builder<'ink>,
+) -> Result<BasicValueEnum<'ink>, IntrinsicError> {
+    if args.len() != 1 {
+        return Err(IntrinsicError::Arity {
+            expected: 1,
+            found: args.len(),
+        });
+    }
+    let BasicMetadataValueEnum::StructValue(value) = args[0] else {
+        return Err(IntrinsicError::Unknown);
+    };
+    if value.get_type().count_fields() != 3 {
+        return Err(IntrinsicError::Unknown);
+    }
+    let buf = builder
+        .build_extract_value(value, 0, "string.buf")
+        .expect("a `String` has three fields")
+        .into_pointer_value();
+    let start = builder
+        .build_extract_value(value, 1, "string.start")
+        .expect("a `String` has three fields")
+        .into_int_value();
+    let ptr_type = context.ptr_type(AddressSpace::default());
+    let payload = builder
+        .build_load(ptr_type, buf, "string.payload")
+        .expect("could not load a string's payload")
+        .into_pointer_value();
+    let i64_type = context.i64_type();
+    let offset = builder
+        .build_int_add(i64_type.const_int(16, false), start, "string.offset")
+        .expect("could not offset into a string's payload");
+    let address = builder
+        .build_ptr_to_int(payload, i64_type, "string.payload.addr")
+        .expect("could not build address cast for a string");
+    let data = builder
+        .build_int_add(address, offset, "string.data.addr")
+        .expect("could not build the address of a string's bytes");
+    Ok(data.into())
 }
 
 /// Emits `bitcast_u64_f64(bits)` and its three siblings: the same bits read

@@ -1,0 +1,48 @@
+---
+source: crates/codira_codegen/src/test.rs
+expression: "\n    extern \"codira-intrinsic\" {\n        func string_data(s: String) -> usize;\n        func load_u8(addr: usize) -> u8;\n    }\n    public func first(s: String) -> u8 {\n        load_u8(string_data(s))\n    }\n    "
+snapshot_kind: text
+---
+; == FILE IR (mod) =====================================
+; ModuleID = 'mod'
+source_filename = "mod"
+
+%DispatchTable = type { ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }
+
+@allocatorHandle = external global ptr
+@dispatchTable = external global %DispatchTable
+@global_type_lookup_table = external global [5 x ptr]
+
+define i8 @first({ ptr, i64, i64 } %0) {
+body:
+  %s = alloca { ptr, i64, i64 }, align 8
+  store { ptr, i64, i64 } %0, ptr %s, align 8
+  %s1 = load { ptr, i64, i64 }, ptr %s, align 8
+  %string.buf = extractvalue { ptr, i64, i64 } %s1, 0
+  %string.start = extractvalue { ptr, i64, i64 } %s1, 1
+  %string.payload = load ptr, ptr %string.buf, align 8
+  %string.offset = add i64 16, %string.start
+  %string.payload.addr = ptrtoint ptr %string.payload to i64
+  %string.data.addr = add i64 %string.payload.addr, %string.offset
+  %intrinsic.addr = inttoptr i64 %string.data.addr to ptr
+  %intrinsic.load = load i8, ptr %intrinsic.addr, align 1
+  ret i8 %intrinsic.load
+}
+
+define i8 @first_wrapper(ptr %0) {
+body:
+  %string.box.data = load ptr, ptr %0, align 8
+  %string = load { ptr, i64, i64 }, ptr %string.box.data, align 8
+  %first = call i8 @first({ ptr, i64, i64 } %string)
+  ret i8 %first
+}
+
+; == GROUP IR (mod) ====================================
+; ModuleID = 'group_name'
+source_filename = "group_name"
+
+%DispatchTable = type { ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr, ptr }
+
+@dispatchTable = global %DispatchTable zeroinitializer
+@global_type_lookup_table = global [5 x ptr] zeroinitializer
+@allocatorHandle = unnamed_addr global ptr null
