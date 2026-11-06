@@ -26,3 +26,10 @@ fn an_exponent_without_digits_is_an_invalid_literal() {
     let diagnostics = rejected("func d() -> f64 { 5e }");
     assert!(diagnostics.contains("invalid literal"), "{diagnostics}");
 }
+
+/// A `.` at the end of the input lexed as a tuple index without digits, and
+/// lowering the field access panicked parsing its number.
+#[test]
+fn a_field_access_cut_off_at_the_end_of_the_input() {
+    rejected("func s{e.");
+}
