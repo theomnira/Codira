@@ -373,3 +373,20 @@ rounds of a string workload) took 1.06, 1.08 and 1.03 s alone and 1.04,
   allocation API does, but `StringRef::new` ends the process like Codira
   code does, and `GcRuntime::alloc`/`alloc_array` (behind
   `Runtime::construct_array` and `StructRef` construction) panic.
+
+## Cascade (experimental, off by default)
+
+`MarkSweep::enable_cascade` attaches Cascade, an engine that reclaims
+objects before a collection would:
+
+- unique objects at their last use;
+- shared objects by deferred, epoch-protected reference counting;
+- cycles by bounded concurrent trial deletion.
+
+Only objects allocated through a Cascade `Mutator` are managed, and
+compiled programs do not use it yet: the compiler emits no retains or
+releases. Without `enable_cascade`, the collector behaves exactly as
+described above. The ownership word Cascade needs takes the upper half of
+the old 64-bit `inline_capacity` field, so the header stays 32 bytes.
+`CASCADE.md` holds the design, the invariants, what is unverified, and the
+measurements.

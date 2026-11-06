@@ -17,7 +17,7 @@ host enables it on a heap through `MarkSweep::enable_cascade`. The compiler
 does not emit retains or releases yet. Section 9 lists what that integration
 needs.
 
-The code is in `src/gc/cascade/`. Tests are in `tests/gc/cascade.rs`,
+The code is in `src/gc/cascade/`. Tests are in `tests/cascade.rs`,
 the model-checking tests are in `src/gc/cascade/loom_tests.rs`, and the
 benchmark is in `benches/cascade.rs`.
 
@@ -127,7 +127,7 @@ rule is what lets the counting avoid atomic read-modify-write operations:
           └──────────────────────────────┘
 ```
 
-**Invariants.** These are checked by `tests/gc/cascade.rs` and by debug
+**Invariants.** These are checked by `tests/cascade.rs` and by debug
 assertions.
 
 1. *Count soundness.* For every tracked object, the applied count is at
@@ -222,6 +222,39 @@ publishes the child first and then stores the field with release ordering.
 A future channel send, task spawn or global store must do the same.
 Publication is one-way. An object is never unpublished, which would require
 knowing that every other thread has dropped it.
+
+### Relation to the String buffer owner word
+
+String buffers (`codira_runtime`'s `string` module) carry an 8-byte *owner
+word*: the thread pointer of the thread that allocated the buffer. That
+thread alone may raise the buffer's fill in place, with plain loads and
+stores. Any other thread appending copies. The two mechanisms answer
+different questions:
+
+- The owner word decides **who may write** the bytes above a buffer's fill.
+- Cascade's ownership word decides **who counts** references to an object
+  and **when** the object may be reclaimed.
+
+They agree where they overlap. A `Mutator` is bound to one OS thread (it is
+not `Send`), so an object a mutator allocates is unpublished and owned by
+the same OS thread whose pointer a String buffer allocated there would
+carry. Publication changes neither the owner word nor who may append in
+place. It only moves the counting to the collector. The owner word was
+written before the buffer became reachable and never changes, so it stays
+valid for the buffer's whole life. Neither mechanism weakens the other:
+`UNIQUE` grants no right to append, and the owner word grants no right to
+reclaim.
+
+Reclamation interacts with the owner word in one place: cell reuse. A cell
+that Cascade reclaims is reused only through the allocator, and the
+allocator writes a fresh owner word before the new buffer is reachable.
+This is the same order that the owner word's argument relies on after a
+tracing sweep.
+
+String buffers are not allocated through Cascade on this branch. Making
+them Cascade-managed is part of compiler integration (Section 9):
+appending in place writes bytes, never references, so it needs no write
+barrier.
 
 ## 5. Deferred counting and the epoch scheme
 
@@ -413,8 +446,9 @@ is in fact reachable at the cut. Then either:
   is within 1/8 of its limit, or a candidate overflowed since the last
   tracing collection, the step budget is multiplied by
   `pressure_multiplier`. If the pressure persists for
-  `pressure_steps_before_trace` steps, Cascade runs the tracing collector,
-  so deferred garbage is never deferred forever.
+  `pressure_steps_before_trace` steps, Cascade runs the tracing collector
+  (`MarkSweep::collect_blocking`, after the step has released its locks), so
+  deferred garbage is never deferred forever.
 
 ## 7. Step latency and work accounting
 
