@@ -140,6 +140,9 @@ const GRAPH: &str = r#"
                     j += 1
                 }
                 for g in chain { acc.bad += bad_node(g) }
+                // In debug builds closing a region stops the world to check
+                // that nothing refers into it: an oracle, but a slow one.
+                if op % 64 == 0 { acc.bad += region_scratch(op, k) }
             } else if r < 95 {
                 let x = slots[a]
                 acc.bad += bad_node(x)
@@ -157,6 +160,52 @@ const GRAPH: &str = r#"
             op += 1
         }
         if acc.bad > 0 { 0 - acc.bad } else { acc.digest }
+    }
+
+    public class RCell { v: i64, w: i64 }
+
+    // A region: scratch objects in an arena freed when the call returns,
+    // mixed with heap objects; returns how many were corrupt.
+    @region
+    func region_scratch(seed: i64, k: i64) -> i64 {
+        var last = RCell { v: seed, w: check_of(seed) }
+        var bad = 0
+        var i = 0
+        while i < k {
+            let c = RCell { v: seed + i, w: check_of(seed + i) }
+            let h = make_node(seed * 7 + i)
+            if c.w != check_of(c.v) { bad += 1 }
+            bad += bad_node(h)
+            if i % 3 == 0 { last = c }
+            i += 1
+        }
+        let xs = array_filled(seed, k as usize)
+        if xs[0] != seed { bad += 1 }
+        if last.w != check_of(last.v) { bad += 1 }
+        bad
+    }
+
+    func graph_task(seed: i64, slots_n: i64, ops: i64) -> i64 {
+        stress(seed, slots_n, ops)
+    }
+
+    // `tasks` graphs as the tasks of a group; the sum of their digests, or
+    // the most negative result if any saw a bad node.
+    public func stress_group(seed: i64, slots_n: i64, ops: i64, tasks: i64) -> i64 {
+        let results = group {
+            var t = 0
+            while t < tasks {
+                spawn graph_task(seed + t, slots_n, ops)
+                t += 1
+            }
+        }
+        var worst = 0
+        var sum = 0
+        for d in results {
+            if d < worst { worst = d }
+            if d > 0 { sum = (sum + d) % 1000000007 }
+        }
+        if worst < 0 { worst } else { sum }
     }
 
     func worker(results: Channel[i64], seed: i64, slots_n: i64, ops: i64) {
@@ -328,6 +377,8 @@ static COLLECTOR: AtomicPtr<GarbageCollector> = AtomicPtr::new(std::ptr::null_mu
 static POINT_SEED: AtomicU64 = AtomicU64::new(0);
 static POINT_RATE: AtomicU64 = AtomicU64::new(0);
 static POINT_COLLECTIONS: AtomicUsize = AtomicUsize::new(0);
+/// Objects moved by the host thread's collections, with relocation on.
+static MOVED: AtomicUsize = AtomicUsize::new(0);
 
 /// Called by Codira code after every operation: sometimes collects, from
 /// inside the running program (the calling thread parks itself first, so
@@ -423,6 +474,7 @@ fn host_collector<'s>(
                 std::thread::sleep(pause_unit * pause);
             }
             gc.collect_blocking().unwrap();
+            MOVED.fetch_add(gc.last_relocation().moved, Ordering::Relaxed);
             count.fetch_add(1, Ordering::Relaxed);
         }
     });
@@ -843,5 +895,68 @@ fn host_threads_allocate_while_codira_code_collects() {
         stats.collections.paced
     );
     assert!(stats.collections.paced > 0, "pacing never collected");
+    assert_no_leak(&driver);
+}
+
+/// Relocation on (as with `CODIRA_GC_COMPACT=1`), with the graphs run as
+/// the tasks of a `group` and with `@region` scratch work in every garbage
+/// burst, under collections from a host thread and from inside the
+/// program: every graph must still match the shadow model, and the
+/// collections must have moved objects.
+#[test]
+fn relocation_with_regions_and_groups_keeps_graphs_intact() {
+    let _serial = serial();
+    let driver = build(|builder| builder);
+    let gc = driver.runtime.gc();
+    gc.set_compaction(true);
+    COLLECTOR.store(std::ptr::from_ref(gc).cast_mut(), Ordering::Release);
+    let _clear = ClearCollector;
+    POINT_RATE.store(32, Ordering::Relaxed);
+    MOVED.store(0, Ordering::Relaxed);
+    let first = first_seed();
+    let deadline = Instant::now() + budget();
+    let done = AtomicBool::new(false);
+    let host_collections = AtomicUsize::new(0);
+    let mut runs = 0;
+    std::thread::scope(|s| {
+        host_collector(
+            s,
+            gc,
+            &done,
+            first,
+            Duration::from_micros(13),
+            &host_collections,
+        );
+        let _done = SetOnDrop(&done);
+        let mut seed = first;
+        while runs == 0
+            || Instant::now() < deadline
+            || (MOVED.load(Ordering::Relaxed) == 0 && runs < 200)
+        {
+            POINT_SEED.store(seed as u64, Ordering::Relaxed);
+            let tasks = 3i64;
+            let got: i64 = driver
+                .runtime
+                .invoke("stress_group", (seed, 16i64, 2_000i64, tasks))
+                .unwrap();
+            assert!(got >= 0, "seed {seed}: the program saw {} bad nodes", -got);
+            let expected = (0..tasks).fold(0, |sum, t| {
+                (sum + Shadow::stress(seed + t, 16, 2_000)) % MODULUS
+            });
+            assert_eq!(
+                got, expected,
+                "seed {seed}: the graphs differ from the shadow model"
+            );
+            seed += tasks;
+            runs += 1;
+        }
+    });
+    let moved = MOVED.load(Ordering::Relaxed);
+    eprintln!(
+        "gc stress (relocation, regions, groups): {runs} runs from seed {first}, {} host collections, {moved} objects moved",
+        host_collections.load(Ordering::Relaxed)
+    );
+    assert!(moved > 0, "no collection moved an object");
+    assert!(gc.region_stats().closed > 0, "no region was used");
     assert_no_leak(&driver);
 }
