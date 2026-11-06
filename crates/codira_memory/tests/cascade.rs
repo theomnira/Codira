@@ -24,7 +24,7 @@ use std::{
 use codira_memory::{
     gc::{
         cascade::{CascadeConfig, Mutator, OwnershipState},
-        safepoint, Event, GcPtr, GcRuntime, HasIndirectionPtr, MarkSweep, Observer,
+        safepoint, Event, GcPolicy, GcPtr, GcRuntime, HasIndirectionPtr, MarkSweep, Observer,
     },
     HasStaticType, StructTypeBuilder, Type,
 };
@@ -78,7 +78,17 @@ fn types() -> Types {
     }
 }
 
+/// A heap with Cascade enabled and pacing off, so a test's tracing
+/// collections are the ones it asks for.
 fn runtime(config: CascadeConfig) -> (Arc<Gc>, DeallocLog) {
+    let (gc, log) = paced_runtime(config);
+    gc.set_policy(GcPolicy::default().without_pacing());
+    (gc, log)
+}
+
+/// A heap with Cascade enabled and the default pacing: tracing collections
+/// also start on their own, interleaved with Cascade's work.
+fn paced_runtime(config: CascadeConfig) -> (Arc<Gc>, DeallocLog) {
     let log = DeallocLog::default();
     let gc = Arc::new(Gc::with_observer(log.clone()));
     gc.enable_cascade(config);
@@ -124,7 +134,7 @@ fn cascade_is_off_by_default() {
     assert_eq!(gc.cascade_deferred_bytes(), 0);
     let t = types();
     let object = gc.alloc(&t.node);
-    gc.collect();
+    gc.collect_blocking().unwrap();
     // Unrooted and not on a scanned stack in a way that matters: tracing
     // works exactly as before.
     let _ = object;
@@ -137,7 +147,7 @@ fn objects_outside_mutators_stay_untracked() {
     let object = gc.alloc(&t.node);
     assert_eq!(state(&gc, object), OwnershipState::Untracked);
     settle(&gc);
-    gc.collect();
+    gc.collect_blocking().unwrap();
     assert!(log.log.lock().contains(&object));
 }
 
@@ -360,7 +370,7 @@ fn a_thread_that_never_handshakes_stops_reclamation_not_safety() {
     // is reclaimed -- the object is garbage but stays allocated.
     assert_ne!(state(&gc, garbage), OwnershipState::Reclaimed);
     // The tracing backstop still reclaims it.
-    gc.collect();
+    gc.collect_blocking().unwrap();
     release_tx.send(()).unwrap();
     m.quiescent(|| silent.join().unwrap());
     settle_with(&gc, &mut m);
@@ -466,7 +476,7 @@ fn tracing_resynchronises_counts() {
     m.store(parent, t.offsets[0], Some(child));
     m.store(parent, t.offsets[1], Some(child));
     // Two increments are still in the thread's buffer.
-    gc.collect();
+    gc.collect_blocking().unwrap();
     let cascade = gc.cascade().unwrap();
     // Two heap references, plus the resynchronisation's own snapshot of the
     // local reference (released two boundaries later).
@@ -763,7 +773,7 @@ impl Worker<'_> {
                     if trace {
                         eprintln!("[{id}] collect");
                     }
-                    gc.collect();
+                    gc.collect_blocking().unwrap();
                     let log: Vec<GcPtr> = gc.observer().log.lock().drain(..).collect();
                     if trace {
                         for o in &log {
@@ -825,12 +835,18 @@ fn randomized(seed: u64, threads: usize, ops: usize, allow_trace: bool) {
             reclaimed.lock().push(key(object))
         })
     };
-    let (gc, _) = runtime(CascadeConfig {
+    let config = CascadeConfig {
         buffer_capacity: 64,
         local_cycle_budget: 1 << 16,
         on_reclaim: Some(hook),
         ..CascadeConfig::default()
-    });
+    };
+    // With tracing allowed, paced collections interleave too.
+    let (gc, _) = if allow_trace {
+        paced_runtime(config)
+    } else {
+        runtime(config)
+    };
     let t = types();
     let model = Model {
         shadow: ReentrantMutex::new(std::cell::RefCell::new(Shadow::default())),
@@ -1111,7 +1127,7 @@ fn concurrent_stress_never_reclaims_a_held_object() {
 
 fn sustained(max_cycle_pass: usize, threads: usize) -> codira_memory::gc::cascade::CascadeStats {
     let limit = 4 << 20;
-    let (gc, _) = runtime(CascadeConfig {
+    let (gc, _) = paced_runtime(CascadeConfig {
         max_cycle_pass,
         pressure_bytes: 1 << 20,
         ..CascadeConfig::default()

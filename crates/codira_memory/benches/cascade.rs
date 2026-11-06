@@ -320,7 +320,7 @@ fn retain_release(config: &Config) {
             for i in 0..count {
                 black_box(plain.alloc(&t.node));
                 if i % 65536 == 65535 {
-                    plain.collect();
+                    plain.collect_blocking().unwrap();
                 }
             }
         });
@@ -426,7 +426,7 @@ fn cycles(config: &Config) {
             }
             drop(roots);
             let start = Instant::now();
-            gc.collect();
+            gc.collect_blocking().unwrap();
             let elapsed = start.elapsed().as_secs_f64();
             rates.push(objects as f64 / elapsed / 1e6);
         }
