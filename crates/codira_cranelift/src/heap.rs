@@ -87,7 +87,7 @@ impl Translator<'_, '_> {
     }
 
     /// The type handle of `ty`, as a constant.
-    fn type_handle(&mut self, ty: &Ty) -> Result<Value, Unsupported> {
+    pub(crate) fn type_handle(&mut self, ty: &Ty) -> Result<Value, Unsupported> {
         let handle = self
             .state
             .heap
@@ -97,7 +97,7 @@ impl Translator<'_, '_> {
     }
 
     /// The allocator handle, as a constant.
-    fn allocator(&mut self) -> Value {
+    pub(crate) fn allocator(&mut self) -> Value {
         let allocator = self.state.heap.allocator();
         self.pointer_const(allocator as usize)
     }
@@ -413,7 +413,11 @@ impl Translator<'_, '_> {
             BuiltinFn::Pipeline(_) => {
                 self.unsupported("a lazy pipeline (`iter()`, `map`, `sum`, ...)")
             }
-            BuiltinFn::String(_) | BuiltinFn::StrLen => self.unsupported("a string method"),
+            BuiltinFn::String(op) => self.string_method(op, receiver, args),
+            BuiltinFn::StrLen => match self.operand_vals(receiver)?.as_slice() {
+                [_, len] => Ok(vec![*len]),
+                _ => self.unsupported("a `str` of an unexpected shape"),
+            },
             other => self.unsupported(format!("the builtin `{}`", other.name())),
         }
     }
@@ -544,6 +548,38 @@ impl Translator<'_, '_> {
             _ => {
                 let address = self.place_address(&place)?;
                 self.store_value(&ty, &value, address, 0)?;
+            }
+        }
+        Ok(Vec::new())
+    }
+
+    /// `place op= ..` on a value that is not a number or `bool` (`s += t`
+    /// on a `String`), the right operand already evaluated: the place's
+    /// operands are evaluated once, its value read, `update` makes the new
+    /// value, and it is stored where it was read.
+    pub(crate) fn update_place(
+        &mut self,
+        lhs: ExprId,
+        update: impl FnOnce(&mut Self, Vals) -> Lowered,
+    ) -> Lowered {
+        let ty = self.infer[lhs].clone();
+        let place = self.place(lhs)?;
+        match &place {
+            Place::Local(vars) => {
+                let current: Vals = vars.iter().map(|v| self.builder.use_var(*v)).collect();
+                let new = update(self, current)?;
+                for (var, value) in vars.iter().zip(&new) {
+                    self.builder.def_var(*var, *value);
+                }
+            }
+            _ => {
+                let address = self.place_address(&place)?;
+                let current = self.load_value(&ty, address, 0)?;
+                let new = update(self, current)?;
+                // The payload address again, rather than one held across
+                // the call.
+                let address = self.place_address(&place)?;
+                self.store_value(&ty, &new, address, 0)?;
             }
         }
         Ok(Vec::new())

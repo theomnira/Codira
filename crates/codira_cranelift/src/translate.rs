@@ -18,7 +18,7 @@ use std::sync::Arc;
 use codira_abi::runtime_functions::{self as rt, RuntimeFunction};
 use codira_hir::{
     ArithOp, BinaryOp, BuiltinFn, CallableDef, CmpOp, Expr, ExprId, Function, Literal, LogicOp,
-    Ordering, Pat, PatId, Statement, Ty, ValueNs,
+    Ordering, Pat, PatId, Statement, Ty, TyKind, ValueNs,
 };
 use cranelift_codegen::ir::{
     condcodes::{FloatCC, IntCC},
@@ -38,6 +38,8 @@ pub(crate) type Lowered = Result<Vals, Unsupported>;
 /// An argument of `print`/`println`, evaluated and waiting to be printed.
 enum PrintArg {
     Text(String),
+    /// A `String` or a `str` value.
+    TextValue(Ty, Vals),
     Value(Option<ScalarTy>, Vals),
 }
 
@@ -187,9 +189,19 @@ impl<'a, 'db> Translator<'a, 'db> {
         }
     }
 
+    /// The type of the value `id` produces: its inferred type, or `String`
+    /// for a `str` used where a `String` is expected (converted).
+    pub(crate) fn value_ty(&self, id: ExprId) -> Ty {
+        if self.infer.is_string_conversion(id) {
+            TyKind::String.intern()
+        } else {
+            self.infer[id].clone()
+        }
+    }
+
     /// The value of `id` at its own type.
     pub(crate) fn operand_vals(&mut self, id: ExprId) -> Lowered {
-        let ty = self.infer[id].clone();
+        let ty = self.value_ty(id);
         self.value(id, &ty)
     }
 
@@ -269,12 +281,19 @@ impl<'a, 'db> Translator<'a, 'db> {
         if self.infer.optional_wrap(id).is_some() {
             return self.unsupported("an optional (`T?`) value");
         }
-        if self.infer.is_string_conversion(id) {
-            return self.unsupported("a `str` used as a `String`");
-        }
         if self.infer.variant_of_expr(id).is_some() {
             return self.unsupported("an enum variant");
         }
+        let value = self.expr_inner(id)?;
+        // A `str` used where a `String` is expected becomes a `String` copy.
+        if self.infer.is_string_conversion(id) && !value.is_empty() {
+            return self.string_from_str(&value);
+        }
+        Ok(value)
+    }
+
+    /// The value of `id` itself, before an implicit conversion.
+    fn expr_inner(&mut self, id: ExprId) -> Lowered {
         let body = self.body.clone();
         match &body[id] {
             Expr::Literal(literal) => self.literal(id, literal),
@@ -469,6 +488,9 @@ impl<'a, 'db> Translator<'a, 'db> {
     }
 
     fn literal(&mut self, id: ExprId, literal: &Literal) -> Lowered {
+        if let Literal::String(text) = literal {
+            return self.str_literal(text);
+        }
         let ty = self.scalar_of(&self.infer[id].clone())?;
         Ok(vec![match (literal, ty) {
             (Literal::Bool(b), _) => self.builder.ins().iconst(types::I8, i64::from(*b)),
@@ -497,15 +519,18 @@ impl<'a, 'db> Translator<'a, 'db> {
                 self.builder.ins().f32const(value)
             }
             (Literal::Float(float), _) => self.builder.ins().f64const(float.value),
-            (Literal::String(_), _) => {
-                return self.unsupported("a string outside `print`/`println`")
-            }
+            (Literal::String(text), _) => return self.str_literal(text),
             _ => return self.unsupported("this literal"),
         }])
     }
 
     fn binary(&mut self, id: ExprId, lhs: ExprId, rhs: ExprId, op: BinaryOp) -> Lowered {
         let lhs_ty = self.infer[lhs].clone();
+        if matches!(lhs_ty.interned(), TyKind::String | TyKind::Str)
+            && op != (BinaryOp::Assignment { op: None })
+        {
+            return self.string_binary(lhs, rhs, op);
+        }
         match op {
             BinaryOp::Assignment { op } => {
                 if self.state.scalar(&lhs_ty).is_ok() {
@@ -946,7 +971,12 @@ impl<'a, 'db> Translator<'a, 'db> {
         if let Expr::Literal(Literal::String(text)) = &self.body.clone()[arg] {
             return Ok(PrintArg::Text(text.to_string()));
         }
-        let ty = self.scalar_of(&self.infer[arg].clone())?;
+        let arg_ty = self.infer[arg].clone();
+        if matches!(arg_ty.interned(), TyKind::String | TyKind::Str) {
+            let value = self.value(arg, &arg_ty)?;
+            return Ok(PrintArg::TextValue(arg_ty, value));
+        }
+        let ty = self.scalar_of(&arg_ty)?;
         let value = self.expr(arg)?;
         Ok(PrintArg::Value(ty, value))
     }
@@ -954,6 +984,7 @@ impl<'a, 'db> Translator<'a, 'db> {
     fn print(&mut self, arg: PrintArg) -> Result<(), Unsupported> {
         let (ty, value) = match arg {
             PrintArg::Text(text) => return self.print_text(&text),
+            PrintArg::TextValue(ty, value) => return self.print_text_value(&ty, &value),
             PrintArg::Value(ty, value) => (ty, value),
         };
         let value = match (ty, value.as_slice()) {

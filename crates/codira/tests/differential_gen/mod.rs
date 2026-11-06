@@ -190,6 +190,12 @@ pub struct Config {
     /// them. Indices are reduced modulo the length, and arrays never
     /// shrink, so no access is out of range.
     pub heap: bool,
+    /// Generate `String`s: literals (converted from `str`), `to_string()` of
+    /// numbers and `bool`s, `+`, `+=` with short pieces, comparisons, `len`,
+    /// `char_count`, `contains`, `starts_with`, `to_upper`, `repeat`,
+    /// `replace`, and printing them. No string grows by more than a piece at
+    /// a time, so lengths stay small.
+    pub strings: bool,
 }
 
 impl Default for Config {
@@ -202,6 +208,7 @@ impl Default for Config {
             calls_in_print_args: true,
             print_in_constant_functions: true,
             heap: true,
+            strings: true,
         }
     }
 }
@@ -309,6 +316,8 @@ enum Shape {
     Array,
     /// An instance of the program's class `Cell`.
     Cell,
+    /// A `String` (assignable when a `var`).
+    Text,
 }
 
 struct Gen<'c> {
@@ -527,8 +536,14 @@ impl Gen<'_> {
         let nest_ok = self.depth < 4;
         loop {
             let sides = if self.cfg.heap { 27 } else { 20 };
+            let sides = if self.cfg.strings { sides + 4 } else { sides };
             match self.rng.below(sides) {
-                20..=26 => {
+                27..=30 => {
+                    if let Some(stmt) = self.text_stmt(&ind) {
+                        return stmt;
+                    }
+                }
+                20..=26 if self.cfg.heap => {
                     if let Some(stmt) = self.heap_stmt(&ind, nest_ok) {
                         return stmt;
                     }
@@ -771,6 +786,112 @@ impl Gen<'_> {
         }
     }
 
+    /// A short `str` literal, sometimes with a multi-byte character.
+    fn text_literal(&mut self) -> String {
+        let piece = *self
+            .rng
+            .pick(&["", "a", "ab", "b-a", "é", "xé!", "a b", "Zz", "-"]);
+        format!("\"{piece}\"")
+    }
+
+    /// A `String` expression whose length is small.
+    fn text_expr(&mut self, depth: u32) -> String {
+        let texts = self.heap_vars(Shape::Text, None);
+        let pick_text = |gen: &mut Self| -> String {
+            if !texts.is_empty() && gen.rng.chance(60) {
+                gen.rng.pick(&texts).name.clone()
+            } else {
+                gen.text_literal()
+            }
+        };
+        match self.rng.below(if depth == 0 { 2 } else { 8 }) {
+            0 => pick_text(self),
+            1 => {
+                let ty = self.any_ty();
+                format!("({}).to_string()", self.expr(ty, 1))
+            }
+            2 | 3 => {
+                let left = pick_text(self);
+                let right = pick_text(self);
+                format!("({left} + {right})")
+            }
+            4 => format!("{}.to_upper()", pick_text(self)),
+            5 => format!("{}.to_lower()", pick_text(self)),
+            6 => format!("{}.repeat({}i64)", pick_text(self), self.rng.below(3)),
+            _ => format!("{}.replace(\"a\", \"<>\")", pick_text(self)),
+        }
+    }
+
+    /// One statement on strings, or `None` when there is nothing to use.
+    fn text_stmt(&mut self, ind: &str) -> Option<String> {
+        match self.rng.below(4) {
+            0 | 1 => {
+                let name = self.fresh("t");
+                let value = self.text_expr(2);
+                self.scopes.last_mut().unwrap().push(Var {
+                    name: name.clone(),
+                    ty: Ty::I64,
+                    assignable: true,
+                    shape: Shape::Text,
+                });
+                Some(format!("{ind}var {name}: String = {value}\n"))
+            }
+            2 => {
+                let texts = self.heap_vars(Shape::Text, None);
+                if texts.is_empty() {
+                    return None;
+                }
+                let name = self.rng.pick(&texts).name.clone();
+                let piece = if self.rng.chance(50) {
+                    self.text_literal()
+                } else {
+                    let ty = *self.rng.pick(&INTS);
+                    format!("({}).to_string()", self.expr(ty, 1))
+                };
+                Some(format!("{ind}{name} += {piece}\n"))
+            }
+            _ if self.may_print => {
+                let texts = self.heap_vars(Shape::Text, None);
+                if texts.is_empty() {
+                    return None;
+                }
+                self.prints = true;
+                let name = self.rng.pick(&texts).name.clone();
+                Some(format!("{ind}println(\"{} \", {name})\n", self.fresh("s")))
+            }
+            _ => None,
+        }
+    }
+
+    /// A value read from a `String`, of type `ty`.
+    fn text_leaf(&mut self, ty: Ty) -> Option<String> {
+        let texts = self.heap_vars(Shape::Text, None);
+        if texts.is_empty() {
+            return None;
+        }
+        let name = self.rng.pick(&texts).name.clone();
+        let other = if self.rng.chance(50) {
+            self.text_literal()
+        } else {
+            self.rng.pick(&texts).name.clone()
+        };
+        match ty {
+            Ty::Bool => Some(match self.rng.below(5) {
+                0 => format!("({name} == {other})"),
+                1 => format!("({name} < {other})"),
+                2 => format!("({name} >= {other})"),
+                3 => format!("{name}.contains({other})"),
+                _ => format!("{name}.starts_with({other})"),
+            }),
+            _ if ty.is_int() => Some(if self.rng.chance(50) {
+                format!("({name}.len() as {})", ty.name())
+            } else {
+                format!("({name}.char_count() as {})", ty.name())
+            }),
+            _ => None,
+        }
+    }
+
     /// A value read from the heap, of type `ty`, or `None` when there is
     /// nothing of that type to read.
     fn heap_leaf(&mut self, ty: Ty) -> Option<String> {
@@ -915,6 +1036,14 @@ impl Gen<'_> {
     }
 
     fn leaf(&mut self, ty: Ty) -> String {
+        if self.cfg.strings && self.heap_nesting < 2 && self.rng.chance(8) {
+            self.heap_nesting += 1;
+            let read = self.text_leaf(ty);
+            self.heap_nesting -= 1;
+            if let Some(read) = read {
+                return read;
+            }
+        }
         if self.cfg.heap && self.heap_nesting < 2 && self.rng.chance(20) {
             self.heap_nesting += 1;
             let read = self.heap_leaf(ty);

@@ -147,13 +147,22 @@ fn run_jit(
             return Ok(None);
         }
     };
-    if std::env::var_os("CODIRA_JIT_TIMINGS").is_some() {
+    let timings = std::env::var_os("CODIRA_JIT_TIMINGS").is_some();
+    if timings {
         eprintln!(
             "cranelift: compiled in {:.3} ms",
             start.elapsed().as_secs_f64() * 1000.0
         );
     }
-    match program.run() {
+    let start = std::time::Instant::now();
+    let returned = program.run();
+    if timings {
+        eprintln!(
+            "cranelift: ran in {:.3} ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    match returned {
         codira_cranelift::Returned::Unit => {}
         codira_cranelift::Returned::Bool(value) => println!("{value}"),
         codira_cranelift::Returned::Int(value) => println!("{value}"),

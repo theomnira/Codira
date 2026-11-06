@@ -592,6 +592,14 @@ fn generator_covers_the_subset() {
         " = Cell { ",
         ".d *= ",
         "for x",
+        ": String = ",
+        ").to_string()",
+        " += \"",
+        ".char_count() as ",
+        ".contains(",
+        ".to_upper()",
+        ".repeat(",
+        ".replace(",
     ] {
         assert!(
             all.contains(construct),

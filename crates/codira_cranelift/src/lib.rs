@@ -31,10 +31,15 @@
 //!   field reads, and assignment (compound too) to fields;
 //! * arrays: literals, indexing and assignment through an index with the
 //!   same bounds check and message, `len()`, `push(..)` (growing the buffer
-//!   through the runtime), `unchecked_get(..)`, and `for` loops over them.
+//!   through the runtime), `unchecked_get(..)`, and `for` loops over them;
+//! * `str` and `String` (`strings`): conversion, printing, `+`, `+=`,
+//!   comparisons, `to_string()` and the methods that read a string or make a
+//!   new one without failing.
 //!
-//! Anything else -- value structs, tuples, enums, optionals, strings beyond
-//! literals, closures, pipelines, externs, intrinsics, `@asm` -- is reported
+//! Anything else -- value structs, tuples, enums, optionals, the string
+//! methods that can fail or return an optional or an array (`slice`, `find`,
+//! `split`, `parse_*`, ...), closures, pipelines, externs, intrinsics, `@asm`
+//! -- is reported
 //! as [`Unsupported`], naming the construct and the function, and the caller
 //! falls back to the LLVM backend for the whole program. Nothing is
 //! half-compiled: either every function reachable from the entry point
@@ -89,6 +94,7 @@ use rustc_hash::FxHashMap;
 
 mod heap;
 mod runtime;
+mod strings;
 mod translate;
 
 use translate::Translator;
@@ -420,6 +426,7 @@ impl State<'_> {
                 Ok(())
             }
             TyKind::Array(element) => self.check(element),
+            TyKind::String | TyKind::Str => Ok(()),
             _ => self.scalar(ty).map(|_| ()),
         }
     }

@@ -1274,9 +1274,14 @@ of a table hashed with it can make them all collide.
 #### Back ends
 
 The LLVM back end compiles all of the above. The Cranelift back end
-(`codira run --jit`) has no GC heap: a program that uses `String` runs on
-LLVM instead, with a note saying so (`... a `String` (strings live on the GC
-heap, which this backend does not reach)`).
+(`codira run --jit`) compiles `str` literals and values, the conversion of a `str` to a `String`, printing, `+`, `+=` (on a
+local, an element or a field), the comparisons, `to_string()` of numbers,
+`bool`s and text, `len`, `is_empty`, `char_count`, `hash`, `contains`,
+`starts_with`, `ends_with`, `to_upper`, `to_lower`, `replace` and `repeat`,
+and strings in fields, arrays, parameters and results, calling the same
+runtime functions in the same order as LLVM. The other methods (`split`,
+`slice`, `find`, `parse_*`, `byte_at`, ...), `string_from_utf8` and
+interpolated literals run on LLVM instead, with a note naming them.
 
 #### Performance
 
@@ -3220,10 +3225,11 @@ covers the scalar core of the language (integers up to 64 bits, floats,
 `while`, `for` over ranges and arrays, `break`, `continue`, `return`; calls,
 methods of classes; `print`/`println` of scalars and string literals) and
 the garbage-collected heap: classes (construction, fields, assignment to
-fields) and arrays (literals, indexing, assignment through an index, `len`,
-`is_empty`, `push`, `unchecked_get`). A program that uses anything else
-(value structs, tuples, enums, optionals, `String` values, closures,
-pipelines, generic functions, the other array methods) runs on the LLVM
+fields), arrays (literals, indexing, assignment through an index, `len`,
+`is_empty`, `push`, `unchecked_get`) and strings (see "Strings"). A program that uses anything else
+(value structs, tuples, enums, optionals, the string methods listed under
+"Strings", closures, pipelines, generic functions, the other array methods)
+runs on the LLVM
 backend instead, with a note naming what Cranelift does not compile yet.
 What it compiles means the same as on LLVM: the same object layout, the
 same division and bounds checks and panic messages, shift and cast
@@ -3233,7 +3239,7 @@ arithmetic, shifts and casts"). Its code calls the same runtime functions
 that scans its frames like LLVM's; `crates/codira/tests/differential.rs`
 runs random programs on both and compares. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
-build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time.
+build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time and the run time.
 
 ### Standalone executables: `codira build --exe`
 
@@ -4127,7 +4133,7 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   "Strings", interpolated literals `f"..{x}.."`, strings in fields, arrays,
   optionals, parameters and results, across modules, to and from the host
   (`StringRef`), through collections, heap snapshots and hot reload
-  (Cranelift `--jit` runs such programs on LLVM; see "Strings")
+  (Cranelift `--jit` compiles part of this; see "Strings")
 - optionals (`T?`, `nil`, `if let`, `while let`, postfix `!`, `== nil`) and
   `match` over literals, tuples, strings and optionals, checked exhaustive
 - `enum` with payloads: construction, `match`/`if let`/`while let` with
