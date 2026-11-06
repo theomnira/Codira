@@ -778,8 +778,10 @@ dependencies = [
 name = "codira_cranelift"
 version = "0.6.0-dev"
 dependencies = [
+ "codira_abi",
  "codira_compiler",
  "codira_hir",
+ "codira_runtime",
  "codira_target",
  "cranelift-codegen",
  "cranelift-frontend",

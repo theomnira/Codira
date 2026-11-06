@@ -19,34 +19,79 @@
 //! The scalar core of the language: integers up to 64 bits, floats, `bool`
 //! and unit; `let` bindings and assignment (compound too); arithmetic,
 //! comparisons, logical and bitwise operators; casts between numeric types;
-//! `if`/`else`, `loop`, `while`, `break` with and without a value, and
-//! `return`; calls to other functions of the program; and `print`/`println`
-//! of scalars and string literals.
+//! `if`/`else`, `loop`, `while`, `for` over a range or an array, `break`
+//! with and without a value, `continue` and `return`; calls to other
+//! functions of the program and to methods; and `print`/`println` of
+//! scalars and string literals.
 //!
-//! Anything else -- structs, classes, arrays, strings beyond literals,
-//! externs, intrinsics, `@asm`, methods -- is reported as [`Unsupported`],
-//! naming the construct and the function, and the caller falls back to the
-//! LLVM backend for the whole program. Nothing is half-compiled: either every
-//! function reachable from the entry point compiles here, or none runs here.
+//! And the garbage-collected heap, with the object layout, run-time checks,
+//! panic messages and exit statuses of the LLVM backend:
+//!
+//! * classes: construction (record literal, tuple-style call, unit value),
+//!   field reads, and assignment (compound too) to fields;
+//! * arrays: literals, indexing and assignment through an index with the
+//!   same bounds check and message, `len()`, `push(..)` (growing the buffer
+//!   through the runtime), `unchecked_get(..)`, and `for` loops over them.
+//!
+//! Anything else -- value structs, tuples, enums, optionals, strings beyond
+//! literals, closures, pipelines, externs, intrinsics, `@asm` -- is reported
+//! as [`Unsupported`], naming the construct and the function, and the caller
+//! falls back to the LLVM backend for the whole program. Nothing is
+//! half-compiled: either every function reachable from the entry point
+//! compiles here, or none runs here.
+//!
+//! # The runtime
+//!
+//! Compiled code calls the runtime through the functions of the runtime
+//! function catalogue (`codira_abi::runtime_functions`), resolved to the
+//! functions `codira_runtime` registers for LLVM-compiled code: allocation,
+//! array growth, printing and panics are the same code on both backends.
+//! Objects are laid out by `codira_hir::layout`, which is checked against
+//! LLVM's layout (`codira_codegen`'s `layout_matches_llvm`), and described to
+//! the collector with descriptors built from it (`runtime::Heap`).
+//!
+//! # Safepoints and stack scanning
+//!
+//! The collector stops the world at safepoints -- every allocation, every
+//! array growth, every blocking runtime call -- and scans each stopped
+//! thread's stack conservatively: any word that looks like a handle keeps its
+//! object alive. JIT frames are ordinary native frames on the same stack, so
+//! they are scanned exactly as AOT frames are, with the same reasoning: a
+//! handle live across a call is either in a callee-saved register (captured
+//! at the safepoint) or spilled to the frame (scanned). Generated code never
+//! keeps only a derived pointer (an object's payload address) live across a
+//! call: it reloads the payload address from the handle after every call
+//! that may allocate, so the handle is what stays live, and an array's
+//! payload, which `push` can move, is never used stale.
+//!
+//! Precise scanning (stack maps) is being built for the LLVM backend. For
+//! JIT frames to take part, the collector needs, for each safepoint (each
+//! call site that can reach one), the frame offsets of the live GC handles.
+//! Cranelift computes exactly that ("user stack maps") for values declared
+//! as needing one: [`Options::precise_stack_maps`] declares every handle the
+//! generated code holds (`Translator::gc_value`), and the maps Cranelift
+//! produces are counted in [`Program::stack_maps`]. Nothing consumes them
+//! yet; the switch is off by default and is the hook where a precise
+//! collector would read them (from the compiled code's buffer, keyed by
+//! return address) and, if objects start to move, rewrite the slots.
 
 use std::{collections::VecDeque, io::Write as _, sync::Arc};
 
-use codira_hir::{
-    ArithOp, BinaryOp, BuiltinFn, CallableDef, CmpOp, Expr, ExprId, FloatBitness, Function,
-    HirDatabase, IntBitness, Literal, LogicOp, Ordering, Package, Pat, PatId, ResolveBitness,
-    Statement, Ty, TyKind, ValueNs,
-};
+use codira_hir::{Function, HirDatabase, Package, Ty, TyKind};
 use cranelift_codegen::{
-    ir::{
-        condcodes::{FloatCC, IntCC},
-        types, AbiParam, Block, InstBuilder, Signature, TrapCode, Type, Value,
-    },
+    ir::{types, AbiParam, Signature, Type},
     settings::{self, Configurable},
 };
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
 use cranelift_jit::{JITBuilder, JITModule};
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module};
 use rustc_hash::FxHashMap;
+
+mod heap;
+mod runtime;
+mod translate;
+
+use translate::Translator;
 
 /// Why a program does not run on this backend.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,17 +117,38 @@ pub enum Returned {
     Float(f64),
 }
 
+/// How to compile.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Options {
+    /// Ask Cranelift for a stack map at every call for the GC handles live
+    /// across it (see the crate documentation). Off by default: nothing
+    /// reads the maps yet, and asking for them makes Cranelift keep those
+    /// handles in stack slots across calls.
+    pub precise_stack_maps: bool,
+    /// The most bytes the program's garbage-collected heap may hold, as
+    /// `codira_runtime::RuntimeBuilder::heap_limit` sets for a runtime: at
+    /// the limit an allocation collects first. `None` for no limit.
+    pub heap_limit: Option<usize>,
+}
+
 /// A program compiled to machine code, ready to run.
 pub struct Program {
     module: JITModule,
     entry: FuncId,
     entry_return: Option<ScalarTy>,
+    stack_maps: usize,
+    // Dropped after the code: the type descriptors the code refers to and
+    // the collector it allocates in.
+    heap: runtime::Heap,
 }
 
 impl Program {
-    /// Calls the entry point, which takes no arguments.
+    /// Calls the entry point, which takes no arguments, on this thread,
+    /// registered with the collector as running Codira code for the call
+    /// (so a collection scans this thread's stack).
     pub fn run(&self) -> Returned {
         let code = self.module.get_finalized_function(self.entry);
+        let _running = codira_runtime::enter_codira();
         // SAFETY: `entry` was compiled from a function with no parameters
         // returning `entry_return`, with the host's default calling
         // convention, which is what each cast below names.
@@ -115,72 +181,38 @@ impl Program {
         let _ = std::io::stdout().flush();
         returned
     }
-}
 
-// The host side of `print`/`println`: one value each, formatted exactly as
-// the LLVM backend's runtime formats it (`codira_runtime`'s `builtins.rs`):
-// integers in decimal, and floats in their shortest round-trip form in their
-// own precision, always with a decimal point or an exponent (Rust's `{:?}`),
-// so `1.0` prints `1.0` and `0.1f32` prints `0.1`.
-extern "C" fn codira_jit_print_i64(value: i64) {
-    print!("{value}");
-}
-extern "C" fn codira_jit_print_u64(value: u64) {
-    print!("{value}");
-}
-extern "C" fn codira_jit_print_f32(value: f32) {
-    print!("{value:?}");
-}
-extern "C" fn codira_jit_print_f64(value: f64) {
-    print!("{value:?}");
-}
-extern "C" fn codira_jit_print_bool(value: u8) {
-    print!("{}", value != 0);
-}
-/// # Safety
-/// `data` points at `len` bytes of a string literal the JIT emitted.
-unsafe extern "C" fn codira_jit_print_str(data: *const u8, len: usize) {
-    // SAFETY: see the function's contract.
-    let bytes = unsafe { std::slice::from_raw_parts(data, len) };
-    print!("{}", String::from_utf8_lossy(bytes));
-}
+    /// How many stack maps Cranelift produced: zero unless
+    /// [`Options::precise_stack_maps`] was set.
+    pub fn stack_maps(&self) -> usize {
+        self.stack_maps
+    }
 
-/// The host side of a failed run-time check (an integer division by zero,
-/// say): reports `message` at `file:line:column` and ends the process with
-/// status 101, exactly as the LLVM backend's runtime does (`report_panic` in
-/// `codira_runtime`'s `builtins.rs`). What was printed so far is flushed
-/// first, so the report comes after it.
-///
-/// # Safety
-/// `message` and `file` point at `message_len` and `file_len` bytes of string
-/// data the JIT emitted.
-unsafe extern "C" fn codira_jit_panic(
-    message: *const u8,
-    message_len: usize,
-    file: *const u8,
-    file_len: usize,
-    line: u32,
-    column: u32,
-) {
-    // SAFETY: see the function's contract.
-    let (message, file) = unsafe {
-        (
-            std::slice::from_raw_parts(message, message_len),
-            std::slice::from_raw_parts(file, file_len),
-        )
-    };
-    let _ = std::io::stdout().flush();
-    eprintln!(
-        "panic at {}:{line}:{column}: {}",
-        String::from_utf8_lossy(file),
-        String::from_utf8_lossy(message)
-    );
-    std::process::exit(101)
+    /// Runs a full collection of this program's heap (for tests: the
+    /// program's objects must survive it while referenced from its frames).
+    pub fn collect_garbage(&self) -> bool {
+        self.heap.collector().collect()
+    }
+
+    /// How many collections allocations had to run because the heap was at
+    /// [`Options::heap_limit`].
+    pub fn emergency_collections(&self) -> usize {
+        self.heap.collector().emergency_collections()
+    }
 }
 
 /// Compiles the program in `db` whose entry point is the function named
 /// `entry`, and every function it can reach.
 pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported> {
+    compile_with(db, entry, Options::default())
+}
+
+/// [`compile`], with [`Options`].
+pub fn compile_with(
+    db: &dyn HirDatabase,
+    entry: &str,
+    options: Options,
+) -> Result<Program, Unsupported> {
     let fail = |what: String| Unsupported {
         function: entry.to_owned(),
         what,
@@ -193,56 +225,24 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
         .ok_or_else(|| fail(format!("there is no function `{entry}`")))?;
 
     let mut flags = settings::builder();
-    flags
-        .set("opt_level", "speed")
-        .map_err(|e| fail(format!("Cranelift setting: {e}")))?;
+    for (name, value) in [
+        ("opt_level", "speed"),
+        // Results that do not fit the return registers (a `String` is
+        // three words) go through a hidden return area.
+        ("enable_multi_ret_implicit_sret", "true"),
+    ] {
+        flags
+            .set(name, value)
+            .map_err(|e| fail(format!("Cranelift setting: {e}")))?;
+    }
     let isa = cranelift_native::builder()
         .map_err(|e| fail(format!("this host is not one Cranelift supports: {e}")))?
         .finish(settings::Flags::new(flags))
         .map_err(|e| fail(format!("Cranelift target: {e}")))?;
     let mut jit = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
-    jit.symbol("codira_jit_print_i64", codira_jit_print_i64 as *const u8);
-    jit.symbol("codira_jit_print_u64", codira_jit_print_u64 as *const u8);
-    jit.symbol("codira_jit_print_f32", codira_jit_print_f32 as *const u8);
-    jit.symbol("codira_jit_print_f64", codira_jit_print_f64 as *const u8);
-    jit.symbol("codira_jit_panic", codira_jit_panic as *const u8);
-    jit.symbol("codira_jit_print_bool", codira_jit_print_bool as *const u8);
-    jit.symbol("codira_jit_print_str", codira_jit_print_str as *const u8);
-    let mut module = JITModule::new(jit);
+    runtime::register_symbols(&mut jit);
+    let module = JITModule::new(jit);
     let pointer = module.target_config().pointer_type();
-
-    let mut print_ids = FxHashMap::default();
-    for (name, params) in [
-        ("codira_jit_print_i64", vec![AbiParam::new(types::I64)]),
-        ("codira_jit_print_u64", vec![AbiParam::new(types::I64)]),
-        ("codira_jit_print_f32", vec![AbiParam::new(types::F32)]),
-        ("codira_jit_print_f64", vec![AbiParam::new(types::F64)]),
-        (
-            "codira_jit_panic",
-            vec![
-                AbiParam::new(pointer),
-                AbiParam::new(pointer),
-                AbiParam::new(pointer),
-                AbiParam::new(pointer),
-                AbiParam::new(types::I32),
-                AbiParam::new(types::I32),
-            ],
-        ),
-        // A Rust `u8` parameter: the caller zero-extends it (see
-        // `ScalarTy::abi_param`).
-        ("codira_jit_print_bool", vec![ScalarTy::Bool.abi_param()]),
-        (
-            "codira_jit_print_str",
-            vec![AbiParam::new(pointer), AbiParam::new(pointer)],
-        ),
-    ] {
-        let mut sig = module.make_signature();
-        sig.params.extend(params);
-        let id = module
-            .declare_function(name, Linkage::Import, &sig)
-            .map_err(|e| fail(e.to_string()))?;
-        print_ids.insert(name, id);
-    }
 
     let mut state = State {
         db,
@@ -250,18 +250,27 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
         module,
         declared: FxHashMap::default(),
         queue: VecDeque::new(),
-        print_ids,
+        imports: runtime::Imports::default(),
+        heap: runtime::Heap::new(),
         strings: FxHashMap::default(),
         pointer,
+        options: options.clone(),
     };
-    let (entry_params, entry_return) = state.signature_types(entry_fn)?;
+    state.heap.collector().set_heap_limit(options.heap_limit);
+    let (entry_params, entry_ret) = state.signature_types(entry_fn)?;
     if !entry_params.is_empty() {
         return Err(fail("an entry point with parameters".to_owned()));
     }
+    let entry_return = state.scalar(&entry_ret).map_err(|what| {
+        fail(format!(
+            "an entry point returning {what} (the host reads only numbers and `bool`s)"
+        ))
+    })?;
     let entry_id = state.declare(entry_fn)?;
 
     let mut ctx = state.module.make_context();
     let mut builder_ctx = FunctionBuilderContext::new();
+    let mut stack_maps = 0;
     while let Some((function, id)) = state.queue.pop_front() {
         ctx.func.signature = state.signature(function)?;
         {
@@ -275,6 +284,9 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
                 function: function.name(db).to_string(),
                 what: format!("Cranelift rejected the function: {e:?}"),
             })?;
+        if let Some(code) = ctx.compiled_code() {
+            stack_maps += code.buffer.user_stack_maps().len();
+        }
         state.module.clear_context(&mut ctx);
     }
     state
@@ -286,12 +298,14 @@ pub fn compile(db: &dyn HirDatabase, entry: &str) -> Result<Program, Unsupported
         module: state.module,
         entry: entry_id,
         entry_return,
+        stack_maps,
+        heap: state.heap,
     })
 }
 
 /// A Codira scalar type, as this backend represents it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ScalarTy {
+pub(crate) enum ScalarTy {
     Bool,
     Int { bits: u8, signed: bool },
     Float { bits: u8 },
@@ -303,7 +317,7 @@ impl ScalarTy {
     /// expect: a `bool` or 8/16-bit integer occupies a full 32-bit register,
     /// zero- or sign-extended. Without the extension the upper bits of the
     /// register are whatever the computation left there, and an optimised
-    /// Rust callee or caller (`codira_jit_print_bool`, the host reading the
+    /// Rust callee or caller (`codira.print_bool`, the host reading the
     /// entry point's result) reads them: `(672u32 + 7u32) == 515u32` once
     /// printed `true` with a release-built compiler.
     fn abi_param(self) -> AbiParam {
@@ -322,7 +336,7 @@ impl ScalarTy {
         }
     }
 
-    fn clif(self) -> Type {
+    pub(crate) fn clif(self) -> Type {
         match self {
             ScalarTy::Bool | ScalarTy::Int { bits: 8, .. } => types::I8,
             ScalarTy::Int { bits: 16, .. } => types::I16,
@@ -334,22 +348,30 @@ impl ScalarTy {
     }
 }
 
-/// Program-wide state: the JIT module and which functions are declared.
-struct State<'db> {
-    db: &'db dyn HirDatabase,
-    layout: Arc<codira_target::abi::TargetDataLayout>,
-    module: JITModule,
+/// Program-wide state: the JIT module, which functions are declared, the
+/// runtime functions imported and the heap the program allocates in.
+pub(crate) struct State<'db> {
+    pub(crate) db: &'db dyn HirDatabase,
+    pub(crate) layout: Arc<codira_target::abi::TargetDataLayout>,
+    pub(crate) module: JITModule,
     declared: FxHashMap<Function, FuncId>,
     queue: VecDeque<(Function, FuncId)>,
-    print_ids: FxHashMap<&'static str, FuncId>,
+    pub(crate) imports: runtime::Imports,
+    pub(crate) heap: runtime::Heap,
     strings: FxHashMap<String, DataId>,
-    pointer: Type,
+    pub(crate) pointer: Type,
+    pub(crate) options: Options,
 }
 
 impl State<'_> {
+    pub(crate) fn display(&self, ty: &Ty) -> String {
+        codira_hir::HirDisplay::display(ty, self.db).to_string()
+    }
+
     /// The scalar type of `ty`, `None` for unit and `never`, or why it is
-    /// not one this backend handles.
-    fn scalar(&self, ty: &Ty) -> Result<Option<ScalarTy>, String> {
+    /// not a scalar this backend handles.
+    pub(crate) fn scalar(&self, ty: &Ty) -> Result<Option<ScalarTy>, String> {
+        use codira_hir::{FloatBitness, IntBitness, ResolveBitness};
         Ok(Some(match ty.interned() {
             TyKind::Bool => ScalarTy::Bool,
             TyKind::Int(int_ty) => {
@@ -376,24 +398,79 @@ impl State<'_> {
             },
             TyKind::Tuple(0, _) | TyKind::Never => return Ok(None),
             TyKind::String => {
-                return Err(
-                    "a `String` (strings live on the GC heap, which this backend does not reach)"
-                        .to_owned(),
-                )
+                return Err("a `String`".to_owned());
             }
-            _ => {
-                return Err(format!(
-                    "a value of type `{}`",
-                    codira_hir::HirDisplay::display(ty, self.db)
-                ))
-            }
+            _ => return Err(format!("a value of type `{}`", self.display(ty))),
         }))
     }
 
-    fn signature_types(
-        &self,
-        function: Function,
-    ) -> Result<(Vec<ScalarTy>, Option<ScalarTy>), Unsupported> {
+    /// Whether this backend represents values of `ty`: a scalar, unit, a
+    /// class instance or an array of such values.
+    pub(crate) fn check(&self, ty: &Ty) -> Result<(), String> {
+        match ty.interned() {
+            TyKind::Struct(s, _)
+                if s.data(self.db).memory_kind == codira_hir::StructMemoryKind::Gc =>
+            {
+                if codira_hir::layout::object_layout(self.db, ty).is_none() {
+                    return Err(format!(
+                        "a class with a field the backend cannot lay out (`{}`)",
+                        self.display(ty)
+                    ));
+                }
+                Ok(())
+            }
+            TyKind::Array(element) => self.check(element),
+            _ => self.scalar(ty).map(|_| ()),
+        }
+    }
+
+    /// The Cranelift types of the scalars a value of `ty` is made of, in
+    /// memory order: none for unit, one for a scalar or a reference.
+    pub(crate) fn clif_types(&self, ty: &Ty) -> Result<Vec<Type>, String> {
+        self.check(ty)?;
+        if let Some(scalar) = self.scalar(ty).ok().flatten() {
+            return Ok(vec![scalar.clif()]);
+        }
+        let layout = codira_hir::layout::value_layout(self.db, ty)
+            .ok_or_else(|| format!("a value of type `{}`", self.display(ty)))?;
+        Ok(layout
+            .leaves
+            .iter()
+            .map(|leaf| self.leaf_type(leaf.scalar))
+            .collect())
+    }
+
+    pub(crate) fn leaf_type(&self, scalar: codira_hir::layout::Scalar) -> Type {
+        use codira_hir::layout::Scalar;
+        match scalar {
+            Scalar::Bool | Scalar::Int(8) => types::I8,
+            Scalar::Int(16) => types::I16,
+            Scalar::Int(32) => types::I32,
+            Scalar::Int(64) => types::I64,
+            Scalar::Int(_) => types::I128,
+            Scalar::F32 => types::F32,
+            Scalar::F64 => types::F64,
+            Scalar::Ptr { .. } => self.pointer,
+        }
+    }
+
+    /// How a value of `ty` is passed to or returned from a function of the
+    /// program: one parameter per scalar, a number or `bool` extended as the
+    /// C convention does.
+    fn abi_params(&self, ty: &Ty) -> Result<Vec<AbiParam>, String> {
+        if let Some(scalar) = self.scalar(ty).ok().flatten() {
+            return Ok(vec![scalar.abi_param()]);
+        }
+        Ok(self
+            .clif_types(ty)?
+            .into_iter()
+            .map(AbiParam::new)
+            .collect())
+    }
+
+    /// The parameter types of `function` (its receiver first) and its
+    /// result type.
+    pub(crate) fn signature_types(&self, function: Function) -> Result<(Vec<Ty>, Ty), Unsupported> {
         let unsupported = |what: String| Unsupported {
             function: function.name(self.db).to_string(),
             what,
@@ -401,42 +478,55 @@ impl State<'_> {
         if function.is_extern(self.db) || function.is_intrinsic(self.db) {
             return Err(unsupported("an `extern` function".to_owned()));
         }
-        if function.self_param_ty(self.db).is_some() {
-            return Err(unsupported("a method with `self`".to_owned()));
-        }
         // Monomorphisation lives in the LLVM backend: this one compiles one
         // body per function, and a generic function has one per
         // instantiation.
         if function.is_generic(self.db) {
             return Err(unsupported("a generic function".to_owned()));
         }
+        if !function.effects(self.db).is_empty() {
+            return Err(unsupported("a function with a `uses` clause".to_owned()));
+        }
         let sig = function
             .ty(self.db)
             .callable_sig(self.db)
             .ok_or_else(|| unsupported("a function without a signature".to_owned()))?;
-        let mut params = Vec::new();
-        for param in sig.params() {
-            match self.scalar(param).map_err(&unsupported)? {
-                Some(ty) => params.push(ty),
-                None => return Err(unsupported("a unit parameter".to_owned())),
+        let params: Vec<Ty> = function
+            .self_param_ty(self.db)
+            .into_iter()
+            .chain(sig.params().iter().cloned())
+            .collect();
+        for param in &params {
+            if param.is_empty() {
+                return Err(unsupported("a unit parameter".to_owned()));
             }
+            self.check(param).map_err(&unsupported)?;
         }
-        let ret = self.scalar(sig.ret()).map_err(&unsupported)?;
+        let ret = sig.ret().clone();
+        self.check(&ret).map_err(&unsupported)?;
         Ok((params, ret))
     }
 
     fn signature(&self, function: Function) -> Result<Signature, Unsupported> {
         let (params, ret) = self.signature_types(function)?;
+        let unsupported = |what: String| Unsupported {
+            function: function.name(self.db).to_string(),
+            what,
+        };
         let mut sig = self.module.make_signature();
-        sig.params.extend(params.iter().map(|ty| ty.abi_param()));
-        if let Some(ret) = ret {
-            sig.returns.push(ret.abi_param());
+        for param in &params {
+            sig.params
+                .extend(self.abi_params(param).map_err(&unsupported)?);
+        }
+        if !ret.is_never() {
+            sig.returns
+                .extend(self.abi_params(&ret).map_err(&unsupported)?);
         }
         Ok(sig)
     }
 
     /// Declares `function` and queues its body, once.
-    fn declare(&mut self, function: Function) -> Result<FuncId, Unsupported> {
+    pub(crate) fn declare(&mut self, function: Function) -> Result<FuncId, Unsupported> {
         if let Some(&id) = self.declared.get(&function) {
             return Ok(id);
         }
@@ -457,7 +547,7 @@ impl State<'_> {
     }
 
     /// The data object holding `text`'s bytes, once per distinct literal.
-    fn string(&mut self, text: &str) -> Result<DataId, String> {
+    pub(crate) fn string(&mut self, text: &str) -> Result<DataId, String> {
         if let Some(&id) = self.strings.get(text) {
             return Ok(id);
         }
@@ -472,832 +562,5 @@ impl State<'_> {
             .map_err(|e| e.to_string())?;
         self.strings.insert(text.to_owned(), id);
         Ok(id)
-    }
-}
-
-/// An argument of `print`/`println`, evaluated and waiting to be printed.
-enum PrintArg {
-    Text(String),
-    Value(Option<ScalarTy>, Option<Value>),
-}
-
-/// Where a `break` goes, and the value it carries.
-struct LoopTarget {
-    exit: Block,
-    value: Option<ScalarTy>,
-}
-
-/// Translates one function body.
-struct Translator<'a, 'db> {
-    state: &'a mut State<'db>,
-    function: Function,
-    body: Arc<codira_hir::Body>,
-    infer: Arc<codira_hir::InferenceResult>,
-    builder: FunctionBuilder<'a>,
-    variables: FxHashMap<PatId, (Variable, ScalarTy)>,
-    loops: Vec<LoopTarget>,
-    /// Whether the current block already ends in a terminator.
-    terminated: bool,
-}
-
-type Lowered = Result<Option<Value>, Unsupported>;
-
-impl<'a, 'db> Translator<'a, 'db> {
-    fn translate(
-        state: &'a mut State<'db>,
-        function: Function,
-        builder: FunctionBuilder<'a>,
-    ) -> Result<(), Unsupported> {
-        let body = function.body(state.db);
-        let infer = function.infer(state.db);
-        let (param_types, ret) = state.signature_types(function)?;
-        let mut this = Translator {
-            state,
-            function,
-            body: body.clone(),
-            infer,
-            builder,
-            variables: FxHashMap::default(),
-            loops: Vec::new(),
-            terminated: false,
-        };
-
-        let entry = this.builder.create_block();
-        this.builder.append_block_params_for_function_params(entry);
-        this.builder.switch_to_block(entry);
-        let params: Vec<Value> = this.builder.block_params(entry).to_vec();
-        for (((pat, _), value), ty) in body.params().iter().zip(params).zip(param_types) {
-            let var = this.builder.declare_var(ty.clif());
-            this.builder.def_var(var, value);
-            if matches!(body[*pat], Pat::Bind { .. }) {
-                this.variables.insert(*pat, (var, ty));
-            }
-        }
-
-        let result = this.expr(body.body_expr())?;
-        if !this.terminated {
-            match (ret, result) {
-                (Some(_), Some(value)) => {
-                    this.builder.ins().return_(&[value]);
-                }
-                (Some(ty), None) => {
-                    let zero = this.zero(ty);
-                    this.builder.ins().return_(&[zero]);
-                }
-                (None, _) => {
-                    this.builder.ins().return_(&[]);
-                }
-            }
-        }
-        this.builder.seal_all_blocks();
-        let frontend = this.state.module.target_config();
-        this.builder.finalize(frontend);
-        Ok(())
-    }
-
-    fn unsupported<T>(&self, what: impl Into<String>) -> Result<T, Unsupported> {
-        Err(Unsupported {
-            function: self.function.name(self.state.db).to_string(),
-            what: what.into(),
-        })
-    }
-
-    fn scalar_of(&self, ty: &Ty) -> Result<Option<ScalarTy>, Unsupported> {
-        self.state.scalar(ty).or_else(|what| self.unsupported(what))
-    }
-
-    fn zero(&mut self, ty: ScalarTy) -> Value {
-        match ty {
-            ScalarTy::Float { bits: 32 } => self.builder.ins().f32const(0.0),
-            ScalarTy::Float { .. } => self.builder.ins().f64const(0.0),
-            other => self.builder.ins().iconst(other.clif(), 0),
-        }
-    }
-
-    /// The value of an operand, which type checking guarantees has one.
-    fn operand(&mut self, id: ExprId) -> Result<Value, Unsupported> {
-        match self.expr(id)? {
-            Some(value) => Ok(value),
-            None => self.unsupported("an operand with no value"),
-        }
-    }
-
-    /// Continues in a fresh block after a terminator: code that follows a
-    /// `return` or `break` is unreachable but still has to be somewhere.
-    fn after_terminator(&mut self) {
-        let dead = self.builder.create_block();
-        self.builder.switch_to_block(dead);
-        self.terminated = false;
-    }
-
-    /// Jumps to `target` with `value`, unless the current block already
-    /// ended.
-    fn jump(&mut self, target: Block, value: Option<Value>) {
-        if self.terminated {
-            return;
-        }
-        match value {
-            Some(value) => self.builder.ins().jump(target, &[value.into()]),
-            None => self.builder.ins().jump(target, &[]),
-        };
-        self.terminated = true;
-    }
-
-    fn switch_to(&mut self, block: Block) {
-        self.builder.switch_to_block(block);
-        self.terminated = false;
-    }
-
-    fn local(&self, id: ExprId) -> Option<(Variable, ScalarTy)> {
-        let Expr::Path(path) = &self.body[id] else {
-            return None;
-        };
-        let resolver = codira_hir::resolver_for_expr(self.state.db, self.body.owner(), id);
-        match resolver.resolve_path_as_value_fully(self.state.db, path) {
-            Some((ValueNs::LocalBinding(pat), _)) => self.variables.get(&pat).copied(),
-            _ => None,
-        }
-    }
-
-    fn expr(&mut self, id: ExprId) -> Lowered {
-        // A `T` used where a `T?` is expected changes representation, and
-        // this backend has no optional representation to change it into.
-        if self.infer.optional_wrap(id).is_some() {
-            return self.unsupported("an optional (`T?`) value");
-        }
-        let body = self.body.clone();
-        match &body[id] {
-            Expr::Literal(literal) => self.literal(id, literal),
-            Expr::Path(_) if self.infer.function_value(id).is_some() => {
-                self.unsupported("a function used as a value")
-            }
-            Expr::Path(_) => match self.local(id) {
-                Some((var, _)) => Ok(Some(self.builder.use_var(var))),
-                None => self.unsupported("a path that is not a scalar local variable"),
-            },
-            Expr::Block { statements, tail } => {
-                for statement in statements {
-                    match statement {
-                        Statement::Let {
-                            pat,
-                            initializer: Some(init),
-                            ..
-                        } => {
-                            let value = self.expr(*init)?;
-                            let Some(ty) = self.scalar_of(&self.infer[*pat])? else {
-                                continue;
-                            };
-                            if !matches!(body[*pat], Pat::Bind { .. }) {
-                                return self.unsupported("a `let` with a pattern");
-                            }
-                            let var = self.builder.declare_var(ty.clif());
-                            let value = match value {
-                                Some(value) => value,
-                                None => self.zero(ty),
-                            };
-                            self.builder.def_var(var, value);
-                            self.variables.insert(*pat, (var, ty));
-                        }
-                        Statement::Let {
-                            initializer: None, ..
-                        } => return self.unsupported("a `let` without an initializer"),
-                        Statement::Expr(expr) => {
-                            self.expr(*expr)?;
-                        }
-                    }
-                }
-                match tail {
-                    Some(tail) => self.expr(*tail),
-                    None => Ok(None),
-                }
-            }
-            Expr::UnaryOp { expr, op } => {
-                let ty = self.scalar_of(&self.infer[*expr])?;
-                let value = self.operand(*expr)?;
-                Ok(Some(match (op, ty) {
-                    (codira_hir::UnaryOp::Neg, Some(ScalarTy::Float { .. })) => {
-                        self.builder.ins().fneg(value)
-                    }
-                    (codira_hir::UnaryOp::Neg, _) => self.builder.ins().ineg(value),
-                    (codira_hir::UnaryOp::Not, Some(ScalarTy::Bool)) => {
-                        let one = self.builder.ins().iconst(types::I8, 1);
-                        self.builder.ins().bxor(value, one)
-                    }
-                    (codira_hir::UnaryOp::Not | codira_hir::UnaryOp::BitNot, _) => {
-                        self.builder.ins().bnot(value)
-                    }
-                }))
-            }
-            Expr::BinaryOp {
-                lhs,
-                rhs,
-                op: Some(op),
-            } => self.binary(id, *lhs, *rhs, *op),
-            Expr::If {
-                condition,
-                then_branch,
-                else_branch,
-            } => self.if_expr(id, *condition, *then_branch, *else_branch),
-            Expr::Loop { body: loop_body } => {
-                let header = self.builder.create_block();
-                let exit = self.builder.create_block();
-                let value = self.scalar_of(&self.infer[id])?;
-                if let Some(ty) = value {
-                    self.builder.append_block_param(exit, ty.clif());
-                }
-                self.jump(header, None);
-                self.switch_to(header);
-                self.loops.push(LoopTarget { exit, value });
-                self.expr(*loop_body)?;
-                self.loops.pop();
-                self.jump(header, None);
-                self.switch_to(exit);
-                Ok(value.map(|_| self.builder.block_params(exit)[0]))
-            }
-            Expr::While {
-                condition,
-                body: loop_body,
-            } => {
-                let header = self.builder.create_block();
-                let inside = self.builder.create_block();
-                let exit = self.builder.create_block();
-                self.jump(header, None);
-                self.switch_to(header);
-                let condition = self.operand(*condition)?;
-                self.builder.ins().brif(condition, inside, &[], exit, &[]);
-                self.switch_to(inside);
-                self.loops.push(LoopTarget { exit, value: None });
-                self.expr(*loop_body)?;
-                self.loops.pop();
-                self.jump(header, None);
-                self.switch_to(exit);
-                Ok(None)
-            }
-            Expr::Break { expr } => {
-                let Some(target) = self.loops.last() else {
-                    return self.unsupported("`break` outside a loop");
-                };
-                let (exit, value_ty) = (target.exit, target.value);
-                let value = match expr {
-                    Some(expr) => self.expr(*expr)?,
-                    None => None,
-                };
-                let value = match (value_ty, value) {
-                    (Some(_), Some(value)) => Some(value),
-                    (Some(ty), None) => Some(self.zero(ty)),
-                    (None, _) => None,
-                };
-                self.jump(exit, value);
-                self.after_terminator();
-                Ok(None)
-            }
-            Expr::Return { expr } => {
-                let value = match expr {
-                    Some(expr) => self.expr(*expr)?,
-                    None => None,
-                };
-                if !self.terminated {
-                    match value {
-                        Some(value) => self.builder.ins().return_(&[value]),
-                        None => self.builder.ins().return_(&[]),
-                    };
-                }
-                self.after_terminator();
-                Ok(None)
-            }
-            Expr::Call { callee, args } => self.call(id, *callee, args),
-            Expr::Cast { expr, .. } => self.cast(id, *expr),
-            Expr::Tuple(elements) if elements.is_empty() => Ok(None),
-            Expr::Missing => self.unsupported("an expression the front end could not lower"),
-            // A lazy pipeline (`xs.iter().map(f).sum()`) is fused into one
-            // loop by the LLVM backend only, like the arrays it reads.
-            Expr::MethodCall { .. }
-                if matches!(self.infer.builtin_call(id), Some(BuiltinFn::Pipeline(_))) =>
-            {
-                self.unsupported("a lazy pipeline (`iter()`, `map`, `sum`, ...)")
-            }
-            Expr::MethodCall { .. } => self.unsupported("a method call"),
-            Expr::For { .. } => self.unsupported("a `for` loop"),
-            Expr::Index { .. } => self.unsupported("indexing"),
-            Expr::RecordLit { .. } => self.unsupported("a struct literal"),
-            Expr::Field { .. } => self.unsupported("a field access"),
-            Expr::Array(_) => self.unsupported("an array"),
-            // Structured concurrency lowers through the LLVM backend only.
-            Expr::Select { .. } => self.unsupported("`select`"),
-            Expr::Offer { .. } => self.unsupported("`offer`"),
-            Expr::Closure { .. } => self.unsupported("a closure"),
-            _ => self.unsupported("this kind of expression"),
-        }
-    }
-
-    fn literal(&mut self, id: ExprId, literal: &Literal) -> Lowered {
-        let ty = self.scalar_of(&self.infer[id])?;
-        Ok(Some(match (literal, ty) {
-            (Literal::Bool(b), _) => self.builder.ins().iconst(types::I8, i64::from(*b)),
-            (Literal::Int(int), Some(ScalarTy::Float { bits })) => {
-                // An integer literal can be inferred as a float.
-                #[allow(clippy::cast_precision_loss)]
-                let value = int.value as f64;
-                if bits == 32 {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let value = value as f32;
-                    self.builder.ins().f32const(value)
-                } else {
-                    self.builder.ins().f64const(value)
-                }
-            }
-            (Literal::Int(int), Some(ty)) => {
-                // The literal's two's-complement bits, which is how `iconst`
-                // takes them.
-                #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
-                let bits = int.value as u64 as i64;
-                self.builder.ins().iconst(ty.clif(), bits)
-            }
-            (Literal::Float(float), Some(ScalarTy::Float { bits: 32 })) => {
-                #[allow(clippy::cast_possible_truncation)]
-                let value = float.value as f32;
-                self.builder.ins().f32const(value)
-            }
-            (Literal::Float(float), _) => self.builder.ins().f64const(float.value),
-            (Literal::String(_), _) => {
-                return self.unsupported("a string outside `print`/`println`")
-            }
-            _ => return self.unsupported("this literal"),
-        }))
-    }
-
-    fn binary(&mut self, id: ExprId, lhs: ExprId, rhs: ExprId, op: BinaryOp) -> Lowered {
-        match op {
-            BinaryOp::Assignment { op } => {
-                let Some((var, ty)) = self.local(lhs) else {
-                    return self.unsupported("assignment to something other than a variable");
-                };
-                let value = self.operand(rhs)?;
-                let value = match op {
-                    None => value,
-                    Some(arith) => {
-                        let old = self.builder.use_var(var);
-                        self.division_check(id, arith, ty, old, value)?;
-                        self.arith(arith, ty, old, value)?
-                    }
-                };
-                self.builder.def_var(var, value);
-                Ok(None)
-            }
-            BinaryOp::LogicOp(logic) => {
-                let left = self.operand(lhs)?;
-                let right_block = self.builder.create_block();
-                let merge = self.builder.create_block();
-                let result = self.builder.append_block_param(merge, types::I8);
-                match logic {
-                    LogicOp::And => {
-                        self.builder
-                            .ins()
-                            .brif(left, right_block, &[], merge, &[left.into()]);
-                    }
-                    LogicOp::Or => {
-                        self.builder
-                            .ins()
-                            .brif(left, merge, &[left.into()], right_block, &[]);
-                    }
-                }
-                self.switch_to(right_block);
-                let right = self.operand(rhs)?;
-                self.jump(merge, Some(right));
-                self.switch_to(merge);
-                Ok(Some(result))
-            }
-            BinaryOp::ArithOp(arith) => {
-                let Some(ty) = self.scalar_of(&self.infer[lhs])? else {
-                    return self.unsupported("arithmetic on unit");
-                };
-                let left = self.operand(lhs)?;
-                let right = self.operand(rhs)?;
-                self.division_check(id, arith, ty, left, right)?;
-                Ok(Some(self.arith(arith, ty, left, right)?))
-            }
-            BinaryOp::CmpOp(cmp) => {
-                let Some(ty) = self.scalar_of(&self.infer[lhs])? else {
-                    return self.unsupported("comparison of unit");
-                };
-                let left = self.operand(lhs)?;
-                let right = self.operand(rhs)?;
-                Ok(Some(self.compare(cmp, ty, left, right)))
-            }
-        }
-    }
-
-    /// Checks the divisor of the integer division or remainder `id` (`a / b`,
-    /// `a % b`, or the compound assignment), as the LLVM backend does: a zero
-    /// divisor, and for a signed type `MIN / -1` or `MIN % -1`, panic with
-    /// the location of `id` instead of reaching `sdiv`/`udiv`/`srem`/`urem`
-    /// (which trap). The effect analysis decides which divisions need it
-    /// (`codira_hir::realtime::division_needs_check`); the others get none.
-    fn division_check(
-        &mut self,
-        id: ExprId,
-        op: ArithOp,
-        ty: ScalarTy,
-        a: Value,
-        b: Value,
-    ) -> Result<(), Unsupported> {
-        let ScalarTy::Int { bits, signed } = ty else {
-            return Ok(());
-        };
-        if !codira_hir::realtime::division_needs_check(self.state.db, &self.body, &self.infer, id) {
-            return Ok(());
-        }
-        let divide = op == ArithOp::Divide;
-        let is_zero = self.builder.ins().icmp_imm_u(IntCC::Equal, b, 0);
-        self.panic_if(
-            is_zero,
-            id,
-            if divide {
-                "attempt to divide by zero"
-            } else {
-                "attempt to calculate the remainder with a divisor of zero"
-            },
-        )?;
-        if signed {
-            // The immediates are the bit patterns at the operand's width:
-            // `MIN` is the top bit alone, `-1` every bit.
-            let all_ones = if bits == 64 { -1 } else { (1i64 << bits) - 1 };
-            let min = 1i64 << (bits - 1);
-            let a_min = self.builder.ins().icmp_imm_u(IntCC::Equal, a, min);
-            let b_minus_one = self.builder.ins().icmp_imm_u(IntCC::Equal, b, all_ones);
-            let overflow = self.builder.ins().band(a_min, b_minus_one);
-            self.panic_if(
-                overflow,
-                id,
-                if divide {
-                    "attempt to divide with overflow"
-                } else {
-                    "attempt to calculate the remainder with overflow"
-                },
-            )?;
-        }
-        Ok(())
-    }
-
-    /// Branches to a cold block that panics with `message` at `id`'s source
-    /// location when `condition` holds, and continues in a new block when it
-    /// does not.
-    fn panic_if(&mut self, condition: Value, id: ExprId, message: &str) -> Result<(), Unsupported> {
-        let fail = self.builder.create_block();
-        let ok = self.builder.create_block();
-        self.builder.set_cold_block(fail);
-        self.builder.ins().brif(condition, fail, &[], ok, &[]);
-        self.switch_to(fail);
-        let (file, line, column) = match self.function.expr_source_range(self.state.db, id) {
-            Some((file_id, range)) => {
-                let line_col = self.state.db.line_index(file_id).line_col(range.start());
-                (
-                    self.state.db.file_relative_path(file_id).to_string(),
-                    line_col.line + 1,
-                    line_col.col_utf16 + 1,
-                )
-            }
-            None => ("<unknown>".to_owned(), 0, 0),
-        };
-        let mut args = Vec::with_capacity(6);
-        for text in [message, file.as_str()] {
-            let (address, len) = self.string_value(text)?;
-            args.extend([address, len]);
-        }
-        for value in [line, column] {
-            args.push(self.builder.ins().iconst(types::I32, i64::from(value)));
-        }
-        self.call_print("codira_jit_panic", &args);
-        self.builder.ins().trap(TrapCode::unwrap_user(1));
-        self.switch_to(ok);
-        Ok(())
-    }
-
-    fn arith(
-        &mut self,
-        op: ArithOp,
-        ty: ScalarTy,
-        a: Value,
-        b: Value,
-    ) -> Result<Value, Unsupported> {
-        let signed = matches!(ty, ScalarTy::Int { signed: true, .. });
-        if let ScalarTy::Float { .. } = ty {
-            let ins = self.builder.ins();
-            return match op {
-                ArithOp::Add => Ok(ins.fadd(a, b)),
-                ArithOp::Subtract => Ok(ins.fsub(a, b)),
-                ArithOp::Multiply => Ok(ins.fmul(a, b)),
-                ArithOp::Divide => Ok(ins.fdiv(a, b)),
-                other => self.unsupported(format!("`{other:?}` on a float")),
-            };
-        }
-        let ins = self.builder.ins();
-        Ok(match op {
-            ArithOp::Add => ins.iadd(a, b),
-            ArithOp::Subtract => ins.isub(a, b),
-            ArithOp::Multiply => ins.imul(a, b),
-            ArithOp::Divide if signed => ins.sdiv(a, b),
-            ArithOp::Divide => ins.udiv(a, b),
-            ArithOp::Remainder if signed => ins.srem(a, b),
-            ArithOp::Remainder => ins.urem(a, b),
-            ArithOp::LeftShift => ins.ishl(a, b),
-            ArithOp::RightShift if signed => ins.sshr(a, b),
-            ArithOp::RightShift => ins.ushr(a, b),
-            ArithOp::BitAnd => ins.band(a, b),
-            ArithOp::BitOr => ins.bor(a, b),
-            ArithOp::BitXor => ins.bxor(a, b),
-        })
-    }
-
-    fn compare(&mut self, op: CmpOp, ty: ScalarTy, a: Value, b: Value) -> Value {
-        let ordered = |ordering: Ordering, strict: bool| match (ordering, strict) {
-            (Ordering::Less, true) => 0,
-            (Ordering::Less, false) => 1,
-            (Ordering::Greater, true) => 2,
-            (Ordering::Greater, false) => 3,
-        };
-        if let ScalarTy::Float { .. } = ty {
-            let cc = match op {
-                CmpOp::Eq { negated: false } => FloatCC::Equal,
-                // `!=` is true when an operand is NaN.
-                CmpOp::Eq { negated: true } => FloatCC::NotEqual,
-                CmpOp::Ord { ordering, strict } => [
-                    FloatCC::LessThan,
-                    FloatCC::LessThanOrEqual,
-                    FloatCC::GreaterThan,
-                    FloatCC::GreaterThanOrEqual,
-                ][ordered(ordering, strict)],
-            };
-            return self.builder.ins().fcmp(cc, a, b);
-        }
-        let signed = matches!(ty, ScalarTy::Int { signed: true, .. });
-        let cc = match op {
-            CmpOp::Eq { negated: false } => IntCC::Equal,
-            CmpOp::Eq { negated: true } => IntCC::NotEqual,
-            CmpOp::Ord { ordering, strict } if signed => [
-                IntCC::SignedLessThan,
-                IntCC::SignedLessThanOrEqual,
-                IntCC::SignedGreaterThan,
-                IntCC::SignedGreaterThanOrEqual,
-            ][ordered(ordering, strict)],
-            CmpOp::Ord { ordering, strict } => [
-                IntCC::UnsignedLessThan,
-                IntCC::UnsignedLessThanOrEqual,
-                IntCC::UnsignedGreaterThan,
-                IntCC::UnsignedGreaterThanOrEqual,
-            ][ordered(ordering, strict)],
-        };
-        self.builder.ins().icmp(cc, a, b)
-    }
-
-    fn if_expr(
-        &mut self,
-        id: ExprId,
-        condition: ExprId,
-        then_branch: ExprId,
-        else_branch: Option<ExprId>,
-    ) -> Lowered {
-        let result_ty = if else_branch.is_some() {
-            self.scalar_of(&self.infer[id])?
-        } else {
-            None
-        };
-        let condition = self.operand(condition)?;
-        let then_block = self.builder.create_block();
-        let else_block = self.builder.create_block();
-        let merge = self.builder.create_block();
-        let result = result_ty.map(|ty| self.builder.append_block_param(merge, ty.clif()));
-        self.builder
-            .ins()
-            .brif(condition, then_block, &[], else_block, &[]);
-
-        for (block, branch) in [(then_block, Some(then_branch)), (else_block, else_branch)] {
-            self.switch_to(block);
-            let value = match branch {
-                Some(branch) => self.expr(branch)?,
-                None => None,
-            };
-            let value = match (result_ty, value) {
-                (Some(_), Some(value)) => Some(value),
-                (Some(ty), None) => Some(self.zero(ty)),
-                (None, _) => None,
-            };
-            self.jump(merge, value);
-        }
-        self.switch_to(merge);
-        Ok(result)
-    }
-
-    fn call(&mut self, id: ExprId, callee: ExprId, args: &[ExprId]) -> Lowered {
-        if let Some(builtin) = self.infer.builtin_call(id) {
-            // Only the printing builtins compile here. Anything else --
-            // `channel`, `declassify`, `ct_select`, and builtins added later
-            // -- is declined by name rather than guessed at: treating an
-            // unknown builtin as `print` would compile it into the wrong
-            // program, which is worse than not compiling it.
-            if !matches!(builtin, BuiltinFn::Print | BuiltinFn::Println) {
-                return self.unsupported(format!("the builtin `{}`", builtin.name()));
-            }
-            // Every argument is evaluated, left to right, before anything is
-            // printed, as on the LLVM backend: an argument that calls a
-            // function which prints does so before this line starts.
-            let mut values = Vec::with_capacity(args.len());
-            for &arg in args {
-                values.push(self.print_argument(arg)?);
-            }
-            for value in values {
-                self.print(value)?;
-            }
-            if builtin == BuiltinFn::Println {
-                self.print_text("\n")?;
-            }
-            return Ok(None);
-        }
-        if self.infer.is_indirect_call(id) {
-            return self.unsupported("a call through a function value");
-        }
-        let Some(CallableDef::Function(function)) = self.infer[callee].as_callable_def() else {
-            return self.unsupported("a call to something other than a function");
-        };
-        if function.is_inline_asm(self.state.db) {
-            return self.unsupported("a call to an `@asm` function");
-        }
-        let callee_id = self.state.declare(function)?;
-        let mut values = Vec::with_capacity(args.len());
-        for &arg in args {
-            values.push(self.operand(arg)?);
-        }
-        let callee_ref = self
-            .state
-            .module
-            .declare_func_in_func(callee_id, self.builder.func);
-        let call = self.builder.ins().call(callee_ref, &values);
-        // A function returning `never` has no result here either; nothing
-        // after a call to it can run, so the block ends in a trap and what
-        // follows goes to a dead block, as after a `return`.
-        let never = function
-            .ty(self.state.db)
-            .callable_sig(self.state.db)
-            .is_some_and(|sig| sig.ret().is_never());
-        if never {
-            self.builder.ins().trap(TrapCode::unwrap_user(1));
-            self.terminated = true;
-            self.after_terminator();
-            return Ok(None);
-        }
-        Ok(self.builder.inst_results(call).first().copied())
-    }
-
-    fn call_print(&mut self, name: &'static str, args: &[Value]) {
-        let print = self.state.print_ids[name];
-        let print = self
-            .state
-            .module
-            .declare_func_in_func(print, self.builder.func);
-        self.builder.ins().call(print, args);
-    }
-
-    /// The address and length of `text`'s bytes, emitted once per program.
-    fn string_value(&mut self, text: &str) -> Result<(Value, Value), Unsupported> {
-        let data = self
-            .state
-            .string(text)
-            .or_else(|what| self.unsupported(what))?;
-        let global = self
-            .state
-            .module
-            .declare_data_in_func(data, self.builder.func);
-        let pointer = self.state.pointer;
-        let address = self.builder.ins().symbol_value(pointer, global);
-        let len = self
-            .builder
-            .ins()
-            .iconst(pointer, i64::try_from(text.len()).unwrap_or(i64::MAX));
-        Ok((address, len))
-    }
-
-    fn print_text(&mut self, text: &str) -> Result<(), Unsupported> {
-        let (address, len) = self.string_value(text)?;
-        self.call_print("codira_jit_print_str", &[address, len]);
-        Ok(())
-    }
-
-    /// Evaluates one argument of `print`/`println`, without printing it.
-    fn print_argument(&mut self, arg: ExprId) -> Result<PrintArg, Unsupported> {
-        if let Expr::Literal(Literal::String(text)) = &self.body.clone()[arg] {
-            return Ok(PrintArg::Text(text.to_string()));
-        }
-        let ty = self.scalar_of(&self.infer[arg])?;
-        let value = self.expr(arg)?;
-        Ok(PrintArg::Value(ty, value))
-    }
-
-    fn print(&mut self, arg: PrintArg) -> Result<(), Unsupported> {
-        let (ty, value) = match arg {
-            PrintArg::Text(text) => return self.print_text(&text),
-            PrintArg::Value(ty, value) => (ty, value),
-        };
-        match (ty, value) {
-            (Some(ScalarTy::Bool), Some(value)) => {
-                self.call_print("codira_jit_print_bool", &[value]);
-            }
-            (Some(ScalarTy::Float { bits: 32 }), Some(value)) => {
-                self.call_print("codira_jit_print_f32", &[value]);
-            }
-            (Some(ScalarTy::Float { .. }), Some(value)) => {
-                self.call_print("codira_jit_print_f64", &[value]);
-            }
-            (Some(ScalarTy::Int { bits, signed }), Some(value)) => {
-                let value = match (bits, signed) {
-                    (64, _) => value,
-                    (_, true) => self.builder.ins().sextend(types::I64, value),
-                    (_, false) => self.builder.ins().uextend(types::I64, value),
-                };
-                let name = if signed {
-                    "codira_jit_print_i64"
-                } else {
-                    "codira_jit_print_u64"
-                };
-                self.call_print(name, &[value]);
-            }
-            _ => self.print_text("()")?,
-        }
-        Ok(())
-    }
-
-    fn cast(&mut self, id: ExprId, expr: ExprId) -> Lowered {
-        let (Some(from), Some(to)) = (
-            self.scalar_of(&self.infer[expr])?,
-            self.scalar_of(&self.infer[id])?,
-        ) else {
-            return self.unsupported("a cast to or from unit");
-        };
-        let value = self.operand(expr)?;
-        let target = to.clif();
-        let ins = self.builder.ins();
-        Ok(Some(match (from, to) {
-            _ if from == to => value,
-            (ScalarTy::Bool, ScalarTy::Int { bits: 8, .. }) => value,
-            (ScalarTy::Bool, ScalarTy::Int { .. }) => ins.uextend(target, value),
-            (
-                ScalarTy::Int {
-                    bits: from_bits,
-                    signed,
-                },
-                ScalarTy::Int { bits: to_bits, .. },
-            ) => match from_bits.cmp(&to_bits) {
-                std::cmp::Ordering::Equal => value,
-                std::cmp::Ordering::Greater => ins.ireduce(target, value),
-                std::cmp::Ordering::Less if signed => ins.sextend(target, value),
-                std::cmp::Ordering::Less => ins.uextend(target, value),
-            },
-            (ScalarTy::Int { signed: true, .. }, ScalarTy::Float { .. }) => {
-                ins.fcvt_from_sint(target, value)
-            }
-            (ScalarTy::Int { signed: false, .. }, ScalarTy::Float { .. }) => {
-                ins.fcvt_from_uint(target, value)
-            }
-            // Float to integer saturates, NaN giving 0, as the language
-            // defines it (and LLVM's `llvm.fpto{s,u}i.sat` implements).
-            // Cranelift's x86-64 backend encodes the saturating conversions
-            // only to 32 and 64 bits (an 8- or 16-bit result reaches an
-            // `unreachable!` in its emitter), so a narrower target converts
-            // to `i32` first -- saturating there, NaN already 0 -- then
-            // clamps to the target's range, which lies inside `i32`'s, and
-            // narrows: the same value for every input.
-            (
-                ScalarTy::Float { .. },
-                ScalarTy::Int {
-                    bits: bits @ (8 | 16),
-                    signed,
-                },
-            ) => {
-                let half = 1i64 << (bits - 1);
-                let wide = if signed {
-                    ins.fcvt_to_sint_sat(types::I32, value)
-                } else {
-                    ins.fcvt_to_uint_sat(types::I32, value)
-                };
-                let clamped = if signed {
-                    let min = self.builder.ins().iconst(types::I32, -half);
-                    let max = self.builder.ins().iconst(types::I32, half - 1);
-                    let low = self.builder.ins().smax(wide, min);
-                    self.builder.ins().smin(low, max)
-                } else {
-                    let max = self.builder.ins().iconst(types::I32, 2 * half - 1);
-                    self.builder.ins().umin(wide, max)
-                };
-                self.builder.ins().ireduce(target, clamped)
-            }
-            (ScalarTy::Float { .. }, ScalarTy::Int { signed: true, .. }) => {
-                ins.fcvt_to_sint_sat(target, value)
-            }
-            (ScalarTy::Float { .. }, ScalarTy::Int { signed: false, .. }) => {
-                ins.fcvt_to_uint_sat(target, value)
-            }
-            (ScalarTy::Float { bits: 32 }, ScalarTy::Float { .. }) => ins.fpromote(target, value),
-            (ScalarTy::Float { .. }, ScalarTy::Float { .. }) => ins.fdemote(target, value),
-            _ => return self.unsupported("this cast"),
-        }))
     }
 }

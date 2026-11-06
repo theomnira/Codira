@@ -142,7 +142,7 @@ fn run_jit(
         Ok(program) => program,
         Err(unsupported) => {
             eprintln!(
-                "note: running on the LLVM backend: the Cranelift backend does not compile                  {unsupported} yet"
+                "note: running on the LLVM backend: the Cranelift backend does not compile {unsupported} yet"
             );
             return Ok(None);
         }

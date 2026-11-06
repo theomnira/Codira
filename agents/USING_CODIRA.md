@@ -299,8 +299,11 @@ for (i, x) in xs.enumerate() { }                  // index and element
   neither, and a closure compiled in place adds only what its body does: a
   `@noalloc @nopanic` function may call `xs.fold(0, func(a, x) { a + x })`.
   A function value passed instead counts as unknown (every effect).
-- Not supported by `codira run --jit` (Cranelift): a program using arrays
-  says so and runs on LLVM.
+- `codira run --jit` (Cranelift) compiles array literals, indexing and
+  assignment through an index (same bounds check and panic), `len()`,
+  `is_empty()`, `push(..)`, `unchecked_get(..)` and `for` loops over arrays;
+  the other methods, slicing and `array_filled` it refuses, saying so, and
+  the program runs on LLVM.
 
 **Collections in the standard library** (`import std.collections.<module>`),
 built on `[T]`, all classes (assigning one shares it):
@@ -1887,8 +1890,9 @@ func fresh[T: Shape + Make](x: T) -> i64 { T.make().area() + x.area() }
   negative or specialised implementations, and one type cannot implement
   two traits that declare a method of the same name (a type's methods
   share one namespace).
-- `codira run --jit` (Cranelift) does not compile method calls or generic
-  functions: it says so, and the program runs on LLVM.
+- `codira run --jit` (Cranelift) compiles calls of methods and associated
+  functions of classes; it does not compile generic functions or trait
+  methods: it says so, and the program runs on LLVM.
 
 ### Optional types
 
@@ -3213,16 +3217,21 @@ bodies without a manual stop/restart cycle.
 in the compiler's own process: no LLVM optimization pipeline, no linker. It
 covers the scalar core of the language (integers up to 64 bits, floats,
 `bool`; `let`/`var` and assignment; operators and casts; `if`, `loop`,
-`while`, `break`, `return`; calls; `print`/`println` of scalars and string
-literals). A program that uses anything else runs on the LLVM backend instead,
-with a note naming what Cranelift does not compile yet. What it compiles
-means the same as on LLVM: the same division checks and panic messages,
-shift and cast semantics, argument order and float printing (see "Integer
-arithmetic, shifts and casts"); `crates/codira/tests/differential.rs` runs
-random programs on both and compares. Arrays (and so the growable-array
-methods and the collections) are not compiled by Cranelift: such a program
-runs on LLVM with the note, and the random programs of the differential
-test have no arrays. Measured: a
+`while`, `for` over ranges and arrays, `break`, `continue`, `return`; calls,
+methods of classes; `print`/`println` of scalars and string literals) and
+the garbage-collected heap: classes (construction, fields, assignment to
+fields) and arrays (literals, indexing, assignment through an index, `len`,
+`is_empty`, `push`, `unchecked_get`). A program that uses anything else
+(value structs, tuples, enums, optionals, `String` values, closures,
+pipelines, generic functions, the other array methods) runs on the LLVM
+backend instead, with a note naming what Cranelift does not compile yet.
+What it compiles means the same as on LLVM: the same object layout, the
+same division and bounds checks and panic messages, shift and cast
+semantics, argument and evaluation order and float printing (see "Integer
+arithmetic, shifts and casts"). Its code calls the same runtime functions
+(allocation, array growth, printing, panics) and allocates in a collector
+that scans its frames like LLVM's; `crates/codira/tests/differential.rs`
+runs random programs on both and compares. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
 build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time.
 

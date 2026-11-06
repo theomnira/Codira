@@ -81,7 +81,7 @@ pub use codira_memory::{
 pub type RuntimeStats = gc::GcStats;
 use codira_project::LOCKFILE_NAME;
 use dispatch_table::DispatchTable;
-use garbage_collector::GarbageCollector;
+pub use garbage_collector::GarbageCollector;
 use log::{debug, error, info};
 use notify::{
     event::{ModifyKind, RenameMode},

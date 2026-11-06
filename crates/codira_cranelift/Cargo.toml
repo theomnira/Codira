@@ -13,7 +13,9 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
 codira_hir = { version = "0.6.0-dev", path = "../codira_hir" }
+codira_runtime = { version = "0.6.0-dev", path = "../codira_runtime" }
 codira_target = { version = "0.6.0-dev", path = "../codira_target" }
 cranelift-codegen = "0.136"
 cranelift-frontend = "0.136"
