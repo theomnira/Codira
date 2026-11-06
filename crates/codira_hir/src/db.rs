@@ -212,6 +212,22 @@ pub trait HirDatabase: DefDatabase {
     #[salsa::invoke(crate::realtime::effect_summary_query)]
     fn effect_summary(&self, func: Function) -> Arc<crate::realtime::EffectSummary>;
 
+    /// The functions whose escape summaries the escape analysis of `func`
+    /// reads (its named callees in the same module). See `crate::escape`.
+    #[salsa::invoke(crate::escape::escape_callees_query)]
+    fn escape_callees(&self, func: Function) -> Arc<Vec<Function>>;
+
+    /// What a call to `func` does with each argument -- keeps it, returns
+    /// it, or neither -- through everything it calls, recursion included.
+    /// See `crate::escape`.
+    #[salsa::invoke(crate::escape::escape_summary_query)]
+    fn escape_summary(&self, func: Function) -> Arc<crate::escape::EscapeSummary>;
+
+    /// Every allocation of `func`'s body, whether it may live in the
+    /// function's stack frame, and why not. See `crate::escape`.
+    #[salsa::invoke(crate::escape::escape_analysis_query)]
+    fn escape_analysis(&self, func: Function) -> Arc<crate::escape::FunctionEscapes>;
+
     #[salsa::invoke(crate::mir_lower::mir_generator_query)]
     fn mir_generator(&self, func: Function) -> Option<Arc<codira_mir::Generator>>;
 

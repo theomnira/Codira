@@ -65,6 +65,7 @@ mod data_derive;
 mod db;
 pub mod diagnostics;
 mod display;
+pub mod escape;
 mod expr;
 mod ids;
 mod in_file;
