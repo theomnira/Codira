@@ -232,11 +232,35 @@ runtime_functions! {
 
     /// 1 and a new `String` at `out` when the `[u8]` holds valid UTF-8.
     pub fn string_from_utf8(array: *const ffi::c_void, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> u8 = "codira.string_from_utf8";
+
+    /// An integer (as two halves, its signedness and its size in bits)
+    /// written as a format spec says, as a new `String`. The spec is a fill
+    /// character, `FormatSpec::abi_flags`, a width and a precision.
+    pub fn string_format_int(low: u64, high: u64, signed: u8, bits: u32, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_format_int";
+
+    /// A float (an `f32` widened when `is_f32` is set) written as a spec says.
+    pub fn string_format_float(value: f64, is_f32: u8, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_format_float";
+
+    /// Text padded and truncated as a spec says.
+    pub fn string_format_text(data: *const u8, len: usize, fill: u32, flags: u32, width: i64, precision: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.string_format_text";
+
+    /// `buf/start/len` with `data` appended quoted, as a Codira literal.
+    pub fn debug_quote(buf: *const ffi::c_void, start: usize, len: usize, data: *const u8, data_len: usize, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.debug_quote";
+
+    /// `buf/start/len` with a line break and `depth` indentation levels.
+    pub fn debug_newline(buf: *const ffi::c_void, start: usize, len: usize, depth: i64, ty: *const ffi::c_void, alloc: *mut ffi::c_void, out: *mut u8) -> () = "codira.debug_newline";
+
+    /// 1 when the class instance `object` is not already being printed (it
+    /// is then recorded until `debug_leave`), 0 on a reference cycle.
+    pub fn debug_enter(object: *const ffi::c_void) -> u8 = "codira.debug_enter";
+
+    /// Ends the innermost instance `debug_enter` recorded.
+    pub fn debug_leave() -> () = "codira.debug_leave";
 }
 
 /// Every runtime function a `String` operation may need, collected together
 /// like [`print_functions`]: a module that uses strings at all gets them all.
-pub fn string_functions() -> [&'static dyn Intrinsic; 30] {
+pub fn string_functions() -> [&'static dyn Intrinsic; 37] {
     [
         &string_from_bytes,
         &string_append,
@@ -268,6 +292,13 @@ pub fn string_functions() -> [&'static dyn Intrinsic; 30] {
         &string_chars,
         &string_to_bytes,
         &string_from_utf8,
+        &string_format_int,
+        &string_format_float,
+        &string_format_text,
+        &debug_quote,
+        &debug_newline,
+        &debug_enter,
+        &debug_leave,
     ]
 }
 

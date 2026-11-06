@@ -140,6 +140,21 @@ impl ExprValidator<'_> {
             | Expr::Propagate { expr } => {
                 self.validate_expr_access(sink, initialized_patterns, *expr, ExprKind::Normal);
             }
+            Expr::Format {
+                value,
+                width,
+                precision,
+                ..
+            } => {
+                for operand in std::iter::once(value).chain(width).chain(precision) {
+                    self.validate_expr_access(
+                        sink,
+                        initialized_patterns,
+                        *operand,
+                        ExprKind::Normal,
+                    );
+                }
+            }
             Expr::BinaryOp { lhs, rhs, op } => {
                 let lhs_expr_kind = match op {
                     Some(BinaryOp::Assignment { op: Some(_) }) => ExprKind::Both,

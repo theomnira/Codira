@@ -19,12 +19,13 @@ pub use salsa;
 pub use self::code_model::{
     Effect, EffectData, EffectOpSig, Enum, EnumLayout, EnumSlot, EnumVariant, Field, Function,
     FunctionData, HasSource, Module, ModuleDef, Package, PrimitiveType, Protocol, ProtocolStep,
-    Session, Struct, StructMemoryKind, Trait, TypeAlias, VariantKind,
+    Session, Struct, StructKind, StructMemoryKind, Trait, TypeAlias, VariantKind,
 };
 pub use crate::{
     builtin::{
         is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, BuiltinFn,
-        ElementRequirement, PipelineOp, StringArg, StringOp,
+        ElementRequirement, FormatAlign, FormatCount, FormatKind, FormatSpec, PipelineOp,
+        StringArg, StringOp, ValueClass,
     },
     db::{
         AstDatabase, AstDatabaseStorage, DefDatabase, DefDatabaseStorage, HirDatabase,

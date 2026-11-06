@@ -744,6 +744,14 @@ impl Collector<'_> {
                 EffectSet::of(&[Effect::Panic]),
                 "postfix `!` panics when the optional is `nil`",
             ),
+            Expr::Format { spec, .. } => self.source(
+                expr,
+                EffectSet::GC_ALLOC,
+                format!(
+                    "formatting a hole (`{{..:{}}}`) builds a new `String` on the heap",
+                    spec.text
+                ),
+            ),
             Expr::Index { index, .. } if matches!(body[*index], Expr::Range { .. }) => {
                 self.source(
                     expr,

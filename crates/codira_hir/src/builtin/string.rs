@@ -72,6 +72,10 @@ pub enum StringOp {
     Hash,
     /// `x.to_string()` on a `String`, `str`, integer, float or `bool`.
     ToString,
+    /// `x.debug_string()` on a value of any type: its debug form, what
+    /// `f"{x:?}"` writes (see `builtin::format`). A method only when the
+    /// type declares no `debug_string` of its own.
+    DebugString,
     /// `string_from_utf8(bytes)`: a copy of `bytes` as a `String` if they are
     /// valid UTF-8, otherwise `nil`. A free function.
     FromUtf8,
@@ -94,6 +98,9 @@ impl StringOp {
     /// builtin string operation.
     pub fn method(receiver: &TyKind, name: &str) -> Option<StringOp> {
         use StringOp::*;
+        if name == "debug_string" {
+            return Some(DebugString);
+        }
         if name == "to_string" {
             return matches!(
                 receiver,
@@ -166,6 +173,7 @@ impl StringOp {
             ParseF64 => "parse_f64",
             Hash => "hash",
             ToString => "to_string",
+            DebugString => "debug_string",
             FromUtf8 => "string_from_utf8",
         }
     }
@@ -176,7 +184,7 @@ impl StringOp {
         use StringOp::*;
         match self {
             Len | IsEmpty | CharCount | Chars | Bytes | Lines | Trim | TrimStart | TrimEnd
-            | ToUpper | ToLower | ParseI64 | ParseF64 | Hash | ToString => &[],
+            | ToUpper | ToLower | ParseI64 | ParseF64 | Hash | ToString | DebugString => &[],
             ByteAt | Repeat => &[StringArg::Integer],
             Find | RFind | Contains | StartsWith | EndsWith | Split => &[StringArg::Text],
             Replace => &[StringArg::Text, StringArg::Text],
@@ -198,7 +206,7 @@ impl StringOp {
             Find | RFind => TyKind::Optional(usize_ty()).intern(),
             Split | Lines => TyKind::Array(TyKind::String.intern()).intern(),
             Trim | TrimStart | TrimEnd | ToUpper | ToLower | Replace | Repeat | Slice
-            | ToString => TyKind::String.intern(),
+            | ToString | DebugString => TyKind::String.intern(),
             ParseI64 => TyKind::Optional(TyKind::Int(IntTy::i64()).intern()).intern(),
             ParseF64 => TyKind::Optional(TyKind::Float(FloatTy::f64()).intern()).intern(),
             Hash => TyKind::Int(IntTy::u64()).intern(),
@@ -213,7 +221,8 @@ impl StringOp {
     pub fn allocates(self, receiver: Option<&TyKind>) -> bool {
         use StringOp::*;
         match self {
-            Chars | Bytes | Split | Lines | ToUpper | ToLower | Replace | Repeat | FromUtf8 => true,
+            Chars | Bytes | Split | Lines | ToUpper | ToLower | Replace | Repeat | FromUtf8
+            | DebugString => true,
             ToString => !matches!(receiver, Some(TyKind::String)),
             _ => matches!(receiver, Some(TyKind::Str)),
         }

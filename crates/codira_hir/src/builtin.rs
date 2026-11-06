@@ -39,9 +39,12 @@ mod array;
 pub use array::{
     is_inlined_closure_arg, is_inlined_closure_literal, ArrayMethod, ElementRequirement,
 };
+mod format;
 mod pipeline;
 mod string;
 
+pub(crate) use format::dotted_name;
+pub use format::{FormatAlign, FormatCount, FormatKind, FormatSpec, ValueClass};
 pub use pipeline::PipelineOp;
 pub use string::{StringArg, StringOp};
 

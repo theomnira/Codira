@@ -684,6 +684,7 @@ impl Elaborator<'_> {
             | Expr::Match { .. }
             | Expr::Unwrap { .. }
             | Expr::Propagate { .. }
+            | Expr::Format { .. }
             | Expr::Index { .. }
             | Expr::Array(_)
             | Expr::Tuple(_)

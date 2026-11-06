@@ -374,6 +374,9 @@ pub enum LiteralError {
     /// An interpolated literal (`f".."`) with an unbalanced brace, or a
     /// hole that is not a name followed by fields.
     InvalidInterpolation,
+
+    /// A hole's format spec (`{x:>8.3}`) that does not parse: the reason.
+    InvalidFormatSpec(String),
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -477,6 +480,16 @@ pub enum Expr {
     /// `ty::infer::propagate` for the rules.
     Propagate {
         expr: ExprId,
+    },
+    /// `{value:spec}`, a hole with a format spec in an interpolated literal
+    /// (`f"{x:>8.3}"`): `value` written as `spec` says, as a new `String`.
+    /// `width` and `precision` are the variables a `{w}` width or precision
+    /// reads. See `builtin::format` for the grammar and the rules.
+    Format {
+        value: ExprId,
+        spec: crate::FormatSpec,
+        width: Option<ExprId>,
+        precision: Option<ExprId>,
     },
     /// `start..end`, or `start..=end` when `inclusive`. Valid only as a
     /// `for` loop's iterable for now; there is no range value type.
@@ -798,6 +811,15 @@ impl Expr {
             | Expr::ChannelReceive { channel: expr }
             | Expr::Unwrap { expr }
             | Expr::Propagate { expr } => f(*expr),
+            Expr::Format {
+                value,
+                width,
+                precision,
+                ..
+            } => {
+                f(*value);
+                width.iter().chain(precision.iter()).copied().for_each(f);
+            }
             Expr::ChannelSend { channel, value } => {
                 f(*channel);
                 f(*value);
@@ -2265,7 +2287,7 @@ mod diagnostics {
     use crate::{
         code_model::DefWithBody,
         diagnostics::{
-            ComptimeBudgetExhausted, DiagnosticSink, IntLiteralTooLarge,
+            ComptimeBudgetExhausted, DiagnosticSink, ExprError, IntLiteralTooLarge,
             InvalidFloatingPointLiteral, InvalidLiteral, InvalidLiteralSuffix,
         },
         HirDatabase,
@@ -2320,6 +2342,11 @@ mod diagnostics {
                         | LiteralError::InvalidInterpolation => {
                             sink.push(InvalidLiteral { literal });
                         }
+                        LiteralError::InvalidFormatSpec(reason) => sink.push(ExprError {
+                            file: literal.file_id,
+                            node: literal.value.syntax_node_ptr(),
+                            message: format!("invalid format spec: {reason}"),
+                        }),
                     }
                 }
                 ExprDiagnostic::ComptimeExhausted { block, limit } => {

@@ -285,7 +285,7 @@ fn push_args(db: &dyn HirDatabase, name: &mut String, args: &Substitution) {
 
 /// A type's name, with every struct in it written by its full name, so that
 /// two structs of the same name in different modules are not confused.
-fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
+pub fn type_name(db: &dyn HirDatabase, ty: &Ty) -> String {
     match ty.interned() {
         TyKind::Struct(strukt, args) => struct_name(db, *strukt, args),
         TyKind::Enum(e, args) => enum_name(db, *e, args),

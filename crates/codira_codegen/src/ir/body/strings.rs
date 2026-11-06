@@ -32,7 +32,7 @@ use crate::{
 
 impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     /// Calls a runtime string function and returns its result, if it has one.
-    fn string_call(
+    pub(super) fn string_call(
         &mut self,
         function: &impl Intrinsic,
         args: &[BasicMetadataValueEnum<'ink>],
@@ -61,7 +61,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// The two handles every allocating string function takes: the type of
     /// what it allocates and the allocator.
-    fn alloc_args(&self, ty: &Ty) -> [BasicMetadataValueEnum<'ink>; 2] {
+    pub(super) fn alloc_args(&self, ty: &Ty) -> [BasicMetadataValueEnum<'ink>; 2] {
         [
             self.string_type_handle(ty).into(),
             self.get_allocator_handle_ptr().into(),
@@ -70,7 +70,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// A slot in the entry block for a runtime function to write a `String`,
     /// a `usize`, an `i64` or an `f64` to.
-    fn string_slot(
+    pub(super) fn string_slot(
         &self,
         ty: inkwell::types::BasicTypeEnum<'ink>,
         name: &str,
@@ -82,7 +82,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Calls `function` with `args` followed by the `[u8]` allocation
     /// handles and an out-slot, and returns the `String` it wrote.
-    fn string_making_call(
+    pub(super) fn string_making_call(
         &mut self,
         function: &impl Intrinsic,
         args: &[BasicMetadataValueEnum<'ink>],
@@ -99,7 +99,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// The three words of a `String` value.
-    fn string_fields(
+    pub(super) fn string_fields(
         &self,
         value: StructValue<'ink>,
     ) -> (PointerValue<'ink>, IntValue<'ink>, IntValue<'ink>) {
@@ -138,7 +138,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// The address of the first byte of a `String`.
-    fn string_data(&self, buf: PointerValue<'ink>, start: IntValue<'ink>) -> PointerValue<'ink> {
+    pub(super) fn string_data(
+        &self,
+        buf: PointerValue<'ink>,
+        start: IntValue<'ink>,
+    ) -> PointerValue<'ink> {
         let array_ty = self
             .hir_types
             .get_array_type(&TyKind::Int(codira_hir::IntTy::u8()).intern());
@@ -161,8 +165,18 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         expr: ExprId,
         value: BasicValueEnum<'ink>,
     ) -> (PointerValue<'ink>, IntValue<'ink>) {
+        self.string_text_of(&self.infer[expr].clone(), value)
+    }
+
+    /// The data pointer and byte length of `value`, a `String` or a `str`
+    /// as `ty` says.
+    pub(super) fn string_text_of(
+        &self,
+        ty: &Ty,
+        value: BasicValueEnum<'ink>,
+    ) -> (PointerValue<'ink>, IntValue<'ink>) {
         let value = value.into_struct_value();
-        if matches!(self.infer[expr].interned(), TyKind::String) {
+        if matches!(ty.interned(), TyKind::String) {
             let (buf, start, len) = self.string_fields(value);
             (self.string_data(buf, start), len)
         } else {
@@ -313,7 +327,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// Whether a runtime result byte is non-zero, as an `i1`.
-    fn is_set(&self, byte: BasicValueEnum<'ink>) -> IntValue<'ink> {
+    pub(super) fn is_set(&self, byte: BasicValueEnum<'ink>) -> IntValue<'ink> {
         let byte = byte.into_int_value();
         self.builder
             .build_int_compare(IntPredicate::NE, byte, byte.get_type().const_zero(), "set")
@@ -336,6 +350,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         }
         if op == StringOp::ToString {
             return Some(self.gen_to_string(receiver, receiver_value));
+        }
+        if op == StringOp::DebugString {
+            let ty = self.infer[receiver].clone();
+            return Some(self.gen_debug_string(&ty, receiver_value, false));
         }
         // A method called on a `str` works on a `String` copy of it.
         let receiver_value = if matches!(self.infer[receiver].interned(), TyKind::Str) {
@@ -569,7 +587,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     .expect("failed to load a parsed number");
                 self.string_optional(&self.infer[expr].clone(), present, value)
             }
-            StringOp::ToString | StringOp::FromUtf8 => {
+            StringOp::ToString | StringOp::FromUtf8 | StringOp::DebugString => {
                 unreachable!("lowered separately")
             }
         })
@@ -644,12 +662,22 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         receiver: ExprId,
         value: BasicValueEnum<'ink>,
     ) -> BasicValueEnum<'ink> {
+        self.gen_to_string_of(&self.infer[receiver].clone(), value)
+    }
+
+    /// `x.to_string()` for an `x` of type `ty`: a `String`, a `str`, an
+    /// integer, a float or a `bool`.
+    pub(super) fn gen_to_string_of(
+        &mut self,
+        ty: &Ty,
+        value: BasicValueEnum<'ink>,
+    ) -> BasicValueEnum<'ink> {
         let i64_type = self.context.i64_type();
-        match self.infer[receiver].clone().interned() {
+        match ty.interned() {
             // Immutable, so the value itself is its own copy.
             TyKind::String => value,
             TyKind::Str => {
-                let (data, len) = self.string_text(receiver, value);
+                let (data, len) = self.string_text_of(ty, value);
                 self.string_making_call(&intrinsics::string_from_bytes, &[data.into(), len.into()])
             }
             TyKind::Int(int_ty) => {

@@ -31,6 +31,7 @@ mod array_methods;
 mod closures;
 mod effects;
 mod exhaustive;
+mod format;
 mod pipelines;
 mod place_expr;
 mod propagate;
@@ -987,6 +988,12 @@ impl InferenceResultBuilder<'_> {
                 self.infer_match(tgt_expr, *expr, arms, *source, expected)
             }
             Expr::Propagate { expr } => self.infer_propagate(tgt_expr, *expr),
+            Expr::Format {
+                value,
+                width,
+                precision,
+                ..
+            } => self.infer_format(*value, *width, *precision),
             Expr::Unwrap { expr } => {
                 let inner_ty = self.infer_expr(*expr, &Expectation::none());
                 match self.normalize(&inner_ty).interned() {
@@ -1473,6 +1480,14 @@ impl InferenceResultBuilder<'_> {
                     AssociationMode::WithSelf,
                 ) {
                     crate::traits::BoundMethod::Found(method) => method.id,
+                    // Every type has a debug form, generated per
+                    // instantiation.
+                    crate::traits::BoundMethod::NotFound(_)
+                        if method_name.as_str() == Some("debug_string") =>
+                    {
+                        let op = crate::StringOp::DebugString;
+                        return self.infer_string_method(tgt_expr, op, &receiver_ty, args);
+                    }
                     other => {
                         for &arg in args {
                             self.infer_expr(arg, &Expectation::none());
@@ -2566,6 +2581,7 @@ impl InferenceResultBuilder<'_> {
         self.check_capture_types(&closures, &pat_types);
         self.check_array_methods(&expr_types);
         self.check_pipelines(&expr_types, &closures);
+        self.check_formats(&expr_types);
         let instantiations = self.resolve_instantiations();
         InferenceResult {
             //            field_resolutions: self.field_resolutions,
