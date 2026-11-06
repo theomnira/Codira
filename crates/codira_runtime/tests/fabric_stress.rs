@@ -153,9 +153,13 @@ fn with_timeout(secs: u64, test: impl FnOnce() + Send + 'static) {
         .expect("the test did not finish in time: a deadlock?");
 }
 
-/// Collections run back to back on a host thread while tasks block on
-/// channels, allocate between operations, join groups and return heap
-/// values. Nothing deadlocks, and every value comes through.
+/// How many collections must overlap the work.
+const MIN_COLLECTIONS: usize = 50;
+
+/// A host thread requests collections in a loop (as often as the
+/// collector's pacing grants them) while tasks block on channels, allocate
+/// between operations, join groups and return heap values, for at least
+/// fifty collections. Nothing deadlocks, and every value comes through.
 #[test]
 fn collections_never_deadlock_against_blocked_or_joining_tasks() {
     with_timeout(300, || {
@@ -181,25 +185,25 @@ fn collections_never_deadlock_against_blocked_or_joining_tasks() {
             // What `stage` does to a value, three times over.
             let stage = |x: i64| x + 1 + x.to_string().len() as i64 - 1;
             let expected_3: i64 = (0..count).map(|x| stage(stage(stage(x)))).sum();
-            for _ in 0..5 {
+            let (pairs, n) = (64i64, 200i64);
+            let strings = 3000i64;
+            let expected_strings: i64 = (0..strings).map(|i| i.to_string().len() as i64 + 8).sum();
+            // The collector paces itself to the work (it waits for a window
+            // of mutator time between collections), so run rounds until
+            // enough collections have overlapped them.
+            let mut rounds = 0;
+            while collections.load(Ordering::Relaxed) < MIN_COLLECTIONS && rounds < 2000 {
                 let total: i64 = driver.runtime.invoke("pipeline", (3i64, count)).unwrap();
                 assert_eq!(total, expected_3);
-            }
-            let pairs = 64i64;
-            let n = 200i64;
-            for _ in 0..5 {
                 let total: i64 = driver.runtime.invoke("many_pairs", (pairs, n)).unwrap();
                 assert_eq!(total, pairs * n * (n - 1) / 2);
-            }
-            let n = 3000i64;
-            let expected: i64 = (0..n).map(|i| i.to_string().len() as i64 + 8).sum();
-            for _ in 0..5 {
-                let total: i64 = driver.runtime.invoke("strings", (n,)).unwrap();
-                assert_eq!(total, expected);
+                let total: i64 = driver.runtime.invoke("strings", (strings,)).unwrap();
+                assert_eq!(total, expected_strings);
+                rounds += 1;
             }
         });
         assert!(
-            collections.load(Ordering::Relaxed) > 10,
+            collections.load(Ordering::Relaxed) >= MIN_COLLECTIONS,
             "the collector ran only {} times",
             collections.load(Ordering::Relaxed)
         );
