@@ -276,14 +276,19 @@ fn file_for(handle: i64, need_read: bool, need_write: bool) -> Result<Arc<File>,
     Ok(Arc::clone(&open.file))
 }
 
-/// Retries an operation the OS interrupted with a signal.
+/// Runs a system call, retrying it when the OS interrupted it with a
+/// signal. The call may block, so it runs parked for the collector and, in a
+/// task, releases its worker (`tasks::blocking_io`): a task reading a slow
+/// file holds up neither a collection nor the other tasks. The buffers it
+/// reads or writes are byte arrays the caller's frame keeps alive; the
+/// collector does not move objects or read byte arrays' contents.
 fn retry<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
-    loop {
+    crate::tasks::blocking_io(|| loop {
         match op() {
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
             result => return result,
         }
-    }
+    })
 }
 
 /// Checks a buffer passed to `read`/`write`: the length must fit an `i64`
