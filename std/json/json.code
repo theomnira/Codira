@@ -1,5 +1,5 @@
 // =============================================================================
-// std/json/json.code — JSON: a value type, a strict parser and a printer
+// std/json/json.code — JSON: a value, a strict parser, printers, streaming, typed decoding
 // =============================================================================
 //
 //     import std.json.json.{Json, JsonObject, parse, to_string}
@@ -49,13 +49,46 @@
 // characters), and the reason.
 //
 // Printing. `to_string` is compact, `to_pretty_string` indents by two
-// spaces (`to_pretty_string_with` takes the width). Strings escape `"`,
-// `\` and the control characters, and nothing else: every other character
-// is written as itself, in UTF-8. Floats are written in the shortest form
-// that reads back as the same `f64` (the runtime's `ryu`), always with a
-// `.` or an exponent, so they read back as a `Float`; a NaN or an
-// infinity, which JSON cannot express, is written as `null`. For every
-// value without one, `parse(to_string(v))` equals `v`.
+// spaces (`to_pretty_string_with` takes the width); `to_bytes_into` and
+// `to_pretty_bytes_into` append the text to a `[u8]` the caller reuses.
+// Strings escape `"`, `\` and the control characters, and nothing else:
+// every other character is written as itself, in UTF-8. Floats are written
+// in the shortest form that reads back as the same `f64` (the runtime's
+// `ryu`), always with a `.` or an exponent, so they read back as a
+// `Float`; a NaN or an infinity, which JSON cannot express, is written as
+// `null`. For every value without one, `parse(to_string(v))` equals `v`.
+// The text is built in one byte array (`push_str`, `push_int`,
+// `push_json_float`) and handed to the `String` without a copy
+// (`string_take_utf8`).
+//
+// Streaming. `JsonWriter` writes one document token by token, into a buffer
+// or a file (std.fs), checking what the parser checks and keeping the first
+// call that does not fit. `JsonReader` reads one document event by event
+// (`next_event`, `peek`), building no tree: it is the parser run one token
+// at a time, so it accepts the same texts and stops at the same first
+// error.
+//
+// Typed decoding. There is no derive: a program writes a decoder per type
+// over `JsonReader` (`begin_object`/`next_key`, `begin_array`/
+// `next_element`, `read_i64`, `read_string`, `read_if_null`, `skip`, ...),
+// and an encoder over `JsonWriter`. A `DecodeError` names the value by its
+// JSONPath (`$.statuses[3].user.id`) and its byte offset, line and column:
+//
+//     func decode_point(r: JsonReader) -> Result[Point, DecodeError] {
+//         var x: i64 = 0
+//         var y = 0.0
+//         r.begin_object()?
+//         while let key = r.next_key()? {
+//             if key == "x" {
+//                 x = r.read_i64()?
+//             } else if key == "y" {
+//                 y = r.read_f64()?
+//             } else {
+//                 r.skip()?
+//             }
+//         }
+//         Result.Ok(Point { x: x, y: y })
+//     }
 //
 // Equality (`equals`, `a.equals(b)`) is structural: arrays element by
 // element, objects as sets of members (order ignored), numbers by kind and

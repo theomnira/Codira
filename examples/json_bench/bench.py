@@ -12,7 +12,12 @@
 #   check values, and prints a table of the medians, in milliseconds.
 #
 #   python3 examples/json_bench/bench.py --codira <path to codira> \
-#       --work <scratch directory> [--rounds 3] [--rust-features ...]
+#       --work <scratch directory> [--rounds 3] [--rust-features ...] [--simd]
+#
+# `--simd` also builds the Rust program with `simd-json` (for the host
+# CPU, `-C target-cpu=native`, which simd-json needs to pick its SIMD
+# code; the serde_json rows are then built that way too) and prints the
+# rows only Rust has (`simd-parse`) after the table.
 #
 # Build products go under `--work`, never into the repository.
 
@@ -28,7 +33,12 @@ ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 
 def run(cmd, **kw):
     print("+", " ".join(cmd), file=sys.stderr)
-    return subprocess.run(cmd, check=True, **kw)
+    result = subprocess.run(cmd, **kw)
+    if result.returncode != 0:
+        if kw.get("capture_output"):
+            sys.stderr.write(result.stderr.decode(errors="replace"))
+        sys.exit("%s failed with status %d" % (cmd[0], result.returncode))
+    return result
 
 
 def lines(output):
@@ -46,6 +56,7 @@ def main():
     ap.add_argument("--work", required=True)
     ap.add_argument("--rounds", type=int, default=3)
     ap.add_argument("--rust-features", default="preserve_order,float_roundtrip")
+    ap.add_argument("--simd", action="store_true")
     args = ap.parse_args()
     work = os.path.abspath(args.work)
     os.makedirs(work, exist_ok=True)
@@ -63,13 +74,18 @@ def main():
             "--target-dir", os.path.join(work, "host-target"),
         ]
     )
+    features = args.rust_features + (",simd" if args.simd else "")
+    rust_env = dict(os.environ)
+    if args.simd:
+        rust_env["RUSTFLAGS"] = "-C target-cpu=native"
     run(
         [
             "cargo", "build", "--release", "--no-default-features",
-            "--features", args.rust_features, "--manifest-path",
+            "--features", features, "--manifest-path",
             os.path.join(HERE, "rust", "Cargo.toml"),
             "--target-dir", os.path.join(work, "rust-target"),
-        ]
+        ],
+        env=rust_env,
     )
     host = os.path.join(work, "host-target", "release", "json_bench_host")
     library = os.path.join(HERE, "target", "mod.codiralib")
@@ -91,6 +107,23 @@ def main():
         same = "same" if len(checks) == 1 else "DIFFERENT: " + ", ".join(sorted(checks))
         failed |= len(checks) != 1
         print(f"| {key[0]} | {key[1]} | {c:.1f} | {r:.1f} | {c / r:.2f}x | {same} |")
+    # Per round, parse + print + pretty: where a collection falls depends
+    # on what the previous phase allocated, so the sum is steadier.
+    for name in sorted({k[0] for k in keys}):
+        phases = [(name, p) for p in ("parse", "print", "pretty")]
+        if all(p in codira_runs[0] for p in phases):
+            c = statistics.median(sum(r[p][0] for p in phases) for r in codira_runs) / 1e6
+            r = statistics.median(sum(r[p][0] for p in phases) for r in rust_runs) / 1e6
+            print(f"| {name} | parse+print+pretty | {c:.1f} | {r:.1f} | {c / r:.2f}x | |")
+    rust_only = [k for k in rust_runs[0] if k not in codira_runs[0]]
+    if rust_only:
+        print()
+        print("| input | phase (Rust only) | ms | check |")
+        print("|---|---|---:|---|")
+        for key in rust_only:
+            r = statistics.median(run[key][0] for run in rust_runs) / 1e6
+            checks = sorted({run[key][1] for run in rust_runs})
+            print(f"| {key[0]} | {key[1]} | {r:.1f} | {', '.join(checks)} |")
     return 1 if failed else 0
 
 

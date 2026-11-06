@@ -125,7 +125,7 @@ impl<'de> DeserializeSeed<'de> for Stream<'_> {
 impl<'de> Visitor<'de> for Stream<'_> {
     type Value = ();
 
-    fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("any JSON value")
     }
 

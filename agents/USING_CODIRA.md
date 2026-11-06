@@ -290,6 +290,20 @@ for (i, x) in xs.enumerate() { }                  // index and element
   neither, and a closure compiled in place adds only what its body does: a
   `@noalloc @nopanic` function may call `xs.fold(0, func(a, x) { a + x })`.
   A function value passed instead counts as unknown (every effect).
+- **Byte buffers.** A `[u8]` has three more methods, for what a serializer
+  writes most, each appending at the end and growing the array as `push`
+  does: `b.push_str(s)` (the UTF-8 bytes of a `String` or `str`, one
+  copy), `b.push_int(n)` (an integer of up to 64 bits as `to_string()`
+  writes it; a bare literal is an `i64`) and `b.push_json_float(x)` (an
+  `f64` as `std.json` prints it: the shortest text that reads back, in
+  `ryu`'s form, which `serde_json` writes, and `null` for a NaN or an
+  infinity). The numbers are written straight into the array's spare
+  capacity -- the integer digits by the same generated writer `+=` uses,
+  the float by the runtime -- with no `String` in between. Other element
+  types get a compile error (`` `push_str` needs an array of `u8` (a byte
+  buffer) ``), as does a 128-bit `push_int`. `string_take_utf8(b)` (see
+  "Strings") turns the bytes into a `String` without copying them.
+  Tests: `crates/codira/tests/byte_buffers.rs`.
 - Not supported by `codira run --jit` (Cranelift): a program using arrays
   says so and runs on LLVM.
 
@@ -1014,6 +1028,16 @@ Construction and conversion:
   `String` -- converts implicitly (a copy).
 - `string_from_utf8(bytes: [u8]) -> String?`: a copy of the bytes if they
   are valid UTF-8, else `nil`.
+- `string_take_utf8(bytes: [u8]) -> String?`: the bytes as a `String`
+  without copying them, if they are valid UTF-8 (Rust's
+  `String::from_utf8(vec)`); `bytes` is left empty, and so is every alias
+  of it, so no program can write those bytes again -- which is what makes
+  them a string's. Once the array has grown its elements live in a buffer
+  of their own, which the string's buffer takes over (the collector
+  re-owns it: `MarkSweep::try_take_array_payload`); a small array that
+  never grew is copied, and emptied the same way. Not UTF-8: `nil`, and
+  `bytes` is unchanged. A printer builds its text in a `[u8]` with the
+  byte-buffer methods (see "Growable arrays") and takes it at the end.
 - Interpolation: `f"x = {x}, p.y = {p.y}, {self.name}"` is a `String`. A
   hole is a variable optionally followed by fields, as in Rust's
   `format!("{x}")` -- no calls, no operators -- and is converted with
@@ -1051,7 +1075,22 @@ costs nothing):
 | `repeat(n)` | `String` | a negative `n` repeats nothing |
 | `parse_i64()`, `parse_f64()` | `i64?`, `f64?` | Rust's `from_str`: no white space, `+`/`-` sign, `inf`, `NaN` |
 | `hash()` | `u64` | FNV-1a 64 of the bytes |
+| `find_json_escape(from)` | `usize` | the first `"`, `\` or control byte (U+0000..U+001F) at or after `from` (clamped), else `len()`; inline, 16 bytes per step (below) |
 | `to_string()` | `String` | itself |
+
+`slice` checks its range and the two character boundaries inline (the
+range compared as unsigned, so a negative index fails; a boundary byte must
+not be a UTF-8 continuation byte) and calls the runtime only for a slice
+that fails, to panic with the message below. `==` and `!=` compare the
+lengths inline and call the runtime only for equal lengths.
+
+`find_json_escape` is the string-end and escape search of a JSON parser
+and printer: one unaligned 16-byte vector load and three compares per step
+(LLVM lowers the vector compares to SSE2 on x86-64 and NEON on AArch64,
+and to scalar code where there is no vector unit), then a byte loop for
+the last bytes; no load reaches past the string. `std.json` uses it in the
+parser (twitter parse 128-130 to 125 ms) and the printer (twitter print 62
+to 55 ms; see "JSON").
 
 **`lines()` and `split()` without the array.** Where the `[String]` would
 be a temporary nothing else sees, the pieces are read as they are found,
@@ -1422,16 +1461,202 @@ more:
 **Printing.** `to_string(v)` is compact; `to_pretty_string(v)` puts each
 element and member on a line of its own with two spaces per level and
 `"key": value` (the layout of `serde_json`'s `to_string_pretty`);
-`to_pretty_string_with(v, indent)` takes the width. Strings escape `"`,
-`\` and the control characters (`\b \f \n \r \t`, else `\u00XX`) and
-nothing else: every other character is written as itself, in UTF-8.
-Floats are written in the shortest form that reads back as the same `f64`
-(the runtime's `codira_json_format_f64`, on the `ryu` crate), always with
-a `.` or an exponent (`1.0`, `1e300`, `-0.0`), so they read back as a
+`to_pretty_string_with(v, indent)` takes the width; `to_bytes_into(v, b)`
+and `to_pretty_bytes_into(v, indent, b)` append the text to a `[u8]` the
+program keeps and `clear()`s between documents, so nothing else is
+allocated once it has room. Strings escape `"`, `\` and the control
+characters (`\b \f \n \r \t`, else `\u00XX`) and nothing else: every other
+character is written as itself, in UTF-8. Floats are written in the
+shortest form that reads back as the same `f64` (`ryu`), always with a
+`.` or an exponent (`1.0`, `1e300`, `-0.0`), so they read back as a
 `Float`; a NaN or an infinity, which JSON cannot express, is written as
-`null`. For every value without one, `parse(to_string(v))` equals `v`,
-and so does the pretty text: the tests check this on random values, and
-that both texts are byte for byte the ones `serde_json` prints.
+`null`. For every value without one, `parse(to_string(v))` equals `v`, and
+so does the pretty text: the tests check this on random values, and that
+both texts are byte for byte the ones `serde_json` prints.
+
+How it is built: the text goes into one growable `[u8]` -- punctuation
+with `push`, each string copied whole between its escapes (found 16 bytes
+at a time by `find_json_escape`) with `push_str`, numbers formatted
+straight into the array's spare capacity by `push_int` and
+`push_json_float` -- and the bytes become the `String` without a copy
+(`string_take_utf8`). The printer before this one filled a 64 KiB chunk
+byte by byte and copied every chunk three more times on its way into the
+result (a slice, `string_from_utf8`, a doubling append); taking that path
+out alone took twitter's print from 63 to 40 ms and deep's pretty print
+from 345 to 110 ms (measured by discarding each chunk instead of copying
+it, before pacing).
+
+**Streaming output: `JsonWriter`.** One document, token by token, with no
+tree:
+
+```codira
+import std.json.json.{JsonWriter, JsonWriteError}
+
+let w = JsonWriter.new()                 // or JsonWriter.pretty(2)
+w.begin_object()
+w.key("ids")
+w.begin_array()
+for id in ids { w.int(id) }
+w.end_array()
+w.key("name")
+w.string(name)
+w.end_object()
+let text = w.finish()?                   // Result[String, JsonWriteError]
+```
+
+- Values: `null()`, `bool(b)`, `int(n)`, `float(x)`, `string(s)`, and
+  `value(v)` for a whole `Json` tree; `begin_array`/`end_array`,
+  `begin_object`/`key(k)`/`end_object`.
+- **It checks what the parser checks**, so what it writes `parse` reads
+  with the default options: a key before each member's value and nowhere
+  else, ends that close what is open, one top-level value, no key twice in
+  one object (the keys of each open object are kept, as the parser keeps
+  them), nesting up to `max_depth` (128; `set_max_depth`, clamped to
+  1000). The first call that does not fit is kept -- `JsonWriteError {
+  kind, call, offset }`: `ExpectedKey`, `UnexpectedKey`, `MismatchedEnd`,
+  `ValueAfterEnd`, `Unfinished`, `DuplicateKey`, `DepthLimit`, `Io(code)`;
+  the call's position and the bytes of valid text before it -- and every
+  later call does nothing (`error()` reads it). Calls return nothing, so
+  an encoder is a plain sequence of calls; `finish` reports the error.
+- Sinks: `finish()` hands the bytes to a `String` without a copy;
+  `finish_into(b)` appends them to a `[u8]`; `JsonWriter.to_file(fd)` (and
+  `pretty_to_file`) sends them to a file opened with std.fs.fs every
+  64 KiB, and `finish_file()` writes the rest and returns the document's
+  size. Every `finish` leaves the writer empty for the next document, its
+  buffers kept, after an error too.
+
+**Streaming input: `JsonReader`.** A pull parser: the events of one
+document, one call at a time, with no tree.
+
+```codira
+import std.json.json.{JsonReader, JsonEvent}
+
+let r = JsonReader.new(text)             // with_options(text, opts); from_bytes(bytes, opts)
+loop {
+    match r.next_event()? {              // Result[JsonEvent, JsonError]
+        JsonEvent.Key(k) -> { .. },
+        JsonEvent.Int(n) -> { .. },
+        JsonEvent.End -> break,
+        _ -> {},
+    }
+}
+```
+
+- Events: `BeginObject`, `EndObject`, `BeginArray`, `EndArray`, `Key`,
+  `Null`, `Bool`, `Int`, `Float`, `Str`, and `End` once the value is
+  complete and only white space follows (then `End` again). `peek()`
+  reads one event ahead; `offset()` is where the last event starts;
+  `depth()` how many arrays and objects are open.
+- **It is the tree parser run one token at a time** -- the same code
+  scans strings, numbers and literals, and a state machine replaces the
+  recursion -- so it accepts exactly the texts `parse_with` accepts with
+  the same options and stops at the same first error (kind, offset, line,
+  column), with the same nesting limit; after an error every call returns
+  it again. Duplicate keys are refused as there (an object's keys are
+  remembered while it is open; with `DuplicateKeys.KeepLast` both members
+  are read, in order). Strings without escapes are views of the text.
+  `from_bytes` checks UTF-8 first (an `InvalidUtf8` error, as
+  `parse_bytes` reports it) and copies the bytes once.
+- Tests: the JSON harness runs every case of every suite in
+  `crates/codira/tests/json.rs` -- the conformance texts, random values,
+  4,000 mutated texts, random bytes and every truncation of valid texts,
+  the nesting limits and the duplicate keys -- through the reader too, and
+  requires the tree rebuilt from its raw events to equal `parse`'s, or the
+  first error to be identical; it replays every accepted value through
+  `JsonWriter`, compact and pretty, and requires the printer's exact bytes.
+
+**Typed decoding and encoding.** There is no derive and there are no
+generic traits, so a program writes a decoder per type over `JsonReader`
+and an encoder over `JsonWriter`:
+
+```codira
+import std.json.json.{JsonReader, JsonWriter, DecodeError}
+
+struct Point { x: i64, y: f64, tag: String? }
+
+func decode_point(r: JsonReader) -> Result[Point, DecodeError] {
+    var x: i64? = nil
+    var y = 0.0
+    var tag: String? = nil
+    r.begin_object()?
+    while let key = r.next_key()? {      // nil at the `}`
+        if key == "x" {
+            x = r.read_i64()?
+        } else if key == "y" {
+            y = r.read_f64()?            // an integer converts
+        } else if key == "tag" {
+            tag = if r.read_if_null()? { nil } else { r.read_string()? }
+        } else {
+            r.skip()?                    // or: return Result.Err(r.unknown_field(key))
+        }
+    }
+    if x == nil { return Result.Err(r.missing_field("x")) }
+    Result.Ok(Point { x: x!, y: y, tag: tag })
+}
+
+func encode_point(w: JsonWriter, p: Point) {
+    w.begin_object()
+    w.key("x")
+    w.int(p.x)
+    w.key("y")
+    w.float(p.y)
+    w.key("tag")
+    if let t = p.tag { w.string(t) } else { w.null() }
+    w.end_object()
+}
+```
+
+- The reader's typed methods: `begin_object`, `next_key` (`String?`),
+  `begin_array`, `next_element` (`bool`: another element follows),
+  `read_null`, `read_bool`, `read_i64`, `read_int_in(lo, hi)` (for a
+  narrower field), `read_f64`, `read_string`, `read_if_null`, `skip` (any
+  value, however deep), `read_value` (a `Json` tree, for a field of any
+  shape) and `finish` (only white space after the value). The procedural
+  ones return `Result[(), DecodeError]`, so `r.skip()?` fits any branch.
+- **Errors name the value exactly.** A `DecodeError { kind, path, offset,
+  line, column }`: the kind (`Syntax(JsonErrorKind)`, `WrongType(expected,
+  found)`, `MissingField(name)`, `UnknownField(name)`, `OutOfRange`,
+  `Custom(text)`), the JSONPath of the value (`$[0].user.name`; a key that
+  is not an identifier as `["we ird"]`), and where the value starts (for a
+  syntax error, where the text goes wrong; for a missing field, the
+  object's `}`). `message()` says `expected a string, found a boolean at
+  $[0].user.name, line 1, column 51 (byte 50)`. `r.path()` and
+  `r.error_here(kind)` give the same for a decoder's own checks.
+- Tests (`crates/codira/tests/json_typed.rs`): 400 random records with
+  unknown members (nested), `null` optionals, shuffled member order and
+  random white space decode into structs and encode back to the value
+  `serde_json` holds; in 120 random documents a wrong-typed value, an
+  out-of-range number, a missing member or a syntax error is injected at a
+  random place, and the reported kind, path, byte offset, line and column
+  must be the ones the test recorded while writing the text.
+
+*Why hand-written, and what a generated form would take.* The debug form
+`{x:?}` shows the compiler can generate a function per type from the type
+alone, with no annotation, and a JSON encoder could be generated the same
+way (`codira.json:<type>`, a struct as an object of its fields in order,
+an array as an array, an optional as its value or `null`, numbers and
+strings as themselves). It was not done, for these reasons:
+
+- A schema is rarely the struct's own shape. Real documents rename
+  fields (`screen_name` against `screenName`), leave some out, give others
+  defaults, keep or reject unknown members, and spell enums one of several
+  ways (`"Circle"`, `{"Circle": {..}}`, `{"type": "Circle", ..}`). Rust's
+  serde needs attributes for each of these; Codira has no field attributes
+  to say them with, and a generator that picks one mapping would encode
+  and decode the wrong JSON for most real schemas without a word.
+- Decoding is the hard half. A generated decoder must build a struct from
+  members in any order, decide what a missing member means (an error, or
+  `nil` for an optional, or a default), and construct classes (whose
+  sharing and cycles JSON cannot express). Each of those is a decision a
+  person should make per type.
+- What a generator would buy is boilerplate, not speed or safety: it would
+  emit the calls written above (`next_key`, `read_*`), so the error
+  locations -- path and byte offset -- would be the same, and the reader's
+  per-call cost would stay.
+- If it is added, the shape is the debug form's: generated per type in the
+  module that needs it, a user's own `to_json`/`from_json` method taking
+  precedence by name (as `debug_string` does), and the field attributes
+  above added to the language first.
 
 **Safety, effects and memory.**
 
@@ -1451,68 +1676,96 @@ that both texts are byte for byte the ones `serde_json` prints.
   than any parse allows, built by a program, can overflow the stack.
 - `codira run` collects as the program allocates (pacing) under a finite
   heap limit, half of the available memory by default (see "Memory: heap
-  limit, pacing, `--runtime-stats`"). The measurements below predate that:
-  they ran under a host with a 1 GiB limit and no pacing.
+  limit, pacing, `--runtime-stats`"). The measurements below ran under a
+  host with a 1 GiB limit and the default pacing.
+- The streaming reader and writer allocate nothing per event beyond what
+  the program keeps: the strings of events are views, the reader's stacks
+  and the writer's buffer are reused, and a file writer holds at most
+  64 KiB before it writes.
 - Values are not sendable between tasks (they hold strings).
 
-**Measured** against Rust's `serde_json::Value` (1.0.133) on the same
-machine: an x86-64 VM, Intel Xeon @ 2.10 GHz, 4 vCPUs shared with other
-builds (load average 3 to 4 during the runs), 16 GB, Linux 6.18, Rust
-1.97.1. Codira: `codira build -O 3` with a release build of the
-compiler, run by `examples/json_bench/host` (the runtime in release mode
-and a 1 GiB heap limit, so that the collector runs). Rust: `cargo build
---release` with `serde_json`'s `preserve_order` (insertion order, as
-here) and `float_roundtrip` (correctly rounded floats, as here). Each
-program parses, prints and pretty-prints each input 11 times and reports
-the median; the table is the median of 5 alternating runs of both, in
-milliseconds. Both print the same check values (node count, string bytes,
-sums of the integers and of the floats' bits, output lengths). The inputs
-are written by `examples/json_bench/gen_inputs.py` (seeded): `twitter`, an
-array of 20,000 records of a social network's API (16.9 MB); `canada`,
-GeoJSON polygons of 300,000 17-digit coordinate pairs (11.8 MB); `deep`,
-4,000 trees of objects and arrays 100 deep (7.0 MB; its pretty text is
-149 MB of mostly indentation). `python3 examples/json_bench/bench.py
---codira <codira> --work <dir>` does all of it.
+**Measured** against Rust's `serde_json` (1.0.133) on the same machine:
+an x86-64 VM, Intel Xeon @ 2.10 GHz, 4 vCPUs, 16 GB, Linux 6.18, Rust
+1.97.1, nothing else running (load average about 1). Codira: `codira
+build -O 3` with a release build of the compiler, run by
+`examples/json_bench/host` (the runtime in release mode, a 1 GiB heap
+limit and the default pacing). Rust: `cargo build --release` with
+`serde_json`'s `preserve_order` (insertion order, as here) and
+`float_roundtrip` (correctly rounded floats, as here), default target
+CPU. Each program runs each phase 11 times and reports the median; the
+table is the median of 5 alternating runs of both, in milliseconds, and
+both print the same check values on every row (node count, string bytes,
+sums of the integers and of the floats' bits, output lengths; for
+`typed`, sums over every decoded field). The inputs are written by
+`examples/json_bench/gen_inputs.py` (seeded): `twitter`, an array of
+20,000 records of a social network's API (16.9 MB); `canada`, GeoJSON
+polygons of 300,000 17-digit coordinate pairs (11.8 MB); `deep`, 4,000
+trees of objects and arrays 100 deep (7.0 MB; its pretty text is 149 MB of
+mostly indentation). "Before" is the previous `std.json.json` and
+compiler (main at f8b145c6a1) measured the same way on the same machine
+the same day. `python3 examples/json_bench/bench.py --codira <codira>
+--work <dir> --rounds 5` does all of it.
 
-| input | phase | Codira | Rust | Codira / Rust |
-|---|---|---:|---:|---:|
-| twitter | parse | 81.8 | 118.0 | 0.69x |
-| twitter | print | 56.2 | 51.4 | 1.09x |
-| twitter | pretty | 78.3 | 63.4 | 1.24x |
-| canada | parse | 51.5 | 47.2 | 1.09x |
-| canada | print | 48.8 | 29.3 | 1.67x |
-| canada | pretty | 71.7 | 46.0 | 1.56x |
-| deep | parse | 63.9 | 88.0 | 0.73x |
-| deep | print | 43.5 | 31.2 | 1.40x |
-| deep | pretty | 343.0 | 293.6 | 1.17x |
+| input | phase | before | Codira | Rust | Codira / Rust |
+|---|---|---:|---:|---:|---:|
+| twitter | parse | 129.6 | 132.2 | 131.1 | 1.01x |
+| twitter | print | 115.5 | 50.2 | 54.8 | 0.92x |
+| twitter | pretty | 132.1 | 58.1 | 67.1 | 0.87x |
+| canada | parse | 57.4 | 54.5 | 53.6 | 1.02x |
+| canada | print | 57.4 | 32.0 | 30.5 | 1.05x |
+| canada | pretty | 115.0 | 46.3 | 52.0 | 0.89x |
+| deep | parse | 71.6 | 67.6 | 97.6 | 0.69x |
+| deep | print | 47.4 | 41.3 | 32.7 | 1.26x |
+| deep | pretty | 512.0 | 242.2 | 337.8 | 0.72x |
+| twitter | stream (no tree) | -- | 65.6 | 33.6 | 1.95x |
+| canada | stream (no tree) | -- | 47.5 | 25.8 | 1.84x |
+| deep | stream (no tree) | -- | 49.4 | 32.0 | 1.54x |
+| twitter | typed (into structs) | -- | 116.3 | 28.8 | 4.04x |
 
-- **Parsing** is within 10% of Rust or faster: what costs in Codira is
-  allocation, and the parser allocates each array and object once (at its
-  exact size, from its stack) and no string without escapes (views); the
-  `IndexMap` behind `preserve_order` hashes every key with SipHash. With
-  `serde_json`'s defaults (a `BTreeMap`, floats not correctly rounded)
-  Rust parses `twitter` in 71.7 ms and `canada` in 36.5 ms against 86.8
-  and 48.1 for Codira in that run -- and reads 126 of `canada`'s 600,000
-  floats an ulp off, so the check values differ.
-- **Printing is 1.1x to 1.7x slower.** Floats cost most (`canada`): each
-  goes through the dispatch table to the runtime's `ryu` and is copied
-  back byte by byte from a stack slot, where Rust calls `ryu` directly
-  and copies its bytes at once. Every byte is a bounds-checked store into
-  the 64 KiB chunk, and each chunk is copied three times more on its way
-  into the `String` (a slice, `string_from_utf8`, the append). An earlier
-  printer that appended to a `String` per token was 4x to 7x slower; one
-  that grew a single byte array, 1.5x to 2.5x (the doublings and the copy
-  at the end).
-- The times include collections: the heap is capped at 1 GiB and each
-  input is parsed 11 times, so where a collection falls depends on what
-  was allocated before, and Codira's times vary more between sets of runs
-  than Rust's (`twitter` parse: 81.8 and 86.8 ms in two sets). Not
-  measured: memory use (a Codira value is 64 bytes, an object member 96),
-  and pause times.
+Per round, parse + print + pretty together (where a collection falls
+depends on what the phase before allocated, so the sum is steadier than
+each phase): twitter 243.4 against 256.2 ms (0.95x), canada 137.4 against
+135.3 (1.02x), deep 351.1 against 468.4 (0.75x). `simd-json` 0.14, built
+for the host CPU (`--simd`), parses into its `OwnedValue` in 63.7
+(twitter), 35.6 (canada) and 61.4 ms (deep), with the same check values.
 
-**Not done:** typed decoding into program types (waits for derive and
-generic traits: a serialization framework comes next); a streaming or
-event parser; reading a number's exact text (an integer beyond `i64` is a
+- **Printing is at parity or faster** but for `deep`'s compact print
+  (1.26x): every tree node there is a small object or array, and the time
+  goes to walking a tree whose nodes are 64 bytes (an object member 96)
+  where `serde_json`'s are 32. The "before" column shows what the old
+  printer cost once pacing ran collections during printing: each output
+  byte was allocated about four times on its way into the `String` (a
+  64 KiB chunk, a slice of it, `string_from_utf8`, a doubling append), and
+  that garbage made the collector run in the middle of printing.
+- **Parsing** is at Rust's speed or faster; its time includes the
+  collections pacing runs while the tree is built (with two trees alive
+  in the benchmark: the previous round's and the new one).
+- **Streaming is 1.5x to 2x slower than `serde`'s visitor.** The reader
+  hands out one event per call (a `Result` of an enum), checks each
+  object's keys for duplicates as the tree parser does (hashing every key,
+  and indexing objects of more than 8 members), and keeps a JSONPath;
+  `serde`'s visitor is monomorphised into the parser and checks nothing of
+  the kind. (Before an empty-string allocation per array and object was
+  taken out of the path bookkeeping, it was another 1.1x to 1.3x slower.)
+- **Typed decoding is 4x slower than `#[derive(Deserialize)]`.** A
+  profile (callgrind, twitter) puts 57% of the instructions in the
+  reader's state machine and its key, value and string scanning, 7% in the
+  duplicate-key check (hashing each key, indexing objects of more than 8
+  members), and most of the rest in allocation (strings with escapes, the
+  decoded arrays) and the program's own decoder, whose keys are matched by
+  a chain of comparisons (serde's derive matches them in generated code
+  and does not reject a repeated unknown key). A call from the program
+  into the reader, another module, was measured at about 2 ns. Not
+  optimised further.
+- Not measured: memory use (a Codira value is 64 bytes, an object member
+  96), pause times, and the pull parser on pretty-printed input (white
+  space is skipped a byte at a time).
+
+**Not done:** generated typed decoders and encoders (see above: decoders
+and encoders are written by hand over `JsonReader` and `JsonWriter`); a
+reader over a file or a stream of chunks (`JsonReader` reads a whole
+`String` or `[u8]` in memory); vector code for skipping white space (only
+the string scan uses it: the benchmark inputs are compact); reading a number's exact text (an integer beyond `i64` is a
 float, a decimal is rounded to an `f64`); JSON Pointer and JSON Patch; a
 limit on input or tree size; a seeded or flooding-resistant key hash (an
 object keeps its own index rather than a `std.collections.map`: its
@@ -3129,9 +3382,10 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     of `std.base64.base64` between `[u8]` and `String`) and `std.sys.arg`
     (the process's arguments and environment variables, as `String`s and
     `String?`s; under `codira run` they are the `codira` command line's).
-  - `std.json.json`: a JSON value type, a strict parser and a printer
-    (see "JSON"); its conformance and property tests are in
-    `crates/codira/tests/json.rs`.
+  - `std.json.json`: a JSON value type, a strict parser, printers, a
+    streaming writer and a pull parser, and typed decoding over the reader
+    (see "JSON"); its conformance, property and streaming tests are in
+    `crates/codira/tests/json.rs`, the typed ones in `json_typed.rs`.
 - **Waiting for the language**: what is written against `String` and
   something else the language lacks (`std.os` and `std.pathlib`: module-level
   `let`s; `std.testing`: trait objects; `std.sys.info`: module-level `let`s;
