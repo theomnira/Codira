@@ -69,6 +69,7 @@ ok    std/gpu/warp.code
 ok    std/hashlib/hash.code
 ok    std/hashlib/hasher.code
 ok    std/hashlib/string_hash.code
+ok    std/json/json.code
 ok    std/math/constants.code
 ok    std/math/fast.code
 ok    std/math/math.code

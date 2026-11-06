@@ -937,6 +937,144 @@ for the debug form (`{x:.2?}`); `x?`/`X?` (hex debug); a `Display` trait
 (`to_string` is found by name); formatting in `codira run --jit` (such a
 program runs on LLVM, as every `String` program does).
 
+### JSON: `std.json.json`
+
+```codira
+import std.json.json.{Json, JsonObject, JsonError, parse, to_string, to_pretty_string}
+import std.result.result.{Result}
+
+func born(text: String) -> Result[i64, JsonError] {
+    let doc = parse(text)?                         // a JsonError leaves with `?`
+    if let year = doc.get("born") {
+        if let n = year.as_i64() { return Result.Ok(n) }
+    }
+    Result.Ok(0)
+}
+
+let doc = parse("{\"name\": \"Ada\", \"tags\": [\"math\"], \"born\": 1815}").unwrap()
+doc.get("name")!.as_str()!                         // "Ada"
+doc.get("tags")!.at(0)!.as_str()!                  // "math"
+doc.get("born")!.as_i64()!                         // 1815
+let o = JsonObject.new().with("n", Json.Int(3)).with("x", Json.Float(0.5))
+to_string(Json.Obj(o))                             // {"n":3,"x":0.5}
+to_pretty_string(doc)                              // two-space indentation
+```
+
+**The value.** `Json` is an enum: `Null`, `Bool(bool)`, `Int(i64)`,
+`Float(f64)`, `Str(String)`, `Arr([Json])`, `Obj(JsonObject)`.
+
+- Numbers keep the distinction the text makes: a number with neither a
+  fraction nor an exponent that fits an `i64` is an `Int`, exact; every
+  other number is a `Float`, the correctly rounded nearest `f64` (also an
+  integer beyond the `i64` range). `-0` is `Float(-0.0)`, so the sign
+  survives. `as_i64` is `nil` on a `Float` (even `1.0`); `as_f64` converts
+  an `Int`.
+- **Objects keep insertion order**: a `JsonObject` holds its members in
+  one array, in the order the text (or `set`) gave them, so printing a
+  parsed document gives its members back in the same order and a round
+  trip changes nothing a diff would see. Lookups hash the key (FNV-1a) and
+  scan the hashes of objects of up to 8 members; larger objects keep an
+  open-addressing index, so `get` is O(1) expected either way. Chosen over
+  `Map` (which does not keep order) and over a sorted map (which reorders
+  what a person wrote).
+- Accessors return optionals: `get(key)`, `at(i)`, `as_bool`, `as_i64`,
+  `as_f64`, `as_str`, `as_array` and `as_object` (the shared array or
+  object, not a copy), `len` (elements or members, 0 otherwise), the
+  `is_*` tests and `kind_name()`. Construction: the variants themselves,
+  `Json.string(..)`, `Json.int(..)`, `Json.float(..)`, `Json.boolean(..)`,
+  `Json.array(..)`, `Json.object()`, and `JsonObject.new()` with `set(key,
+  value) -> Json?` (replaces in place, keeping the position), `with` (set
+  and return the object), `remove` (keeps the order; O(n)), `get`,
+  `contains_key`, `keys`, `values`, `key_at(i)`, `value_at(i)`.
+- **Equality** (`equals(a, b)`, `a.equals(b)`) is structural: arrays
+  element by element, objects as sets of members (order ignored), numbers
+  by kind and value (`Int(1)` and `Float(1.0)` differ, as their texts
+  do; IEEE for floats). `==` on `Json` is not available (an enum with
+  non-scalar payloads).
+
+**Parsing.** `parse(text: String) -> Result[Json, JsonError]`,
+`parse_with(text, ParseOptions { max_depth, duplicate_keys })`, and
+`parse_bytes(bytes: [u8])` / `parse_bytes_with` for bytes (`read_file`'s),
+which reports bytes that are not UTF-8 as an `InvalidUtf8` error at the
+first bad byte. The grammar is ECMA-404 / IETF RFC 8259 and nothing
+more:
+
+- No comments, trailing commas, single quotes, unquoted keys, leading
+  zeros, `+` signs, `.5`, `NaN` or `Infinity`, no byte order mark. White
+  space is space, tab, line feed and carriage return. Any value may be the
+  top level; only white space may follow it.
+- Strings: the escapes `\" \\ \/ \b \f \n \r \t \uXXXX` (either case of
+  hex digits), with `\uD83D\uDE00` surrogate pairs decoded; a lone or
+  mismatched surrogate, any other escape, and an unescaped control
+  character (U+0000..U+001F) are errors. DEL and every other character
+  are accepted as written.
+- A number too large for an `f64` (`1e400`) is an error
+  (`NumberOutOfRange`), not an infinity; one too small rounds to zero.
+- **Duplicate keys** are an error (`DuplicateKey`, at the second key) by
+  default: parsers that disagree about which value wins have been used to
+  get data past a check. `DuplicateKeys.KeepLast` keeps the last value at
+  the position of the first key, as JavaScript's `JSON.parse` and
+  `serde_json` do.
+- **Errors** are a `JsonError { kind, offset, line, column }`: the
+  `JsonErrorKind` (19 reasons: `UnexpectedEnd`, `ExpectedValue`,
+  `TrailingComma`, `InvalidNumber`, `LoneSurrogate`, `DepthLimit`, ...),
+  the byte offset, the 1-based line (lines end at line feeds) and the
+  1-based column in characters. `reason()` is the phrase, `message()`
+  says `trailing comma at line 1, column 7 (byte 6)`.
+- **Limits.** Arrays and objects nest at most `max_depth` deep (128 by
+  default, as `serde_json`'s, which admits 127; `[[1]]` is 2 deep), and a
+  larger `max_depth` is clamped to `MAX_DEPTH_LIMIT()`, 1000: a level costs
+  up to about 900 bytes of stack in the parser, and parsing, printing and
+  comparing 1000 levels was measured to run in a 1 MiB stack and not in
+  768 KiB (the main thread and Codira's task threads have 8 MiB). The size
+  of the input is not limited.
+- **The parser never panics.** Every input gives a value or an error; the
+  tests feed it random bytes and every prefix of valid documents. It is
+  written in Codira, recursive descent over the `String`; the runtime
+  parses floats (Rust's `f64::from_str`, correctly rounded).
+
+**Printing.** `to_string(v)` is compact; `to_pretty_string(v)` puts each
+element and member on a line of its own with two spaces per level and
+`"key": value` (the layout of `serde_json`'s `to_string_pretty`);
+`to_pretty_string_with(v, indent)` takes the width. Strings escape `"`,
+`\` and the control characters (`\b \f \n \r \t`, else `\u00XX`) and
+nothing else: every other character is written as itself, in UTF-8.
+Floats are written in the shortest form that reads back as the same `f64`
+(the runtime's `codira_json_format_f64`, on the `ryu` crate), always with
+a `.` or an exponent (`1.0`, `1e300`, `-0.0`), so they read back as a
+`Float`; a NaN or an infinity, which JSON cannot express, is written as
+`null`. For every value without one, `parse(to_string(v))` equals `v`,
+and so does the pretty text: the tests check this on random values, and
+that both texts are byte for byte the ones `serde_json` prints.
+
+**Safety, effects and memory.**
+
+- Hostile input: nesting is bounded, the parser does not panic, and every
+  index it uses is checked. Not bounded: the input size, the size of the
+  tree (64 bytes per array element, 96 per object member, plus an object
+  header per array and object) and the time for a large
+  object whose keys an attacker chose to collide in FNV-1a, which is
+  unseeded (**not DoS-resistant**, like `Map`).
+- A string without escapes is a view of the input text (no copy): the
+  value keeps the whole input buffer alive. Copy what you keep
+  (`f"{s}"`) to let the input go.
+- Parsing and printing allocate (GC arrays and objects; the parser keeps
+  each array's and object's elements on a stack of its own and allocates
+  the result once, at its exact size); both may panic only on running out
+  of memory. The printer and `equals` recurse: a value nested more deeply
+  than any parse allows, built by a program, can overflow the stack.
+- `codira run` and `codira start` set no heap limit, and without one the
+  collector never runs: a program that parses many large documents should
+  run under a host that sets `RuntimeBuilder::heap_limit`.
+- Values are not sendable between tasks (they hold strings).
+
+**Not done:** typed decoding into program types (waits for derive and
+generic traits: a serialization framework comes next); a streaming or
+event parser; reading a number's exact text (an integer beyond `i64` is a
+float, a decimal is rounded to an `f64`); JSON Pointer and JSON Patch; a
+limit on input or tree size; a seeded or flooding-resistant key hash;
+printing keys sorted; comments or trailing commas as an option.
+
 ### Integer arithmetic, shifts and casts
 
 What each operator does, on every integer width (`i8` to `i128`, `u8` to
@@ -2322,6 +2460,9 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     of `std.base64.base64` between `[u8]` and `String`) and `std.sys.arg`
     (the process's arguments and environment variables, as `String`s and
     `String?`s; under `codira run` they are the `codira` command line's).
+  - `std.json.json`: a JSON value type, a strict parser and a printer
+    (see "JSON"); its conformance and property tests are in
+    `crates/codira/tests/json.rs`.
 - **Waiting for the language**: what is written against `String` and
   something else the language lacks (`std.os` and `std.pathlib`: module-level
   `let`s; `std.testing`: trait objects; `std.sys.info`: module-level `let`s;

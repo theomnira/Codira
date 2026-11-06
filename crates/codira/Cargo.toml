@@ -45,6 +45,9 @@ serde_json = { workspace = true, features = ["std"] }
 codira_ctcheck = { version = "0.6.0-dev", path = "../codira_ctcheck" }
 cargo-husky = { workspace = true, features = ["user-hooks"] }
 tempfile = { workspace = true }
+# The oracle of the `std.json.json` tests (`tests/json.rs`): exact float
+# parsing, so that it and Codira read every number alike.
+serde_json = { workspace = true, features = ["std", "float_roundtrip"] }
 codira_skeptic = { path = "../codira_skeptic", version = "0.6.0-dev" }
 
 [build-dependencies]

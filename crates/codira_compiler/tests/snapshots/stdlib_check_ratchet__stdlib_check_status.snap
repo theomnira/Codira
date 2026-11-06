@@ -70,6 +70,7 @@ snapshot_kind: text
    0 syntax     0 semantic  hashlib/hash.code
    0 syntax    49 semantic  hashlib/hasher.code
    0 syntax     0 semantic  hashlib/string_hash.code
+   0 syntax     0 semantic  json/json.code
    0 syntax     0 semantic  math/constants.code
    0 syntax     0 semantic  math/fast.code
    0 syntax     0 semantic  math/math.code

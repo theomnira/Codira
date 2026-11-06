@@ -1,0 +1,1461 @@
+// =============================================================================
+// std/json/json.code — JSON: a value type, a strict parser and a printer
+// =============================================================================
+//
+//     import std.json.json.{Json, JsonObject, parse, to_string}
+//
+//     let doc = parse("{\"name\": \"ada\", \"langs\": [\"en\", \"fr\"]}")?
+//     if let name = doc.get("name") { println(name.as_str()!) }
+//     let o = JsonObject.new()
+//     o.set("n", Json.Int(3));
+//     println(to_string(Json.Obj(o)))        // {"n":3}
+//
+// The grammar is the one of ECMA-404 and IETF RFC 8259, and nothing more:
+// no comments, no trailing commas, no single quotes, no leading zeros or
+// `+` signs, no `NaN` or `Infinity`, no byte order mark. White space is
+// space, tab, line feed and carriage return. Any value can be the top
+// level, and only white space may follow it.
+//
+// Values. `Json` is an enum. Numbers keep the distinction the text makes:
+// a number written without a fraction or an exponent that fits an `i64`
+// is an `Int`, exact; every other number is a `Float`, the nearest `f64`
+// (correctly rounded; an integer beyond the `i64` range too). `-0` is
+// `Float(-0.0)`, so that the sign survives. A number too large for an
+// `f64` (`1e400`) is an error rather than an infinity.
+//
+// Objects keep their members in the order they were written (or `set`):
+// printing a parsed document gives its members back in the same order, so
+// a round trip changes nothing a diff would see. A `JsonObject` is a class
+// holding its members in one array, and a hash index once it has more
+// than 8 members; a lookup is O(1) expected either way.
+//
+// Duplicate keys (`{"a": 1, "a": 2}`) are an error by default, because
+// parsers that disagree about which one wins have been used to slip data
+// past a check. `DuplicateKeys.KeepLast` keeps the last value, at the
+// position of the first occurrence (what JavaScript's `JSON.parse` and
+// Rust's `serde_json` do).
+//
+// Strings. The parser's input is a `String`, so it is valid UTF-8 already
+// (`parse_bytes` checks bytes first). Escapes include `\uXXXX` surrogate
+// pairs; a lone surrogate, an unknown escape and an unescaped control
+// character (U+0000..U+001F) are errors. A string without escapes is a
+// view of the input text: nothing is copied, and the value keeps the
+// input's buffer alive (copy it, `f"{s}"`, to let the buffer go).
+//
+// Limits. Arrays and objects may nest `max_depth` deep (128 by default,
+// at most `MAX_DEPTH_LIMIT()`), so hostile input cannot exhaust the stack.
+// The parser never panics: every input gives a value or a `JsonError`
+// with the byte offset, the line and column (1-based; the column counts
+// characters), and the reason.
+//
+// Printing. `to_string` is compact, `to_pretty_string` indents by two
+// spaces (`to_pretty_string_with` takes the width). Strings escape `"`,
+// `\` and the control characters, and nothing else: every other character
+// is written as itself, in UTF-8. Floats are written in the shortest form
+// that reads back as the same `f64` (the runtime's `ryu`), always with a
+// `.` or an exponent, so they read back as a `Float`; a NaN or an
+// infinity, which JSON cannot express, is written as `null`. For every
+// value without one, `parse(to_string(v))` equals `v`.
+//
+// Equality (`equals`, `a.equals(b)`) is structural: arrays element by
+// element, objects as sets of members (order ignored), numbers by kind and
+// value (`Int(1)` and `Float(1.0)` differ, as their texts do).
+//
+// NOT DoS-RESISTANT in one respect: object keys are indexed with an
+// unseeded hash (FNV-1a), so whoever writes a large object can make its
+// keys collide and parsing it quadratic. Depth is limited; size is not.
+// =============================================================================
+
+import root.result.result.{Result};
+
+extern "C" {
+    // The shortest round-trip text of a float (or `null`), written to the
+    // 32 bytes at `out_addr`; returns its length (`native_json` in the
+    // runtime).
+    @noalloc @nopanic @noblock
+    func codira_json_format_f64(value: f64, out_addr: usize) -> usize;
+}
+
+extern "codira-intrinsic" {
+    func stack_alloc(size: usize, align: usize) -> usize;
+    func load_u8(addr: usize) -> u8;
+}
+
+// ── The value ───────────────────────────────────────────────────────────────
+
+public enum Json {
+    Null
+    Bool(bool)
+    // A number without a fraction or exponent, in the `i64` range.
+    Int(i64)
+    // Every other number.
+    Float(f64)
+    Str(String)
+    Arr([Json])
+    Obj(JsonObject)
+}
+
+// One member of an object: its key, the key's `hash()`, and its value.
+struct Member {
+    key: String,
+    hash: u64,
+    value: Json,
+}
+
+// The members of an object, in insertion order. A class: copies share it.
+public class JsonObject {
+    entries: [Member],
+    // `nil` while there are at most `INDEX_FROM()` members (a scan of the
+    // hashes is faster then); otherwise an open-addressing table of entry
+    // index + 1 (0 is a free slot), a power of two at least twice the
+    // number of entries.
+    index: [u32]?,
+}
+
+// An object starts using its hash index above this many members.
+func INDEX_FROM() -> usize { 8 }
+
+// The table slot a key hash starts probing at (before masking).
+func slot_of(hash: u64) -> usize {
+    (hash ^ (hash >> 29)) as usize
+}
+
+// The position of `key` among `members[lo..hi]` (relative to `lo`), or
+// `hi - lo`. `table`, when present, indexes exactly those members.
+func find_member(members: [Member], lo: usize, hi: usize, table: [u32]?, key: String, hash: u64) -> usize {
+    let n = hi - lo
+    if let t = table {
+        let mask = t.len() - 1
+        var slot = slot_of(hash) & mask
+        loop {
+            let entry = t[slot] as usize
+            if entry == 0 {
+                return n
+            }
+            let m = members[lo + entry - 1]
+            if m.hash == hash && m.key == key {
+                return entry - 1
+            }
+            slot = (slot + 1) & mask
+        }
+    }
+    var i = lo
+    while i < hi {
+        let m = members[i]
+        if m.hash == hash && m.key == key {
+            return i - lo
+        }
+        i += 1
+    }
+    n
+}
+
+// A fresh index of `members[lo..hi]`, with room for twice as many.
+func build_index(members: [Member], lo: usize, hi: usize) -> [u32] {
+    let n = hi - lo
+    var size: usize = 16
+    while size < n * 4 {
+        size = size * 2
+    }
+    let table = array_filled(0u32, size)
+    let mask = size - 1
+    var i: usize = 0
+    while i < n {
+        var slot = slot_of(members[lo + i].hash) & mask
+        while table[slot] != 0 {
+            slot = (slot + 1) & mask
+        }
+        table[slot] = (i + 1) as u32
+        i += 1
+    }
+    table
+}
+
+// The index of `members[lo..hi]` after entry `hi - 1 - lo` (whose hash is
+// `hash`) was added, given the index before (`nil` while small).
+func index_after_push(members: [Member], lo: usize, hi: usize, table: [u32]?, hash: u64) -> [u32]? {
+    let n = hi - lo
+    if n <= INDEX_FROM() {
+        return nil
+    }
+    if let t = table {
+        if n * 2 <= t.len() {
+            let mask = t.len() - 1
+            var slot = slot_of(hash) & mask
+            while t[slot] != 0 {
+                slot = (slot + 1) & mask
+            }
+            t[slot] = n as u32
+            return t
+        }
+    }
+    build_index(members, lo, hi)
+}
+
+extend JsonObject {
+    // An empty object.
+    public func new() -> JsonObject {
+        JsonObject { entries: [], index: nil }
+    }
+
+    // The number of members.
+    public func len(self) -> usize {
+        self.entries.len()
+    }
+
+    public func is_empty(self) -> bool {
+        self.entries.len() == 0
+    }
+
+    // The value of `key`, or `nil`.
+    public func get(self, key: String) -> Json? {
+        let n = self.entries.len()
+        let at = find_member(self.entries, 0, n, self.index, key, key.hash())
+        if at < n { self.entries[at].value } else { nil }
+    }
+
+    public func contains_key(self, key: String) -> bool {
+        let n = self.entries.len()
+        find_member(self.entries, 0, n, self.index, key, key.hash()) < n
+    }
+
+    // Sets `key` to `value`: in place when the key is there (its position
+    // is kept; the old value is returned), at the end otherwise (`nil`).
+    public func set(self, key: String, value: Json) -> Json? {
+        let hash = key.hash()
+        let n = self.entries.len()
+        let at = find_member(self.entries, 0, n, self.index, key, hash)
+        if at < n {
+            let old = self.entries[at].value
+            self.entries[at] = Member { key: key, hash: hash, value: value }
+            return old
+        }
+        self.entries.push(Member { key: key, hash: hash, value: value })
+        self.index = index_after_push(self.entries, 0, n + 1, self.index, hash)
+        nil
+    }
+
+    // `set`, returning the object, for building one in an expression.
+    public func with(self, key: String, value: Json) -> JsonObject {
+        self.set(key, value);
+        self
+    }
+
+    // Removes `key`, keeping the order of the others; returns its value.
+    // O(n): the members after it move down.
+    public func remove(self, key: String) -> Json? {
+        let n = self.entries.len()
+        let at = find_member(self.entries, 0, n, self.index, key, key.hash())
+        if at >= n {
+            return nil
+        }
+        let old = self.entries.remove(at).value
+        if n - 1 > INDEX_FROM() {
+            self.index = build_index(self.entries, 0, n - 1)
+        } else {
+            self.index = nil
+        }
+        old
+    }
+
+    // The keys, in order (a new array).
+    public func keys(self) -> [String] {
+        self.entries.map(func(m) { m.key })
+    }
+
+    // The values, in the order of `keys()` (a new array).
+    public func values(self) -> [Json] {
+        self.entries.map(func(m) { m.value })
+    }
+
+    // The key of member `i` in order, or `nil` past the end.
+    public func key_at(self, i: usize) -> String? {
+        if i < self.entries.len() { self.entries[i].key } else { nil }
+    }
+
+    // The value of member `i` in order, or `nil` past the end.
+    public func value_at(self, i: usize) -> Json? {
+        if i < self.entries.len() { self.entries[i].value } else { nil }
+    }
+}
+
+extend Json {
+    // ── Construction ────────────────────────────────────────────────────────
+
+    public func string(value: String) -> Json { Json.Str(value) }
+    public func int(value: i64) -> Json { Json.Int(value) }
+    public func float(value: f64) -> Json { Json.Float(value) }
+    public func boolean(value: bool) -> Json { Json.Bool(value) }
+    public func array(items: [Json]) -> Json { Json.Arr(items) }
+    // An empty object value; reach its members with `as_object()`.
+    public func object() -> Json { Json.Obj(JsonObject.new()) }
+
+    // ── Queries ─────────────────────────────────────────────────────────────
+
+    public func is_null(self) -> bool {
+        match self { Json.Null -> true, _ -> false }
+    }
+    public func is_bool(self) -> bool {
+        match self { Json.Bool(_) -> true, _ -> false }
+    }
+    // An `Int` or a `Float`.
+    public func is_number(self) -> bool {
+        match self { Json.Int(_) -> true, Json.Float(_) -> true, _ -> false }
+    }
+    public func is_int(self) -> bool {
+        match self { Json.Int(_) -> true, _ -> false }
+    }
+    public func is_float(self) -> bool {
+        match self { Json.Float(_) -> true, _ -> false }
+    }
+    public func is_string(self) -> bool {
+        match self { Json.Str(_) -> true, _ -> false }
+    }
+    public func is_array(self) -> bool {
+        match self { Json.Arr(_) -> true, _ -> false }
+    }
+    public func is_object(self) -> bool {
+        match self { Json.Obj(_) -> true, _ -> false }
+    }
+
+    // "null", "bool", "int", "float", "string", "array" or "object".
+    public func kind_name(self) -> str {
+        match self {
+            Json.Null -> "null",
+            Json.Bool(_) -> "bool",
+            Json.Int(_) -> "int",
+            Json.Float(_) -> "float",
+            Json.Str(_) -> "string",
+            Json.Arr(_) -> "array",
+            Json.Obj(_) -> "object",
+        }
+    }
+
+    // ── Accessors: `nil` when the value is of another kind ──────────────────
+
+    public func as_bool(self) -> bool? {
+        match self { Json.Bool(b) -> b, _ -> nil }
+    }
+
+    // An `Int`'s value (a `Float` is `nil`, even an integral one).
+    public func as_i64(self) -> i64? {
+        match self { Json.Int(n) -> n, _ -> nil }
+    }
+
+    // A `Float`'s value, or an `Int`'s converted (rounded beyond 2^53).
+    public func as_f64(self) -> f64? {
+        match self {
+            Json.Int(n) -> n as f64,
+            Json.Float(x) -> x,
+            _ -> nil,
+        }
+    }
+
+    public func as_str(self) -> String? {
+        match self { Json.Str(s) -> s, _ -> nil }
+    }
+
+    // The array itself (shared, not copied).
+    public func as_array(self) -> [Json]? {
+        match self { Json.Arr(items) -> items, _ -> nil }
+    }
+
+    // The object itself (shared, not copied).
+    public func as_object(self) -> JsonObject? {
+        match self { Json.Obj(o) -> o, _ -> nil }
+    }
+
+    // The member `key` of an object; `nil` when absent or not an object.
+    public func get(self, key: String) -> Json? {
+        match self { Json.Obj(o) -> o.get(key), _ -> nil }
+    }
+
+    // Element `index` of an array; `nil` when out of range or not an array.
+    public func at(self, index: usize) -> Json? {
+        match self {
+            Json.Arr(items) -> if index < items.len() { items[index] } else { nil },
+            _ -> nil,
+        }
+    }
+
+    // The number of elements or members; 0 for anything else.
+    public func len(self) -> usize {
+        match self {
+            Json.Arr(items) -> items.len(),
+            Json.Obj(o) -> o.len(),
+            _ -> 0,
+        }
+    }
+
+    // Structural equality; see `equals`.
+    public func equals(self, other: Json) -> bool {
+        equals(self, other)
+    }
+
+    // The compact text, as `to_string(self)`.
+    public func to_json(self) -> String {
+        to_string(self)
+    }
+}
+
+// Structural equality: the same kind and, for arrays, equal elements in
+// order; for objects, the same keys with equal values in any order; for
+// numbers, `Int`s or `Float`s (not one of each) equal as numbers (IEEE:
+// `-0.0` equals `0.0`, a NaN equals nothing).
+public func equals(a: Json, b: Json) -> bool {
+    match a {
+        Json.Null -> b.is_null(),
+        Json.Bool(x) -> match b { Json.Bool(y) -> x == y, _ -> false },
+        Json.Int(x) -> match b { Json.Int(y) -> x == y, _ -> false },
+        Json.Float(x) -> match b { Json.Float(y) -> x == y, _ -> false },
+        Json.Str(x) -> match b { Json.Str(y) -> x == y, _ -> false },
+        Json.Arr(xs) -> match b { Json.Arr(ys) -> arrays_equal(xs, ys), _ -> false },
+        Json.Obj(x) -> match b { Json.Obj(y) -> objects_equal(x, y), _ -> false },
+    }
+}
+
+func arrays_equal(xs: [Json], ys: [Json]) -> bool {
+    let n = xs.len()
+    if n != ys.len() {
+        return false
+    }
+    var i: usize = 0
+    while i < n {
+        if !equals(xs[i], ys[i]) {
+            return false
+        }
+        i += 1
+    }
+    true
+}
+
+func objects_equal(x: JsonObject, y: JsonObject) -> bool {
+    let n = x.entries.len()
+    if n != y.entries.len() {
+        return false
+    }
+    var i: usize = 0
+    while i < n {
+        let m = x.entries[i]
+        let at = find_member(y.entries, 0, n, y.index, m.key, m.hash)
+        if at >= n || !equals(m.value, y.entries[at].value) {
+            return false
+        }
+        i += 1
+    }
+    true
+}
+
+// ── Errors ──────────────────────────────────────────────────────────────────
+
+// Why a text is not JSON.
+public enum JsonErrorKind {
+    // The text ended where more was needed.
+    UnexpectedEnd
+    // A value was expected here (a byte that cannot start one).
+    ExpectedValue
+    // An object member's name must be a string.
+    ExpectedKey
+    // `:` must follow an object member's name.
+    ExpectedColon
+    // After an array element: `,` or `]`.
+    ExpectedCommaOrBracket
+    // After an object member: `,` or `}`.
+    ExpectedCommaOrBrace
+    // `,` right before `]` or `}`.
+    TrailingComma
+    // Something other than white space after the value.
+    TrailingCharacters
+    // A word that is not `true`, `false` or `null` (`NaN`, `tru`).
+    InvalidLiteral
+    // A malformed number: a leading zero, a missing digit.
+    InvalidNumber
+    // A number too large for an `f64`.
+    NumberOutOfRange
+    // A control character (U+0000..U+001F) written in a string unescaped.
+    ControlCharacter
+    // A `\` followed by something JSON does not define.
+    InvalidEscape
+    // A `\u` not followed by four hexadecimal digits.
+    InvalidUnicodeEscape
+    // A `\u` surrogate without its other half.
+    LoneSurrogate
+    // The text ended inside a string.
+    UnterminatedString
+    // A key an object already has (with `DuplicateKeys.Reject`).
+    DuplicateKey
+    // Arrays and objects nested deeper than `max_depth`.
+    DepthLimit
+    // `parse_bytes` only: the bytes are not UTF-8.
+    InvalidUtf8
+}
+
+// Where and why parsing failed.
+public struct JsonError {
+    public kind: JsonErrorKind,
+    // The byte offset in the text, 0-based.
+    public offset: usize,
+    // The line (1-based; lines end at line feeds).
+    public line: usize,
+    // The column, 1-based, in characters (code points).
+    public column: usize,
+}
+
+extend JsonError {
+    // The reason, as a phrase.
+    public func reason(self) -> str {
+        match self.kind {
+            JsonErrorKind.UnexpectedEnd -> "unexpected end of input",
+            JsonErrorKind.ExpectedValue -> "expected a value",
+            JsonErrorKind.ExpectedKey -> "expected a string key",
+            JsonErrorKind.ExpectedColon -> "expected `:` after an object key",
+            JsonErrorKind.ExpectedCommaOrBracket -> "expected `,` or `]` after an array element",
+            JsonErrorKind.ExpectedCommaOrBrace -> "expected `,` or `}` after an object member",
+            JsonErrorKind.TrailingComma -> "trailing comma",
+            JsonErrorKind.TrailingCharacters -> "trailing characters after the value",
+            JsonErrorKind.InvalidLiteral -> "invalid literal (expected `true`, `false` or `null`)",
+            JsonErrorKind.InvalidNumber -> "invalid number",
+            JsonErrorKind.NumberOutOfRange -> "number out of range",
+            JsonErrorKind.ControlCharacter -> "unescaped control character in a string",
+            JsonErrorKind.InvalidEscape -> "invalid escape in a string",
+            JsonErrorKind.InvalidUnicodeEscape -> "invalid `\\u` escape (expected four hexadecimal digits)",
+            JsonErrorKind.LoneSurrogate -> "lone surrogate in a `\\u` escape",
+            JsonErrorKind.UnterminatedString -> "unterminated string",
+            JsonErrorKind.DuplicateKey -> "duplicate key in an object",
+            JsonErrorKind.DepthLimit -> "arrays and objects nested deeper than the limit",
+            JsonErrorKind.InvalidUtf8 -> "invalid UTF-8",
+        }
+    }
+
+    // "<reason> at line L, column C (byte B)".
+    public func message(self) -> String {
+        let line = self.line
+        let column = self.column
+        let offset = self.offset
+        self.reason().to_string() + f" at line {line}, column {column} (byte {offset})"
+    }
+}
+
+// The error `kind` at byte `offset` of `text`, with its line and column.
+func error_at(text: String, kind: JsonErrorKind, offset: usize) -> JsonError {
+    var line: usize = 1
+    var column: usize = 1
+    var i: usize = 0
+    let end = if offset < text.len() { offset } else { text.len() }
+    while i < end {
+        let b = text.byte_at(i)
+        if b == 10 {
+            line += 1
+            column = 1
+        } else if (b & 0xC0) != 0x80 {
+            column += 1
+        }
+        i += 1
+    }
+    JsonError { kind: kind, offset: offset, line: line, column: column }
+}
+
+// ── Options ─────────────────────────────────────────────────────────────────
+
+// What to do with a key an object already has.
+public enum DuplicateKeys {
+    // An error (`JsonErrorKind.DuplicateKey`), at the second key.
+    Reject
+    // The last value wins, at the position of the first occurrence.
+    KeepLast
+}
+
+public struct ParseOptions {
+    // How deep arrays and objects may nest: `[[1]]` is 2 deep. Clamped to
+    // `MAX_DEPTH_LIMIT()`.
+    public max_depth: usize,
+    public duplicate_keys: DuplicateKeys,
+}
+
+// The default nesting limit, 128 (`serde_json`'s admits 127).
+public func DEFAULT_MAX_DEPTH() -> usize { 128 }
+
+// The largest nesting limit `parse_with` honours: a larger `max_depth` is
+// this. A level of nesting takes up to about 900 bytes of stack in the
+// parser (less in the printer and `equals`): parsing, printing and
+// comparing 1000 levels runs in a 1 MiB stack (and not in 768 KiB). The
+// main thread and Codira's task threads have 8 MiB.
+public func MAX_DEPTH_LIMIT() -> usize { 1000 }
+
+// 128 levels, duplicate keys rejected.
+public func default_options() -> ParseOptions {
+    ParseOptions { max_depth: DEFAULT_MAX_DEPTH(), duplicate_keys: DuplicateKeys.Reject }
+}
+
+// ── Parsing ─────────────────────────────────────────────────────────────────
+
+// Parses `text` as one JSON value, with `default_options()`.
+public func parse(text: String) -> Result[Json, JsonError] {
+    parse_with(text, default_options())
+}
+
+// Parses `text` as one JSON value.
+public func parse_with(text: String, options: ParseOptions) -> Result[Json, JsonError] {
+    let limit = if options.max_depth < MAX_DEPTH_LIMIT() { options.max_depth } else { MAX_DEPTH_LIMIT() }
+    let keep_last = match options.duplicate_keys {
+        DuplicateKeys.KeepLast -> true,
+        DuplicateKeys.Reject -> false,
+    }
+    let p = Parser {
+        text: text,
+        pos: 0,
+        depth: 0,
+        max_depth: limit,
+        keep_last: keep_last,
+        scratch: [],
+        items: [],
+        item_top: 0,
+        members: [],
+        member_top: 0,
+    }
+    let value = p.value()?
+    p.skip_space()
+    if p.pos < text.len() {
+        return Result.Err(p.error(JsonErrorKind.TrailingCharacters, p.pos))
+    }
+    Result.Ok(value)
+}
+
+// Parses UTF-8 `bytes` (as `read_file` returns them), with
+// `default_options()`. Bytes that are not UTF-8 are an `InvalidUtf8`
+// error at the first bad byte.
+public func parse_bytes(bytes: [u8]) -> Result[Json, JsonError] {
+    parse_bytes_with(bytes, default_options())
+}
+
+public func parse_bytes_with(bytes: [u8], options: ParseOptions) -> Result[Json, JsonError] {
+    if let text = string_from_utf8(bytes) {
+        return parse_with(text, options)
+    }
+    let bad = first_invalid_utf8(bytes)
+    // Line and column of the valid prefix.
+    var line: usize = 1
+    var column: usize = 1
+    var i: usize = 0
+    while i < bad {
+        let b = bytes[i]
+        if b == 10 {
+            line += 1
+            column = 1
+        } else if (b & 0xC0) != 0x80 {
+            column += 1
+        }
+        i += 1
+    }
+    Result.Err(JsonError { kind: JsonErrorKind.InvalidUtf8, offset: bad, line: line, column: column })
+}
+
+// The offset of the first byte of `bytes` that does not begin a valid
+// UTF-8 sequence (the length when there is none). Only on the error path.
+func first_invalid_utf8(bytes: [u8]) -> usize {
+    let n = bytes.len()
+    var i: usize = 0
+    while i < n {
+        let b = bytes[i]
+        var width: usize = 0
+        var low: u8 = 0x80
+        var high: u8 = 0xBF
+        if b < 0x80 {
+            width = 1
+        } else if b >= 0xC2 && b <= 0xDF {
+            width = 2
+        } else if b >= 0xE0 && b <= 0xEF {
+            width = 3
+            if b == 0xE0 { low = 0xA0 }
+            if b == 0xED { high = 0x9F }
+        } else if b >= 0xF0 && b <= 0xF4 {
+            width = 4
+            if b == 0xF0 { low = 0x90 }
+            if b == 0xF4 { high = 0x8F }
+        } else {
+            return i
+        }
+        if i + width > n {
+            return i
+        }
+        var k: usize = 1
+        while k < width {
+            let c = bytes[i + k]
+            let lo = if k == 1 { low } else { 0x80 }
+            let hi = if k == 1 { high } else { 0xBF }
+            if c < lo || c > hi {
+                return i
+            }
+            k += 1
+        }
+        i += width
+    }
+    n
+}
+
+// A recursive-descent parser over a `String`. Arrays and objects being
+// parsed keep their elements on two stacks (`items`, `members`), so that
+// each array or object is allocated once, at its exact size, when it ends:
+// a growing array moves its elements out of its cell to a buffer of its
+// own on every doubling, which is most of what building one costs.
+class Parser {
+    text: String,
+    pos: usize,
+    depth: usize,
+    max_depth: usize,
+    keep_last: bool,
+    // Reused for the bytes of a `\u` escape.
+    scratch: [u8],
+    // `items[..item_top]`: the elements of the arrays being parsed, the
+    // innermost last.
+    items: [Json],
+    item_top: usize,
+    // `members[..member_top]`: the same for objects.
+    members: [Member],
+    member_top: usize,
+}
+
+func is_digit(b: u8) -> bool {
+    b >= 48 && b <= 57
+}
+
+// The value of a hexadecimal digit, or 16.
+func hex_value(b: u8) -> u32 {
+    if b >= 48 && b <= 57 {
+        return (b - 48) as u32
+    }
+    if b >= 97 && b <= 102 {
+        return (b - 87) as u32
+    }
+    if b >= 65 && b <= 70 {
+        return (b - 55) as u32
+    }
+    16
+}
+
+extend Parser {
+    func error(self, kind: JsonErrorKind, at: usize) -> JsonError {
+        error_at(self.text, kind, at)
+    }
+
+    func skip_space(self) {
+        let text = self.text
+        let n = text.len()
+        var i = self.pos
+        while i < n {
+            let b = text.byte_at(i)
+            if b == 32 || b == 10 || b == 13 || b == 9 {
+                i += 1
+            } else {
+                break
+            }
+        }
+        self.pos = i
+    }
+
+    // One value, after optional white space.
+    func value(self) -> Result[Json, JsonError] {
+        self.skip_space()
+        let text = self.text
+        let at = self.pos
+        if at >= text.len() {
+            return Result.Err(self.error(JsonErrorKind.UnexpectedEnd, at))
+        }
+        let b = text.byte_at(at)
+        if b == 34 {
+            let s = self.string()?
+            return Result.Ok(Json.Str(s))
+        }
+        if b == 123 {
+            return self.object()
+        }
+        if b == 91 {
+            return self.array()
+        }
+        if b == 45 || is_digit(b) {
+            return self.number()
+        }
+        if b == 116 {
+            self.literal(114, 117, 101, 0)?
+            return Result.Ok(Json.Bool(true))
+        }
+        if b == 102 {
+            self.literal(97, 108, 115, 101)?
+            return Result.Ok(Json.Bool(false))
+        }
+        if b == 110 {
+            self.literal(117, 108, 108, 0)?
+            return Result.Ok(Json.Null)
+        }
+        if (b >= 65 && b <= 90) || (b >= 97 && b <= 122) {
+            // `NaN`, `Infinity`, `True`, `undefined`...
+            return Result.Err(self.error(JsonErrorKind.InvalidLiteral, at))
+        }
+        Result.Err(self.error(JsonErrorKind.ExpectedValue, at))
+    }
+
+    // The rest of a literal whose first byte is at `pos`: the bytes `b1`,
+    // `b2`, `b3` and, unless it is 0, `b4`.
+    func literal(self, b1: u8, b2: u8, b3: u8, b4: u8) -> Result[bool, JsonError] {
+        let text = self.text
+        let n = text.len()
+        let start = self.pos
+        let width: usize = if b4 == 0 { 4 } else { 5 }
+        var i: usize = 1
+        while i < width {
+            let at = start + i
+            if at >= n {
+                return Result.Err(self.error(JsonErrorKind.UnexpectedEnd, at))
+            }
+            let want = if i == 1 { b1 } else if i == 2 { b2 } else if i == 3 { b3 } else { b4 }
+            if text.byte_at(at) != want {
+                return Result.Err(self.error(JsonErrorKind.InvalidLiteral, start))
+            }
+            i += 1
+        }
+        let end = start + width
+        // `nullx`, `true1`: a literal runs into more letters or digits.
+        if end < n {
+            let next = text.byte_at(end)
+            if (next >= 65 && next <= 90) || (next >= 97 && next <= 122) || is_digit(next) || next == 95 {
+                return Result.Err(self.error(JsonErrorKind.InvalidLiteral, start))
+            }
+        }
+        self.pos = end
+        Result.Ok(true)
+    }
+
+    // A number starting at `pos` (a `-` or a digit).
+    func number(self) -> Result[Json, JsonError] {
+        let text = self.text
+        let n = text.len()
+        let start = self.pos
+        var i = start
+        let negative = text.byte_at(i) == 45
+        if negative {
+            i += 1
+        }
+        if i >= n {
+            return Result.Err(self.error(JsonErrorKind.UnexpectedEnd, i))
+        }
+        let first = text.byte_at(i)
+        let digits_start = i
+        // The value of up to 18 digits, which cannot overflow.
+        var value: i64 = 0
+        if first == 48 {
+            i += 1
+            if i < n && is_digit(text.byte_at(i)) {
+                return Result.Err(self.error(JsonErrorKind.InvalidNumber, i))
+            }
+        } else if is_digit(first) {
+            while i < n {
+                let d = text.byte_at(i)
+                if !is_digit(d) {
+                    break
+                }
+                value = value * 10 + (d - 48) as i64
+                i += 1
+            }
+        } else {
+            return Result.Err(self.error(JsonErrorKind.InvalidNumber, i))
+        }
+        let int_end = i
+        var is_float = false
+        if i < n && text.byte_at(i) == 46 {
+            is_float = true
+            i += 1
+            let frac_start = i
+            while i < n && is_digit(text.byte_at(i)) {
+                i += 1
+            }
+            if i == frac_start {
+                let kind = if i >= n { JsonErrorKind.UnexpectedEnd } else { JsonErrorKind.InvalidNumber }
+                return Result.Err(self.error(kind, i))
+            }
+        }
+        if i < n && (text.byte_at(i) == 101 || text.byte_at(i) == 69) {
+            is_float = true
+            i += 1
+            if i < n && (text.byte_at(i) == 43 || text.byte_at(i) == 45) {
+                i += 1
+            }
+            let exp_start = i
+            while i < n && is_digit(text.byte_at(i)) {
+                i += 1
+            }
+            if i == exp_start {
+                let kind = if i >= n { JsonErrorKind.UnexpectedEnd } else { JsonErrorKind.InvalidNumber }
+                return Result.Err(self.error(kind, i))
+            }
+        }
+        self.pos = i
+        if !is_float {
+            if int_end - digits_start <= 18 {
+                if negative {
+                    if value == 0 {
+                        return Result.Ok(Json.Float(-0.0))
+                    }
+                    return Result.Ok(Json.Int(-value))
+                }
+                return Result.Ok(Json.Int(value))
+            }
+            if let exact = text.slice(start, i).parse_i64() {
+                return Result.Ok(Json.Int(exact))
+            }
+        }
+        if let float = text.slice(start, i).parse_f64() {
+            if float - float == 0.0 {
+                return Result.Ok(Json.Float(float))
+            }
+            return Result.Err(self.error(JsonErrorKind.NumberOutOfRange, start))
+        }
+        Result.Err(self.error(JsonErrorKind.InvalidNumber, start))
+    }
+
+    // A string whose opening quote is at `pos`.
+    func string(self) -> Result[String, JsonError] {
+        let text = self.text
+        let n = text.len()
+        let start = self.pos + 1
+        var i = start
+        while i < n {
+            let b = text.byte_at(i)
+            if b == 34 {
+                self.pos = i + 1
+                return Result.Ok(text.slice(start, i))
+            }
+            if b == 92 {
+                return self.escaped_string(start, i)
+            }
+            if b < 32 {
+                return Result.Err(self.error(JsonErrorKind.ControlCharacter, i))
+            }
+            i += 1
+        }
+        Result.Err(self.error(JsonErrorKind.UnterminatedString, n))
+    }
+
+    // The rest of a string from `start`, whose first escape is at `escape`.
+    func escaped_string(self, start: usize, escape: usize) -> Result[String, JsonError] {
+        let text = self.text
+        let n = text.len()
+        var out = "".to_string()
+        out += text.slice(start, escape)
+        var i = escape
+        var run = escape
+        while i < n {
+            let b = text.byte_at(i)
+            if b == 34 {
+                if run < i {
+                    out += text.slice(run, i)
+                }
+                self.pos = i + 1
+                return Result.Ok(out)
+            }
+            if b < 32 {
+                return Result.Err(self.error(JsonErrorKind.ControlCharacter, i))
+            }
+            if b != 92 {
+                i += 1
+                continue
+            }
+            if run < i {
+                out += text.slice(run, i)
+            }
+            if i + 1 >= n {
+                return Result.Err(self.error(JsonErrorKind.UnterminatedString, n))
+            }
+            let e = text.byte_at(i + 1)
+            var width: usize = 2
+            if e == 34 {
+                out += "\""
+            } else if e == 92 {
+                out += "\\"
+            } else if e == 47 {
+                out += "/"
+            } else if e == 98 {
+                out += "\x08"
+            } else if e == 102 {
+                out += "\x0c"
+            } else if e == 110 {
+                out += "\n"
+            } else if e == 114 {
+                out += "\r"
+            } else if e == 116 {
+                out += "\t"
+            } else if e == 117 {
+                let high = self.hex4(i + 2)?
+                var cp = high
+                width = 6
+                if high >= 0xDC00 && high <= 0xDFFF {
+                    return Result.Err(self.error(JsonErrorKind.LoneSurrogate, i))
+                }
+                if high >= 0xD800 && high <= 0xDBFF {
+                    // A high surrogate: a `\u` low surrogate must follow.
+                    if i + 7 >= n || text.byte_at(i + 6) != 92 || text.byte_at(i + 7) != 117 {
+                        return Result.Err(self.error(JsonErrorKind.LoneSurrogate, i))
+                    }
+                    let low = self.hex4(i + 8)?
+                    if low < 0xDC00 || low > 0xDFFF {
+                        return Result.Err(self.error(JsonErrorKind.LoneSurrogate, i))
+                    }
+                    cp = 0x10000 + ((high - 0xD800) << 10) + (low - 0xDC00)
+                    width = 12
+                }
+                out += self.code_point_text(cp)
+            } else {
+                return Result.Err(self.error(JsonErrorKind.InvalidEscape, i))
+            }
+            i += width
+            run = i
+        }
+        Result.Err(self.error(JsonErrorKind.UnterminatedString, n))
+    }
+
+    // The four hexadecimal digits at `at`, as a number.
+    func hex4(self, at: usize) -> Result[u32, JsonError] {
+        let text = self.text
+        let n = text.len()
+        var value: u32 = 0
+        var k: usize = 0
+        while k < 4 {
+            if at + k >= n {
+                return Result.Err(self.error(JsonErrorKind.UnexpectedEnd, n))
+            }
+            let digit = hex_value(text.byte_at(at + k))
+            if digit >= 16 {
+                return Result.Err(self.error(JsonErrorKind.InvalidUnicodeEscape, at + k))
+            }
+            value = value * 16 + digit
+            k += 1
+        }
+        Result.Ok(value)
+    }
+
+    // The UTF-8 text of a Unicode scalar value (not a surrogate).
+    func code_point_text(self, cp: u32) -> String {
+        let bytes = self.scratch
+        bytes.clear()
+        if cp < 0x80 {
+            bytes.push(cp as u8)
+        } else if cp < 0x800 {
+            bytes.push((0xC0 | (cp >> 6)) as u8)
+            bytes.push((0x80 | (cp & 0x3F)) as u8)
+        } else if cp < 0x10000 {
+            bytes.push((0xE0 | (cp >> 12)) as u8)
+            bytes.push((0x80 | ((cp >> 6) & 0x3F)) as u8)
+            bytes.push((0x80 | (cp & 0x3F)) as u8)
+        } else {
+            bytes.push((0xF0 | (cp >> 18)) as u8)
+            bytes.push((0x80 | ((cp >> 12) & 0x3F)) as u8)
+            bytes.push((0x80 | ((cp >> 6) & 0x3F)) as u8)
+            bytes.push((0x80 | (cp & 0x3F)) as u8)
+        }
+        if let s = string_from_utf8(bytes) {
+            return s
+        }
+        // Not reached: the bytes above are UTF-8 for every value the
+        // caller passes. U+FFFD rather than a panic all the same.
+        "�".to_string()
+    }
+
+    // One level deeper, at the `[` or `{` at `pos`.
+    func enter(self) -> Result[bool, JsonError] {
+        if self.depth >= self.max_depth {
+            return Result.Err(self.error(JsonErrorKind.DepthLimit, self.pos))
+        }
+        self.depth += 1
+        self.pos += 1
+        Result.Ok(true)
+    }
+
+    // An array whose `[` is at `pos`.
+    func array(self) -> Result[Json, JsonError] {
+        self.enter()?
+        let text = self.text
+        let n = text.len()
+        self.skip_space()
+        if self.pos < n && text.byte_at(self.pos) == 93 {
+            self.pos += 1
+            self.depth -= 1
+            let empty: [Json] = []
+            return Result.Ok(Json.Arr(empty))
+        }
+        let lo = self.item_top
+        loop {
+            let item = self.value()?
+            let top = self.item_top
+            if top < self.items.len() {
+                self.items[top] = item
+            } else {
+                self.items.push(item)
+            }
+            self.item_top = top + 1
+            self.skip_space()
+            if self.pos >= n {
+                return Result.Err(self.error(JsonErrorKind.UnexpectedEnd, self.pos))
+            }
+            let b = text.byte_at(self.pos)
+            if b == 44 {
+                self.pos += 1
+                self.skip_space()
+                if self.pos < n && text.byte_at(self.pos) == 93 {
+                    return Result.Err(self.error(JsonErrorKind.TrailingComma, self.pos))
+                }
+            } else if b == 93 {
+                self.pos += 1
+                break
+            } else {
+                return Result.Err(self.error(JsonErrorKind.ExpectedCommaOrBracket, self.pos))
+            }
+        }
+        let items = self.items[lo..self.item_top]
+        self.item_top = lo
+        self.depth -= 1
+        Result.Ok(Json.Arr(items))
+    }
+
+    // An object whose `{` is at `pos`.
+    func object(self) -> Result[Json, JsonError] {
+        self.enter()?
+        let text = self.text
+        let n = text.len()
+        self.skip_space()
+        if self.pos < n && text.byte_at(self.pos) == 125 {
+            self.pos += 1
+            self.depth -= 1
+            return Result.Ok(Json.Obj(JsonObject.new()))
+        }
+        let lo = self.member_top
+        var table: [u32]? = nil
+        loop {
+            // A key.
+            if self.pos >= n {
+                return Result.Err(self.error(JsonErrorKind.UnexpectedEnd, self.pos))
+            }
+            let key_at = self.pos
+            if text.byte_at(key_at) != 34 {
+                return Result.Err(self.error(JsonErrorKind.ExpectedKey, key_at))
+            }
+            let key = self.string()?
+            let hash = key.hash()
+            let top = self.member_top
+            let existing = find_member(self.members, lo, top, table, key, hash)
+            let fresh = existing == top - lo
+            if !fresh && !self.keep_last {
+                return Result.Err(self.error(JsonErrorKind.DuplicateKey, key_at))
+            }
+            // `:`.
+            self.skip_space()
+            if self.pos >= n {
+                return Result.Err(self.error(JsonErrorKind.UnexpectedEnd, self.pos))
+            }
+            if text.byte_at(self.pos) != 58 {
+                return Result.Err(self.error(JsonErrorKind.ExpectedColon, self.pos))
+            }
+            self.pos += 1
+            let item = self.value()?
+            let member = Member { key: key, hash: hash, value: item }
+            if fresh {
+                if top < self.members.len() {
+                    self.members[top] = member
+                } else {
+                    self.members.push(member)
+                }
+                self.member_top = top + 1
+                table = index_after_push(self.members, lo, top + 1, table, hash)
+            } else {
+                self.members[lo + existing] = member
+            }
+            // `,` or `}`.
+            self.skip_space()
+            if self.pos >= n {
+                return Result.Err(self.error(JsonErrorKind.UnexpectedEnd, self.pos))
+            }
+            let b = text.byte_at(self.pos)
+            if b == 44 {
+                self.pos += 1
+                self.skip_space()
+                if self.pos < n && text.byte_at(self.pos) == 125 {
+                    return Result.Err(self.error(JsonErrorKind.TrailingComma, self.pos))
+                }
+            } else if b == 125 {
+                self.pos += 1
+                break
+            } else {
+                return Result.Err(self.error(JsonErrorKind.ExpectedCommaOrBrace, self.pos))
+            }
+        }
+        let entries = self.members[lo..self.member_top]
+        self.member_top = lo
+        self.depth -= 1
+        Result.Ok(Json.Obj(JsonObject { entries: entries, index: table }))
+    }
+}
+
+// ── Printing ────────────────────────────────────────────────────────────────
+
+// The compact text of `value`: no white space between tokens.
+public func to_string(value: Json) -> String {
+    let w = Writer { buf: array_filled(0u8, 256), len: 0, indent: 0, pretty: false }
+    w.value(value, 0)
+    w.finish()
+}
+
+// The text of `value` with each element and member on a line of its own,
+// indented by two spaces per level (the layout of `serde_json`'s
+// `to_string_pretty`).
+public func to_pretty_string(value: Json) -> String {
+    to_pretty_string_with(value, 2)
+}
+
+// As `to_pretty_string`, indented by `indent` spaces per level (0 puts
+// every element on a line of its own, unindented).
+public func to_pretty_string_with(value: Json, indent: usize) -> String {
+    let w = Writer { buf: array_filled(0u8, 256), len: 0, indent: indent, pretty: true }
+    w.value(value, 0)
+    w.finish()
+}
+
+// The text is written into `buf[..len]`, a byte array that doubles when
+// full, and becomes a `String` once at the end: one bounds-checked store
+// per byte, where appending to a `String` is a runtime call per piece.
+class Writer {
+    buf: [u8],
+    len: usize,
+    indent: usize,
+    pretty: bool,
+}
+
+func hex_digit(d: u8) -> u8 {
+    if d < 10 { 48 + d } else { 87 + d }
+}
+
+extend Writer {
+    // Room for `more` bytes past `len`.
+    func reserve(self, more: usize) {
+        let need = self.len + more
+        let have = self.buf.len()
+        if need <= have {
+            return
+        }
+        var size = have * 2
+        while size < need {
+            size = size * 2
+        }
+        self.buf.append(array_filled(0u8, size - have))
+    }
+
+    // The text written, as a `String`.
+    func finish(self) -> String {
+        if let text = string_from_utf8(self.buf[0..self.len]) {
+            return text
+        }
+        // Not reached: only valid UTF-8 is ever written (whole strings, and
+        // ASCII around them).
+        "".to_string()
+    }
+
+    func byte(self, b: u8) {
+        self.reserve(1)
+        self.buf[self.len] = b
+        self.len += 1
+    }
+
+    // A line break and the indentation of `level`.
+    func newline(self, level: usize) {
+        let width = level * self.indent
+        self.reserve(width + 1)
+        let buf = self.buf
+        var at = self.len
+        buf[at] = 10
+        at += 1
+        var k: usize = 0
+        while k < width {
+            buf[at] = 32
+            at += 1
+            k += 1
+        }
+        self.len = at
+    }
+
+    func value(self, value: Json, level: usize) {
+        match value {
+            Json.Null -> self.word(110, 117, 108, 108, 0),
+            Json.Bool(b) -> {
+                if b { self.word(116, 114, 117, 101, 0) } else { self.word(102, 97, 108, 115, 101) }
+            },
+            Json.Int(n) -> self.int(n),
+            Json.Float(x) -> self.float(x),
+            Json.Str(s) -> self.string(s),
+            Json.Arr(items) -> self.array(items, level),
+            Json.Obj(o) -> self.object(o, level),
+        }
+    }
+
+    // Four bytes, and a fifth unless it is 0.
+    func word(self, b1: u8, b2: u8, b3: u8, b4: u8, b5: u8) {
+        self.reserve(5)
+        let buf = self.buf
+        let at = self.len
+        buf[at] = b1
+        buf[at + 1] = b2
+        buf[at + 2] = b3
+        buf[at + 3] = b4
+        if b5 == 0 {
+            self.len = at + 4
+        } else {
+            buf[at + 4] = b5
+            self.len = at + 5
+        }
+    }
+
+    func int(self, n: i64) {
+        self.reserve(20)
+        let buf = self.buf
+        var at = self.len
+        // The magnitude as a `u64`, which holds that of `i64`'s minimum.
+        var m: u64 = n as u64
+        if n < 0 {
+            buf[at] = 45
+            at += 1
+            m = 0 - m
+        }
+        var digits: usize = 1
+        var rest = m / 10
+        while rest > 0 {
+            digits += 1
+            rest = rest / 10
+        }
+        var k = digits
+        while k > 0 {
+            k -= 1
+            buf[at + k] = (48 + m % 10) as u8
+            m = m / 10
+        }
+        self.len = at + digits
+    }
+
+    func float(self, x: f64) {
+        self.reserve(32)
+        let tmp = stack_alloc(32, 8)
+        let count = codira_json_format_f64(x, tmp)
+        let buf = self.buf
+        let at = self.len
+        var k: usize = 0
+        while k < count {
+            buf[at + k] = load_u8(tmp + k)
+            k += 1
+        }
+        self.len = at + count
+    }
+
+    func string(self, s: String) {
+        let n = s.len()
+        self.reserve(n + 2)
+        let buf = self.buf
+        var at = self.len
+        buf[at] = 34
+        at += 1
+        var i: usize = 0
+        while i < n {
+            let b = s.byte_at(i)
+            if b >= 32 && b != 34 && b != 92 {
+                buf[at] = b
+                at += 1
+            } else {
+                // An escape takes up to 6 bytes where the byte took 1.
+                self.len = at
+                self.reserve(6 + (n - i) + 1)
+                at = self.len
+                buf[at] = 92
+                if b == 34 || b == 92 {
+                    buf[at + 1] = b
+                    at += 2
+                } else if b == 10 {
+                    buf[at + 1] = 110
+                    at += 2
+                } else if b == 13 {
+                    buf[at + 1] = 114
+                    at += 2
+                } else if b == 9 {
+                    buf[at + 1] = 116
+                    at += 2
+                } else if b == 8 {
+                    buf[at + 1] = 98
+                    at += 2
+                } else if b == 12 {
+                    buf[at + 1] = 102
+                    at += 2
+                } else {
+                    buf[at + 1] = 117
+                    buf[at + 2] = 48
+                    buf[at + 3] = 48
+                    buf[at + 4] = hex_digit(b >> 4)
+                    buf[at + 5] = hex_digit(b & 15)
+                    at += 6
+                }
+            }
+            i += 1
+        }
+        buf[at] = 34
+        self.len = at + 1
+    }
+
+    func array(self, items: [Json], level: usize) {
+        let n = items.len()
+        if n == 0 {
+            self.byte(91)
+            self.byte(93)
+            return
+        }
+        self.byte(91)
+        var i: usize = 0
+        while i < n {
+            if i > 0 {
+                self.byte(44)
+            }
+            if self.pretty {
+                self.newline(level + 1)
+            }
+            self.value(items[i], level + 1)
+            i += 1
+        }
+        if self.pretty {
+            self.newline(level)
+        }
+        self.byte(93)
+    }
+
+    func object(self, o: JsonObject, level: usize) {
+        let entries = o.entries
+        let n = entries.len()
+        if n == 0 {
+            self.byte(123)
+            self.byte(125)
+            return
+        }
+        self.byte(123)
+        var i: usize = 0
+        while i < n {
+            if i > 0 {
+                self.byte(44)
+            }
+            if self.pretty {
+                self.newline(level + 1)
+            }
+            let m = entries[i]
+            self.string(m.key)
+            self.byte(58)
+            if self.pretty {
+                self.byte(32)
+            }
+            self.value(m.value, level + 1)
+            i += 1
+        }
+        if self.pretty {
+            self.newline(level)
+        }
+        self.byte(125)
+    }
+}

@@ -30,6 +30,7 @@ importable:
   std.fs.fs
   std.hashlib.hash
   std.hashlib.string_hash
+  std.json.json
   std.math.constants
   std.math.fast
   std.math.math

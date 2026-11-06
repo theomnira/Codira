@@ -58,6 +58,8 @@ been shown to compute anything.
     (`cargo nextest --workspace` on Linux, Windows and macOS). In CI run 98
     (commit `a980406deb`) none of these tests was among the failures on any
     runner; the per-runner test lists are not kept in the repository.
+  - **L**: written and run on x86-64 Linux; its tests are not yet part of a
+    recorded CI run.
   - **L+CI (imported)**: the import ratchet checks, builds and loads it on
     every CI runner; no program runs it.
   - **L+CI (source)**: the module's source is compiled into a test program
@@ -95,6 +97,7 @@ path is given.
 | `std.fs.fs` | importable | open, read, write, seek, size, fsync, close, remove, rename, directory sync (`a_program_writes_and_reads_a_file_through_std_fs`; `fs_and_hash.rs`: `a_codira_program_writes_reads_renames_and_removes_a_file`) | — | Raw addresses: the runtime checks length and non-null only. Errors are negative codes, not `Result`. Durability claimed on Linux only; `fs_sync_dir` unsupported on Windows. Handles are never closed automatically. | L+CI |
 | `std.hashlib.hash` | importable | FNV-1a 64 over bytes, integers, floats, bools; combiners; `Hashable` for every integer and float type and `bool` (the MurmurHash3 finalizer) and `str` (FNV-1a) (`std_hashlib_hash_is_fnv1a`) | — | **Not cryptographic, not DoS-resistant** (unkeyed). `combine_hash` mixes weakly. | L+CI |
 | `std.hashlib.string_hash` | importable | `hash_string`, `hash_string_bytes`: FNV-1a 64, compared with Rust's (`std_string_modules_work`) | — | **Not cryptographic, not DoS-resistant.** | L+CI |
+| `std.json.json` | importable | `Json` (null, bool, `i64` and `f64` numbers, `String`, arrays, insertion-ordered objects), a strict RFC 8259 parser with positions in its errors, a compact and a pretty printer whose floats round-trip (`crates/codira/tests/json.rs`: `conformance_with_the_standard`, `random_values_print_like_serde_json_and_round_trip`, `mutated_texts_agree_with_serde_json`, `random_bytes_and_truncations_never_crash`, `nesting_is_limited`; `std_json_parses_reads_builds_and_prints`) | — | Never panics on input; nesting limited (128 by default, 1000 at most); size not limited. Duplicate keys rejected by default. Object keys hashed with unseeded FNV-1a: **not DoS-resistant** for large objects. Strings without escapes are views that keep the input alive. | L |
 | `std.math.constants` | importable | IEEE values of π, e, limits, infinities, NaN (`std_math_constants_are_the_ieee_values`) | — | Constants are niladic functions (`PI()`) until module-level `let` exists. | L+CI |
 | `std.math.fast` | importable | f32 approximations within their stated error (`std_math_fast_is_within_its_stated_error`) | — | Bounds hold for positive normal inputs only; `fast_pow`, `fast_tan` have none; `fast_ipow_*` is not exact. | L+CI |
 | `std.math.math` | importable | libm-backed and intrinsic functions, rounding, `gcd`, `factorial`, classification, within 2 ulp of Rust's libm on the tested points (`std_math_math_matches_libm`) | — | `factorial`, `ipow`, `lcm` wrap on overflow. `tanh` is NaN above ~355; `sinh`/`tanh` lose all accuracy near 0 (untested; see Defects). | L+CI |
@@ -214,8 +217,7 @@ is the API layer of the architecture, not a schedule; the milestone is in
 | `std.atomic` | planned | application: atomics with orderings (replaces `std.atomic.atomic`) | module-level constants; atomic intrinsics in the compiler | — | — |
 | `std.text` | planned | application: Unicode (char properties, case, normalization, grapheme segmentation) | `String`, tables (module-level constants) | — | — |
 | `std.encoding` | planned | application: base64/base32/hex (strict and lenient), UTF-16, percent-encoding (replaces `std.base64.*`) | `Result`, growable arrays | Strict decoding by default | — |
-| `std.json` | planned | application: parse and print JSON, a value type | `String`, generic enums, `Map` | Depth and size limits | — |
-| `std.toml` | planned | application: parse and print TOML | as `std.json` | — | — |
+| `std.toml` | planned | application: parse and print TOML | as `std.json.json` | — | — |
 | `std.regex` | planned | application: linear-time regular expressions (no backtracking) | `String`, collections | Linear time: no catastrophic backtracking | — |
 | `std.crypto` | planned | application: hashes (today's `std.crypto.hash`), HMAC, HKDF, AEAD, CSPRNG, constant-time compare, over audited runtime crates | runtime services; secret types | Cryptographic; secrets `secret`-typed | — |
 | `std.compress` | planned | application: deflate/gzip/zlib, zstd, over runtime crates | runtime services | Output size limits (zip bombs) | — |

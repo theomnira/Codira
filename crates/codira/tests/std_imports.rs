@@ -24,6 +24,8 @@
 //!   abnormal exit): all four call `panic`, which returns `Never`.
 //! - A program importing a standard-library module with errors does not
 //!   build, and the errors are reported against the standard-library file.
+//! - `std.json.json`: a document parsed, read, changed, built and printed
+//!   (its conformance and property tests are in `tests/json.rs`).
 
 use std::{
     path::{Path, PathBuf},
@@ -1338,6 +1340,136 @@ public func main() {
          set-by-the-test false\n",
         h = fnv1a(b"hello"),
     );
+    assert_eq!(stdout, expected);
+}
+
+/// `std.json.json`: a document parsed, read through the accessors, changed,
+/// built from scratch and printed, compact and pretty; errors with their
+/// position; equality; and `?` passing a `JsonError` on. The parser's
+/// conformance and property tests are in `tests/json.rs`.
+#[test]
+fn std_json_parses_reads_builds_and_prints() {
+    let (_dir, stdout) = run_ok(&[(
+        "mod.code",
+        r#"
+import std.json.json.{Json, JsonObject, JsonError, JsonErrorKind, ParseOptions, DuplicateKeys, parse, parse_with, parse_bytes, to_string, to_pretty_string, to_pretty_string_with, equals, default_options}
+import std.result.result.{Result}
+
+func total_age(text: String) -> Result[i64, JsonError] {
+    let doc = parse(text)?
+    var total: i64 = 0
+    if let people = doc.get("people") {
+        var i: usize = 0
+        while i < people.len() {
+            if let age = people.at(i)!.get("age") { total += age.as_i64()! }
+            i += 1
+        }
+    }
+    Result.Ok(total)
+}
+
+public func main() {
+    let text = "{\"name\": \"Ada\", \"tags\": [\"math\", \"code\"], \"born\": 1815, \"ratio\": 0.5, \"alive\": false, \"spouse\": null}"
+    let doc = parse(text).unwrap()
+    println(doc.kind_name(), " ", doc.len(), " ", doc.get("name")!.as_str()!, " ", doc.get("born")!.as_i64()!)
+    println(doc.get("tags")!.at(1)!.as_str()!, " ", doc.get("tags")!.at(2) == nil, " ", doc.get("missing") == nil)
+    println(doc.get("ratio")!.as_f64()!, " ", doc.get("born")!.as_f64()!, " ", doc.get("ratio")!.as_i64() == nil)
+    println(doc.get("alive")!.as_bool()!, " ", doc.get("spouse")!.is_null(), " ", doc.get("name")!.is_string())
+    println(to_string(doc))
+
+    let o = doc.as_object()!
+    o.set("born", Json.Int(1816));
+    o.set("langs", Json.Arr([Json.Str("en".to_string()), Json.Float(1.0)]));
+    o.remove("spouse");
+    println(o.len(), " ", o.key_at(0)!, " ", o.key_at(5)!, " ", o.contains_key("spouse"))
+    println(to_string(doc))
+
+    let built = JsonObject.new()
+        .with("a", Json.Int(-9223372036854775807 - 1))
+        .with("b", Json.Arr([]))
+        .with("c", Json.Obj(JsonObject.new().with("d", Json.Bool(true))))
+        .with("e", Json.Str("tab\there \"q\" é \x01".to_string()))
+    let value = Json.Obj(built)
+    println(to_string(value))
+    println(to_pretty_string(value))
+    println(to_pretty_string_with(Json.Arr([Json.Int(1), Json.Obj(JsonObject.new())]), 4))
+
+    let wide = JsonObject.new()
+    var i: i64 = 0
+    while i < 40 {
+        wide.set(f"key{i}", Json.Int(i * i));
+        i += 1
+    }
+    wide.set("key7", Json.Str("seven".to_string()));
+    wide.remove("key0");
+    println(wide.len(), " ", wide.get("key39")!.as_i64()!, " ", wide.get("key7")!.as_str()!, " ", wide.get("key0") == nil, " ", wide.key_at(0)!)
+
+    let a = parse("{\"x\": [1, 2.5, {\"y\": null}], \"z\": \"w\"}").unwrap()
+    let b = parse("{\"z\": \"w\", \"x\": [1, 2.5, {\"y\": null}]}").unwrap()
+    let c = parse("{\"z\": \"w\", \"x\": [1.0, 2.5, {\"y\": null}]}").unwrap()
+    println(equals(a, b), " ", a.equals(c), " ", equals(parse(to_string(a)).unwrap(), a))
+
+    match parse("[1, 2,]") {
+        Result.Ok(_) -> println("accepted"),
+        Result.Err(e) -> println(e.message(), " ", e.kind == JsonErrorKind.TrailingComma),
+    }
+    match parse("{\"k\": 1, \"k\": 2}") {
+        Result.Ok(_) -> println("accepted"),
+        Result.Err(e) -> println(e.reason(), " at ", e.offset),
+    }
+    let keep = ParseOptions { max_depth: 8, duplicate_keys: DuplicateKeys.KeepLast }
+    println(to_string(parse_with("{\"k\": 1, \"k\": 2}", keep).unwrap()))
+    match parse_with("[[[[[[[[[1]]]]]]]]]", keep) {
+        Result.Ok(_) -> println("accepted"),
+        Result.Err(e) -> println(e.reason(), " at ", e.offset),
+    }
+    println(default_options().max_depth)
+    match parse_bytes([34u8, 0xFFu8, 34u8]) {
+        Result.Ok(_) -> println("accepted"),
+        Result.Err(e) -> println(e.reason(), " at ", e.offset),
+    }
+    println(to_string(parse_bytes("[\"ok\"]".to_string().bytes()).unwrap()))
+
+    println(total_age("{\"people\": [{\"age\": 36}, {\"age\": 41}, {\"name\": \"x\"}]}").unwrap())
+    println(total_age("{\"people\": [}").err()!.message())
+    println(to_string(Json.Float(0.0 / 0.0)), " ", to_string(Json.Float(1e300)), " ", to_string(Json.Float(-0.0)))
+}
+"#,
+    )]);
+    let expected = "\
+object 6 Ada 1815
+code true true
+0.5 1815.0 true
+false true true
+{\"name\":\"Ada\",\"tags\":[\"math\",\"code\"],\"born\":1815,\"ratio\":0.5,\"alive\":false,\"spouse\":null}
+6 name langs false
+{\"name\":\"Ada\",\"tags\":[\"math\",\"code\"],\"born\":1816,\"ratio\":0.5,\"alive\":false,\"langs\":[\"en\",1.0]}
+{\"a\":-9223372036854775808,\"b\":[],\"c\":{\"d\":true},\"e\":\"tab\\there \\\"q\\\" é \\u0001\"}
+{
+  \"a\": -9223372036854775808,
+  \"b\": [],
+  \"c\": {
+    \"d\": true
+  },
+  \"e\": \"tab\\there \\\"q\\\" é \\u0001\"
+}
+[
+    1,
+    {}
+]
+39 1521 seven true key1
+true false true
+trailing comma at line 1, column 7 (byte 6) true
+duplicate key in an object at 9
+{\"k\":2}
+arrays and objects nested deeper than the limit at 8
+128
+invalid UTF-8 at 1
+[\"ok\"]
+77
+expected a value at line 1, column 13 (byte 12)
+null 1e300 -0.0
+";
     assert_eq!(stdout, expected);
 }
 
