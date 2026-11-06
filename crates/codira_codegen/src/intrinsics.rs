@@ -381,6 +381,7 @@ pub fn array_functions() -> [&'static dyn Intrinsic; 4] {
 /// import from the runtime's dispatch table. Each is an entry of the runtime
 /// function catalogue (`codira_abi::runtime_functions`), with the same
 /// signature; `declarations_match_the_catalogue` checks both directions.
+#[cfg(test)]
 pub fn runtime_function_declarations() -> Vec<&'static dyn Intrinsic> {
     let mut all: Vec<&'static dyn Intrinsic> = vec![
         &new,
