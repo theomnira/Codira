@@ -160,7 +160,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// The data pointer and byte length of `value`, the result of `expr`,
     /// which is a `String` or a `str`.
-    fn string_text(
+    pub(super) fn string_text(
         &self,
         expr: ExprId,
         value: BasicValueEnum<'ink>,
@@ -277,7 +277,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// The location arguments of a runtime function that may panic.
-    fn location_args(&mut self, expr: ExprId) -> [BasicMetadataValueEnum<'ink>; 4] {
+    pub(super) fn location_args(&mut self, expr: ExprId) -> [BasicMetadataValueEnum<'ink>; 4] {
         let (file, line, column) = self.source_location(expr);
         let u32_type = self.context.i32_type();
         [

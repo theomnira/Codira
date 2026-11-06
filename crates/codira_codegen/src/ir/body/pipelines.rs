@@ -50,8 +50,21 @@
 //! called directly until it returns `nil`. `rev()` walks an array from its
 //! last element down (stopping if the array has been shortened below the
 //! next index) and a range from its end down.
+//!
+//! The pieces of a string, `s.lines()` and `s.split(sep)`, are a source
+//! too, without the `[String]` they return as a value: in `for line in
+//! s.lines()`, in `s.split(sep).iter()..` (the array would be a temporary
+//! nothing else sees), and as the receiver of a chain typed as a pipeline
+//! (`s.split(sep).map(f).count()`, see `codira_hir`'s
+//! `ty::infer::pipelines`). The string is evaluated once, before the first
+//! piece, as the eager call would be; then each piece is found when it is
+//! pulled: `\n` (and a one-byte separator) with the runtime's `memchr`
+//! (`codira.string_find_byte`), a longer separator with `string_find`.
+//! A piece is a view (`{ buf, start + offset, len }`), as the array's
+//! elements are. An empty separator panics before the first piece, as
+//! `split` does.
 
-use codira_hir::{BuiltinFn, Expr, ExprId, Function, PatId, PipelineOp, Ty, TyKind};
+use codira_hir::{BuiltinFn, Expr, ExprId, Function, PatId, PipelineOp, StringOp, Ty, TyKind};
 use inkwell::{
     basic_block::BasicBlock,
     types::{BasicTypeEnum, IntType, StructType},
@@ -85,6 +98,15 @@ enum Source<'ink> {
         object: BasicValueEnum<'ink>,
         next: Function,
         key: ExprId,
+    },
+    /// The pieces of a string: its three words, its first byte, and the
+    /// separator's bytes (`split`), or none (`lines`).
+    Text {
+        buf: PointerValue<'ink>,
+        start: IntValue<'ink>,
+        len: IntValue<'ink>,
+        data: PointerValue<'ink>,
+        sep: Option<(PointerValue<'ink>, IntValue<'ink>)>,
     },
 }
 
@@ -208,6 +230,8 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         let flow = self.build_flow(receiver, pure)?;
         let elem_ty = match self.infer[receiver].interned() {
             TyKind::Iter(elem) => elem.clone(),
+            // `s.split(sep).count()`: the pieces themselves.
+            _ if self.text_pieces_call(receiver).is_some() => TyKind::String.intern(),
             _ => unreachable!("inference types a pipeline as `Iter[T]`"),
         };
         let terminal = self.prepare_terminal(call, op, &elem_ty, &flow, args)?;
@@ -260,6 +284,326 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         Some(self.gen_empty())
     }
 
+    /// Generates `for pat in s.lines() { body }` (or `s.split(sep)`) over
+    /// the pieces as they are found, without the array.
+    pub(super) fn gen_text_for(
+        &mut self,
+        pat: PatId,
+        iterable: ExprId,
+        body: ExprId,
+    ) -> Option<BasicValueEnum<'ink>> {
+        let source = self.text_source(iterable)?;
+        let terminal = Terminal::Loop(pat, body);
+        let done = self.context.append_basic_block(self.fn_value, "for.end");
+        self.drive(&source, false, &[], done, &mut |this, value, next| {
+            this.terminal_step(&terminal, value, next, done)
+        });
+        self.builder.position_at_end(done);
+        Some(self.gen_empty())
+    }
+
+    /// The string `s` and separator of `expr` when it is `s.lines()` or
+    /// `s.split(sep)`, which can be a lazy source.
+    pub(super) fn text_pieces_call(&self, expr: ExprId) -> Option<(ExprId, Option<ExprId>)> {
+        let Expr::MethodCall { receiver, args, .. } = &self.body[expr] else {
+            return None;
+        };
+        if self.infer.is_string_conversion(expr) || self.infer.optional_wrap(expr).is_some() {
+            return None;
+        }
+        match self.infer.builtin_call(expr) {
+            Some(BuiltinFn::String(StringOp::Lines)) => Some((*receiver, None)),
+            Some(BuiltinFn::String(StringOp::Split)) => Some((*receiver, args.first().copied())),
+            _ => None,
+        }
+    }
+
+    /// Evaluates `s.lines()` or `s.split(sep)` as a source: the string, then
+    /// the separator, as the call would; an empty separator panics here,
+    /// before any piece, with `split`'s message and location.
+    fn text_source(&mut self, call: ExprId) -> Option<Source<'ink>> {
+        let (receiver, sep) = self
+            .text_pieces_call(call)
+            .expect("a `lines` or `split` call");
+        let receiver_ty = self.infer[receiver].clone();
+        let value = self.gen_expr(receiver)?;
+        // A method called on a `str` works on a `String` copy of it.
+        let value = if matches!(receiver_ty.interned(), TyKind::Str) {
+            self.gen_to_string_of(&receiver_ty, value)
+        } else {
+            value
+        };
+        let sep = match sep {
+            Some(sep) => {
+                let sep_value = self.gen_expr(sep)?;
+                Some(self.string_text(sep, sep_value))
+            }
+            None => None,
+        };
+        let (buf, start, len) = self.string_fields(value.into_struct_value());
+        let data = self.string_data(buf, start);
+        if let Some((sep_data, sep_len)) = sep {
+            let empty = self.is_zero(sep_len);
+            let fail = self.block("split.empty");
+            let go = self.block("split.go");
+            self.branch_if(empty, fail, go);
+            self.builder.position_at_end(fail);
+            // The eager `split` reports the panic, at this call.
+            let [ty, alloc] = self.alloc_args(&crate::ir::strings::string_array());
+            let [file, file_len, line, column] = self.location_args(call);
+            self.string_call(
+                &crate::intrinsics::string_split,
+                &[
+                    buf.into(),
+                    start.into(),
+                    len.into(),
+                    sep_data.into(),
+                    sep_len.into(),
+                    ty,
+                    alloc,
+                    file,
+                    file_len,
+                    line,
+                    column,
+                ],
+            );
+            self.builder
+                .build_unreachable()
+                .expect("failed to build unreachable after a panic");
+            self.builder.position_at_end(go);
+        }
+        Some(Source::Text {
+            buf,
+            start,
+            len,
+            data,
+            sep,
+        })
+    }
+
+    /// The loop over the pieces of a string (see the module docs): finds
+    /// the next piece from the current offset, gives `body` the view of it,
+    /// and moves past its separator.
+    fn text_loop(
+        &mut self,
+        (buf, start, len, data): (
+            PointerValue<'ink>,
+            IntValue<'ink>,
+            IntValue<'ink>,
+            PointerValue<'ink>,
+        ),
+        sep: Option<(PointerValue<'ink>, IntValue<'ink>)>,
+        after: BasicBlock<'ink>,
+        body: &mut Sink<'_, 'ink, Self>,
+    ) {
+        let usize_ty = len.get_type();
+        let i8_ty = self.context.i8_type();
+        let i64_ty = self.context.i64_type();
+        let ok = "failed to build a string piece loop";
+        let pos = self.new_state(usize_ty.const_zero().into(), "text.pos");
+        // `split` always has a next piece until one ends without a
+        // separator; `lines` has one while bytes are left.
+        let live = sep.map(|_| {
+            self.new_state(
+                self.context.bool_type().const_int(1, false).into(),
+                "text.live",
+            )
+        });
+        let cond = self.block("text.cond");
+        let body_block = self.block("text.body");
+        self.jump(cond);
+        self.builder.position_at_end(cond);
+        let p = self.load_state(pos, usize_ty.into()).into_int_value();
+        let more = match live {
+            Some(live) => self
+                .load_state(live, self.context.bool_type().into())
+                .into_int_value(),
+            None => self
+                .builder
+                .build_int_compare(IntPredicate::ULT, p, len, "more")
+                .expect(ok),
+        };
+        self.branch_if(more, body_block, after);
+        self.builder.position_at_end(body_block);
+        // Safety: `p <= len`: a piece and its separator are within the string.
+        let rest = unsafe {
+            self.builder
+                .build_gep(i8_ty, data, &[p], "text.rest")
+                .expect(ok)
+        };
+        let rest_len = self
+            .builder
+            .build_int_sub(len, p, "text.rest_len")
+            .expect(ok);
+        let found_at = match sep {
+            None => self
+                .string_call(
+                    &crate::intrinsics::string_find_byte,
+                    &[
+                        rest.into(),
+                        rest_len.into(),
+                        i8_ty.const_int(u64::from(b'\n'), false).into(),
+                    ],
+                )
+                .expect("returns an offset")
+                .into_int_value(),
+            Some((sep_data, sep_len)) => {
+                // One byte (always ASCII in UTF-8): `memchr`.
+                let one = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        sep_len,
+                        usize_ty.const_int(1, false),
+                        "one",
+                    )
+                    .expect(ok);
+                let by_byte = self.block("text.byte");
+                let by_text = self.block("text.find");
+                let found = self.block("text.found");
+                self.branch_if(one, by_byte, by_text);
+                self.builder.position_at_end(by_byte);
+                let byte = self
+                    .builder
+                    .build_load(i8_ty, sep_data, "sep.byte")
+                    .expect(ok);
+                let at_byte = self
+                    .string_call(
+                        &crate::intrinsics::string_find_byte,
+                        &[rest.into(), rest_len.into(), byte.into()],
+                    )
+                    .expect("returns an offset");
+                let byte_end = self.builder.get_insert_block().expect("in a block");
+                self.jump(found);
+                self.builder.position_at_end(by_text);
+                let at_text = self
+                    .string_call(
+                        &crate::intrinsics::string_find,
+                        &[
+                            rest.into(),
+                            rest_len.into(),
+                            sep_data.into(),
+                            sep_len.into(),
+                        ],
+                    )
+                    .expect("returns an offset");
+                let text_end = self.builder.get_insert_block().expect("in a block");
+                self.jump(found);
+                self.builder.position_at_end(found);
+                let phi = self.builder.build_phi(i64_ty, "text.at").expect(ok);
+                phi.add_incoming(&[(&at_byte, byte_end), (&at_text, text_end)]);
+                phi.as_basic_value().into_int_value()
+            }
+        };
+        let found = self
+            .builder
+            .build_int_compare(
+                IntPredicate::SGE,
+                found_at,
+                i64_ty.const_zero(),
+                "text.found",
+            )
+            .expect(ok);
+        let at = self
+            .builder
+            .build_int_truncate_or_bit_cast(found_at, usize_ty, "text.at")
+            .expect(ok);
+        let piece_end = self
+            .builder
+            .build_select(found, at, rest_len, "text.end")
+            .expect(ok)
+            .into_int_value();
+        let (piece_len, next) = match (sep, live) {
+            (None, _) => {
+                // A `\r` right before the `\n` is not part of the line.
+                let nonzero = self
+                    .builder
+                    .build_int_compare(IntPredicate::NE, at, usize_ty.const_zero(), "nonzero")
+                    .expect(ok);
+                let has_prev = self
+                    .builder
+                    .build_and(found, nonzero, "has_prev")
+                    .expect(ok);
+                let prev = self
+                    .builder
+                    .build_int_sub(piece_end, usize_ty.const_int(1, false), "prev")
+                    .expect(ok);
+                let index = self
+                    .builder
+                    .build_select(has_prev, prev, usize_ty.const_zero(), "prev")
+                    .expect(ok)
+                    .into_int_value();
+                // Safety: `index < rest_len`, which is at least 1 here.
+                let prev_ptr = unsafe {
+                    self.builder
+                        .build_gep(i8_ty, rest, &[index], "prev_ptr")
+                        .expect(ok)
+                };
+                let prev_byte = self
+                    .builder
+                    .build_load(i8_ty, prev_ptr, "prev_byte")
+                    .expect(ok)
+                    .into_int_value();
+                let is_cr = self
+                    .builder
+                    .build_int_compare(
+                        IntPredicate::EQ,
+                        prev_byte,
+                        i8_ty.const_int(u64::from(b'\r'), false),
+                        "is_cr",
+                    )
+                    .expect(ok);
+                let strip = self.builder.build_and(has_prev, is_cr, "strip").expect(ok);
+                let strip = self
+                    .builder
+                    .build_int_z_extend(strip, usize_ty, "strip")
+                    .expect(ok);
+                let piece_len = self
+                    .builder
+                    .build_int_sub(piece_end, strip, "line.len")
+                    .expect(ok);
+                let after_break = self
+                    .builder
+                    .build_int_add(p, at, "line.next")
+                    .and_then(|next| {
+                        self.builder
+                            .build_int_add(next, usize_ty.const_int(1, false), "line.next")
+                    })
+                    .expect(ok);
+                let next = self
+                    .builder
+                    .build_select(found, after_break, len, "line.next")
+                    .expect(ok)
+                    .into_int_value();
+                (piece_len, next)
+            }
+            (Some((_, sep_len)), Some(live)) => {
+                self.builder.build_store(live, found).expect(ok);
+                let after_sep = self
+                    .builder
+                    .build_int_add(p, at, "piece.next")
+                    .and_then(|next| self.builder.build_int_add(next, sep_len, "piece.next"))
+                    .expect(ok);
+                let next = self
+                    .builder
+                    .build_select(found, after_sep, len, "piece.next")
+                    .expect(ok)
+                    .into_int_value();
+                (piece_end, next)
+            }
+            (Some(_), None) => unreachable!("`split` keeps a live flag"),
+        };
+        self.builder.build_store(pos, next).expect(ok);
+        let piece_start = self
+            .builder
+            .build_int_add(start, p, "piece.start")
+            .expect(ok);
+        let piece = self.make_string(buf, piece_start, piece_len);
+        if body(self, piece, cond).is_some() {
+            self.jump(cond);
+        }
+    }
+
     /// Evaluates the pipeline `expr` (an `Iter[T]` expression): its source,
     /// then the arguments of its stages, left to right. `pure` says that no
     /// code in the loop can change an array (`is_pure_pipeline`).
@@ -283,11 +627,19 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     calls.push((current, op));
                     current = *receiver;
                 }
+                // `s.split(sep).map(f)..`: the pieces themselves.
+                (Expr::MethodCall { .. }, Some(BuiltinFn::String(_)))
+                    if self.text_pieces_call(current).is_some() =>
+                {
+                    break current
+                }
                 _ => unreachable!("inference allows only a chain of pipeline calls"),
             }
         };
         calls.reverse();
-        let source = self.gen_source(source, pure)?;
+        // The pieces of a string are found front to back only.
+        let lazy_text = !calls.iter().any(|(_, op)| *op == PipelineOp::Rev);
+        let source = self.gen_source(source, pure, lazy_text)?;
         let mut flow = Flow {
             source,
             reversed: false,
@@ -362,8 +714,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Evaluates the source `expr` of a pipeline: a range, or the
     /// `x.iter()` call on an array or an iterator object.
-    fn gen_source(&mut self, expr: ExprId, pure: bool) -> Option<Source<'ink>> {
+    fn gen_source(&mut self, expr: ExprId, pure: bool, lazy_text: bool) -> Option<Source<'ink>> {
         let body = self.body.clone();
+        if self.text_pieces_call(expr).is_some() {
+            return self.text_source(expr);
+        }
         match &body[expr] {
             Expr::Range {
                 start,
@@ -380,6 +735,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 })
             }
             Expr::MethodCall { receiver, .. } => {
+                // `s.lines().iter()`: the array is a temporary nothing else
+                // sees, so the pieces are the source instead.
+                if lazy_text && self.text_pieces_call(*receiver).is_some() {
+                    return self.text_source(*receiver);
+                }
                 let value = self.gen_expr(*receiver)?;
                 if let Some(next) = self.infer.iterator_next(expr) {
                     return Some(Source::Object {
@@ -469,9 +829,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             Expr::Literal(codira_hir::Literal::String(_)) => false,
             Expr::Literal(_) | Expr::Path(_) | Expr::Missing => true,
             Expr::BinaryOp {
-                lhs,
-                op: Some(op),
-                ..
+                lhs, op: Some(op), ..
             } => {
                 !matches!(op, codira_hir::BinaryOp::Assignment { .. }) && scalar(&self.infer[*lhs])
             }
@@ -505,10 +863,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             (Expr::MethodCall { receiver, .. }, Some(BuiltinFn::Pipeline(PipelineOp::Iter)))
                 if matches!(body[*receiver], Expr::Range { .. }) =>
             {
-                self.gen_source(*receiver, pure)?
+                self.gen_source(*receiver, pure, false)?
             }
             (Expr::Range { .. }, _) | (Expr::MethodCall { .. }, Some(_)) => {
-                self.gen_source(arg, pure)?
+                self.gen_source(arg, pure, false)?
             }
             _ => {
                 let array_value = self.gen_expr(arg)?;
@@ -555,7 +913,9 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     done,
                 }
             }
-            Source::Object { .. } => unreachable!("inference zips only arrays and ranges"),
+            Source::Object { .. } | Source::Text { .. } => {
+                unreachable!("inference zips only arrays and ranges")
+            }
         })
     }
 
@@ -1344,6 +1704,13 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     }
                 }
             }
+            Source::Text {
+                buf,
+                start,
+                len,
+                data,
+                sep,
+            } => self.text_loop((*buf, *start, *len, *data), *sep, after, body),
             Source::Object { object, next, key } => {
                 let cond = self.block("pipe.cond");
                 let body_block = self.block("pipe.body");
@@ -1391,7 +1758,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 inclusive,
                 signed,
             } => self.range_len(*start, *end, *inclusive, *signed)?,
-            Source::Object { .. } => return None,
+            Source::Object { .. } | Source::Text { .. } => return None,
         };
         for stage in stages {
             len = match stage {

@@ -1541,6 +1541,20 @@ impl InferenceResultBuilder<'_> {
                 }
             }
             Err(None) => {
+                // `s.split(sep).map(f).count()`: the pieces of a string as
+                // a pipeline, when the chain needs one.
+                if self.starts_text_pipeline(tgt_expr, receiver) {
+                    let op = method_name
+                        .as_str()
+                        .and_then(crate::PipelineOp::from_name)
+                        .expect("a pipeline operation");
+                    return self.infer_pipeline_method(
+                        tgt_expr,
+                        op,
+                        &TyKind::String.intern(),
+                        args,
+                    );
+                }
                 // `len()` and friends on arrays and `str` are builtins.
                 if let Some(ty) =
                     self.infer_builtin_method(tgt_expr, &receiver_ty, method_name, args)

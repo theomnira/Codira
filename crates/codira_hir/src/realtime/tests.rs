@@ -1022,6 +1022,42 @@ fn envelope_values_and_their_direction_of_change() {
 }
 
 #[test]
+fn appends_count_as_allocating_even_where_the_room_is_there() {
+    // Every append has an inline path that allocates nothing when the
+    // buffer has room; that is decided at run time, so each still counts
+    // as allocating, whatever its right side (text, a number written in
+    // place, an interpolated literal written piece by piece).
+    let source = r#"
+    func text(s: String) -> String { var t = s; t += "x"; t }
+    func number(s: String, n: i64) -> String { var t = s; t += n.to_string(); t }
+    func plan(s: String, n: i64, x: f64) -> String { var t = s; t += f"[{n}:{x:>8.2}]"; t }
+    func fresh(n: i64) -> String { f"{n:08}" }
+    func each_line(s: String) -> usize {
+        var n: usize = 0
+        for line in s.lines() { n += line.len() }
+        n
+    }
+    func pieces(s: String) -> usize { s.split(",").map(func(p) { p.len() }).count() }
+    "#;
+    let alloc = set(&[Effect::Alloc, Effect::Block, Effect::Panic]);
+    for name in ["text", "number", "plan", "fresh", "each_line", "pieces"] {
+        assert_eq!(effects_of(source, name), alloc, "{name}");
+    }
+    let diags = diagnostics(
+        r#"
+    @noalloc
+    func grow(s: String) -> String { var t = s; t += "x"; t }
+    "#,
+    );
+    assert!(
+        diags.contains(
+            "`grow` is `@noalloc` but allocates here: string concatenation allocates (or grows) a buffer"
+        ),
+        "{diags}"
+    );
+}
+
+#[test]
 fn string_operations_count_as_allocating_or_panicking() {
     let source = r#"
     func make(n: i64) -> String { n.to_string() }

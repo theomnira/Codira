@@ -991,9 +991,13 @@ impl Collector<'_> {
         }
     }
 
-    /// `a + b` and `s += t` on strings allocate the result (an append that
-    /// fits the buffer still may not, so it counts as allocating); comparing
-    /// strings has no effect.
+    /// `a + b` and `s += t` on strings allocate the result; comparing
+    /// strings has no effect. An append whose bytes fit the buffer's room
+    /// allocates nothing at run time (the inline fast path of String
+    /// Fabric), but whether they fit is known only then -- the capacity is
+    /// a property of the buffer, which the compiler does not track -- so an
+    /// append counts as allocating, as do the pieces of an `f"..."` literal
+    /// and a number appended with `s += n.to_string()`.
     fn string_operator(&mut self, expr: ExprId, lhs: ExprId, op: Option<BinaryOp>) {
         let text = matches!(
             self.frame.infer[lhs].interned(),

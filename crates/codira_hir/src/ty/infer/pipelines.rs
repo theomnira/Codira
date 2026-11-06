@@ -45,6 +45,59 @@ pub(super) enum IteratorObject {
 }
 
 impl InferenceResultBuilder<'_> {
+    /// Whether the method call `call` on `receiver` starts a pipeline over
+    /// the pieces of a string: `receiver` is `s.split(sep)` or `s.lines()`,
+    /// `call` is a pipeline operation other than `iter`, and the chain of
+    /// pipeline operations it starts uses one that arrays do not have
+    /// (`count`, `take`, `enumerate`, `find`, ...). Then
+    /// `s.split(",").map(f).count()` is one loop over the pieces, with no
+    /// array. A chain of only what arrays have (`s.split(",").map(f)`,
+    /// `.filter(g).sum()`) keeps the eager array methods it always had, so
+    /// no program that compiled before changes meaning; `s.split(",").iter()`
+    /// starts a pipeline as on any array (code generation reads the pieces
+    /// without the array there too).
+    pub(super) fn starts_text_pipeline(&self, call: ExprId, receiver: ExprId) -> bool {
+        if !matches!(
+            self.builtin_calls.get(&receiver),
+            Some(BuiltinFn::String(
+                crate::StringOp::Split | crate::StringOp::Lines
+            ))
+        ) {
+            return false;
+        }
+        let name_of = |expr: ExprId| match &self.body[expr] {
+            Expr::MethodCall { method_name, .. } => method_name.as_str().map(str::to_owned),
+            _ => None,
+        };
+        let Some(first) = name_of(call) else {
+            return false;
+        };
+        if first == "iter" || PipelineOp::from_name(&first).is_none() {
+            return false;
+        }
+        // Up the chain: each method call on the one before.
+        let mut current = call;
+        loop {
+            let Some(name) = name_of(current) else {
+                return false;
+            };
+            if PipelineOp::from_name(&name).is_none() {
+                return false;
+            }
+            if crate::ArrayMethod::from_name(&name).is_none() {
+                return true;
+            }
+            let parent = self.body.exprs().find_map(|(id, expr)| match expr {
+                Expr::MethodCall { receiver, .. } if *receiver == current => Some(id),
+                _ => None,
+            });
+            match parent {
+                Some(parent) => current = parent,
+                None => return false,
+            }
+        }
+    }
+
     /// Infers `start..end` as the receiver of a pipeline operation: a range
     /// is a pipeline of its bounds' integer type.
     pub(super) fn infer_range_pipeline_call(

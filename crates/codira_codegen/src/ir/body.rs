@@ -3855,6 +3855,10 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         {
             return self.gen_pipeline_for(for_expr, pat, iterable, body_expr);
         }
+        // Over the pieces of a string, without the array: see `pipelines`.
+        if self.text_pieces_call(iterable).is_some() {
+            return self.gen_text_for(pat, iterable, body_expr);
+        }
         if let Expr::Range {
             start,
             end,
