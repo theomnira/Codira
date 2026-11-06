@@ -181,7 +181,7 @@ fn question_mark_on_an_inlined_callee_leaves_no_result_behind() {
             .collect();
         assert!(calls.is_empty(), "`{name}` calls {calls:?}:\n{body}");
         assert!(
-            !body.contains("alloca"),
+            !keeps_in_memory(body),
             "`{name}` keeps a value in memory:\n{body}"
         );
         // The function's own `Result[i64, Problem]` is its return value;
@@ -261,5 +261,12 @@ public func step(i: i64) -> Result[i64, i64] {
     assert!(weighted >= 1, "no weighted branch in:\n{body}");
     // A `Result[i64, i64]` is two words: returned in registers, not
     // through memory.
-    assert!(!body.contains("alloca"), "{body}");
+    assert!(!keeps_in_memory(body), "{body}");
+}
+
+/// Whether `body` has a stack slot other than the frame record the
+/// collector's root pass adds (`%gc.frame`, which holds no `Result`).
+fn keeps_in_memory(body: &str) -> bool {
+    body.lines()
+        .any(|line| line.contains("alloca") && !line.contains("%gc.frame"))
 }

@@ -297,6 +297,7 @@ bool instrumentFunction(Function &function, const DataLayout &layout, bool knows
 
     // Which calls are safepoints, and can this function be handled at all?
     std::vector<CallBase *> safepoints;
+    std::vector<CallBase *> noReturns;
     bool supported = !function.hasGC() && !function.hasPersonalityFn();
     for (BasicBlock &block : function) {
         for (Instruction &inst : block) {
@@ -307,8 +308,13 @@ bool instrumentFunction(Function &function, const DataLayout &layout, bool knows
                 if (call->isMustTailCall() || call->hasFnAttr(Attribute::ReturnsTwice)) {
                     supported = false;
                 }
+                // Nothing is live across a call that never returns (a
+                // panic): it needs no record. Should it reach a collection,
+                // this frame is then scanned conservatively.
+                bool returns = !call->doesNotReturn() &&
+                               !isa<UnreachableInst>(call->getNextNode());
                 if (isSafepointCall(*call)) {
-                    safepoints.push_back(call);
+                    (returns ? safepoints : noReturns).push_back(call);
                 }
             }
         }
@@ -316,6 +322,9 @@ bool instrumentFunction(Function &function, const DataLayout &layout, bool knows
     if (safepoints.empty()) {
         return false;
     }
+    // With a record, its frame is skipped by the conservative scan, so a
+    // call that does not return must still have its arguments spilled.
+    safepoints.insert(safepoints.end(), noReturns.begin(), noReturns.end());
 
     References refs(function);
 
