@@ -556,6 +556,7 @@ impl Checker<'_> {
                         | BuiltinFn::ArrayFilled
                         | BuiltinFn::Fma
                         | BuiltinFn::Channel
+                        | BuiltinFn::Cancelled
                         | BuiltinFn::ArrayLen
                         | BuiltinFn::ArrayUncheckedGet
                         | BuiltinFn::StrLen

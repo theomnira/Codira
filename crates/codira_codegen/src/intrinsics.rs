@@ -80,6 +80,28 @@ runtime_functions! {
     /// scope itself.
     pub fn scope_end(scope: usize) -> () = "codira.scope_end";
 
+    /// Opens a `group` whose tasks return `result_size` bytes each.
+    pub fn group_begin(result_size: usize) -> usize = "codira.group_begin";
+
+    /// Runs `entry(copy of args[..size], result slot)` as a task of `group`.
+    pub fn group_spawn(group: usize, entry: usize, args: usize, size: usize) -> () = "codira.group_spawn";
+
+    /// Waits for every task of `group`; returns how many it has.
+    pub fn group_end(group: usize) -> usize = "codira.group_end";
+
+    /// The lowest index of a task of `group` that returned an `Err`, or the
+    /// task count.
+    pub fn group_first_error(group: usize) -> usize = "codira.group_first_error";
+
+    /// Copies the result of task `index` of `group` to address `out`.
+    pub fn group_result(group: usize, index: usize, out: usize) -> () = "codira.group_result";
+
+    /// Frees `group` and the results it kept.
+    pub fn group_free(group: usize) -> () = "codira.group_free";
+
+    /// 1 if the running task has been cancelled, 0 otherwise.
+    pub fn task_cancelled() -> usize = "codira.task_cancelled";
+
     /// Creates a channel of `capacity` elements of `element_size` bytes,
     /// owned by `scope`.
     pub fn channel_new(scope: usize, capacity: usize, element_size: usize) -> usize = "codira.channel_new";
@@ -109,11 +131,18 @@ runtime_functions! {
 
 /// Every runtime function `scope`, `spawn` and channels lower to, collected
 /// together like [`print_functions`].
-pub fn task_functions() -> [&'static dyn Intrinsic; 10] {
+pub fn task_functions() -> [&'static dyn Intrinsic; 17] {
     [
         &scope_begin,
         &scope_spawn,
         &scope_end,
+        &group_begin,
+        &group_spawn,
+        &group_end,
+        &group_first_error,
+        &group_result,
+        &group_free,
+        &task_cancelled,
         &channel_new,
         &channel_send,
         &channel_receive,

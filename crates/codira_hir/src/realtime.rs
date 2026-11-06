@@ -781,6 +781,12 @@ impl Collector<'_> {
                 EffectSet::TASKS,
                 "`scope` allocates its task bookkeeping and waits for its tasks at the end",
             ),
+            Expr::Group { .. } => self.source(
+                expr,
+                EffectSet::TASKS,
+                "`group` waits for its tasks at the end, and allocates its bookkeeping and \
+                 the array of their results",
+            ),
             Expr::Spawn { .. } => self.source(
                 expr,
                 EffectSet::TASKS,
@@ -855,7 +861,10 @@ impl Collector<'_> {
                 EffectSet::of(&[Effect::Secret]),
                 "`declassify` releases a `secret` value",
             ),
-            BuiltinFn::CtSelect
+            // A load of the running task's cancellation state: no wait, no
+            // allocation.
+            BuiltinFn::Cancelled
+            | BuiltinFn::CtSelect
             | BuiltinFn::Select
             | BuiltinFn::Likely
             | BuiltinFn::Unlikely

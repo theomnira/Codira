@@ -259,6 +259,42 @@ fn noblock_rejects_channels_scopes_and_printing() {
     assert_eq!(count("`fine`"), 0, "{diags}");
 }
 
+/// Waiting on a group is blocking, directly or through a call, so
+/// `@noblock` and `@realtime` code cannot do it; `cancelled()` is a load and
+/// allowed anywhere.
+#[test]
+fn noblock_and_realtime_reject_waiting_on_a_group() {
+    let diags = diagnostics(
+        r#"
+    func square(x: i64) -> i64 { x * x }
+    func fan(n: i64) -> [i64] { group { spawn square(n); } }
+    @noblock
+    func waits(n: i64) -> i64 { let xs = group { spawn square(n); }; xs[0] }
+    @realtime
+    func via_call(n: i64) -> usize { fan(n).len() }
+    @realtime
+    func polls() -> bool { cancelled() }
+    "#,
+    );
+    let count = |needle: &str| diags.matches(needle).count();
+    assert_eq!(
+        count("`waits` is `@noblock` but may block here: `group` waits for its tasks at the end"),
+        1,
+        "{diags}"
+    );
+    assert!(
+        diags.contains("`via_call` is `@realtime` but calls `fan`")
+            && diags.contains("`group` waits for its tasks at the end"),
+        "{diags}"
+    );
+    assert_eq!(count("`polls`"), 0, "{diags}");
+    let effects = effects_of(
+        "func square(x: i64) -> i64 { x * x }\nfunc f() -> [i64] { group { spawn square(2); } }",
+        "f",
+    );
+    assert!(effects.contains(Effect::Block) && effects.contains(Effect::Spawn));
+}
+
 /// `select` (even with `default`, which still locks its channels) and every
 /// session operation may block; `select` and `open` also allocate.
 #[test]

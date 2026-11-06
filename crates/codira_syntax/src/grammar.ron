@@ -176,6 +176,10 @@ Grammar(
         // stays an ordinary identifier everywhere else (`if scope { .. }`
         // still tests a variable named `scope`).
         "scope",
+        // `group { .. }`: a task group -- like `scope`, but its value is the
+        // results of the tasks `spawn`ed in it, in spawn order. Promoted under
+        // the same condition as `scope`.
+        "group",
         // `select { .. }`: waits on several channel operations and performs
         // exactly one. Promoted only when directly followed by `{` where a
         // block may start, like `scope`; `default` only at the start of a
@@ -315,6 +319,7 @@ Grammar(
         "PERFORM_EXPR",
         "SPAWN_EXPR",
         "SCOPE_EXPR",
+        "GROUP_EXPR",
         "SELECT_EXPR",
         "SELECT_ARM_LIST",
         "SELECT_ARM",
@@ -655,6 +660,9 @@ Grammar(
         "ScopeExpr": (
             options: [ ["body", "BlockExpr"] ]
         ),
+        "GroupExpr": (
+            options: [ ["body", "BlockExpr"] ]
+        ),
         "ChannelRecvExpr": (
             options: [ ["expr", "Expr"] ]
         ),
@@ -723,6 +731,7 @@ Grammar(
                 "PerformExpr",
                 "SpawnExpr",
                 "ScopeExpr",
+                "GroupExpr",
                 "HandleExpr",
                 "TryExpr",
                 "PropagateExpr",

@@ -50,6 +50,7 @@ fn collect_expr<'ink>(
     let uses_tasks = matches!(
         expr,
         Expr::Scope { .. }
+            | Expr::Group { .. }
             | Expr::Spawn { .. }
             | Expr::ChannelSend { .. }
             | Expr::ChannelReceive { .. }
@@ -132,6 +133,12 @@ fn collect_expr<'ink>(
                 *needs_alloc = true;
             }
         }
+    }
+
+    // A group allocates the array of its tasks' results.
+    if matches!(expr, Expr::Group { .. }) {
+        collect_intrinsic(context, target, &intrinsics::new_array, intrinsics);
+        *needs_alloc = true;
     }
 
     // Creating a function value allocates its object.

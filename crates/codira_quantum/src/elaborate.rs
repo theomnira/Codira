@@ -698,6 +698,7 @@ impl Elaborator<'_> {
                     .into(),
             )),
             Expr::Scope { .. }
+            | Expr::Group { .. }
             | Expr::Spawn { .. }
             | Expr::ChannelSend { .. }
             | Expr::ChannelReceive { .. }

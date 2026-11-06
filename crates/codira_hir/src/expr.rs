@@ -20,6 +20,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 pub use self::{
     scope::ExprScopes,
     session::{opened_session, SessionFlow},
+    tasks::direct_spawns,
 };
 use crate::{
     code_model::{src::HasSource, DefWithBody},
@@ -548,8 +549,13 @@ pub enum Expr {
     Scope {
         body: ExprId,
     },
+    /// `group { .. }`: like `scope`, but the value is the results of the
+    /// tasks spawned directly in it, in spawn order (see `expr::tasks`).
+    Group {
+        body: ExprId,
+    },
     /// `spawn f(args)`: runs the call `call` as a task of the innermost
-    /// enclosing `scope`.
+    /// enclosing `scope` or `group`.
     Spawn {
         call: ExprId,
     },
@@ -807,6 +813,7 @@ impl Expr {
                 }
             }
             Expr::Scope { body: expr }
+            | Expr::Group { body: expr }
             | Expr::Spawn { call: expr }
             | Expr::ChannelReceive { channel: expr }
             | Expr::Unwrap { expr }
@@ -1423,6 +1430,10 @@ impl<'a> ExprCollector<'a> {
             ast::ExprKind::ScopeExpr(e) => {
                 let body = self.collect_block_opt(e.body());
                 self.alloc_expr(Expr::Scope { body }, syntax_ptr)
+            }
+            ast::ExprKind::GroupExpr(e) => {
+                let body = self.collect_block_opt(e.body());
+                self.alloc_expr(Expr::Group { body }, syntax_ptr)
             }
             ast::ExprKind::SpawnExpr(e) => {
                 let call = self.collect_expr_opt(e.expr());

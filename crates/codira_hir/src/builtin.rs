@@ -68,6 +68,9 @@ pub enum BuiltinFn {
     /// `channel(capacity)` creates a bounded `Channel[T]`, owned by the
     /// enclosing `scope` (see `expr::validator::tasks`).
     Channel,
+    /// `cancelled()`: whether the running task has been cancelled (see
+    /// `codira_runtime::tasks`); always `false` outside a task.
+    Cancelled,
     /// `array_filled(value, count)` creates a `[T]` of `count` copies of
     /// `value`, an integer, float or `bool`. The only way a program can make
     /// an array whose length is not written out in the source.
@@ -114,6 +117,7 @@ impl BuiltinFn {
         BuiltinFn::Declassify,
         BuiltinFn::CtSelect,
         BuiltinFn::Channel,
+        BuiltinFn::Cancelled,
         BuiltinFn::ArrayFilled,
         BuiltinFn::Select,
         BuiltinFn::Likely,
@@ -130,6 +134,7 @@ impl BuiltinFn {
             BuiltinFn::Declassify => "declassify",
             BuiltinFn::CtSelect => "ct_select",
             BuiltinFn::Channel => "channel",
+            BuiltinFn::Cancelled => "cancelled",
             BuiltinFn::ArrayFilled => "array_filled",
             BuiltinFn::Select => "select",
             BuiltinFn::Likely => "likely",
