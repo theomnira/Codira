@@ -8,13 +8,16 @@
 //     println(seen.contains(7))
 //
 // Elements need `Hashable` (std.hashlib.hash) and `Eq` (std.cmp.cmp); every
-// integer and float type, `bool` and `str` have both. Expected O(1)
-// insertion, lookup and removal.
+// integer and float type, `bool`, `str` and `String` have both. Expected
+// O(1) insertion, lookup and removal.
 //
-// NOT DoS-RESISTANT, like `Map`: whoever chooses the elements can make
-// them collide.
+// Hashed as `Map` hashes (it is one): SipHash-1-3 under a secret key of its
+// own by default, so whoever chooses the elements cannot make them collide
+// on purpose. `Set.unkeyed()` hashes with the fast unkeyed `hash_value`
+// instead, which is NOT DoS-resistant; `Set.with_key(key)` with a key you
+// give.
 
-import root.hashlib.hash.{Hashable};
+import root.hashlib.hash.{Hashable, HashKey};
 import root.cmp.cmp.{Eq};
 import root.collections.map.{Map};
 
@@ -23,9 +26,25 @@ public class Set[T] {
 }
 
 extend Set[T: Hashable + Eq] {
-    // An empty set.
+    // An empty set (SipHash-1-3 under a key of its own).
     public func new() -> Set[T] {
         Set { entries: Map.new() }
+    }
+
+    // An empty set with room for `n` elements before it grows.
+    public func with_capacity(n: usize) -> Set[T] {
+        Set { entries: Map.with_capacity(n) }
+    }
+
+    // An empty set hashing with SipHash-1-3 under `key`.
+    public func with_key(key: HashKey) -> Set[T] {
+        Set { entries: Map.with_key(key) }
+    }
+
+    // An empty set hashing with the elements' `hash_value()`. NOT
+    // DoS-RESISTANT: for trusted elements only.
+    public func unkeyed() -> Set[T] {
+        Set { entries: Map.unkeyed() }
     }
 
     // A set of the elements of `items`.
@@ -62,6 +81,11 @@ extend Set[T: Hashable + Eq] {
 
     public func clear(self) {
         self.entries.clear()
+    }
+
+    // Makes room for `additional` more elements without growing.
+    public func reserve(self, additional: usize) {
+        self.entries.reserve(additional)
     }
 
     // Every element, in table order (which is not insertion order).

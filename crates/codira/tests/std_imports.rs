@@ -1233,58 +1233,282 @@ public func main() {
     );
 }
 
-/// `Map[i64, i64]` replays random insertions, lookups and removals the same
-/// way Rust's `HashMap` does.
+/// `Map` replays random operation sequences exactly as Rust's `HashMap` does:
+/// insertions, removals and re-insertions, lookups that hit and miss,
+/// `reserve`, `shrink_to_fit`, `clear`, and order-independent sums over
+/// `iter()`. Three phases: churn over 48 keys (tombstones made and cleared
+/// over and over), growth to tens of thousands of keys (every resize), and
+/// alternating inserts and removes over 2000 keys (tombstone storms that
+/// force same-size rebuilds). Each phase runs on every hasher -- the keyed
+/// default, `unkeyed`, a fixed key, and a map made `with_capacity` -- with
+/// `i64` keys, and on `String` keys and on `Set[i64]` against `HashSet`.
+/// Both sides draw the same operations from the same xorshift generator.
 #[test]
 fn std_collections_map_matches_rust_hash_map() {
-    let mut state = 0x1234_5678_u64;
-    let mut next = move || {
-        state ^= state << 13;
-        state ^= state >> 7;
-        state ^= state << 17;
-        state
-    };
-    let mut reference = std::collections::HashMap::new();
-    let mut code = String::from(
-        "import std.collections.map.{Map}\n\npublic func main() {\n    \
-         let m: Map[i64, i64] = Map.new()\n",
-    );
-    let mut expected = String::new();
-    for _ in 0..1500 {
-        let key = (next() % 300) as i64;
-        let value = (next() % 1000) as i64;
-        match next() % 4 {
-            0 | 1 => {
-                code.push_str(&format!(
-                    "    if let o = m.insert({key}, {value}) {{ print(o, \",\") }} \
-                     else {{ print(\"-,\") }}\n"
-                ));
-                match reference.insert(key, value) {
-                    Some(old) => expected.push_str(&format!("{old},")),
-                    None => expected.push_str("-,"),
-                }
-            }
-            2 => {
-                code.push_str(&format!(
-                    "    if let o = m.remove({key}) {{ print(o, \",\") }} \
-                     else {{ print(\"-,\") }}\n"
-                ));
-                match reference.remove(&key) {
-                    Some(old) => expected.push_str(&format!("{old},")),
-                    None => expected.push_str("-,"),
-                }
-            }
-            _ => {
-                code.push_str(&format!("    print(m.get_or({key}, -1), \",\")\n"));
-                let found = reference.get(&key).copied().unwrap_or(-1);
-                expected.push_str(&format!("{found},"));
-            }
+    use std::collections::{HashMap, HashSet};
+
+    /// (seed, operations, key space, per-mille thresholds for insert,
+    /// remove, get, contains; the rest split between reserve, shrink,
+    /// iterate and clear).
+    const PHASES: [(u64, u64, u64, [u64; 4]); 3] = [
+        (0x1234_5678, 12_000, 48, [350, 700, 900, 960]),
+        (0x9E37_79B9, 30_000, 50_000, [600, 700, 950, 990]),
+        (0xDEAD_BEEF, 20_000, 2_000, [450, 900, 960, 990]),
+    ];
+
+    struct Xorshift(u64);
+    impl Xorshift {
+        fn next(&mut self) -> u64 {
+            self.0 ^= self.0 << 13;
+            self.0 ^= self.0 >> 7;
+            self.0 ^= self.0 << 17;
+            self.0
         }
     }
-    code.push_str("    println(m.len())\n}\n");
-    expected.push_str(&format!("{}\n", reference.len()));
-    let (_dir, stdout) = run_ok(&[("mod.code", &code)]);
-    assert_eq!(stdout, expected);
+
+    /// What one operation prints, for a map from keys `K` (made from the
+    /// drawn number by `key`).
+    fn replay<K: std::hash::Hash + Eq + Clone>(
+        out: &mut String,
+        key: impl Fn(u64) -> K,
+        weight: impl Fn(&K) -> i64,
+    ) {
+        for &(seed, ops, space, [ins, rem, get, has]) in &PHASES {
+            let mut r = Xorshift(seed);
+            let mut m: HashMap<K, i64> = HashMap::new();
+            for _ in 0..ops {
+                let op = r.next() % 1000;
+                let k = key(r.next() % space);
+                let v = (r.next() % 1000) as i64;
+                if op < ins {
+                    match m.insert(k, v) {
+                        Some(old) => out.push_str(&format!("{old},")),
+                        None => out.push_str("-,"),
+                    }
+                } else if op < rem {
+                    match m.remove(&k) {
+                        Some(old) => out.push_str(&format!("{old},")),
+                        None => out.push_str("-,"),
+                    }
+                } else if op < get {
+                    out.push_str(&format!("{},", m.get(&k).copied().unwrap_or(-1)));
+                } else if op < has {
+                    out.push_str(if m.contains_key(&k) { "t," } else { "f," });
+                } else {
+                    match op % 4 {
+                        0 => m.reserve(v as usize),
+                        1 => m.shrink_to_fit(),
+                        2 => {
+                            let mut sum = 0i64;
+                            let mut count = 0i64;
+                            for (k, v) in &m {
+                                sum = sum.wrapping_add(weight(k).wrapping_mul(31) ^ v);
+                                count += 1;
+                            }
+                            out.push_str(&format!("[{count} {sum}],"));
+                        }
+                        _ => {
+                            if v < 100 {
+                                m.clear();
+                            }
+                        }
+                    }
+                }
+            }
+            out.push_str(&format!("{}\n", m.len()));
+        }
+    }
+
+    let mut expected = String::new();
+    let mut ints = String::new();
+    replay(&mut ints, |n| n as i64, |k| *k);
+    for _ in 0..4 {
+        expected.push_str(&ints);
+    }
+    replay(&mut expected, |n| format!("k{n}"), |k| k.len() as i64);
+    // `Set[i64]`: insert and remove answer whether they changed the set.
+    for &(seed, ops, space, [ins, rem, _, has]) in &PHASES {
+        let mut r = Xorshift(seed);
+        let mut s: HashSet<i64> = HashSet::new();
+        for _ in 0..ops {
+            let op = r.next() % 1000;
+            let k = (r.next() % space) as i64;
+            let _ = r.next();
+            if op < ins {
+                expected.push_str(if s.insert(k) { "t," } else { "f," });
+            } else if op < rem {
+                expected.push_str(if s.remove(&k) { "t," } else { "f," });
+            } else if op < has {
+                expected.push_str(if s.contains(&k) { "t," } else { "f," });
+            }
+        }
+        expected.push_str(&format!("{}\n", s.len()));
+    }
+
+    let phases = PHASES
+        .iter()
+        .map(|(seed, ops, space, [a, b, c, d])| {
+            format!("        Phase {{ seed: {seed}, ops: {ops}, space: {space}, ins: {a}, rem: {b}, get: {c}, has: {d} }},\n")
+        })
+        .collect::<String>();
+    let program = r#"
+import std.collections.map.{Map}
+import std.collections.set.{Set}
+import std.hashlib.hash.{HashKey}
+
+class R { s: u64 }
+
+func next(r: R) -> u64 {
+    var x = r.s
+    x = x ^ (x << 13)
+    x = x ^ (x >> 7)
+    x = x ^ (x << 17)
+    r.s = x
+    x
+}
+
+struct Phase { seed: u64, ops: u64, space: u64, ins: u64, rem: u64, get: u64, has: u64 }
+
+func phases() -> [Phase] {
+    [
+PHASES    ]
+}
+
+func print_old(o: i64?) {
+    if let v = o { print(v, ",") } else { print("-,") }
+}
+
+func run_ints(kind: i64) {
+    for p in phases() {
+        let r = R { s: p.seed }
+        var m: Map[i64, i64] = Map.new()
+        if kind == 1 { m = Map.unkeyed() }
+        if kind == 2 { m = Map.with_key(HashKey.new(7, 11)) }
+        if kind == 3 { m = Map.with_capacity(100) }
+        var i: u64 = 0
+        while i < p.ops {
+            let op = next(r) % 1000
+            let k = (next(r) % p.space) as i64
+            let v = (next(r) % 1000) as i64
+            if op < p.ins {
+                print_old(m.insert(k, v))
+            } else if op < p.rem {
+                print_old(m.remove(k))
+            } else if op < p.get {
+                print(m.get_or(k, -1), ",")
+            } else if op < p.has {
+                print(if m.contains_key(k) { "t," } else { "f," })
+            } else if op % 4 == 0 {
+                m.reserve(v as usize)
+            } else if op % 4 == 1 {
+                m.shrink_to_fit()
+            } else if op % 4 == 2 {
+                var sum: i64 = 0
+                var count: i64 = 0
+                for (key, value) in m.iter() {
+                    sum += (key * 31) ^ value
+                    count += 1
+                }
+                print("[", count, " ", sum, "],")
+            } else if v < 100 {
+                m.clear()
+            }
+            i += 1
+        }
+        println(m.len())
+    }
+}
+
+func run_strings() {
+    for p in phases() {
+        let r = R { s: p.seed }
+        let m: Map[String, i64] = Map.new()
+        var i: u64 = 0
+        while i < p.ops {
+            let op = next(r) % 1000
+            let n = next(r) % p.space
+            let k = f"k{n}"
+            let v = (next(r) % 1000) as i64
+            if op < p.ins {
+                print_old(m.insert(k, v))
+            } else if op < p.rem {
+                print_old(m.remove(k))
+            } else if op < p.get {
+                print(m.get_or(k, -1), ",")
+            } else if op < p.has {
+                print(if m.contains_key(k) { "t," } else { "f," })
+            } else if op % 4 == 0 {
+                m.reserve(v as usize)
+            } else if op % 4 == 1 {
+                m.shrink_to_fit()
+            } else if op % 4 == 2 {
+                var sum: i64 = 0
+                var count: i64 = 0
+                for (key, value) in m.iter() {
+                    sum += ((key.len() as i64) * 31) ^ value
+                    count += 1
+                }
+                print("[", count, " ", sum, "],")
+            } else if v < 100 {
+                m.clear()
+            }
+            i += 1
+        }
+        println(m.len())
+    }
+}
+
+func run_set() {
+    for p in phases() {
+        let r = R { s: p.seed }
+        let s: Set[i64] = Set.new()
+        var i: u64 = 0
+        while i < p.ops {
+            let op = next(r) % 1000
+            let k = (next(r) % p.space) as i64
+            let _skip = next(r)
+            if op < p.ins {
+                print(if s.insert(k) { "t," } else { "f," })
+            } else if op < p.rem {
+                print(if s.remove(k) { "t," } else { "f," })
+            } else if op < p.has {
+                print(if s.contains(k) { "t," } else { "f," })
+            }
+            i += 1
+        }
+        println(s.len())
+    }
+}
+
+public func main() {
+    for kind in 0..4 { run_ints(kind) }
+    run_strings()
+    run_set()
+}
+"#
+    .replace("PHASES", &phases);
+    let (_dir, stdout) = run_ok(&[("mod.code", &program)]);
+    if stdout != expected {
+        let line = stdout
+            .lines()
+            .zip(expected.lines())
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        let (got, want) = (
+            stdout.lines().nth(line).unwrap_or(""),
+            expected.lines().nth(line).unwrap_or(""),
+        );
+        let at = got
+            .split(',')
+            .zip(want.split(','))
+            .position(|(a, b)| a != b)
+            .unwrap_or(0);
+        panic!(
+            "line {line} differs at operation {at}: got {:?}, want {:?}",
+            got.split(',').nth(at),
+            want.split(',').nth(at)
+        );
+    }
 }
 
 /// The modules written against `String`: `std.collections.string`,
