@@ -203,6 +203,7 @@ pub unsafe extern "C" fn codira_runtime_create(
         heap_limit: None,
         heap_limit_note: None,
         gc_policy: codira_runtime::GcPolicy::default(),
+        compaction: false,
         fuel: None,
     };
 

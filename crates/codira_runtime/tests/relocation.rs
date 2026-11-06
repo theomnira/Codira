@@ -211,17 +211,20 @@ const LIMIT: usize = 16 << 20;
 
 /// Collections the fragmentation workload's host function made, with what
 /// each reported.
-static REPORTS: std::sync::Mutex<Vec<codira_memory::gc::CollectionReport>> =
+static REPORTS: std::sync::Mutex<Vec<codira_memory::gc::RelocationReport>> =
     std::sync::Mutex::new(Vec::new());
 
 extern "C" fn phase_done() {
-    gc().collect();
-    REPORTS.lock().unwrap().push(gc().last_collection());
+    let _ = gc().collect_blocking();
+    REPORTS.lock().unwrap().push(gc().last_relocation());
 }
 
 fn fragment_driver(compaction: bool, limit: Option<usize>) -> CompileAndRunTestDriver {
     let driver = CompileAndRunTestDriver::new(FRAGMENT_SOURCE, |builder| {
+        // Pacing off: the collections are the ones the workload asks for
+        // (and the heap limit's), so the two runs do the same work.
         let builder = builder
+            .gc_growth(None)
             .compaction(compaction)
             .insert_fn("phase_done", phase_done as extern "C" fn());
         match limit {

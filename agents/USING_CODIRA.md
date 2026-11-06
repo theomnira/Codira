@@ -4205,8 +4205,9 @@ Runtime (hosts embedding `codira_runtime`):
     integer in a compiled frame that looks like a pointer no longer keeps
     an object alive -- except while it sits in a callee-saved register at
     the safepoint (those registers may hold a host frame's references and
-    are scanned conservatively; measured: 6 of 40 such objects retained,
-    against 40 of 40 with the conservative scan). Frames are left out of
+    are scanned conservatively; measured: 5 of 40 such objects retained,
+    at most one per such register, against 40 of 40 with the conservative
+    scan). Frames are left out of
     the scan on x86-64 Linux only; elsewhere the records are read and the
     frames are scanned conservatively as well.
   - `CODIRA_GC_ROOTS=conservative` (or
