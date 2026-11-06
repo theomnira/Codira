@@ -111,7 +111,15 @@ impl AsName for ast::FieldKind {
     fn as_name(&self) -> Name {
         match self {
             ast::FieldKind::Name(nr) => nr.as_name(),
-            ast::FieldKind::Index(idx) => Name::new_tuple_field(idx.text()[1..].parse().unwrap()),
+            // An index too large for `usize` names no field; as text it is
+            // reported as an unknown field instead of panicking here.
+            ast::FieldKind::Index(idx) => {
+                let digits = &idx.text()[1..];
+                digits.parse().map_or_else(
+                    |_| Name::new_text(digits.into()),
+                    Name::new_tuple_field,
+                )
+            }
         }
     }
 }

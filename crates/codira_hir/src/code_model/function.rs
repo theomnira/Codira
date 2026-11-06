@@ -616,6 +616,32 @@ impl Function {
     }
 
     pub fn diagnostics(self, db: &dyn HirDatabase, sink: &mut DiagnosticSink<'_>) {
+        // Only a declaration of a foreign function (in an `extern` block)
+        // or a required method of a trait may leave out the body. Anywhere
+        // else there is nothing to generate code from: code generation used
+        // to reach the missing body and panic.
+        let data = db.fn_data(self.id);
+        let in_trait = matches!(
+            self.id.lookup(db).container,
+            crate::ids::ItemContainerId::TraitId(_)
+        );
+        let source = self.source(db);
+        // A declaration that ends in `;`: one cut short by a syntax error
+        // already has that error.
+        let declared = source
+            .value
+            .syntax()
+            .last_token()
+            .is_some_and(|token| token.kind() == codira_syntax::SyntaxKind::SEMI);
+        if !data.has_body() && !data.is_extern() && !in_trait && declared {
+            sink.push(crate::diagnostics::ExprError {
+                file: source.file_id,
+                node: codira_syntax::SyntaxNodePtr::new(source.value.syntax()),
+                message: "a function needs a body: only a function in an `extern` block or a \
+                          required method of a trait is declared without one"
+                    .to_string(),
+            });
+        }
         db.function_bounds(self.id).add_diagnostics(sink);
         let body = self.body(db);
         body.add_diagnostics(db, self.into(), sink);

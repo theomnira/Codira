@@ -255,6 +255,10 @@ pub enum AllocError {
     /// The requested object is too large to describe with a memory layout.
     #[error("the requested object is too large")]
     TooLarge,
+    /// Test-only fault injection made this allocation fail (see
+    /// `MarkSweep::fail_nth_allocation`). Never returned otherwise.
+    #[error("injected allocation failure (test-only fault injection)")]
+    Injected,
 }
 
 /// An in-progress payload replacement, see

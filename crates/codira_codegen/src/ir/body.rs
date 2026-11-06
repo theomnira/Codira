@@ -2083,7 +2083,7 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
         let ty = &self.infer[expr];
         match ty.interned() {
             TyKind::Float(_) => self.gen_unary_op_float(expr, op),
-            &TyKind::Int(int_ty) => self.gen_unary_op_int(expr, op, int_ty.signedness),
+            &TyKind::Int(_) => self.gen_unary_op_int(expr, op),
             TyKind::Bool => self.gen_unary_op_bool(expr, op),
             _ => unimplemented!("unimplemented operation op{0}", ty.display(self.db)),
         }
@@ -2110,30 +2110,21 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
     }
 
     /// Generates IR to calculate a unary operation on an integer value.
-    fn gen_unary_op_int(
-        &mut self,
-        expr: ExprId,
-        op: UnaryOp,
-        signedness: codira_hir::Signedness,
-    ) -> Option<BasicValueEnum<'ink>> {
+    fn gen_unary_op_int(&mut self, expr: ExprId, op: UnaryOp) -> Option<BasicValueEnum<'ink>> {
         let value: IntValue<'ink> = self
             .gen_expr(expr)
             .map(|value| self.opt_deref_value(expr, value))
             .expect("no value")
             .into_int_value();
         match op {
-            UnaryOp::Neg => {
-                if signedness == codira_hir::Signedness::Signed {
-                    Some(
-                        self.builder
-                            .build_int_neg(value, "neg")
-                            .expect("failed to build int neg")
-                            .into(),
-                    )
-                } else {
-                    unimplemented!("Operator {:?} is not implemented for unsigned integer", op)
-                }
-            }
+            // Wraps at the type's width for every integer, unsigned ones
+            // included (`-1u8` is `255u8`), as the Cranelift backend does.
+            UnaryOp::Neg => Some(
+                self.builder
+                    .build_int_neg(value, "neg")
+                    .expect("failed to build int neg")
+                    .into(),
+            ),
             // Both `!` (on an integer) and `~` are the bitwise complement
             // at the machine level; inference is what keeps `~` off
             // non-integers and `!` meaningful on bools.

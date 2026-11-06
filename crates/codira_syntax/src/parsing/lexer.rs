@@ -133,6 +133,11 @@ fn scan_identifier_or_keyword(c: char, cursor: &mut Cursor<'_>) -> SyntaxKind {
 
 fn scan_index(c: char, cursor: &mut Cursor<'_>) -> Option<SyntaxKind> {
     if c == '.' {
+        // At the end of the input the loop below consumes nothing; a `.`
+        // alone is not an index.
+        if cursor.current().is_none() {
+            return None;
+        }
         let mut is_first = true;
         while let Some(cc) = cursor.current() {
             match cc {

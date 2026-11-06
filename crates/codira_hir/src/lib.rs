@@ -67,6 +67,8 @@ pub mod diagnostics;
 mod display;
 pub mod escape;
 mod expr;
+#[cfg(test)]
+mod fuzz_regressions;
 mod ids;
 mod in_file;
 mod item_tree;

@@ -137,7 +137,18 @@ pub struct RuntimeOptions {
     /// The fuel budget of fuel-instrumented code, or `None` for no limit. See
     /// [`RuntimeBuilder::fuel`].
     pub fuel: Option<u64>,
+    /// Test-only: the GC allocation that fails, counted from 1 once the
+    /// library is loaded. See [`RuntimeBuilder::fail_nth_allocation`].
+    pub fail_nth_allocation: Option<u64>,
 }
+
+/// Environment variable that arms test-only allocation fault injection in
+/// every [`Runtime`] the process builds: set to `N`, the `N`th GC allocation
+/// after the library is loaded fails (see
+/// [`RuntimeBuilder::fail_nth_allocation`]). For fault-injection harnesses
+/// that run whole programs (`codira run`, `codira start`, standalone
+/// executables); never set it in production.
+pub const FAIL_NTH_ALLOCATION_ENV: &str = "CODIRA_TEST_FAIL_NTH_ALLOCATION";
 
 /// Retrieve the allocator using the provided handle.
 ///
@@ -259,6 +270,10 @@ pub(crate) fn exhaustion_message(
         gc::AllocError::TooLarge => {
             format!("fatal: cannot allocate {what}: the object is too large to describe")
         }
+        gc::AllocError::Injected => format!(
+            "fatal: out of memory: cannot allocate {what}: injected allocation failure \
+             ({FAIL_NTH_ALLOCATION_ENV} or `fail_nth_allocation`, test-only)"
+        ),
     }
 }
 
@@ -367,6 +382,7 @@ impl RuntimeBuilder {
                 heap_limit_note: None,
                 gc_policy: GcPolicy::default(),
                 fuel: None,
+                fail_nth_allocation: None,
             },
         }
     }
@@ -426,6 +442,17 @@ impl RuntimeBuilder {
     /// limit and on request.
     pub fn gc_growth(mut self, percent: Option<u32>) -> Self {
         self.options.gc_policy.growth_percent = percent;
+        self
+    }
+
+    /// **Test-only fault injection.** Makes the `n`th GC allocation after
+    /// the library is loaded fail, as if the heap had no memory left (`n`
+    /// counts from 1; see `MarkSweep::fail_nth_allocation` for what counts).
+    /// Generated code then takes the runtime's out-of-memory exit, exactly as
+    /// for an exhausted heap limit; the host API returns or reports the
+    /// error. Overrides [`FAIL_NTH_ALLOCATION_ENV`].
+    pub fn fail_nth_allocation(mut self, n: u64) -> Self {
+        self.options.fail_nth_allocation = Some(n);
         self
     }
 
@@ -640,6 +667,15 @@ impl Runtime {
         ensure_emergency_reserve();
 
         runtime.add_assembly(&options.library_path)?;
+
+        let fail_nth_allocation = options.fail_nth_allocation.or_else(|| {
+            std::env::var(FAIL_NTH_ALLOCATION_ENV)
+                .ok()
+                .and_then(|value| value.trim().parse().ok())
+        });
+        if fail_nth_allocation.is_some() {
+            runtime.gc.fail_nth_allocation(fail_nth_allocation);
+        }
         Ok(runtime)
     }
 

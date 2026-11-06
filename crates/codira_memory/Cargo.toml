@@ -30,6 +30,17 @@ codira_capi_utils = { version = "0.6.0-dev", path = "../codira_capi_utils", feat
 insta = { workspace = true, features = ["ron"] }
 paste = { workspace = true }
 
+# Only with RUSTFLAGS="--cfg loom" (the loom model of the safepoint
+# protocol, tests/safepoint_loom.rs); never part of a normal build.
+[target.'cfg(loom)'.dev-dependencies]
+loom = "0.7"
+
+[lints.rust]
+# `codira_asan`: an AddressSanitizer build (TESTING.md); `loom`: the loom
+# models of the safepoint protocol (tests/safepoint_loom.rs) and of Cascade
+# (cfg(loom) in src/gc/cascade).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(codira_asan)', 'cfg(loom)'] }
+
 [[bench]]
 name = "gc"
 harness = false
@@ -41,5 +52,3 @@ harness = false
 [target.'cfg(loom)'.dependencies]
 loom = "0.7"
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

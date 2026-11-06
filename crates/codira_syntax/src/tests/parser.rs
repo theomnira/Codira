@@ -1942,3 +1942,30 @@ fn a_match_arm_with_a_fat_arrow_is_reported_not_a_hang() {
     let other = SourceFile::parse("func b(r: R) { match r { x { 1 } { 2 } } }").debug_dump();
     assert!(other.contains("expected THIN_ARROW"), "{other}");
 }
+
+/// A `{` where a match arm should start: pattern recovery does not consume
+/// it, so the arm loop ran until the parser's step limit panicked ("the
+/// parser seems stuck"). Found by the compiler fuzzer.
+#[test]
+fn a_brace_where_a_match_arm_should_start_is_an_error() {
+    for text in ["{match s{{", "func f() { match x { { } } }", "func g() { match a { {{{ 1 -> 2 } }"] {
+        let parse = SourceFile::parse(text);
+        assert!(!parse.errors().is_empty(), "{text}");
+        assert!(
+            parse.errors().iter().any(|e| e.to_string().contains("expected pattern")),
+            "{text}: {:?}",
+            parse.errors()
+        );
+    }
+}
+
+/// A `{` where an imported name should be: recovery left it in place and
+/// the list loop retried it until the step limit panicked. Found by the
+/// compiler fuzzer.
+#[test]
+fn a_brace_inside_an_import_list_is_an_error() {
+    for text in ["import x.{{", "import a.b.{c, {d}, e}\nfunc f() {}"] {
+        let parse = SourceFile::parse(text);
+        assert!(!parse.errors().is_empty(), "{text}");
+    }
+}

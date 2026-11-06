@@ -3906,6 +3906,16 @@ instead.
 Hot reload: Codira is designed so a running application can swap function
 bodies without a manual stop/restart cycle.
 
+**Toolchain correctness gates.** GC stress against a shadow model, forced
+allocation failure, sanitizers, a loom model of the safepoints, compiler
+and runtime fuzzing, a long-running service and the backend differential
+run are described in `TESTING.md` and run by `python3
+scripts/aurora_gates.py`. One knob reaches programs: setting
+`CODIRA_TEST_FAIL_NTH_ALLOCATION=N` makes the `N`th GC allocation of any
+`Runtime` (so of `codira run` and standalone executables too) fail and take
+the out-of-memory exit -- for testing that a program fails cleanly; never
+set it in production.
+
 ### Fast development runs: `codira run --jit`
 
 `codira run --jit` compiles the program with the Cranelift backend and runs it

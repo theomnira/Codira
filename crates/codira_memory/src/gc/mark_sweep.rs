@@ -178,6 +178,12 @@ where
     /// Says where the heap limit came from, for the diagnostic of a failed
     /// allocation (see [`MarkSweep::set_heap_limit_note`]).
     limit_note: Mutex<Option<String>>,
+    /// Test-only fault injection: 0 when disarmed; otherwise the number of
+    /// allocations, this one included, until one fails (see
+    /// [`MarkSweep::fail_nth_allocation`]).
+    fault_countdown: AtomicU64,
+    /// Allocations that fault injection made fail.
+    injected_failures: AtomicU64,
 }
 
 /// What a collection needs, shared with [`MarkSweep::request_collection`]'s
@@ -263,6 +269,58 @@ where
             requests: Arc::new(Requests::default()),
             request_thread: Mutex::new(None),
             limit_note: Mutex::new(None),
+            fault_countdown: AtomicU64::new(0),
+            injected_failures: AtomicU64::new(0),
+        }
+    }
+
+    /// **Test-only fault injection.** Makes the `n`th GC allocation from now
+    /// fail with [`AllocError::Injected`] (`n` counts from 1); every other
+    /// allocation is unaffected, and injection disarms itself once it fired.
+    /// `None` (or `Some(0)`) disarms it.
+    ///
+    /// Every allocation point of the collector counts, on every thread:
+    /// [`MarkSweep::try_alloc`], [`MarkSweep::try_alloc_array`] and
+    /// [`MarkSweep::try_grow_array`] (so objects, arrays, strings and array
+    /// growth from generated code, the runtime and the host, and heap
+    /// snapshot restores). Hot-reload migration allocates under the heap
+    /// lock without going through these and is not counted.
+    ///
+    /// A harness runs a program with `n = 1, 2, ...` until it no longer
+    /// fails, which checks every allocation point the program reaches. When
+    /// disarmed this costs one relaxed load per allocation.
+    pub fn fail_nth_allocation(&self, n: Option<u64>) {
+        self.fault_countdown.store(n.unwrap_or(0), Ordering::SeqCst);
+    }
+
+    /// Returns how many allocations fault injection made fail.
+    pub fn injected_failures(&self) -> u64 {
+        self.injected_failures.load(Ordering::SeqCst)
+    }
+
+    /// Counts one allocation against [`MarkSweep::fail_nth_allocation`].
+    #[inline]
+    fn check_fault(&self) -> Result<(), AllocError> {
+        if self.fault_countdown.load(Ordering::Relaxed) == 0 {
+            Ok(())
+        } else {
+            self.count_fault()
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn count_fault(&self) -> Result<(), AllocError> {
+        let previous =
+            self.fault_countdown
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    left.checked_sub(1)
+                });
+        if previous == Ok(1) {
+            self.injected_failures.fetch_add(1, Ordering::SeqCst);
+            Err(AllocError::Injected)
+        } else {
+            Ok(())
         }
     }
 
@@ -459,6 +517,7 @@ where
         if min_capacity <= capacity {
             return Ok(());
         }
+        self.check_fault()?;
         let new_capacity = min_capacity.max(capacity.saturating_mul(2)).max(4);
         let grow = || unsafe { self.heap.inner.write().grow_array(header, new_capacity) };
         let grow_or_collect = || match grow() {
@@ -512,6 +571,7 @@ where
         ty: &Type,
         layout: Layout,
     ) -> Result<NonNull<ObjectHeader>, AllocError> {
+        self.check_fault()?;
         if safepoint::is_running() {
             safepoint::poll();
             if self.heap.collection_due() {
