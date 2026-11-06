@@ -17,8 +17,7 @@ The first full run of the suite (`python3 scripts/bench.py`, see
 gate.
 
 **Since then.** The tables of the full run below are main at `f8b145c6a1`.
-Two later commits of main were measured with the CI subset against the
-stored baseline:
+Later commits of main were measured against the stored baseline:
 
 - `16934da443` (task groups, and a scheduler whose channel operations try
   before they wait): no kernel regressed. `channels.spsc` went from 13.2x
@@ -28,6 +27,63 @@ stored baseline:
   MiB** (52 MiB fails), with 41.1 MiB live at that cap instead of 48.7.
   `baseline/ci.json` is now that run's samples (9 rounds, 42 kernels, with
   the heap floor).
+
+- `80babddeed` (every workstream merged: relocation, precise stack roots,
+  Cascade, task groups, regions; the full suite, 11 rounds, against the
+  baseline). **The gate fails on two kernels**, both call-heavy recursion:
+  `loops.fib_32` went from 0.99x to 1.84x Rust's time (+86%, 95% interval
+  +44% to +128%, p = 0.0001), and `groups.fib_64`, the same `fib` in tasks,
+  from 0.49x to 0.95x (+94%). The cause is the frame record that precise
+  stack roots add to every function that makes a call: the same program
+  built with `CODIRA_GC_FRAMES=0` runs `fib_32` in 6.4-8.5 ms instead of
+  12.8-16.4 ms (Rust: 7.3 ms). The baseline was left as it is: whether to
+  accept that cost is a decision, not a measurement. Several other kernels
+  moved up by 8-17% (the server's long run, the object graphs, JSON
+  parsing) without surviving the correction. The heap floor is 56 MiB, as
+  before. `json.pretty_deep` completed all 11 runs (its live bytes after
+  the last collection fell from 604 to 501 MiB), and JSON printing got
+  faster: `print_canada` from 2.25x to 1.36x Rust's time.
+
+**Relocation** (`CODIRA_GC_COMPACT=1`, experimental) on the workloads that
+fragment the heap, at `80babddeed`, 11 rounds with Codira and Rust (the
+ratios make the two runs comparable; they were not interleaved with each
+other). It buys nothing measurable here: the peak heap, the live bytes and
+the resident set are the same (but for `cyclic_graph`'s RSS, 40 to 32 MiB),
+the heap floor stays at 56 MiB, and collections take 10-50% longer, which
+shows on the object graphs (`binary_trees` 2.75x to 3.52x, `linked_list`
+2.16x to 3.23x). The last collection of a run moved 0 objects for
+`binary_trees`, `linked_list` and the server's long run at 64 MiB, and 159
+for `cyclic_graph`: these heaps do not leave many blocks a quarter full, so
+the cost is the search for them.
+
+| kernel | Codira/Rust, non-moving [95%] | with `CODIRA_GC_COMPACT=1` [95%] | peak heap MiB (off → on) | live after last GC MiB (off → on) | stopped ms (off → on) | RSS MiB (off → on) |
+|---|---:|---:|---:|---:|---:|---:|
+| hashmap.churn_fast | 1.27x [1.03, 1.44] | 1.35x [1.22, 1.47] | 7 → 7 | 2.6 → 2.6 | 0 → 0 | 12 → 12 |
+| hashmap.churn_secure | 0.94x [0.89, 1.04] | 1.06x [0.97, 1.14] | 7 → 7 | 2.6 → 2.6 | 0 → 0 | 12 → 12 |
+| json.parse_twitter | 1.00x [0.88, 1.05] | 1.01x [0.91, 1.22] | 607 → 607 | 484.1 → 484.1 | 305 → 366 | 613 → 613 |
+| json.parse_canada | 1.39x [1.20, 1.42] | 1.35x [1.26, 1.41] | 392 → 392 | 180.4 → 180.4 | 98 → 119 | 398 → 398 |
+| json.parse_deep | 1.47x [1.25, 1.82] | 1.30x [1.22, 1.40] | 619 → 619 | 425.3 → 425.3 | 335 → 427 | 625 → 626 |
+| json.print_twitter | 0.98x [0.95, 1.10] | 0.96x [0.89, 1.07] | 246 → 246 | 125.3 → 125.3 | 47 → 54 | 235 → 235 |
+| json.print_canada | 1.36x [1.30, 1.47] | 1.36x [1.31, 1.66] | 158 → 158 | 90.6 → 90.6 | 31 → 38 | 158 → 158 |
+| json.print_deep | 1.86x [1.82, 2.01] | 1.92x [1.82, 2.02] | 169 → 169 | 106.6 → 106.6 | 60 → 76 | 173 → 173 |
+| json.pretty_twitter | 1.03x [0.94, 1.07] | 1.09x [1.02, 1.17] | 287 → 287 | 183.2 → 183.2 | 88 → 96 | 286 → 286 |
+| json.pretty_canada | 1.20x [1.12, 1.25] | 1.24x [1.11, 1.30] | 211 → 211 | 141.4 → 141.4 | 57 → 67 | 211 → 211 |
+| json.pretty_deep | 1.31x [1.20, 1.40] | 1.33x [1.22, 1.40] | 960 → 960 | 500.7 → 500.7 | 139 → 170 | 852 → 852 |
+| graph.binary_trees | 2.75x [2.53, 3.17] | 3.52x [3.24, 3.62] | 32 → 32 | 8.0 → 8.0 | 332 → 499 | 37 → 37 |
+| graph.cyclic_graph | 3.77x [3.45, 3.91] | 3.95x [3.79, 4.06] | 19 → 19 | 3.1 → 3.1 | 202 → 238 | 40 → 32 |
+| graph.linked_list | 2.16x [2.04, 2.71] | 3.23x [2.83, 3.43] | 256 → 256 | 51.7 → 51.7 | 528 → 680 | 261 → 261 |
+| server.requests | 2.70x [2.39, 2.94] | 2.52x [2.18, 2.71] | 30 → 30 | 10.9 → 10.9 | 124 → 125 | 48 → 48 |
+| server.long_run_heap_1024 | 2.89x [2.57, 2.98] | 2.92x [2.72, 3.11] | 113 → 113 | 41.1 → 41.1 | 987 → 1111 | 170 → 171 |
+| server.long_run_heap_256 | 2.74x [2.58, 2.89] | 3.14x [2.70, 3.36] | 113 → 113 | 41.1 → 41.1 | 1003 → 1112 | 170 → 171 |
+| server.long_run_heap_128 | 2.80x [2.71, 3.09] | 2.84x [2.59, 3.10] | 113 → 113 | 41.1 → 41.1 | 1016 → 1085 | 170 → 171 |
+| server.long_run_heap_96 | 2.80x [2.53, 3.04] | 2.96x [2.64, 3.33] | 96 → 96 | 41.0 → 41.0 | 1022 → 1157 | 150 → 151 |
+| server.long_run_heap_80 | 3.18x [3.01, 3.44] | 3.21x [2.90, 3.52] | 80 → 80 | 41.1 → 41.1 | 1297 → 1373 | 126 → 126 |
+| server.long_run_heap_64 | 3.34x [3.16, 3.72] | 3.54x [3.29, 4.17] | 64 → 64 | 41.1 → 41.1 | 1758 → 1777 | 103 → 104 |
+| server.long_run_heap_48 | – | does not complete | | | | |
+| regions.list_heap | 2.38x [2.21, 2.60] | 2.35x [2.19, 2.55] | 11 → 11 | 0.0 → 0.0 | 47 → 47 | 15 → 15 |
+| regions.list_region | 1.34x [1.23, 1.40] | 1.40x [1.28, 1.45] | 0 → 0 | 0.0 → 0.0 | 0 → 0 | 4 → 4 |
+| regions.scratch_arrays_heap | 4.58x [3.83, 4.74] | 4.80x [3.01, 5.16] | 4 → 4 | 0.0 → 0.0 | 9 → 9 | 8 → 8 |
+| regions.scratch_arrays_region | 2.76x [2.36, 2.93] | 2.67x [2.17, 2.93] | 0 → 0 | 0.0 → 0.0 | 0 → 0 | 4 → 4 |
 
 On `261f4b94da`, two workloads were added, `regions` and `groups` (11
 rounds, the same machine; their compile times are in the files of that
