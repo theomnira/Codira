@@ -641,8 +641,22 @@ fn match_arm_list(p: &mut Parser<'_>) {
     while !p.at(EOF) && !p.at(T!['}']) {
         let arm = p.start();
         patterns::pattern(p);
-        if p.expect(T![->]) {
+        if p.at(T![=]) && p.nth_at(1, T![>]) {
+            // `pattern => value`, as in Rust: say so, and read the value.
+            let error = p.start();
+            p.error("a `match` arm is `pattern -> value`, not `pattern => value`");
+            p.bump_any();
+            p.bump_any();
+            error.complete(p, ERROR);
             expr(p);
+        } else if p.expect(T![->]) {
+            expr(p);
+        } else if !p.at(T!['}']) && !p.at(T![,]) && !p.at(EOF) {
+            // Nothing here continues the arm, and the pattern parser does
+            // not skip a `{`: skip one token so the loop makes progress.
+            let error = p.start();
+            p.bump_any();
+            error.complete(p, ERROR);
         }
         if !p.at(T!['}']) {
             p.eat(T![,]);

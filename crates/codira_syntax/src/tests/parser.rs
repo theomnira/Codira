@@ -1904,3 +1904,23 @@ fn propagate_expr_leaves_holes_and_optional_types_alone() {
     assert_eq!(kinds.iter().filter(|k| **k == OPTIONAL_TYPE).count(), 3);
     assert!(!kinds.contains(&SyntaxKind::PROPAGATE_EXPR));
 }
+
+/// A `match` arm written with `=>` (as in Rust) is reported, once, and the
+/// arm's value is still parsed -- before, an arm whose value was a block
+/// made the parser loop forever ("the parser seems stuck").
+#[test]
+fn a_match_arm_with_a_fat_arrow_is_reported_not_a_hang() {
+    let block = SourceFile::parse("func b(r: R) { match r { x => { 1 } } }");
+    let dump = block.debug_dump();
+    assert!(
+        dump.contains("a `match` arm is `pattern -> value`, not `pattern => value`"),
+        "{dump}"
+    );
+    assert!(dump.contains("BLOCK_EXPR"), "{dump}");
+    let plain = SourceFile::parse("func b(r: R) -> i64 { match r { R.Ok(x) => x, _ => { 0 } } }");
+    let dump = plain.debug_dump();
+    assert_eq!(dump.matches("not `pattern => value`").count(), 2, "{dump}");
+    // Anything else that cannot follow a pattern still makes progress.
+    let other = SourceFile::parse("func b(r: R) { match r { x { 1 } { 2 } } }").debug_dump();
+    assert!(other.contains("expected THIN_ARROW"), "{other}");
+}
