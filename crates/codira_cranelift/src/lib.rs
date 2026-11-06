@@ -198,12 +198,6 @@ impl Program {
         self.stack_maps
     }
 
-    /// Runs a full collection of this program's heap (for tests: the
-    /// program's objects must survive it while referenced from its frames).
-    pub fn collect_garbage(&self) -> bool {
-        self.heap.collector().collect()
-    }
-
     /// How many collections allocations had to run because the heap was at
     /// [`Options::heap_limit`].
     pub fn emergency_collections(&self) -> usize {
