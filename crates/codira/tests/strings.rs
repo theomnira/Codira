@@ -580,10 +580,11 @@ public func main() {
     );
 }
 
-/// The Cranelift backend has no GC heap: a program using `String` runs on
-/// LLVM instead, with a note that says why, and prints the same.
+/// `String`s run on the Cranelift backend and print what LLVM prints; a
+/// string method it does not compile yet runs the program on LLVM instead,
+/// with a note naming the method.
 #[test]
-fn jit_runs_strings_on_llvm_and_says_why() {
+fn jit_runs_strings_and_names_what_it_does_not_compile() {
     let dir = package_with(
         r#"
 public func main() {
@@ -592,7 +593,7 @@ public func main() {
 }
 "#,
     );
-    let output = codira_run(dir.path(), &["--jit"]);
+    let output = codira_run_with_env(dir.path(), &["--jit"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -600,10 +601,36 @@ public func main() {
         "stdout:\n{stdout}\nstderr:\n{stderr}"
     );
     assert_eq!(stdout.replace("\r\n", "\n"), "jit?\n");
+    assert!(stderr.contains("cranelift: compiled in"), "{stderr}");
+
+    let dir = package_with(
+        r#"
+public func main() {
+    println("  a b ".trim())
+}
+"#,
+    );
+    let output = codira_run_with_env(dir.path(), &["--jit"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "{stderr}");
+    assert_eq!(stdout.replace("\r\n", "\n"), "a b\n");
     assert!(
-        stderr.contains(
-            "a `String` (strings live on the GC heap, which this backend does not reach)"
-        ),
+        stderr.contains("note: running on the LLVM backend")
+            && stderr.contains("the string method `trim`"),
         "{stderr}"
     );
+}
+
+/// `codira run` of the package in `dir` with `args`, reporting JIT timings.
+fn codira_run_with_env(dir: &std::path::Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new(env!("CARGO_BIN_EXE_codira"))
+        .arg("run")
+        .args(args)
+        .arg("--manifest-path")
+        .arg(dir.join("codira.toml"))
+        .args(["--color", "disable"])
+        .env("CODIRA_JIT_TIMINGS", "1")
+        .output()
+        .unwrap()
 }
