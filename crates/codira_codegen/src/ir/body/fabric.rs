@@ -226,6 +226,15 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         if !thread_pointer && !exact {
             return slow(self, buf, start, len);
         }
+        // Computed before the fill is loaded, so that on the fast path,
+        // where the two are equal, the optimizer keeps using this value
+        // (it prefers the older of two equal values) and the new fill and
+        // the destination depend on registers rather than on the load: a
+        // loop of appends then has no dependency through memory.
+        let end = self
+            .builder
+            .build_int_add(start, len, "string.end")
+            .expect("failed to add");
         let check = self
             .context
             .append_basic_block(self.fn_value, "append.check");
@@ -286,10 +295,6 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .build_load(usize_ty, elements, "string.owner")
             .expect("failed to load a buffer's owner")
             .into_int_value();
-        let end = self
-            .builder
-            .build_int_add(start, len, "string.end")
-            .expect("failed to add");
         let expected_owner = if thread_pointer {
             self.thread_pointer()
         } else {
