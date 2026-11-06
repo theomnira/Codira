@@ -433,7 +433,9 @@ impl World {
 
     /// Returns every pointer-aligned word of every parked thread's frozen
     /// stack range (callee-saved registers included: they were spilled into
-    /// it). Empty when no thread is parked with Codira frames.
+    /// it), and every word of every registered [`super::root_region`]. Empty
+    /// when no thread is parked with Codira frames and no region holds
+    /// anything.
     pub(crate) fn stack_words(&self) -> Vec<usize> {
         let word = std::mem::size_of::<usize>();
         let total: usize = self
@@ -453,6 +455,9 @@ impl World {
                 address += word;
             }
         }
+        // Results of finished tasks waiting to be joined, and anything else
+        // the runtime keeps off the stacks (see `root_region`).
+        super::root_region::collect_words(&mut words);
         words
     }
 }

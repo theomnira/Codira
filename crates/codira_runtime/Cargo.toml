@@ -25,6 +25,7 @@ log = { workspace = true }
 notify = { workspace = true }
 once_cell = { workspace = true }
 parking_lot = { workspace = true }
+crossbeam-deque = { workspace = true }
 rustc-hash = { workspace = true }
 seq-macro = { workspace = true }
 thiserror = { workspace = true }

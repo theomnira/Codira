@@ -9,6 +9,7 @@ mod heap;
 mod mark_sweep;
 mod policy;
 mod ptr;
+pub mod root_region;
 mod root_ptr;
 pub mod safepoint;
 mod snapshot;
