@@ -98,8 +98,8 @@ fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
 }
 
-/// The churn example allocates about 115 MB in total (3.8 million objects)
-/// with about 250 KB live; under an 8 MiB limit it completes, its check
+/// The churn example allocates more than ten times the limit in total, with
+/// well under a megabyte live; under an 8 MiB limit it completes, its check
 /// value says no live object was lost, and the statistics show the
 /// collections that made it possible.
 #[test]
@@ -122,7 +122,14 @@ fn a_program_allocating_far_more_than_the_limit_completes() {
         err.contains("heap limit   8.00 MiB, from --heap-limit"),
         "{err}"
     );
-    assert!(err.contains("allocated    1"), "{err}");
+    // Far more allocated in total than the limit allows at once.
+    let allocated_mib: f64 = err
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("allocated"))
+        .and_then(|rest| rest.split_whitespace().next())
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("no allocated line\n{err}"));
+    assert!(allocated_mib > 80.0, "{err}");
     let collections: u64 = err
         .lines()
         .find_map(|line| line.trim().strip_prefix("collections"))
