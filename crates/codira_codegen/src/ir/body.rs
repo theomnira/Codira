@@ -533,8 +533,8 @@ impl<'db, 'ink, 't> BodyIrGenerator<'db, 'ink, 't> {
                     if builtin == BuiltinFn::ArrayFilled {
                         return self.gen_array_filled(expr, args);
                     }
-                    if let BuiltinFn::String(_) = builtin {
-                        return self.gen_string_from_utf8(expr, args);
+                    if let BuiltinFn::String(op) = builtin {
+                        return self.gen_string_from_utf8(expr, op, args);
                     }
                     return self.gen_builtin_call(builtin, args);
                 }

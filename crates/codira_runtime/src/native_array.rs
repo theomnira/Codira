@@ -6,6 +6,11 @@
 //!   array's elements to a larger buffer, and the element-wise operations
 //!   generated code hands to the runtime instead of emitting them inline
 //!   (`sort`, `binary_search`, `reverse`).
+//! - The float formatting of `[u8]`'s `push_json_float`:
+//!   `codira.bytes_format_json_f64` writes the text into the spare capacity
+//!   generated code has made room in, and returns its length. (`push_int`
+//!   needs no runtime call: it uses the digit writer generated code has for
+//!   `+=`.)
 //!
 //! The compiler side is `codira_codegen::intrinsics::array_functions` and
 //! `codira_codegen::ir::body::arrays`; names and signatures must match the
@@ -214,6 +219,13 @@ extern "C" fn array_reverse(data: *mut u8, len: usize, stride: usize) {
     }
 }
 
+/// `bytes.push_json_float(x)`: the JSON text of `value` at `out` (room for
+/// [`crate::native_json::FORMAT_F64_CAPACITY`] bytes), as
+/// `codira_json_format_f64` writes it; returns its length.
+extern "C" fn bytes_format_json_f64(value: f64, out: *mut u8) -> usize {
+    crate::native_json::codira_json_format_f64(value, out as usize)
+}
+
 /// Returns the definitions of every function in this module, for the
 /// runtime's dispatch table.
 pub(crate) fn functions() -> Vec<FunctionDefinition> {
@@ -233,6 +245,10 @@ pub(crate) fn functions() -> Vec<FunctionDefinition> {
         IntoFunctionDefinition::into(
             array_reverse as extern "C" fn(*mut u8, usize, usize),
             "codira.array_reverse",
+        ),
+        IntoFunctionDefinition::into(
+            bytes_format_json_f64 as extern "C" fn(f64, *mut u8) -> usize,
+            "codira.bytes_format_json_f64",
         ),
     ]
 }

@@ -1224,6 +1224,67 @@ extern "C" fn string_from_utf8(
     }
 }
 
+/// `string_take_utf8(bytes)`: 1 and a string at `out` holding the bytes of
+/// the array when they are valid UTF-8, else 0 (and the array unchanged).
+/// No new buffer is made when the array's elements live out of line (it
+/// has grown): the new string's buffer takes them over -- moved up by
+/// [`OWNER_BYTES`] in place to make room for the owner word every string
+/// buffer starts with -- and the array is left empty, so no program can
+/// change them again, which is what makes them a string's. A small array that never grew is copied, and also left
+/// empty, so the result does not depend on where the bytes lived.
+extern "C" fn string_take_utf8(
+    array: *const c_void,
+    ty: *const c_void,
+    alloc: *mut c_void,
+    out: *mut u8,
+) -> u8 {
+    let array = array.cast::<*mut u8>();
+    // Safety: generated code passes a live `[u8]`, its handles and a slot;
+    // arrays are never shared between threads.
+    unsafe {
+        let len = header(array).length.load(Ordering::Acquire);
+        if std::str::from_utf8(std::slice::from_raw_parts(elements(array), len)).is_err() {
+            return 0;
+        }
+        let alloc = Alloc::new(ty, alloc);
+        // An empty buffer to give the elements to. The allocation is a
+        // safepoint; `array` stays alive across it (it is still used).
+        let buf = alloc.array(0, 0);
+        let from = codira_memory::gc::GcPtr::from(array.cast::<*mut std::ffi::c_void>());
+        let to = codira_memory::gc::GcPtr::from(buf.cast::<*mut std::ffi::c_void>());
+        // Safety of the move: both are `[u8]` arrays (no references), `buf`
+        // is fresh and empty, and neither is shared.
+        if alloc.gc.try_take_array_payload(from, to, OWNER_BYTES) {
+            // A string buffer starts with its owner word: the bytes move up
+            // by `OWNER_BYTES` within the buffer (one `memmove`, no new
+            // buffer), after growing it if it had less room than that.
+            let needed = len + OWNER_BYTES;
+            if header(buf).capacity < needed {
+                if let Err(err) = alloc.gc.try_grow_array(to, needed) {
+                    crate::heap_exhausted(&alloc.gc, &alloc.ty, None, &err);
+                }
+            }
+            let data = elements(buf);
+            std::ptr::copy(data, data.add(OWNER_BYTES), len);
+            data.cast::<usize>().write(thread_token());
+            header(buf).length.store(needed, Ordering::Release);
+            write(
+                out,
+                RawString {
+                    buf,
+                    start: OWNER_BYTES,
+                    len,
+                },
+            );
+            return 1;
+        }
+        let bytes = std::slice::from_raw_parts(elements(array), len);
+        write(out, alloc.string(&[bytes], len));
+        header(array).length.store(0, Ordering::Release);
+        1
+    }
+}
+
 /// A Codira `String` held by the host: returned by [`Runtime::invoke`], read
 /// from a field with `StructRef::get`, or made with [`StringRef::new`] to
 /// pass to Codira code.
@@ -1574,6 +1635,10 @@ pub(crate) fn definitions() -> Vec<FunctionDefinition> {
             string_from_utf8 as extern "C" fn(H, T, A, O) -> u8,
             "codira.string_from_utf8",
         ),
+        IntoFunctionDefinition::into(
+            string_take_utf8 as extern "C" fn(H, T, A, O) -> u8,
+            "codira.string_take_utf8",
+        ),
     ]
     .into_iter()
     .chain(format::definitions())
@@ -1810,6 +1875,64 @@ mod tests {
                 (0..len)
                     .map(|i| self.read(slots.add(i).read()).to_owned())
                     .collect()
+            }
+        }
+    }
+
+    /// `string_take_utf8` makes a string buffer of the layout every other
+    /// string has: the owner word first (this thread's), the text after it
+    /// -- also when the text itself starts with eight zero bytes, which
+    /// read as an owner word would say "shared". A grown array's buffer is
+    /// taken over (and shrunk when it has much room to spare), a small one
+    /// copied; the array is left empty either way, and appending to the
+    /// string leaves it unchanged.
+    #[test]
+    fn taken_strings_have_an_owner_word() {
+        let heap = Heap::new();
+        for (text, grow) in [
+            ("\0\0\0\0\0\0\0\0 after zeros", true),
+            ("héllo, taken", true),
+            ("", true),
+            ("small", false),
+        ] {
+            let array = heap.byte_array(text.as_bytes()).cast::<*mut u8>();
+            if grow {
+                let handle = codira_memory::gc::GcPtr::from(array.cast::<*mut c_void>());
+                // Safety: a live `[u8]` of this test's heap, not shared.
+                unsafe { heap.gc.try_grow_array(handle, text.len() * 3 + 64) }.unwrap();
+            }
+            let mut out = std::mem::MaybeUninit::<RawString>::uninit();
+            let ok = string_take_utf8(
+                array.cast(),
+                heap.bytes,
+                heap.alloc(),
+                out.as_mut_ptr().cast(),
+            );
+            assert_eq!(ok, 1);
+            // Safety: the function wrote the slot.
+            let taken = unsafe { out.assume_init() };
+            assert_eq!(heap.read(taken), text);
+            assert_eq!(taken.start, OWNER_BYTES);
+            // Safety: `taken` is a live string; `array` a live array.
+            unsafe {
+                assert_eq!(owner(taken.buf), thread_token());
+                assert_eq!(
+                    header(taken.buf).length.load(Ordering::Acquire),
+                    OWNER_BYTES + text.len()
+                );
+                assert_eq!(header(array).length.load(Ordering::Acquire), 0);
+            }
+            let longer = heap.append(taken, "!");
+            assert_eq!(heap.read(longer), format!("{text}!"));
+            assert_eq!(heap.read(taken), text);
+            if grow {
+                // Grown to far more than it used: shrunk on the way to the
+                // text and its owner word.
+                // Safety: `taken` is a live string.
+                assert_eq!(
+                    unsafe { header(taken.buf).capacity },
+                    OWNER_BYTES + text.len()
+                );
             }
         }
     }

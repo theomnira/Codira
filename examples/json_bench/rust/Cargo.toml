@@ -1,0 +1,37 @@
+# The Rust half of the JSON benchmarks: `serde_json::Value`, built on its
+# own, outside the workspace (and its `Cargo.lock`):
+#
+#   cargo build --release --manifest-path examples/json_bench/rust/Cargo.toml
+#
+# `preserve_order` (the default here) keeps object members in insertion
+# order in an `IndexMap`, as `std.json.json` does; without it `serde_json`
+# sorts them in a `BTreeMap`:
+#
+#   cargo build --release --no-default-features --manifest-path ...
+#
+# `bench.py` builds it with `preserve_order,float_roundtrip`.
+[package]
+name = "json_bench_rust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[features]
+default = ["preserve_order"]
+preserve_order = ["serde_json/preserve_order"]
+# Correctly rounded float parsing, as Codira's (Rust's `f64::from_str`);
+# without it `serde_json` parses some 17-digit floats an ulp off (on
+# `canada.json`, 126 of 600,000), a little faster.
+float_roundtrip = ["serde_json/float_roundtrip"]
+# `simd-json` parsing into its `OwnedValue` as one more comparison.
+simd = ["dep:simd-json"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "=1.0.133"
+simd-json = { version = "0.14", optional = true }
+
+[profile.release]
+opt-level = 3

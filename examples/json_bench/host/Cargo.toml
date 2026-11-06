@@ -1,0 +1,17 @@
+# Runs `main` of the built Codira benchmark with the runtime compiled in
+# release mode (as in a release build of `codira`) and a cap on the GC heap,
+# so that the collector runs: without a cap it never does, and eleven parses
+# of each input would keep every tree. Built on its own, outside the
+# workspace:
+#
+#   cargo build --release --manifest-path examples/json_bench/host/Cargo.toml
+[package]
+name = "json_bench_host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[dependencies]
+codira_runtime = { path = "../../../crates/codira_runtime" }

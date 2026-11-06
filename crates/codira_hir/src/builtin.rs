@@ -124,6 +124,7 @@ impl BuiltinFn {
         BuiltinFn::Unlikely,
         BuiltinFn::Fma,
         BuiltinFn::String(StringOp::FromUtf8),
+        BuiltinFn::String(StringOp::TakeUtf8),
     ];
 
     /// The name a program calls this builtin by.

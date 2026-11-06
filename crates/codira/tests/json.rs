@@ -20,6 +20,12 @@
 //!   never crashes, and agrees with `serde_json` on which are JSON.
 //! - Nesting limits: the default, a configured one and the clamp, with the
 //!   printer and equality run at the deepest nesting allowed.
+//! - Streaming, on every case of every test above: the pull parser
+//!   (`JsonReader`), with a tree rebuilt from its raw events, gives the
+//!   same value as `parse` or the same first error (kind, offset, line and
+//!   column), and the streaming writer (`JsonWriter`) replaying an accepted
+//!   value writes exactly the compact and pretty texts the tree printer
+//!   writes (`run_cases` checks both for every case).
 
 use std::{
     collections::BTreeMap,
@@ -37,11 +43,17 @@ use serde_json::Value;
 ///     <compact text>
 ///     <pretty text>
 ///
-/// or `err <kind> <offset> <line> <column>`. Flag 1 keeps the last of
-/// duplicate keys. The texts printed are parsed back with the case's
-/// options.
+/// or `err <kind> <offset> <line> <column>`, then
+///
+///     stream <same: 0/1> <writer same: 0/1>
+///
+/// where `same` says the pull parser's events rebuilt the same value (or
+/// stopped at the same error) and `writer same` that `JsonWriter`, fed the
+/// value's events, wrote the same compact and pretty texts (1 for an error).
+/// Flag 1 keeps the last of duplicate keys. The texts printed are parsed
+/// back with the case's options.
 const HARNESS: &str = r#"
-import std.json.json.{Json, JsonError, JsonErrorKind, ParseOptions, DuplicateKeys, parse_with, parse_bytes_with, to_string, to_pretty_string, equals}
+import std.json.json.{Json, JsonError, JsonErrorKind, ParseOptions, DuplicateKeys, parse_with, parse_bytes_with, to_string, to_pretty_string, equals, JsonReader, JsonEvent, JsonWriter, JsonObject}
 import std.fs.file.{read_file}
 import std.result.result.{Result}
 
@@ -80,6 +92,90 @@ func round_trips(text: String, value: Json, options: ParseOptions) -> i64 {
     }
 }
 
+// A value from the reader's raw events, `first` already read.
+func build(r: JsonReader, first: JsonEvent) -> Result[Json, JsonError] {
+    match first {
+        JsonEvent.Null -> Result.Ok(Json.Null),
+        JsonEvent.Bool(b) -> Result.Ok(Json.Bool(b)),
+        JsonEvent.Int(n) -> Result.Ok(Json.Int(n)),
+        JsonEvent.Float(x) -> Result.Ok(Json.Float(x)),
+        JsonEvent.Str(s) -> Result.Ok(Json.Str(s)),
+        JsonEvent.BeginArray -> {
+            let items: [Json] = []
+            loop {
+                let e = r.next_event()?
+                match e {
+                    JsonEvent.EndArray -> return Result.Ok(Json.Arr(items)),
+                    _ -> items.push(build(r, e)?),
+                }
+            }
+        },
+        JsonEvent.BeginObject -> {
+            let o = JsonObject.new()
+            loop {
+                match r.next_event()? {
+                    JsonEvent.EndObject -> return Result.Ok(Json.Obj(o)),
+                    JsonEvent.Key(k) -> {
+                        let e = r.next_event()?
+                        o.set(k, build(r, e)?);
+                    },
+                    _ -> return Result.Ok(Json.Str("unexpected event in an object".to_string())),
+                }
+            }
+        },
+        _ -> Result.Ok(Json.Str("unexpected event".to_string())),
+    }
+}
+
+// The whole document through the reader: a value or the first error.
+func stream(bytes: [u8], options: ParseOptions) -> Result[Json, JsonError] {
+    let r = JsonReader.from_bytes(bytes, options)?
+    let first = r.next_event()?
+    let v = build(r, first)?
+    match r.next_event()? {
+        JsonEvent.End -> Result.Ok(v),
+        _ -> Result.Ok(Json.Str("events after the value".to_string())),
+    }
+}
+
+func replay(w: JsonWriter, v: Json) {
+    match v {
+        Json.Null -> w.null(),
+        Json.Bool(b) -> w.bool(b),
+        Json.Int(n) -> w.int(n),
+        Json.Float(x) -> w.float(x),
+        Json.Str(s) -> w.string(s),
+        Json.Arr(items) -> {
+            w.begin_array()
+            for item in items { replay(w, item) }
+            w.end_array()
+        },
+        Json.Obj(o) -> {
+            w.begin_object()
+            var i: usize = 0
+            while i < o.len() {
+                w.key(o.key_at(i)!)
+                replay(w, o.value_at(i)!)
+                i += 1
+            }
+            w.end_object()
+        },
+    }
+}
+
+func written(w: JsonWriter, v: Json) -> String {
+    w.set_max_depth(1000)
+    replay(w, v)
+    match w.finish() {
+        Result.Ok(text) -> text,
+        Result.Err(e) -> e.message(),
+    }
+}
+
+func same_error(a: JsonError, b: JsonError) -> bool {
+    kind_name(a.kind) == kind_name(b.kind) && a.offset == b.offset && a.line == b.line && a.column == b.column
+}
+
 public func main() {
     let data = read_file("cases.bin").unwrap()
     var at: usize = 0
@@ -92,6 +188,7 @@ public func main() {
         at += len
         let duplicates = if (flags & 1) != 0 { DuplicateKeys.KeepLast } else { DuplicateKeys.Reject }
         let options = ParseOptions { max_depth: depth, duplicate_keys: duplicates }
+        let streamed = stream(bytes, options)
         match parse_bytes_with(bytes, options) {
             Result.Ok(v) -> {
                 let compact = to_string(v)
@@ -99,9 +196,20 @@ public func main() {
                 println("ok ", round_trips(compact, v, options), " ", round_trips(pretty, v, options), " ", compact.len(), " ", pretty.len())
                 println(compact)
                 println(pretty)
+                let same = match streamed {
+                    Result.Ok(s) -> if equals(s, v) && to_string(s) == compact { 1 } else { 0 },
+                    Result.Err(_) -> 0,
+                }
+                let writer_same = if written(JsonWriter.new(), v) == compact && written(JsonWriter.pretty(2), v) == pretty { 1 } else { 0 }
+                println("stream ", same, " ", writer_same)
             },
             Result.Err(e) -> {
                 println("err ", kind_name(e.kind), " ", e.offset, " ", e.line, " ", e.column)
+                let same = match streamed {
+                    Result.Ok(_) -> 0,
+                    Result.Err(f) -> if same_error(e, f) { 1 } else { 0 },
+                }
+                println("stream ", same, " 1")
             },
         }
     }
@@ -213,6 +321,20 @@ fn parse_outcomes(stdout: &[u8]) -> Vec<Outcome> {
     while at < stdout.len() {
         let header = line(&mut at);
         let fields: Vec<&str> = header.split(' ').collect();
+        if fields[0] == "stream" {
+            let index = outcomes.len() - 1;
+            assert_eq!(
+                fields[1], "1",
+                "case {index}: the pull parser disagrees with the tree parser ({:?})",
+                outcomes[index]
+            );
+            assert_eq!(
+                fields[2], "1",
+                "case {index}: the streaming writer wrote other text than the printer ({:?})",
+                outcomes[index]
+            );
+            continue;
+        }
         match fields[0] {
             "ok" => {
                 let compact_len: usize = fields[3].parse().unwrap();
@@ -653,10 +775,9 @@ fn random_values_print_like_serde_json_and_round_trip() {
     }
 }
 
-/// Documents larger than the printer's 64 KiB chunk, with strings longer
-/// than its 1 KiB limit for copying byte by byte (which it appends in runs
-/// between escapes), are printed like `serde_json` too: no character is
-/// split where a chunk ends.
+/// Documents of more than 64 KiB, with strings of up to 2,500 characters
+/// (copied whole between their escapes) and many escapes, are printed like
+/// `serde_json` too.
 #[test]
 fn large_documents_and_long_strings_print_like_serde_json() {
     let mut rng = Rng(0x10_6e57_2a11);

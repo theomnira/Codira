@@ -189,6 +189,67 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 self.set_array_len(array, usize_ty.const_zero());
                 Some(self.gen_empty())
             }
+            ArrayMethod::PushStr => {
+                let text_ty = self.infer[args[0]].clone();
+                let text = self.gen_expr(args[0])?;
+                // Only the length now: the data address is taken after the
+                // buffer may have grown (a safepoint), from the string's own
+                // fields, which stay live across it.
+                let (_, text_len) = self.string_text_of(&text_ty, text);
+                let len = self.array_len(array);
+                let new_len = self.saturating_add(len, text_len);
+                self.ensure_capacity(array, new_len);
+                let (data, _) = self.string_text_of(&text_ty, text);
+                let dest = self.element_ptr(array, len);
+                // Safety of the copy: `len + text_len <= capacity`, made so
+                // just above, and a string's buffer is never an array a
+                // program can name, so the two do not overlap.
+                self.builder
+                    .build_memcpy(dest, 1, data, 1, text_len)
+                    .expect("failed to copy a string's bytes");
+                self.set_array_len(array, new_len);
+                Some(self.gen_empty())
+            }
+            ArrayMethod::PushInt => {
+                let value = self.gen_expr(args[0])?.into_int_value();
+                let signed = self.is_signed_int(args[0]);
+                let i64_ty = self.context.i64_type();
+                let wide = if value.get_type().get_bit_width() == 64 {
+                    value
+                } else if signed {
+                    self.builder
+                        .build_int_s_extend(value, i64_ty, "int.wide")
+                        .expect("failed to widen an integer")
+                } else {
+                    self.builder
+                        .build_int_z_extend(value, i64_ty, "int.wide")
+                        .expect("failed to widen an integer")
+                };
+                // The digit writer `+=` uses for integers (`codira.fmt.dec`,
+                // generated in this module): no call into the runtime.
+                let decimal = self.decimal_function();
+                self.push_formatted(array, 20, |this, dest| {
+                    let flag = this.context.bool_type().const_int(u64::from(signed), false);
+                    this.builder
+                        .build_call(decimal, &[dest.into(), wide.into(), flag.into()], "digits")
+                        .expect("failed to call the digit writer")
+                        .try_as_basic_value()
+                        .unwrap_basic()
+                        .into_int_value()
+                });
+                Some(self.gen_empty())
+            }
+            ArrayMethod::PushJsonFloat => {
+                let value = self.gen_expr(args[0])?;
+                self.push_formatted(array, 24, |this, dest| {
+                    this.gen_runtime_call_value(
+                        &intrinsics::bytes_format_json_f64,
+                        &[value.into(), dest.into()],
+                    )
+                    .into_int_value()
+                });
+                Some(self.gen_empty())
+            }
             ArrayMethod::Capacity => Some(self.array_capacity(array).into()),
             ArrayMethod::IsEmpty => {
                 let len = self.array_len(array);
@@ -723,6 +784,33 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .try_as_basic_value()
             .unwrap_basic()
             .into_int_value()
+    }
+
+    /// Appends to the byte array `array` the text `write` puts at the
+    /// address it is given (at most `room` bytes) and returns the length
+    /// of: room is made first, so the runtime writes straight into the
+    /// array's spare capacity, and the length is raised by what it wrote.
+    fn push_formatted(
+        &mut self,
+        array: RuntimeArrayValue<'ink>,
+        room: u64,
+        write: impl FnOnce(&mut Self, PointerValue<'ink>) -> IntValue<'ink>,
+    ) {
+        let usize_ty = array.length_ty();
+        let len = self.array_len(array);
+        let needed = self.saturating_add(len, usize_ty.const_int(room, false));
+        self.ensure_capacity(array, needed);
+        let dest = self.element_ptr(array, len);
+        let written = write(self, dest);
+        let written = self
+            .builder
+            .build_int_cast(written, usize_ty, "written")
+            .expect("failed to convert a length");
+        let new_len = self
+            .builder
+            .build_int_nuw_add(len, written, "len.next")
+            .expect("failed to add to a length");
+        self.set_array_len(array, new_len);
     }
 
     /// Makes sure `array` has room for `needed` elements, growing it through

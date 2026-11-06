@@ -404,6 +404,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 .expect("returns an array")
             }
             StringOp::ByteAt => self.gen_byte_at(expr, args[0], arg_values[0], data, len),
+            StringOp::FindJsonEscape => {
+                let from = self.clamped_offset(args[0], arg_values[0].into_int_value(), len);
+                self.gen_find_json_escape(data, from, len).into()
+            }
             StringOp::Find | StringOp::RFind => {
                 let (needle, needle_len) = text(self, 0);
                 let function_args = [data.into(), len.into(), needle.into(), needle_len.into()];
@@ -540,6 +544,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             StringOp::Slice => {
                 let (from, from_signed) = self.index_arg(args[0], arg_values[0].into_int_value());
                 let (to, to_signed) = self.index_arg(args[1], arg_values[1].into_int_value());
+                // The check inline: `from <= to <= len` (as unsigned, so a
+                // negative index fails) and neither end inside a character.
+                // Only a slice that fails it calls the runtime, which then
+                // panics with the message; the condition is the runtime's.
+                let ok_block = self.gen_slice_fast_check(data, len, from, to);
                 let [file, file_len, line, column] = self.location_args(expr);
                 self.string_call(
                     &intrinsics::string_check_slice,
@@ -556,6 +565,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                         column,
                     ],
                 );
+                self.builder
+                    .build_unconditional_branch(ok_block)
+                    .expect("failed to branch after a slice check");
+                self.builder.position_at_end(ok_block);
                 // Checked: `from <= to <= len`, both non-negative.
                 let from = self
                     .builder
@@ -598,11 +611,318 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             }
             StringOp::ToString
             | StringOp::FromUtf8
+            | StringOp::TakeUtf8
             | StringOp::DebugString
             | StringOp::TypeName => {
                 unreachable!("lowered separately")
             }
         })
+    }
+
+    /// Emits the inline part of a slice check of `from..to` (64-bit
+    /// indices, as `index_arg` makes them) on the `len` bytes at `data`:
+    /// returns the block reached when the slice is valid, and leaves the
+    /// builder in the block for a slice that is not (where the caller
+    /// calls the runtime's check). A boundary is valid at the end or where
+    /// the byte is not a UTF-8 continuation byte (`0b10xx_xxxx`).
+    fn gen_slice_fast_check(
+        &mut self,
+        data: PointerValue<'ink>,
+        len: IntValue<'ink>,
+        from: IntValue<'ink>,
+        to: IntValue<'ink>,
+    ) -> inkwell::basic_block::BasicBlock<'ink> {
+        let i64_ty = self.context.i64_type();
+        let i8_ty = self.context.i8_type();
+        let ok = self.context.append_basic_block(self.fn_value, "slice.ok");
+        let slow = self
+            .context
+            .append_basic_block(self.fn_value, "slice.check");
+        let check_from = self.context.append_basic_block(self.fn_value, "slice.from");
+        let load_from = self
+            .context
+            .append_basic_block(self.fn_value, "slice.from.byte");
+        let check_to = self.context.append_basic_block(self.fn_value, "slice.to");
+        let load_to = self
+            .context
+            .append_basic_block(self.fn_value, "slice.to.byte");
+        let b = &self.builder;
+        let wide_len = b
+            .build_int_z_extend_or_bit_cast(len, i64_ty, "len")
+            .expect("failed to widen a length");
+        let ordered = b
+            .build_int_compare(IntPredicate::ULE, from, to, "slice.ordered")
+            .expect("failed to compare indices");
+        let inside = b
+            .build_int_compare(IntPredicate::ULE, to, wide_len, "slice.inside")
+            .expect("failed to compare indices");
+        let in_range = b.build_and(ordered, inside, "slice.in_range").expect("and");
+        b.build_conditional_branch(in_range, check_from, slow)
+            .expect("failed to branch on a slice range");
+        let boundary = |at: IntValue<'ink>,
+                        here: inkwell::basic_block::BasicBlock<'ink>,
+                        load: inkwell::basic_block::BasicBlock<'ink>,
+                        next: inkwell::basic_block::BasicBlock<'ink>| {
+            b.position_at_end(here);
+            let at_end = b
+                .build_int_compare(IntPredicate::EQ, at, wide_len, "slice.at_end")
+                .expect("failed to compare an index");
+            b.build_conditional_branch(at_end, next, load)
+                .expect("failed to branch on a slice end");
+            b.position_at_end(load);
+            let offset = b
+                .build_int_truncate_or_bit_cast(at, len.get_type(), "slice.offset")
+                .expect("failed to convert an index");
+            // Safety: `at < len` on this path.
+            let address = unsafe {
+                b.build_gep(i8_ty, data, &[offset], "slice.byte")
+                    .expect("failed to build the address of a byte")
+            };
+            let byte = b
+                .build_load(i8_ty, address, "slice.byte")
+                .expect("failed to load a byte")
+                .into_int_value();
+            let top = b
+                .build_and(byte, i8_ty.const_int(0xC0, false), "slice.top")
+                .expect("and");
+            let continuation = b
+                .build_int_compare(
+                    IntPredicate::EQ,
+                    top,
+                    i8_ty.const_int(0x80, false),
+                    "slice.inside_char",
+                )
+                .expect("failed to test a byte");
+            b.build_conditional_branch(continuation, slow, next)
+                .expect("failed to branch on a boundary");
+        };
+        boundary(from, check_from, load_from, check_to);
+        boundary(to, check_to, load_to, ok);
+        b.position_at_end(slow);
+        ok
+    }
+
+    /// The integer type of `bits` bits (at least 1).
+    fn int_type_of_width(&self, bits: u32) -> inkwell::types::IntType<'ink> {
+        let bits = std::num::NonZeroU32::new(bits).expect("a width is at least 1 bit");
+        self.context
+            .custom_width_int_type(bits)
+            .expect("LLVM supports integer types of this width")
+    }
+
+    /// The integer `value` (the value of `expr`) as a `usize` offset
+    /// clamped to `0..=len`: a negative value is 0, one past the end `len`.
+    fn clamped_offset(
+        &self,
+        expr: ExprId,
+        value: IntValue<'ink>,
+        len: IntValue<'ink>,
+    ) -> IntValue<'ink> {
+        let len_ty = len.get_type();
+        let width = value.get_type().get_bit_width().max(len_ty.get_bit_width());
+        let wide_ty = self.int_type_of_width(width);
+        let signed = self.is_signed_int(expr);
+        let wide = if signed {
+            self.builder
+                .build_int_s_extend_or_bit_cast(value, wide_ty, "from")
+        } else {
+            self.builder
+                .build_int_z_extend_or_bit_cast(value, wide_ty, "from")
+        }
+        .expect("failed to widen an offset");
+        let wide_len = self
+            .builder
+            .build_int_z_extend_or_bit_cast(len, wide_ty, "len")
+            .expect("failed to widen a length");
+        let zero = wide_ty.const_zero();
+        let negative = if signed {
+            self.builder
+                .build_int_compare(IntPredicate::SLT, wide, zero, "negative")
+                .expect("failed to compare an offset")
+        } else {
+            self.context.bool_type().const_zero()
+        };
+        let past = self
+            .builder
+            .build_int_compare(IntPredicate::UGT, wide, wide_len, "past")
+            .expect("failed to compare an offset");
+        let high = self
+            .builder
+            .build_select(past, wide_len, wide, "from.high")
+            .expect("failed to clamp an offset")
+            .into_int_value();
+        let clamped = self
+            .builder
+            .build_select(negative, zero, high, "from.clamped")
+            .expect("failed to clamp an offset")
+            .into_int_value();
+        self.builder
+            .build_int_truncate_or_bit_cast(clamped, len_ty, "from")
+            .expect("failed to narrow an offset")
+    }
+
+    /// The first offset in `from..len` of the bytes at `data` that is `"`,
+    /// `\\` or below 0x20, or `len`: 16 bytes at a time with one unaligned
+    /// vector load and three compares (LLVM lowers them to SSE2 or NEON,
+    /// or to scalar code where there is no vector unit), then the last
+    /// bytes one by one. Every load is below `len`.
+    fn gen_find_json_escape(
+        &mut self,
+        data: PointerValue<'ink>,
+        from: IntValue<'ink>,
+        len: IntValue<'ink>,
+    ) -> IntValue<'ink> {
+        const LANES: u32 = 16;
+        let usize_ty = len.get_type();
+        let i8_ty = self.context.i8_type();
+        let vec_ty = i8_ty.vec_type(LANES);
+        let mask_ty = self.int_type_of_width(LANES);
+        let splat = |byte: u64| {
+            let lanes: Vec<_> = (0..LANES).map(|_| i8_ty.const_int(byte, false)).collect();
+            inkwell::types::VectorType::const_vector(&lanes)
+        };
+        let entry = self.builder.get_insert_block().expect("inside a block");
+        let vec_cond = self.context.append_basic_block(self.fn_value, "jesc.vec");
+        let vec_body = self
+            .context
+            .append_basic_block(self.fn_value, "jesc.vec.body");
+        let vec_found = self
+            .context
+            .append_basic_block(self.fn_value, "jesc.vec.found");
+        let scalar_cond = self.context.append_basic_block(self.fn_value, "jesc.byte");
+        let scalar_body = self
+            .context
+            .append_basic_block(self.fn_value, "jesc.byte.body");
+        let done = self.context.append_basic_block(self.fn_value, "jesc.done");
+        let b = &self.builder;
+        b.build_unconditional_branch(vec_cond).expect("branch");
+
+        // while i + 16 <= len
+        b.position_at_end(vec_cond);
+        let i = b.build_phi(usize_ty, "i").expect("phi");
+        let lanes = usize_ty.const_int(u64::from(LANES), false);
+        let i_val = i.as_basic_value().into_int_value();
+        let next = b.build_int_nuw_add(i_val, lanes, "i.next").expect("add");
+        // `i <= len` always, so `len - i` does not wrap.
+        let left = b.build_int_sub(len, i_val, "left").expect("sub");
+        let room = b
+            .build_int_compare(IntPredicate::UGE, left, lanes, "room")
+            .expect("compare");
+        b.build_conditional_branch(room, vec_body, scalar_cond)
+            .expect("branch");
+
+        b.position_at_end(vec_body);
+        // Safety: `i + 16 <= len`, so the 16 bytes are the string's.
+        let at = unsafe { b.build_gep(i8_ty, data, &[i_val], "at").expect("gep") };
+        let chunk = b.build_load(vec_ty, at, "chunk").expect("load");
+        inkwell::values::BasicValue::as_instruction_value(&chunk)
+            .expect("a load is an instruction")
+            .set_alignment(1)
+            .expect("alignment 1 is valid");
+        let chunk = chunk.into_vector_value();
+        let control = b
+            .build_int_compare(IntPredicate::ULT, chunk, splat(0x20), "control")
+            .expect("compare");
+        let quote = b
+            .build_int_compare(IntPredicate::EQ, chunk, splat(0x22), "quote")
+            .expect("compare");
+        let backslash = b
+            .build_int_compare(IntPredicate::EQ, chunk, splat(0x5c), "backslash")
+            .expect("compare");
+        let any = b.build_or(control, quote, "any").expect("or");
+        let any = b.build_or(any, backslash, "any").expect("or");
+        let bits = b
+            .build_bit_cast(any, mask_ty, "bits")
+            .expect("bitcast")
+            .into_int_value();
+        let hit = b
+            .build_int_compare(IntPredicate::NE, bits, mask_ty.const_zero(), "hit")
+            .expect("compare");
+        b.build_conditional_branch(hit, vec_found, vec_cond)
+            .expect("branch");
+        i.add_incoming(&[(&from, entry), (&next, vec_body)]);
+
+        b.position_at_end(vec_found);
+        let cttz = inkwell::intrinsics::Intrinsic::find("llvm.cttz")
+            .and_then(|f| f.get_declaration(self.module, &[mask_ty.into()]))
+            .expect("llvm.cttz is always available");
+        let first = b
+            .build_call(
+                cttz,
+                &[
+                    bits.into(),
+                    self.context.bool_type().const_int(1, false).into(),
+                ],
+                "first",
+            )
+            .expect("call")
+            .try_as_basic_value()
+            .unwrap_basic()
+            .into_int_value();
+        let first = b
+            .build_int_z_extend_or_bit_cast(first, usize_ty, "first")
+            .expect("zext");
+        let found_vec = b.build_int_nuw_add(i_val, first, "found").expect("add");
+        b.build_unconditional_branch(done).expect("branch");
+
+        // The last bytes, one by one.
+        b.position_at_end(scalar_cond);
+        let j = b.build_phi(usize_ty, "j").expect("phi");
+        let j_val = j.as_basic_value().into_int_value();
+        let more = b
+            .build_int_compare(IntPredicate::ULT, j_val, len, "more")
+            .expect("compare");
+        b.build_conditional_branch(more, scalar_body, done)
+            .expect("branch");
+
+        b.position_at_end(scalar_body);
+        // Safety: `j < len`.
+        let at = unsafe { b.build_gep(i8_ty, data, &[j_val], "at").expect("gep") };
+        let byte = b
+            .build_load(i8_ty, at, "byte")
+            .expect("load")
+            .into_int_value();
+        let control = b
+            .build_int_compare(
+                IntPredicate::ULT,
+                byte,
+                i8_ty.const_int(0x20, false),
+                "control",
+            )
+            .expect("compare");
+        let quote = b
+            .build_int_compare(
+                IntPredicate::EQ,
+                byte,
+                i8_ty.const_int(0x22, false),
+                "quote",
+            )
+            .expect("compare");
+        let backslash = b
+            .build_int_compare(
+                IntPredicate::EQ,
+                byte,
+                i8_ty.const_int(0x5c, false),
+                "backslash",
+            )
+            .expect("compare");
+        let any = b.build_or(control, quote, "any").expect("or");
+        let any = b.build_or(any, backslash, "any").expect("or");
+        let j_next = b
+            .build_int_nuw_add(j_val, usize_ty.const_int(1, false), "j.next")
+            .expect("add");
+        b.build_conditional_branch(any, done, scalar_cond)
+            .expect("branch");
+        j.add_incoming(&[(&i_val, vec_cond), (&j_next, scalar_body)]);
+
+        b.position_at_end(done);
+        let result = b.build_phi(usize_ty, "jesc").expect("phi");
+        result.add_incoming(&[
+            (&found_vec, vec_found),
+            (&len, scalar_cond),
+            (&j_val, scalar_body),
+        ]);
+        result.as_basic_value().into_int_value()
     }
 
     /// `s.byte_at(i)`: the byte, after checking `i` against the length the
@@ -716,22 +1036,24 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         self.gen_to_string(expr, value)
     }
 
-    /// `string_from_utf8(bytes)`.
+    /// `string_from_utf8(bytes)` and `string_take_utf8(bytes)`.
     pub(super) fn gen_string_from_utf8(
         &mut self,
         expr: ExprId,
+        op: StringOp,
         args: &[ExprId],
     ) -> Option<BasicValueEnum<'ink>> {
         let array = self.gen_expr(*args.first()?)?;
         let string_ty = self.hir_types.get_string_type();
         let slot = self.string_slot(string_ty.into(), "string.out");
         let [ty, alloc] = self.alloc_args(&strings::byte_array());
-        let ok = self
-            .string_call(
-                &intrinsics::string_from_utf8,
-                &[array.into(), ty, alloc, slot.into()],
-            )
-            .expect("returns a flag");
+        let call_args = [array.into(), ty, alloc, slot.into()];
+        let ok = if op == StringOp::TakeUtf8 {
+            self.string_call(&intrinsics::string_take_utf8, &call_args)
+        } else {
+            self.string_call(&intrinsics::string_from_utf8, &call_args)
+        }
+        .expect("returns a flag");
         let present = self.is_set(ok);
         // On failure the slot was never written: select keeps the payload
         // of a `nil` all zero rather than reading undefined memory.
@@ -769,10 +1091,42 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 let args = [a.into(), a_len.into(), b.into(), b_len.into()];
                 Some(match cmp {
                     CmpOp::Eq { negated } => {
-                        let equal = self
+                        // Lengths first, inline: strings of different
+                        // lengths are unequal without a call (most of the
+                        // comparisons of a chain of `key == "..."` tests).
+                        let same_len = self
+                            .builder
+                            .build_int_compare(IntPredicate::EQ, a_len, b_len, "same_len")
+                            .expect("failed to compare lengths");
+                        let entry = self.builder.get_insert_block().expect("inside a block");
+                        let bytes = self
+                            .context
+                            .append_basic_block(self.fn_value, "string_eq.bytes");
+                        let done = self
+                            .context
+                            .append_basic_block(self.fn_value, "string_eq.done");
+                        self.builder
+                            .build_conditional_branch(same_len, bytes, done)
+                            .expect("failed to branch on lengths");
+                        self.builder.position_at_end(bytes);
+                        let flag = self
                             .string_call(&intrinsics::string_eq, &args)
                             .expect("returns a flag")
                             .into_int_value();
+                        let bytes_end = self.builder.get_insert_block().expect("inside a block");
+                        self.builder
+                            .build_unconditional_branch(done)
+                            .expect("failed to branch");
+                        self.builder.position_at_end(done);
+                        let phi = self
+                            .builder
+                            .build_phi(flag.get_type(), "string_eq")
+                            .expect("failed to build a phi");
+                        phi.add_incoming(&[
+                            (&flag.get_type().const_zero(), entry),
+                            (&flag, bytes_end),
+                        ]);
+                        let equal = phi.as_basic_value().into_int_value();
                         let predicate = if negated {
                             IntPredicate::EQ
                         } else {
