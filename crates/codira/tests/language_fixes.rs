@@ -17,7 +17,10 @@
 //!   - a call of a method or an associated function of another module's
 //!     type, which stopped code generation with "unknown function": method
 //!     calls never reached the dispatch table, and the receiver was left out
-//!     of the boxing on both sides of a call through it.
+//!     of the boxing on both sides of a call through it;
+//!   - a `()` field or enum payload (`Result[(), E]`), whose type the
+//!     runtime could not load: it was given a structural type id that no
+//!     module exports, instead of the runtime's own `()`.
 
 use std::{
     path::Path,
@@ -364,4 +367,30 @@ public func main() {
     let (code, stdout, stderr) = run(&[("mod.code", main), ("shapes.code", shapes)], &[]);
     assert_eq!(code, Some(0), "{stderr}");
     assert_eq!(stdout, "6\n2x3 cm\n4 6 24\n16\n3 6 6\n");
+}
+
+// ---- the unit type in a layout ----------------------------------------------
+
+/// `()` as an enum payload, in a generic instantiation and as a struct field.
+#[test]
+fn a_unit_payload_or_field_loads_and_runs() {
+    let program = r#"
+enum R[T, E] { Ok(T), Err(E) }
+enum U { A(()), B }
+struct S { unit: (), n: i64 }
+
+func f(fail: bool) -> R[(), i64] {
+    if fail { R.Err(4) } else { R.Ok(()) }
+}
+
+public func main() {
+    let s = S { unit: (), n: 2 }
+    match f(false) { R.Ok(_) -> println("ok ", s.n), R.Err(e) -> println(e) }
+    match f(true) { R.Ok(_) -> println("ok"), R.Err(e) -> println("err ", e) }
+    match U.A(()) { U.A(_) -> println("a"), U.B -> println("b") }
+}
+"#;
+    let (code, stdout, stderr) = run(&[("mod.code", program)], &[]);
+    assert_eq!(code, Some(0), "{stderr}");
+    assert_eq!(stdout, "ok 2\nerr 4\na\n");
 }

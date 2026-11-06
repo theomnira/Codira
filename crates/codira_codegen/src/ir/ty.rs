@@ -680,6 +680,12 @@ impl<'db, 'ink> HirTypeCache<'db, 'ink> {
             // An optional is structural too, and identified the same way.
             // `String` is a value struct to the runtime (see
             // `code_gen::symbols`), identified by its constant name.
+            //
+            // The empty tuple is the exception: it is the unit type, which
+            // the runtime knows as `()` (it has no layout to export, so a
+            // structural id would name a type no module defines -- the
+            // `()` payload slot of `Result[(), E]` failed to load).
+            TyKind::Tuple(0, _) => <()>::type_id().clone(),
             TyKind::Tuple(..) | TyKind::Optional(_) | TyKind::String => {
                 {
                     let read_only = self.tuple_ty_to_type_id.borrow();
