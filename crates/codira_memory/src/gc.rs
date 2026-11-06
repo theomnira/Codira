@@ -8,6 +8,7 @@ mod array;
 mod heap;
 mod mark_sweep;
 mod ptr;
+pub mod root_region;
 mod root_ptr;
 pub mod safepoint;
 mod snapshot;

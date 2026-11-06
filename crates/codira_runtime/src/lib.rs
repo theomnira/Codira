@@ -35,7 +35,7 @@ mod native_process;
 pub mod native_time;
 mod reflection;
 pub mod string;
-mod tasks;
+pub mod tasks;
 mod utils;
 
 use std::{

@@ -42,10 +42,11 @@ pub extern "C" fn codira_time_monotonic_ns() -> u64 {
 
 /// Blocks the calling thread for at least `nanos` nanoseconds (longer when
 /// the scheduler says so). `0` returns at once. A sleeping thread is parked
-/// for the collector: it does not hold up a collection.
+/// for the collector: it does not hold up a collection. A sleeping task
+/// releases its worker (see `tasks::blocking_io`).
 pub extern "C" fn codira_time_sleep_ns(nanos: u64) {
     if nanos > 0 {
-        codira_memory::gc::safepoint::blocking(|| std::thread::sleep(Duration::from_nanos(nanos)));
+        crate::tasks::blocking_io(|| std::thread::sleep(Duration::from_nanos(nanos)));
     }
 }
 
