@@ -1145,3 +1145,36 @@ fn string_operations_count_as_allocating_or_panicking() {
     );
     assert!(!diags.contains("`fine`"), "{diags}");
 }
+
+/// The effects of the runtime functions constructs lower to come from the
+/// runtime function catalogue: a GC allocation allocates, can wait for the
+/// heap (or a collection) and can abort; a panic only panics; a byte
+/// comparison does nothing at all; spawning starts tasks.
+#[test]
+fn runtime_function_effects_come_from_the_catalogue() {
+    use codira_abi::runtime_functions as rt;
+
+    use super::{runtime_function_effects as effects, Effect, EffectSet};
+
+    let gc = EffectSet::of(&[Effect::Alloc, Effect::Block, Effect::Panic]);
+    assert_eq!(effects(&rt::NEW), gc);
+    assert_eq!(effects(&rt::ARRAY_GROW), gc);
+    assert_eq!(effects(&rt::PRINT_I64), gc);
+    assert_eq!(effects(&rt::PANIC), EffectSet::of(&[Effect::Panic]));
+    assert_eq!(
+        effects(&rt::PANIC_INDEX_OUT_OF_BOUNDS),
+        EffectSet::of(&[Effect::Panic])
+    );
+    assert_eq!(
+        effects(&rt::STRING_CHECK_SLICE),
+        EffectSet::of(&[Effect::Panic])
+    );
+    assert_eq!(
+        effects(&rt::CHANNEL_RECEIVE),
+        EffectSet::of(&[Effect::Block])
+    );
+    assert!(effects(&rt::SCOPE_SPAWN).contains(Effect::Spawn));
+    for f in rt::CATALOGUE.iter().filter(|f| f.realtime_safe) {
+        assert_eq!(effects(f), EffectSet::NONE, "`{}`", f.symbol);
+    }
+}

@@ -45,9 +45,13 @@ const MODELLED: &[&str] = &[
     "record.running.store(false, Ordering::Release);\n    if STOP.load(Ordering::Relaxed) {",
     // poll: the safepoint.
     "if STOP.load(Ordering::Relaxed) && MODE.with(Cell::get) == RUNNING {",
-    // stop_the_world: the collector's half, and the release.
-    "STOP.store(true, Ordering::SeqCst);\n        while registry\n            .records\n            .iter()\n            .any(|record| record.running.load(Ordering::SeqCst))",
-    "STOP.store(false, Ordering::SeqCst);",
+    // stop_the_world: the collector's half, and the release. The flag is set
+    // through `set_stop`, which also refreshes the poll word compiled code
+    // checks (one more SeqCst load and store, after the flag's store); that
+    // keeps the store-load order the model relies on.
+    "fn set_stop(on: bool) {\n    STOP.store(on, Ordering::SeqCst);",
+    "set_stop(true);\n        let requested_at = std::time::Instant::now();\n        while registry\n            .records\n            .iter()\n            .any(|record| record.running.load(Ordering::SeqCst))",
+    "set_stop(false);",
 ];
 
 #[test]

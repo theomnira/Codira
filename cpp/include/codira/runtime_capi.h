@@ -522,6 +522,38 @@ struct CodiraErrorHandle codira_gc_root(struct CodiraRuntime runtime, CodiraGcPt
 struct CodiraErrorHandle codira_gc_unroot(struct CodiraRuntime runtime, CodiraGcPtr obj);
 
 /**
+ * Pins `obj`: until the matching [`codira_gc_unpin`] the object stays
+ * alive and never moves, so foreign code may keep its address and the
+ * address of its payload even when relocation is on. Pins nest; a pin is
+ * a root. If successful, returns a zero error handle.
+ *
+ * If a non-zero error handle is returned, it must be manually destructed using
+ * [`codira_error_destroy`].
+ *
+ * # Safety
+ *
+ * This function receives raw pointers as parameters. If any of the arguments
+ * is a null pointer, an error will be returned. Passing pointers to invalid
+ * data, will lead to undefined behavior.
+ */
+struct CodiraErrorHandle codira_gc_pin(struct CodiraRuntime runtime, CodiraGcPtr obj);
+
+/**
+ * Ends one [`codira_gc_pin`] of `obj`. If successful, returns a zero error
+ * handle.
+ *
+ * If a non-zero error handle is returned, it must be manually destructed using
+ * [`codira_error_destroy`].
+ *
+ * # Safety
+ *
+ * This function receives raw pointers as parameters. If any of the arguments
+ * is a null pointer, an error will be returned. Passing pointers to invalid
+ * data, will lead to undefined behavior.
+ */
+struct CodiraErrorHandle codira_gc_unpin(struct CodiraRuntime runtime, CodiraGcPtr obj);
+
+/**
  * Collects all memory that is no longer referenced by rooted objects. If
  * successful, `reclaimed` is set, otherwise a non-zero error handle is
  * returned. If `reclaimed` is `true`, memory was reclaimed, otherwise nothing

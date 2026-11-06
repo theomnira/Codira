@@ -13,6 +13,7 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
+codira_abi = { version = "0.6.0-dev", path = "../codira_abi" }
 la-arena = { workspace = true }
 codira_syntax = { version = "0.6.0-dev", path = "../codira_syntax" }
 codira_target = { version = "0.6.0-dev", path = "../codira_target" }

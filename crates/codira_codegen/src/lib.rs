@@ -45,6 +45,8 @@ mod test;
 #[cfg(test)]
 mod test_memtag;
 #[cfg(test)]
+mod test_layout;
+#[cfg(test)]
 mod test_never;
 #[cfg(test)]
 mod test_targets;

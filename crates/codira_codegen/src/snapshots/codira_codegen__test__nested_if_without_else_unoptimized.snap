@@ -23,37 +23,34 @@ body:
   br i1 %a1, label %then, label %else
 
 then:                                             ; preds = %body
-  %n2 = load i32, ptr %n, align 4
   store i32 1, ptr %n, align 4
   br label %if_merge
 
 else:                                             ; preds = %body
-  %b3 = load i1, ptr %b, align 1
-  br i1 %b3, label %then4, label %if_merge5
+  %b2 = load i1, ptr %b, align 1
+  br i1 %b2, label %then3, label %if_merge4
 
-then4:                                            ; preds = %else
-  %c6 = load i1, ptr %c, align 1
-  br i1 %c6, label %then7, label %else8
+then3:                                            ; preds = %else
+  %c5 = load i1, ptr %c, align 1
+  br i1 %c5, label %then6, label %else7
 
-then7:                                            ; preds = %then4
-  %n10 = load i32, ptr %n, align 4
+then6:                                            ; preds = %then3
   store i32 2, ptr %n, align 4
-  br label %if_merge9
+  br label %if_merge8
 
-else8:                                            ; preds = %then4
-  %n11 = load i32, ptr %n, align 4
+else7:                                            ; preds = %then3
   store i32 3, ptr %n, align 4
-  br label %if_merge9
+  br label %if_merge8
 
-if_merge9:                                        ; preds = %else8, %then7
-  br label %if_merge5
+if_merge8:                                        ; preds = %else7, %then6
+  br label %if_merge4
 
-if_merge5:                                        ; preds = %if_merge9, %else
+if_merge4:                                        ; preds = %if_merge8, %else
   br label %if_merge
 
-if_merge:                                         ; preds = %if_merge5, %then
-  %n12 = load i32, ptr %n, align 4
-  ret i32 %n12
+if_merge:                                         ; preds = %if_merge4, %then
+  %n9 = load i32, ptr %n, align 4
+  ret i32 %n9
 }
 
 ; == GROUP IR (mod) ====================================

@@ -127,8 +127,9 @@ fn unsupported_constructs_are_named_not_miscompiled() {
     assert_eq!(error.function, "main");
 }
 
-/// Enums and optionals have no representation in this backend: a function
-/// that builds or matches one is refused, naming what it met.
+/// Enums have no representation in this backend, and matching on an
+/// optional is not compiled: a function that does either is refused,
+/// naming what it met.
 #[test]
 fn enums_and_optionals_are_refused() {
     let enums = r"
@@ -143,14 +144,14 @@ fn enums_and_optionals_are_refused() {
     let optionals = r"
         public func main() -> i64 {
             let x: i64? = 5
-            x!
+            if let v = x { v } else { 0 }
         }
     ";
     for source in [enums, optionals] {
         let driver = driver(source);
         let error = compile(driver.db(), "main")
             .err()
-            .expect("enums and optionals are not supported");
+            .expect("enums and `if let` are not supported");
         assert_eq!(error.function, "main");
     }
 }

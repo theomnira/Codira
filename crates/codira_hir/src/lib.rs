@@ -72,6 +72,7 @@ mod fuzz_regressions;
 mod ids;
 mod in_file;
 mod item_tree;
+pub mod layout;
 mod mir_lower;
 pub mod mono;
 mod name;

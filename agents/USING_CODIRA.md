@@ -176,6 +176,15 @@ binding *refers to* but does not hold: a field of a class instance
 (`c.n = 3`) and an element of an array (`a[0] = 5`). Parameters are
 mutable local copies.
 
+An assignment evaluates each operand of its place once. For a number or a
+`bool` (`xs[i] = v`, `xs[f()] += 1`, `make().n *= 2`) the order is: the
+place's operands (the array and the index, the instance), left to right;
+an element's index is checked; for a compound assignment the old value is
+read; then the right operand; then the store, with the index checked again
+against the array as it is then. For other types (`String`, arrays,
+classes, value structs, optionals) the right operand comes first and then
+the place.
+
 Bindings exist only inside functions. A module-level `let` or `var`
 (`public let LIMIT: i64 = 10;`) is rejected ("module-level `let` is not
 supported yet"): write a function returning the value instead, as
@@ -304,8 +313,11 @@ for (i, x) in xs.enumerate() { }                  // index and element
   buffer) ``), as does a 128-bit `push_int`. `string_take_utf8(b)` (see
   "Strings") turns the bytes into a `String` without a second buffer.
   Tests: `crates/codira/tests/byte_buffers.rs`.
-- Not supported by `codira run --jit` (Cranelift): a program using arrays
-  says so and runs on LLVM.
+- `codira run --jit` (Cranelift) compiles array literals, indexing and
+  assignment through an index (same bounds check and panic), `len()`,
+  `is_empty()`, `push(..)`, `unchecked_get(..)` and `for` loops over arrays;
+  the other methods, slicing and `array_filled` it refuses, saying so, and
+  the program runs on LLVM.
 
 **Collections in the standard library** (`import std.collections.<module>`),
 built on `[T]`, all classes (assigning one shares it):
@@ -1399,9 +1411,14 @@ of a table hashed with it can make them all collide.
 #### Back ends
 
 The LLVM back end compiles all of the above. The Cranelift back end
-(`codira run --jit`) has no GC heap: a program that uses `String` runs on
-LLVM instead, with a note saying so (`... a `String` (strings live on the GC
-heap, which this backend does not reach)`).
+(`codira run --jit`) compiles `str` literals and values, the conversion of a `str` to a `String`, printing, `+`, `+=` (on a
+local, an element or a field), the comparisons, `to_string()` of numbers,
+`bool`s and text, `len`, `is_empty`, `char_count`, `hash`, `contains`,
+`starts_with`, `ends_with`, `to_upper`, `to_lower`, `replace` and `repeat`,
+and strings in fields, arrays, parameters and results, calling the same
+runtime functions in the same order as LLVM. The other methods (`split`,
+`slice`, `find`, `parse_*`, `byte_at`, ...), `string_from_utf8` and
+interpolated literals run on LLVM instead, with a note naming them.
 
 #### Performance
 
@@ -2238,8 +2255,9 @@ func fresh[T: Shape + Make](x: T) -> i64 { T.make().area() + x.area() }
   negative or specialised implementations, and one type cannot implement
   two traits that declare a method of the same name (a type's methods
   share one namespace).
-- `codira run --jit` (Cranelift) does not compile method calls or generic
-  functions: it says so, and the program runs on LLVM.
+- `codira run --jit` (Cranelift) compiles calls of methods and associated
+  functions of classes; it does not compile generic functions or trait
+  methods: it says so, and the program runs on LLVM.
 
 ### Optional types
 
@@ -2265,6 +2283,11 @@ while let v = next() { }          // loops while present
 `T?` is a value -- a present flag plus the payload, no allocation. A `T` is
 accepted wherever a `T?` is expected. `nil` needs an optional type from
 context (`let x = nil` alone is an error: annotate it).
+
+`codira run --jit` (Cranelift) compiles optionals of the types it compiles:
+`nil`, a `T` where a `T?` is expected, postfix `!` (same panic), `==`/`!=`,
+and optionals in fields, arrays, parameters and results; `if let`,
+`while let`, `match` and `?` run on LLVM, with the note.
 
 `T?` is the standard library's optional; there is no `Option[T]` enum,
 since it would add nothing `T?` lacks (`std.collections.optional`'s older
@@ -3922,18 +3945,41 @@ set it in production.
 in the compiler's own process: no LLVM optimization pipeline, no linker. It
 covers the scalar core of the language (integers up to 64 bits, floats,
 `bool`; `let`/`var` and assignment; operators and casts; `if`, `loop`,
-`while`, `break`, `return`; calls; `print`/`println` of scalars and string
-literals). A program that uses anything else runs on the LLVM backend instead,
-with a note naming what Cranelift does not compile yet. What it compiles
-means the same as on LLVM: the same division checks and panic messages,
-shift and cast semantics, argument order and float printing (see "Integer
-arithmetic, shifts and casts"); `crates/codira/tests/differential.rs` runs
-random programs on both and compares. Arrays (and so the growable-array
-methods and the collections) are not compiled by Cranelift: such a program
-runs on LLVM with the note, and the random programs of the differential
-test have no arrays. Measured: a
+`while`, `for` over ranges and arrays, `break`, `continue`, `return`; calls,
+methods of classes; `print`/`println` of scalars and string literals) and
+the garbage-collected heap: classes (construction, fields, assignment to
+fields), arrays (literals, indexing, assignment through an index, `len`,
+`is_empty`, `push`, `unchecked_get`), strings (see "Strings") and
+optionals (`nil`, wrapping, `!`, `==`/`!=`). A program that uses anything else
+(value structs, tuples, enums, pattern matching (`match`, `if let`,
+`while let`), `?`, the string methods listed under "Strings", closures,
+pipelines, format specs and `{x:?}`, generic functions, the other array
+methods) runs on the LLVM
+backend instead, with a note naming what Cranelift does not compile yet.
+What it compiles means the same as on LLVM: the same object layout, the
+same division and bounds checks and panic messages, shift and cast
+semantics, argument and evaluation order and float printing (see "Integer
+arithmetic, shifts and casts"). Its code calls the same runtime functions
+(allocation, array growth, printing, panics) and allocates in a collector
+that scans its frames like LLVM's; `crates/codira/tests/differential.rs`
+runs random programs on both and compares. Measured: a
 three-function program compiles in about 2.2 ms (minimum of 25, in a debug
-build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time.
+build of the compiler). `CODIRA_JIT_TIMINGS=1` prints the compile time and the run time.
+
+`--jit` gets the heap limit and pacing `codira run` gives a runtime
+(`--heap-limit`, `--gc-growth`, the environment and `[runtime]`), and
+running out of memory ends the program with the same report and status.
+
+The collector treats JIT frames as it treats AOT frames: the entry point
+runs registered as a thread running Codira code, every allocation and
+growth is a safepoint, and a stopped thread's stack is scanned
+conservatively. JIT code keeps an object's handle (never only its payload
+address) live across a call that can reach a safepoint, and reads the
+payload address again after it. For precise scanning, JIT frames will need
+the stack slots of the handles live at each such call: Cranelift computes
+them on request (`codira_cranelift::Options::precise_stack_maps`, off by
+default, which nothing consumes yet), and a precise collector would read
+them by return address from the compiled code.
 
 ### Standalone executables: `codira build --exe`
 
@@ -4829,7 +4875,7 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   "Strings", interpolated literals `f"..{x}.."`, strings in fields, arrays,
   optionals, parameters and results, across modules, to and from the host
   (`StringRef`), through collections, heap snapshots and hot reload
-  (Cranelift `--jit` runs such programs on LLVM; see "Strings")
+  (Cranelift `--jit` compiles part of this; see "Strings")
 - optionals (`T?`, `nil`, `if let`, `while let`, postfix `!`, `== nil`) and
   `match` over literals, tuples, strings and optionals, checked exhaustive
 - `enum` with payloads: construction, `match`/`if let`/`while let` with

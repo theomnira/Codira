@@ -100,7 +100,7 @@ pub fn run(args: Args) -> anyhow::Result<ExitStatus> {
     )?;
 
     if args.jit {
-        if let Some(status) = run_jit(&manifest_path, &config, colors, &args.entry)? {
+        if let Some(status) = run_jit(&manifest_path, &config, colors, &args.entry, &heap)? {
             return Ok(status);
         }
     }
@@ -137,6 +137,7 @@ fn run_jit(
     config: &Config,
     colors: codira_compiler::DisplayColor,
     entry: &str,
+    heap: &crate::ops::heap::HeapSettings,
 ) -> anyhow::Result<Option<ExitStatus>> {
     let (_package, driver) =
         codira_compiler::Driver::with_package_path(manifest_path, config.clone())?;
@@ -145,22 +146,42 @@ fn run_jit(
         return Ok(Some(ExitStatus::Error));
     }
     let start = std::time::Instant::now();
-    let program = match codira_cranelift::compile(driver.db(), entry) {
+    // The same heap limit and pacing a runtime started by `codira run` gets.
+    let options = codira_cranelift::Options {
+        heap_limit: heap.limit,
+        heap_limit_note: heap.limit.map(|_| heap.note()),
+        gc_policy: Some(codira_runtime::GcPolicy {
+            growth_percent: heap.growth,
+            ..codira_runtime::GcPolicy::default()
+        }),
+        ..codira_cranelift::Options::default()
+    };
+    let program = match codira_cranelift::compile_with(driver.db(), entry, options) {
         Ok(program) => program,
         Err(unsupported) => {
             eprintln!(
-                "note: running on the LLVM backend: the Cranelift backend does not compile                  {unsupported} yet"
+                "note: running on the LLVM backend: the Cranelift backend does not compile {unsupported} yet"
             );
             return Ok(None);
         }
     };
-    if std::env::var_os("CODIRA_JIT_TIMINGS").is_some() {
+    heap.warn_if_unlimited();
+    let timings = std::env::var_os("CODIRA_JIT_TIMINGS").is_some();
+    if timings {
         eprintln!(
             "cranelift: compiled in {:.3} ms",
             start.elapsed().as_secs_f64() * 1000.0
         );
     }
-    match program.run() {
+    let start = std::time::Instant::now();
+    let returned = program.run();
+    if timings {
+        eprintln!(
+            "cranelift: ran in {:.3} ms",
+            start.elapsed().as_secs_f64() * 1000.0
+        );
+    }
+    match returned {
         codira_cranelift::Returned::Unit => {}
         codira_cranelift::Returned::Bool(value) => println!("{value}"),
         codira_cranelift::Returned::Int(value) => println!("{value}"),
