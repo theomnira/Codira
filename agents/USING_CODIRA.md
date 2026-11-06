@@ -1690,7 +1690,7 @@ strings as themselves). It was not done, for these reasons:
 
 **Measured** against Rust's `serde_json` (1.0.133) on the same machine:
 an x86-64 VM, Intel Xeon @ 2.10 GHz, 4 vCPUs, 16 GB, Linux 6.18, Rust
-1.97.1, nothing else running (load average about 1). Codira: `codira
+1.97.1. Codira: `codira
 build -O 3` with a release build of the compiler, run by
 `examples/json_bench/host` (the runtime in release mode, a 1 GiB heap
 limit and the default pacing). Rust: `cargo build --release` with
@@ -1712,29 +1712,36 @@ the same day. `python3 examples/json_bench/bench.py --codira <codira>
 
 | input | phase | before | Codira | Rust | Codira / Rust |
 |---|---|---:|---:|---:|---:|
-| twitter | parse | 129.6 | 132.2 | 131.1 | 1.01x |
-| twitter | print | 115.5 | 50.2 | 54.8 | 0.92x |
-| twitter | pretty | 132.1 | 58.1 | 67.1 | 0.87x |
-| canada | parse | 57.4 | 54.5 | 53.6 | 1.02x |
-| canada | print | 57.4 | 32.0 | 30.5 | 1.05x |
-| canada | pretty | 115.0 | 46.3 | 52.0 | 0.89x |
-| deep | parse | 71.6 | 67.6 | 97.6 | 0.69x |
-| deep | print | 47.4 | 41.3 | 32.7 | 1.26x |
-| deep | pretty | 512.0 | 242.2 | 337.8 | 0.72x |
-| twitter | stream (no tree) | -- | 65.6 | 33.6 | 1.95x |
-| canada | stream (no tree) | -- | 47.5 | 25.8 | 1.84x |
-| deep | stream (no tree) | -- | 49.4 | 32.0 | 1.54x |
-| twitter | typed (into structs) | -- | 116.3 | 28.8 | 4.04x |
+| twitter | parse | 129.6 | 116.0 | 141.8 | 0.82x |
+| twitter | print | 115.5 | 53.8 | 62.0 | 0.87x |
+| twitter | pretty | 132.1 | 64.3 | 74.5 | 0.86x |
+| canada | parse | 57.4 | 59.2 | 56.9 | 1.04x |
+| canada | print | 57.4 | 36.9 | 32.6 | 1.13x |
+| canada | pretty | 115.0 | 53.3 | 60.9 | 0.88x |
+| deep | parse | 71.6 | 72.0 | 102.3 | 0.70x |
+| deep | print | 47.4 | 45.3 | 34.4 | 1.32x |
+| deep | pretty | 512.0 | 296.3 | 355.4 | 0.83x |
+| twitter | stream (no tree) | -- | 71.9 | 35.2 | 2.04x |
+| canada | stream (no tree) | -- | 48.8 | 26.7 | 1.83x |
+| deep | stream (no tree) | -- | 52.2 | 33.2 | 1.57x |
+| twitter | typed (into structs) | -- | 135.5 | 30.4 | 4.45x |
 
-Per round, parse + print + pretty together (where a collection falls
-depends on what the phase before allocated, so the sum is steadier than
-each phase): twitter 243.4 against 256.2 ms (0.95x), canada 137.4 against
-135.3 (1.02x), deep 351.1 against 468.4 (0.75x). `simd-json` 0.14, built
-for the host CPU (`--simd`), parses into its `OwnedValue` in 63.7
-(twitter), 35.6 (canada) and 61.4 ms (deep), with the same check values.
+The Codira and Rust columns are one run (load average 1.1 to 2.5: the
+machine was not idle, and Rust's times were 6-13% above an earlier quiet
+run); "before" is a separate run the same day at a load average of about
+1, so compare it with care -- in the quiet run this branch measured
+twitter 50.2 / 58.1, canada 32.0 / 46.3 and deep 41.3 / 242.2 ms for print
+/ pretty. Per round, parse + print + pretty together (where a collection
+falls depends on what the phase before allocated, so the sum is steadier
+than each phase): twitter 233.7 against 277.1 ms (0.84x), canada 153.8
+against 149.5 (1.03x), deep 413.6 against 494.2 (0.84x). `simd-json`
+0.14, built for the host CPU (`--simd`), parses into its `OwnedValue` in
+63.7 (twitter), 35.6 (canada) and 61.4 ms (deep), with the same check
+values (quiet run).
 
-- **Printing is at parity or faster** but for `deep`'s compact print
-  (1.26x): every tree node there is a small object or array, and the time
+- **Printing is at parity or faster** but for `canada`'s compact print
+  (1.13x: 600,000 floats, each a call into the runtime's `ryu`) and
+  `deep`'s (1.32x): every tree node there is a small object or array, and the time
   goes to walking a tree whose nodes are 64 bytes (an object member 96)
   where `serde_json`'s are 32. The "before" column shows what the old
   printer cost once pacing ran collections during printing: each output
