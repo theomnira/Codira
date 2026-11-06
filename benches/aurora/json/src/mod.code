@@ -12,8 +12,15 @@
 // the wrapping sum of the integers (`true` counts 1) and the wrapping sum
 // of the floats' bit patterns, folded into one number; that of a print is
 // the length of the text.
+//
+// `stream_*` computes the parse check value from `JsonReader`'s events,
+// with no tree (Rust: a `serde` visitor driven by `serde_json`'s
+// deserializer; C++: RapidJSON's SAX `Reader`). `typed_twitter` decodes the
+// statuses into structs with hand-written decoders over `JsonReader` (Rust:
+// `#[derive(Deserialize)]`); its check value folds sums over every decoded
+// field.
 
-import std.json.json.{Json, JsonObject, parse, to_string, to_pretty_string}
+import std.json.json.{Json, JsonObject, JsonReader, JsonEvent, DecodeError, parse, to_string, to_pretty_string}
 import std.fs.file.{read_file}
 import std.result.result.{Result}
 
@@ -121,3 +128,252 @@ public func print_deep() { run_print("data/deep.json", false) }
 public func pretty_twitter() { run_print("data/twitter.json", true) }
 public func pretty_canada() { run_print("data/canada.json", true) }
 public func pretty_deep() { run_print("data/deep.json", true) }
+
+// The parse check value from the reader's events.
+func stream_sums(text: String) -> Sums {
+    let s = Sums { nodes: 0, strings: 0, ints: 0, floats: 0 }
+    let r = JsonReader.new(text)
+    loop {
+        match r.next_event() {
+            Result.Ok(e) -> {
+                match e {
+                    JsonEvent.End -> return s,
+                    JsonEvent.Key(k) -> { s.strings += k.len() as u64 },
+                    JsonEvent.EndArray -> {},
+                    JsonEvent.EndObject -> {},
+                    JsonEvent.BeginArray -> { s.nodes += 1 },
+                    JsonEvent.BeginObject -> { s.nodes += 1 },
+                    JsonEvent.Null -> { s.nodes += 1 },
+                    JsonEvent.Bool(b) -> {
+                        s.nodes += 1
+                        if b { s.ints += 1 }
+                    },
+                    JsonEvent.Int(n) -> {
+                        s.nodes += 1
+                        s.ints += n as u64
+                    },
+                    JsonEvent.Float(x) -> {
+                        s.nodes += 1
+                        s.floats += __intrinsic_bitcast_f64_u64(x)
+                    },
+                    JsonEvent.Str(t) -> {
+                        s.nodes += 1
+                        s.strings += t.len() as u64
+                    },
+                }
+            },
+            Result.Err(e) -> {
+                println("stream error: ", e.message())
+                return s
+            },
+        }
+    }
+}
+
+// ── Typed decoding (twitter) ────────────────────────────────────────────────
+
+struct User {
+    id: i64,
+    name: String,
+    screen_name: String,
+    location: String?,
+    followers_count: i64,
+    verified: bool,
+}
+
+struct Hashtag {
+    text: String,
+    indices: [i64],
+}
+
+struct Status {
+    id: i64,
+    text: String,
+    truncated: bool,
+    in_reply_to_status_id: i64?,
+    user: User,
+    retweet_count: i64,
+    favorite_count: i64,
+    hashtags: [Hashtag],
+    lang: String,
+    score: f64,
+}
+
+func decode_user(r: JsonReader) -> Result[User, DecodeError] {
+    var id: i64 = 0
+    var name = "".to_string()
+    var screen_name = "".to_string()
+    var location: String? = nil
+    var followers_count: i64 = 0
+    var verified = false
+    r.begin_object()?
+    while let key = r.next_key()? {
+        if key == "id" {
+            id = r.read_i64()?
+        } else if key == "name" {
+            name = r.read_string()?
+        } else if key == "screen_name" {
+            screen_name = r.read_string()?
+        } else if key == "location" {
+            location = if r.read_if_null()? { nil } else { r.read_string()? }
+        } else if key == "followers_count" {
+            followers_count = r.read_i64()?
+        } else if key == "verified" {
+            verified = r.read_bool()?
+        } else {
+            r.skip()?
+        }
+    }
+    Result.Ok(User { id: id, name: name, screen_name: screen_name, location: location, followers_count: followers_count, verified: verified })
+}
+
+func decode_hashtag(r: JsonReader) -> Result[Hashtag, DecodeError] {
+    var text = "".to_string()
+    let indices: [i64] = []
+    r.begin_object()?
+    while let key = r.next_key()? {
+        if key == "text" {
+            text = r.read_string()?
+        } else if key == "indices" {
+            r.begin_array()?
+            while r.next_element()? {
+                indices.push(r.read_i64()?)
+            }
+        } else {
+            r.skip()?
+        }
+    }
+    Result.Ok(Hashtag { text: text, indices: indices })
+}
+
+func decode_status(r: JsonReader) -> Result[Status, DecodeError] {
+    var id: i64 = 0
+    var text = "".to_string()
+    var truncated = false
+    var reply: i64? = nil
+    var user: User? = nil
+    var retweet_count: i64 = 0
+    var favorite_count: i64 = 0
+    let hashtags: [Hashtag] = []
+    var lang = "".to_string()
+    var score = 0.0
+    r.begin_object()?
+    while let key = r.next_key()? {
+        if key == "id" {
+            id = r.read_i64()?
+        } else if key == "text" {
+            text = r.read_string()?
+        } else if key == "truncated" {
+            truncated = r.read_bool()?
+        } else if key == "in_reply_to_status_id" {
+            reply = if r.read_if_null()? { nil } else { r.read_i64()? }
+        } else if key == "user" {
+            user = decode_user(r)?
+        } else if key == "retweet_count" {
+            retweet_count = r.read_i64()?
+        } else if key == "favorite_count" {
+            favorite_count = r.read_i64()?
+        } else if key == "entities" {
+            r.begin_object()?
+            while let inner = r.next_key()? {
+                if inner == "hashtags" {
+                    r.begin_array()?
+                    while r.next_element()? {
+                        hashtags.push(decode_hashtag(r)?)
+                    }
+                } else {
+                    r.skip()?
+                }
+            }
+        } else if key == "lang" {
+            lang = r.read_string()?
+        } else if key == "score" {
+            score = r.read_f64()?
+        } else {
+            r.skip()?
+        }
+    }
+    if user == nil {
+        return Result.Err(r.missing_field("user"))
+    }
+    Result.Ok(Status { id: id, text: text, truncated: truncated, in_reply_to_status_id: reply, user: user!, retweet_count: retweet_count, favorite_count: favorite_count, hashtags: hashtags, lang: lang, score: score })
+}
+
+func decode_twitter(text: String) -> Result[[Status], DecodeError] {
+    let r = JsonReader.new(text)
+    let statuses: [Status] = []
+    r.begin_object()?
+    while let key = r.next_key()? {
+        if key == "statuses" {
+            r.begin_array()?
+            while r.next_element()? {
+                statuses.push(decode_status(r)?)
+            }
+        } else {
+            r.skip()?
+        }
+    }
+    r.finish()?
+    Result.Ok(statuses)
+}
+
+// The typed check value: the count, the wrapping sum of the numbers
+// (booleans count 1, the score's bits) and the strings' bytes, folded.
+func typed_check(statuses: [Status]) -> u64 {
+    var numbers: u64 = 0
+    var bytes: u64 = 0
+    for s in statuses {
+        numbers += s.id as u64 + s.retweet_count as u64 + s.favorite_count as u64
+        numbers += __intrinsic_bitcast_f64_u64(s.score)
+        if s.truncated { numbers += 1 }
+        if let n = s.in_reply_to_status_id { numbers += n as u64 }
+        let u = s.user
+        numbers += u.id as u64 + u.followers_count as u64
+        if u.verified { numbers += 1 }
+        bytes += (s.text.len() + s.lang.len() + u.name.len() + u.screen_name.len()) as u64
+        if let place = u.location { bytes += place.len() as u64 }
+        for h in s.hashtags {
+            bytes += h.text.len() as u64
+            for i in h.indices { numbers += i as u64 }
+        }
+    }
+    (statuses.len() as u64) * 1000003 + bytes * 10007 + numbers
+}
+
+func fold(s: Sums) -> u64 {
+    s.nodes * 1000003 + s.strings * 10007 + s.ints * 101 + s.floats
+}
+
+func run_stream(path: str) {
+    let text = load(path)
+    let start = now()
+    var check: u64 = 0
+    var i: usize = 0
+    while i < REPS() {
+        check = fold(stream_sums(text))
+        i += 1
+    }
+    report(start, check)
+}
+
+public func stream_twitter() { run_stream("data/twitter.json") }
+public func stream_canada() { run_stream("data/canada.json") }
+public func stream_deep() { run_stream("data/deep.json") }
+
+public func typed_twitter() {
+    let text = load("data/twitter.json")
+    let start = now()
+    var check: u64 = 0
+    var i: usize = 0
+    while i < REPS() {
+        match decode_twitter(text) {
+            Result.Ok(statuses) -> { check = typed_check(statuses) },
+            Result.Err(e) -> {
+                println("typed error: ", e.message())
+                return
+            },
+        }
+        i += 1
+    }
+    report(start, check)
+}
