@@ -244,12 +244,18 @@ fn captured_objects_survive_a_collection() {
     let holder = holder.root();
 
     let before = runtime.gc_stats().allocated_memory;
-    assert!(!runtime.gc_collect(), "nothing is unreachable yet");
+    assert!(
+        !runtime.collect_blocking().unwrap().reclaimed_anything(),
+        "nothing is unreachable yet"
+    );
     assert_eq!(runtime.gc_stats().allocated_memory, before);
 
     // Reuse any memory that was wrongly freed.
     let _: i64 = runtime.invoke("garbage", (1000i64,)).unwrap();
-    assert!(runtime.gc_collect(), "the garbage counters are collected");
+    assert!(
+        runtime.collect_blocking().unwrap().reclaimed_anything(),
+        "the garbage counters are collected"
+    );
     let _: i64 = runtime.invoke("garbage", (1000i64,)).unwrap();
 
     let first: i64 = runtime.invoke("call", (holder.as_ref(runtime),)).unwrap();
@@ -257,7 +263,7 @@ fn captured_objects_survive_a_collection() {
     assert_eq!((first, second), (423, 433));
 
     drop(holder);
-    assert!(runtime.gc_collect());
+    assert!(runtime.collect_blocking().unwrap().reclaimed_anything());
     assert_eq!(runtime.gc_stats().allocated_memory, 0);
 }
 

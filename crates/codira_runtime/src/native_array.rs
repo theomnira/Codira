@@ -33,7 +33,7 @@ extern "C" fn array_grow(
     // threads (only scalars and channels cross between tasks).
     if let Err(err) = unsafe { allocator.try_grow_array(handle, min_capacity) } {
         let ty = allocator.ptr_type(handle);
-        crate::out_of_memory(&ty, &err);
+        crate::heap_exhausted(&allocator, &ty, None, &err);
     }
 }
 

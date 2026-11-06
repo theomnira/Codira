@@ -234,7 +234,7 @@ fn enums_in_fields_arrays_and_the_heap() {
     let runtime = &driver.runtime;
     let root: StructRef<'_> = runtime.invoke("build", ()).unwrap();
     let root = root.root();
-    runtime.gc_collect();
+    runtime.collect_blocking().unwrap();
     assert_invoke_eq!(i32, 15, driver, "total", root.as_ref(runtime));
     assert_invoke_eq!(f64, 11.0, driver, "shapes");
 }

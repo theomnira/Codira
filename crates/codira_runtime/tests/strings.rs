@@ -68,7 +68,7 @@ fn strings_cross_the_host_boundary() {
 
     // A rooted string survives a collection.
     let kept = greeting.root();
-    let _collected = driver.runtime.gc_collect();
+    let _collected = driver.runtime.collect_blocking().unwrap();
     assert_eq!(kept.as_ref(runtime).as_str(), "hello, wörld!");
 }
 

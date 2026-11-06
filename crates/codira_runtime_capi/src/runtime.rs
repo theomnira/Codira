@@ -201,6 +201,8 @@ pub unsafe extern "C" fn codira_runtime_create(
         user_functions,
         type_table,
         heap_limit: None,
+        heap_limit_note: None,
+        gc_policy: codira_runtime::GcPolicy::default(),
         fuel: None,
     };
 

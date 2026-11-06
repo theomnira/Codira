@@ -32,7 +32,7 @@ use std::{
     cell::RefCell,
     ptr::NonNull,
     sync::{
-        atomic::{AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering},
         Arc, Weak,
     },
 };
@@ -220,11 +220,27 @@ pub(crate) fn array_payload_layout(element: &TypeData, capacity: usize) -> Optio
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum AllocError {
     /// Committing more memory would exceed the configured heap limit.
-    #[error("GC heap limit of {limit} bytes exceeded ({committed} bytes committed, {requested} more requested)")]
+    ///
+    /// When the allocation came from a thread running Codira code, a full
+    /// collection ran first (see `MarkSweep::try_alloc`), so `live` is what
+    /// survived it.
+    #[error(
+        "GC heap limit of {limit} bytes exceeded: {requested} more bytes requested, {committed} \
+         bytes committed, {live} bytes in objects not known to be garbage"
+    )]
     LimitExceeded {
+        /// The configured limit on committed bytes.
         limit: usize,
+        /// Bytes the heap holds from the system (blocks, large objects and
+        /// out-of-line payloads).
         committed: usize,
+        /// Bytes the failed request needed on top of `committed`: a whole
+        /// 64 KiB block for a small object, the object itself otherwise.
         requested: usize,
+        /// Payload bytes of the objects the last collection found live plus
+        /// everything allocated since (headers and size-class rounding not
+        /// included).
+        live: usize,
     },
     /// The system allocator returned null.
     #[error("the system allocator could not provide {requested} bytes")]
@@ -295,8 +311,8 @@ pub(crate) struct HeapInner {
     /// Owning references to the type of every object that was allocated in
     /// this heap, keyed by type data address. Headers store raw pointers.
     types: FxHashMap<usize, Type>,
-    /// Live-byte counters of the thread caches of this heap.
-    thread_counters: Vec<Arc<AtomicUsize>>,
+    /// Allocation counters of the thread caches of this heap.
+    thread_counters: Vec<Arc<ThreadCounters>>,
     /// Live payload bytes not accounted for by thread counters. Can be
     /// negative when objects counted by a thread were freed.
     global_bytes: isize,
@@ -307,6 +323,62 @@ pub(crate) struct HeapInner {
     committed: usize,
     /// Optional cap on `committed`.
     limit: Option<usize>,
+    /// The most `committed` has ever been.
+    peak_committed: usize,
+    /// Payload bytes and objects allocated through the locked paths, ever.
+    locked_bytes_total: u64,
+    locked_objects_total: u64,
+    /// Payload bytes and objects allocated by thread caches that no longer
+    /// exist.
+    retired_bytes_total: u64,
+    retired_objects_total: u64,
+    /// Live payload bytes the last sweep found.
+    live_after_sweep: usize,
+    /// Pacing (see [`crate::gc::GcPolicy`]): grow by this percentage over
+    /// `live_after_sweep` before collecting; `None` collects only at the
+    /// limit.
+    growth_percent: Option<u32>,
+    /// Pacing never asks for a collection below this many live bytes.
+    min_heap: usize,
+    /// Pacing asks for a collection once [`HeapInner::allocated_bytes`] is
+    /// above this; `usize::MAX` when pacing is off.
+    trigger: usize,
+    /// Set when `trigger` was passed: the next allocation by a thread
+    /// running Codira code collects. Shared with [`Heap::due`].
+    due: Arc<AtomicBool>,
+}
+
+/// What a sweep freed.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SweepOutcome {
+    /// Objects freed.
+    pub objects: usize,
+    /// Payload bytes of the objects freed (headers and size-class rounding
+    /// not included, as in [`HeapInner::allocated_bytes`]).
+    pub bytes: usize,
+}
+
+/// A consistent reading of the heap's counters, for statistics.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct HeapCounters {
+    pub committed: usize,
+    pub peak_committed: usize,
+    pub limit: Option<usize>,
+    pub live: usize,
+    pub live_after_sweep: usize,
+    pub trigger: Option<usize>,
+    pub bytes_allocated: u64,
+    pub objects_allocated: u64,
+}
+
+/// Allocation counters of one thread cache. Only the owning thread writes
+/// them; they only grow.
+#[derive(Default)]
+pub(crate) struct ThreadCounters {
+    /// Payload bytes allocated.
+    bytes: AtomicUsize,
+    /// Objects allocated.
+    objects: AtomicUsize,
 }
 
 /// The maximum number of empty blocks a heap keeps cached.
@@ -317,7 +389,7 @@ fn block_layout() -> Layout {
 }
 
 impl HeapInner {
-    fn new(limit: Option<usize>) -> Self {
+    fn new(limit: Option<usize>, due: Arc<AtomicBool>) -> Self {
         Self {
             blocks: Vec::new(),
             free_runs: Default::default(),
@@ -331,6 +403,77 @@ impl HeapInner {
             empty_blocks: Vec::new(),
             committed: 0,
             limit,
+            peak_committed: 0,
+            locked_bytes_total: 0,
+            locked_objects_total: 0,
+            retired_bytes_total: 0,
+            retired_objects_total: 0,
+            live_after_sweep: 0,
+            growth_percent: None,
+            min_heap: 0,
+            trigger: usize::MAX,
+            due,
+        }
+    }
+
+    /// Records `bytes` more committed memory.
+    #[inline]
+    fn add_committed(&mut self, bytes: usize) {
+        self.committed += bytes;
+        self.peak_committed = self.peak_committed.max(self.committed);
+    }
+
+    /// Sets the pacing parameters (see [`crate::gc::GcPolicy`]) and
+    /// recomputes when the next paced collection is due.
+    pub(crate) fn set_pacing(&mut self, growth_percent: Option<u32>, min_heap: usize) {
+        self.growth_percent = growth_percent;
+        self.min_heap = min_heap;
+        self.recompute_trigger();
+        self.check_trigger();
+    }
+
+    fn recompute_trigger(&mut self) {
+        self.trigger = match self.growth_percent {
+            None => usize::MAX,
+            Some(percent) => {
+                let goal = self.live_after_sweep as u128 * (100 + u128::from(percent)) / 100;
+                usize::try_from(goal)
+                    .unwrap_or(usize::MAX)
+                    .max(self.min_heap)
+            }
+        };
+    }
+
+    /// Asks for a collection if pacing's trigger was reached. Called on the
+    /// slow allocation paths (refilling a thread's run, large objects,
+    /// growing arrays), so the per-object fast path pays nothing for it.
+    #[inline]
+    fn check_trigger(&self) {
+        if self.trigger != usize::MAX && self.allocated_bytes() > self.trigger {
+            self.due.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Returns the heap's counters.
+    pub(crate) fn counters(&self) -> HeapCounters {
+        let (thread_bytes, thread_objects) =
+            self.thread_counters.iter().fold((0u64, 0u64), |(b, o), c| {
+                (
+                    b + c.bytes.load(Ordering::Relaxed) as u64,
+                    o + c.objects.load(Ordering::Relaxed) as u64,
+                )
+            });
+        HeapCounters {
+            committed: self.committed,
+            peak_committed: self.peak_committed,
+            limit: self.limit,
+            live: self.allocated_bytes(),
+            live_after_sweep: self.live_after_sweep,
+            trigger: (self.trigger != usize::MAX).then_some(self.trigger),
+            bytes_allocated: self.locked_bytes_total + self.retired_bytes_total + thread_bytes,
+            objects_allocated: self.locked_objects_total
+                + self.retired_objects_total
+                + thread_objects,
         }
     }
 
@@ -356,6 +499,7 @@ impl HeapInner {
                 limit,
                 committed: self.committed,
                 requested,
+                live: self.allocated_bytes(),
             })
         } else {
             Ok(())
@@ -474,7 +618,7 @@ impl HeapInner {
                     requested: BLOCK_SIZE,
                 },
             )?;
-            self.committed += BLOCK_SIZE;
+            self.add_committed(BLOCK_SIZE);
             base
         };
 
@@ -496,6 +640,7 @@ impl HeapInner {
     /// Leases a run of `class` to a thread cache.
     fn lease_run(&mut self, class: u8) -> Result<Run, AllocError> {
         let run = self.take_run(class)?;
+        self.check_trigger();
         self.leases.insert(
             run.start,
             Lease {
@@ -573,7 +718,7 @@ impl HeapInner {
                 requested: layout.size(),
             },
         )?;
-        self.committed += layout.size();
+        self.add_committed(layout.size());
         self.large.insert(base.as_ptr() as usize, layout);
 
         let header = base.cast::<ObjectHeader>();
@@ -609,6 +754,9 @@ impl HeapInner {
         };
         unsafe { init_header(header, ty, (*header.as_ptr()).class) };
         self.global_bytes += payload.size() as isize;
+        self.locked_bytes_total += payload.size() as u64;
+        self.locked_objects_total += 1;
+        self.check_trigger();
         Ok(header)
     }
 
@@ -674,7 +822,7 @@ impl HeapInner {
                     requested: layout.size(),
                 },
             )?;
-            self.committed += layout.size();
+            self.add_committed(layout.size());
             self.out_of_line.insert(key, (buffer, layout));
             (*hdr).flags |= FLAG_OUT_OF_LINE;
             buffer
@@ -741,7 +889,8 @@ impl HeapInner {
                 .ok_or(AllocError::SystemOutOfMemory {
                     requested: layout.size(),
                 })?;
-                self.committed = self.committed - previous_layout.size() + layout.size();
+                self.committed -= previous_layout.size();
+                self.add_committed(layout.size());
                 buffer
             }
             _ => {
@@ -752,7 +901,7 @@ impl HeapInner {
                     },
                 )?;
                 std::ptr::copy_nonoverlapping((*hdr).data, buffer.as_ptr(), used);
-                self.committed += layout.size();
+                self.add_committed(layout.size());
                 if let Some((previous, previous_layout)) = self.out_of_line.remove(&key) {
                     std::alloc::dealloc(previous.as_ptr(), previous_layout);
                     self.committed -= previous_layout.size();
@@ -765,6 +914,8 @@ impl HeapInner {
         (*hdr).flags |= FLAG_OUT_OF_LINE;
         (*hdr).data = buffer.as_ptr();
         self.global_bytes += new_layout.size() as isize - old_size as isize;
+        self.locked_bytes_total += new_layout.size() as u64;
+        self.check_trigger();
         Ok(())
     }
 
@@ -805,8 +956,10 @@ impl HeapInner {
 
     /// Frees every unmarked object, clears the marks of the others, rebuilds
     /// the free runs, and releases empty blocks. `on_free` is called with the
-    /// handle of every freed object. Returns the number of freed objects.
-    pub(crate) fn sweep(&mut self, mut on_free: impl FnMut(GcPtr)) -> usize {
+    /// handle of every freed object. Returns what was freed, and sets when
+    /// pacing asks for the next collection.
+    pub(crate) fn sweep(&mut self, mut on_free: impl FnMut(GcPtr)) -> SweepOutcome {
+        let before = self.allocated_bytes();
         let mut freed = 0usize;
         let mut live_bytes = 0usize;
 
@@ -902,12 +1055,19 @@ impl HeapInner {
         let thread_bytes: usize = self
             .thread_counters
             .iter()
-            .map(|c| c.load(Ordering::Relaxed))
+            .map(|c| c.bytes.load(Ordering::Relaxed))
             .sum();
         self.global_bytes = live_bytes as isize - thread_bytes as isize;
         self.sweeps += 1;
+        self.live_after_sweep = live_bytes;
+        self.recompute_trigger();
+        self.due.store(false, Ordering::Relaxed);
+        self.check_trigger();
 
-        freed
+        SweepOutcome {
+            objects: freed,
+            bytes: before.saturating_sub(live_bytes),
+        }
     }
 
     /// Releases the memory of a dead object. For small cells the cell is
@@ -944,12 +1104,13 @@ impl HeapInner {
         }
     }
 
-    /// Returns the exact number of payload bytes of live objects.
+    /// Returns the exact number of payload bytes of live objects: those the
+    /// last sweep kept plus everything allocated since.
     fn allocated_bytes(&self) -> usize {
         let thread_bytes: usize = self
             .thread_counters
             .iter()
-            .map(|c| c.load(Ordering::Relaxed))
+            .map(|c| c.bytes.load(Ordering::Relaxed))
             .sum();
         (self.global_bytes + thread_bytes as isize).max(0) as usize
     }
@@ -1037,6 +1198,9 @@ static NEXT_HEAP_ID: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct Heap {
     id: u64,
     pub(crate) inner: RwLock<HeapInner>,
+    /// Pacing asks for a collection (see [`HeapInner::check_trigger`]).
+    /// Read without the lock on every allocation by Codira code.
+    pub(crate) due: Arc<AtomicBool>,
     /// Incremented whenever the type registry is pruned, which invalidates
     /// the thread caches' sets of known-registered types.
     type_epoch: AtomicU64,
@@ -1050,9 +1214,11 @@ unsafe impl Sync for HeapInner {}
 
 impl Heap {
     pub(crate) fn new(limit: Option<usize>) -> Arc<Self> {
+        let due = Arc::new(AtomicBool::new(false));
         Arc::new(Self {
             id: NEXT_HEAP_ID.fetch_add(1, Ordering::Relaxed),
-            inner: RwLock::new(HeapInner::new(limit)),
+            inner: RwLock::new(HeapInner::new(limit, due.clone())),
+            due,
             type_epoch: AtomicU64::new(0),
         })
     }
@@ -1100,6 +1266,12 @@ impl Heap {
     pub(crate) fn committed(&self) -> usize {
         self.inner.read().committed()
     }
+
+    /// Returns true if pacing asked for a collection.
+    #[inline]
+    pub(crate) fn collection_due(&self) -> bool {
+        self.due.load(Ordering::Relaxed)
+    }
 }
 
 /// The number of entries in a thread cache's known-type table.
@@ -1117,9 +1289,9 @@ struct LocalRun {
 struct ThreadHeapCache {
     heap_id: u64,
     heap: Weak<Heap>,
-    /// Payload bytes allocated by this thread since the last collection, as
-    /// seen by `stats`. Only this thread writes it.
-    counter: Arc<AtomicUsize>,
+    /// Payload bytes and objects this thread allocated, ever. Only this
+    /// thread writes them.
+    counter: Arc<ThreadCounters>,
     type_epoch: u64,
     /// Direct-mapped set of type data addresses known to be registered.
     known_types: [usize; KNOWN_TYPES],
@@ -1128,7 +1300,7 @@ struct ThreadHeapCache {
 
 impl ThreadHeapCache {
     fn new(heap: &Arc<Heap>) -> Self {
-        let counter = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::new(ThreadCounters::default());
         heap.inner.write().thread_counters.push(counter.clone());
         Self {
             heap_id: heap.id,
@@ -1189,9 +1361,15 @@ impl ThreadHeapCache {
             init_header(header, ty, class);
         }
 
+        // Single-writer counters: a load and a store each, no atomic
+        // read-modify-write.
         let counter = &*self.counter;
-        counter.store(
-            counter.load(Ordering::Relaxed) + payload_size,
+        counter.bytes.store(
+            counter.bytes.load(Ordering::Relaxed) + payload_size,
+            Ordering::Relaxed,
+        );
+        counter.objects.store(
+            counter.objects.load(Ordering::Relaxed) + 1,
             Ordering::Relaxed,
         );
         Ok(header)
@@ -1210,8 +1388,10 @@ impl Drop for ThreadHeapCache {
                 inner.end_lease(run.start, run.cur, run.end);
             }
         }
-        let bytes = self.counter.load(Ordering::Relaxed);
+        let bytes = self.counter.bytes.load(Ordering::Relaxed);
         inner.global_bytes += bytes as isize;
+        inner.retired_bytes_total += bytes as u64;
+        inner.retired_objects_total += self.counter.objects.load(Ordering::Relaxed) as u64;
         inner
             .thread_counters
             .retain(|c| !Arc::ptr_eq(c, &self.counter));

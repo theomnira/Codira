@@ -371,6 +371,11 @@ pub fn blocking<R>(f: impl FnOnce() -> R) -> R {
 
 /// What a stop-the-world operation sees: every other thread is parked.
 pub(crate) struct World {
+    /// When this thread asked the others to stop (after any stop already in
+    /// progress had ended).
+    pub(crate) requested_at: std::time::Instant,
+    /// When every other thread had parked.
+    pub(crate) stopped_at: std::time::Instant,
     /// The stack ranges `[low, high)` of the parked threads.
     stacks: Vec<(usize, usize)>,
     /// Some thread holds Codira frames that cannot be scanned.
@@ -382,11 +387,13 @@ pub(crate) struct World {
 }
 
 impl World {
-    fn snapshot(registry: &Registry) -> Self {
+    fn snapshot(registry: &Registry, requested_at: std::time::Instant) -> Self {
         // Called with the registry locked: look at the current thread's
         // record without registering it.
         let current = CURRENT.with(Cell::get);
         let mut world = World {
+            requested_at,
+            stopped_at: std::time::Instant::now(),
             stacks: Vec::new(),
             unscannable: false,
             others_in_codira: false,
@@ -456,7 +463,7 @@ impl World {
 /// other thread's. Reentrant on the thread that holds the stop.
 pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
     if MODE.with(Cell::get) == OWNER {
-        let world = World::snapshot(&REGISTRY.lock());
+        let world = World::snapshot(&REGISTRY.lock(), std::time::Instant::now());
         return f(&world);
     }
     blocking(|| {
@@ -466,6 +473,7 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
         }
         registry.stopped = true;
         STOP.store(true, Ordering::SeqCst);
+        let requested_at = std::time::Instant::now();
         while registry
             .records
             .iter()
@@ -475,7 +483,7 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
             // thread could not know was needed (see `make_idle`).
             CHANGED.wait_for(&mut registry, STOP_POLL);
         }
-        let world = World::snapshot(&registry);
+        let world = World::snapshot(&registry, requested_at);
         drop(registry);
 
         /// Ends the stop even if `f` unwinds.
@@ -503,6 +511,16 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
 /// frame of the old code may be live anywhere.
 pub fn exclusive<R>(f: impl FnOnce() -> R) -> Option<R> {
     stop_the_world(|world| (!world.others_in_codira && !world.self_in_codira).then(f))
+}
+
+/// Returns true if some thread other than the current one has Codira frames
+/// on its stack (holds a [`MutatorGuard`]), whether it is running or parked.
+pub(crate) fn other_threads_in_codira() -> bool {
+    let registry = REGISTRY.lock();
+    let current = CURRENT.with(Cell::get);
+    registry.records.iter().any(|record| {
+        !std::ptr::eq(current, Arc::as_ptr(record)) && record.active.load(Ordering::Relaxed)
+    })
 }
 
 /// Returns true if the current thread holds the stop (it is collecting or

@@ -47,7 +47,7 @@ use std::{
 use std::ptr::NonNull;
 
 use codira_memory::{
-    gc::{Array as _, GcPtr, HasIndirectionPtr, RawGcPtr},
+    gc::{AllocError, Array as _, GcPtr, HasIndirectionPtr, RawGcPtr},
     HasStaticType, Type,
 };
 
@@ -167,7 +167,7 @@ impl Alloc {
     fn array(&self, capacity: usize, length: usize) -> *const *mut u8 {
         let mut handle = match self.gc.try_alloc_array(&self.ty, capacity) {
             Ok(handle) => handle,
-            Err(err) => out_of_memory(&self.ty, &err.to_string()),
+            Err(err) => crate::heap_exhausted(&self.gc, &self.ty, None, &err),
         };
         // Safety: the elements below `length` are written by the caller
         // before the array is reachable from Codira code.
@@ -192,15 +192,6 @@ impl Alloc {
         }
         RawString { buf, start: 0, len }
     }
-}
-
-#[cold]
-fn out_of_memory(ty: &Type, err: &str) -> ! {
-    eprintln!(
-        "codira runtime: cannot allocate `{}`: {err}. Aborting.",
-        ty.name()
-    );
-    std::process::abort()
 }
 
 /// Writes a string result to the out-pointer generated code passed.
@@ -866,12 +857,22 @@ pub struct BoxedString(GcPtr);
 
 impl<'r> StringRef<'r> {
     /// A new string holding a copy of `text`, allocated on `runtime`'s heap.
+    ///
+    /// Ends the process like an allocation by Codira code if the heap cannot
+    /// provide the memory (see [`crate::HEAP_EXHAUSTED_EXIT_STATUS`]);
+    /// [`StringRef::try_new`] returns the error instead.
     pub fn new(runtime: &'r Runtime, text: &str) -> Self {
+        Self::try_new(runtime, text).unwrap_or_else(|err| {
+            let ty = <u8 as HasStaticType>::type_info().array_type();
+            crate::heap_exhausted(&runtime.gc, &ty, Some(text.len()), &err)
+        })
+    }
+
+    /// A new string holding a copy of `text`, allocated on `runtime`'s heap,
+    /// or why the heap could not provide the memory.
+    pub fn try_new(runtime: &'r Runtime, text: &str) -> Result<Self, AllocError> {
         let ty = <u8 as HasStaticType>::type_info().array_type();
-        let mut handle = match runtime.gc.try_alloc_array(&ty, text.len()) {
-            Ok(handle) => handle,
-            Err(err) => out_of_memory(&ty, &err.to_string()),
-        };
+        let mut handle = runtime.gc.try_alloc_array(&ty, text.len())?;
         // Safety: every element is written right below.
         unsafe { handle.set_length(text.len()) };
         let raw: RawGcPtr = handle.as_raw().into();
@@ -880,14 +881,14 @@ impl<'r> StringRef<'r> {
         unsafe {
             std::ptr::copy_nonoverlapping(text.as_ptr(), elements(buf), text.len());
         }
-        Self {
+        Ok(Self {
             raw: RawString {
                 buf,
                 start: 0,
                 len: text.len(),
             },
             runtime,
-        }
+        })
     }
 
     /// The text.
@@ -1004,7 +1005,7 @@ impl<'r> Marshal<'r> for StringRef<'r> {
         let ty = Self::string_type(self.runtime);
         let mut handle = match self.runtime.gc.try_alloc(&ty) {
             Ok(handle) => handle,
-            Err(err) => out_of_memory(&ty, &err.to_string()),
+            Err(err) => crate::heap_exhausted(&self.runtime.gc, &ty, None, &err),
         };
         // Safety: the object was allocated with the layout of a `String`.
         unsafe { handle.deref_mut::<RawString>().write_unaligned(self.raw) };

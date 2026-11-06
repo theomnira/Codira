@@ -7,19 +7,26 @@
 mod array;
 mod heap;
 mod mark_sweep;
+mod policy;
 mod ptr;
 mod root_ptr;
 pub mod safepoint;
 mod snapshot;
 mod stack_scan;
+mod stats;
 
 use std::{marker::PhantomData, ptr::NonNull};
 
 pub use heap::AllocError;
 pub use mark_sweep::{CollectRefused, MarkSweep};
+pub use policy::GcPolicy;
 pub use ptr::{GcPtr, HasIndirectionPtr, RawGcPtr};
 pub use root_ptr::GcRootPtr;
 pub use snapshot::{RestoredHeap, SnapshotError};
+pub use stats::{
+    format_bytes, format_duration, CollectionCounts, CollectionReport, GcStats, PauseSummary,
+    Trigger,
+};
 
 use crate::r#type::Type;
 

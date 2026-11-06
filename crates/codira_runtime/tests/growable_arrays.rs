@@ -69,7 +69,7 @@ fn growth_under_a_heap_limit_keeps_every_element() {
     );
     assert_eq!(nodes.len(), n as usize);
     let nodes = nodes.root();
-    driver.runtime.gc_collect();
+    driver.runtime.collect_blocking().unwrap();
     let nodes = nodes.as_ref(&driver.runtime);
     let bad: i64 = driver.runtime.invoke("check", (nodes.clone(),)).unwrap();
     assert_eq!(bad, 0);
