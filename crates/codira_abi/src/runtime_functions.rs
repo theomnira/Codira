@@ -516,7 +516,9 @@ pub const REGION_ALLOC: RuntimeFunction = RuntimeFunction::pure(
 
 /// `codira.region_close`.
 pub const REGION_CLOSE: RuntimeFunction = RuntimeFunction {
-    panics: Panics::Always,
+    // It returns; it ends the process only when region checks find a
+    // reference still into the region (a compiler bug).
+    panics: Panics::OnBadArgument,
     ..RuntimeFunction::pure(
         "codira.region_close",
         Group::Gc,
@@ -530,14 +532,18 @@ pub const REGION_CLOSE: RuntimeFunction = RuntimeFunction {
 };
 
 /// `codira.gc.foreign_enter`.
-pub const GC_FOREIGN_ENTER: RuntimeFunction = RuntimeFunction::pure(
-    "codira.gc.foreign_enter",
-    Group::Gc,
-    &[("frame", ConstBytes)],
-    Unit,
-    "Marks the thread as running foreign code before a call to a `@noalloc` extern \
-     function, so a collection does not wait for it.",
-);
+pub const GC_FOREIGN_ENTER: RuntimeFunction = RuntimeFunction {
+    // The collector reads the thread's state: no wait, but shared.
+    shared: &[Shared::GcHeap],
+    ..RuntimeFunction::pure(
+        "codira.gc.foreign_enter",
+        Group::Gc,
+        &[("frame", ConstBytes)],
+        Unit,
+        "Marks the thread as running foreign code before a call to a `@noalloc` extern \
+         function, so a collection does not wait for it.",
+    )
+};
 
 /// `codira.gc.foreign_leave`.
 pub const GC_FOREIGN_LEAVE: RuntimeFunction = RuntimeFunction::pure(
@@ -1273,7 +1279,10 @@ pub const GROUP_FIRST_ERROR: RuntimeFunction = RuntimeFunction {
 };
 /// `codira.group_result`.
 pub const GROUP_RESULT: RuntimeFunction = RuntimeFunction {
-    shared: &[Shared::Tasks],
+    // Ends the process when asked for a task the group does not have.
+    panics: Panics::OnBadArgument,
+    realtime_safe: false,
+    shared: &[Shared::Tasks, Shared::Process],
     ..task(
         "codira.group_result",
         &[("group", Usize), ("index", Usize), ("out", Usize)],
@@ -1445,6 +1454,15 @@ mod tests {
                 assert!(f.blocks, "`{}` can wait for another thread", f.symbol);
             }
             if f.never_returns() {
+                // `Always` means the function *is* the panic. One that
+                // returns normally and ends the process only on bad input is
+                // `OnBadArgument`; marking it `Always` would make the effect
+                // analysis drop everything else it does.
+                assert!(
+                    !f.blocks && !f.safepoint,
+                    "`{}` never returns, yet waits: is it `OnBadArgument`?",
+                    f.symbol
+                );
                 assert_eq!(f.ret, Repr::Unit, "`{}` never returns a value", f.symbol);
                 assert!(f.shared.contains(&Shared::Process), "`{}`", f.symbol);
             }

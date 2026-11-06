@@ -1174,6 +1174,13 @@ fn runtime_function_effects_come_from_the_catalogue() {
         EffectSet::of(&[Effect::Block])
     );
     assert!(effects(&rt::SCOPE_SPAWN).contains(Effect::Spawn));
+    // Closing a region returns (it ends the process only when region checks
+    // find a reference into it), and can stop the world first.
+    assert_eq!(
+        effects(&rt::REGION_CLOSE),
+        EffectSet::of(&[Effect::Block, Effect::Panic])
+    );
+    assert!(effects(&rt::GROUP_RESULT).contains(Effect::Panic));
     for f in rt::CATALOGUE.iter().filter(|f| f.realtime_safe) {
         assert_eq!(effects(f), EffectSet::NONE, "`{}`", f.symbol);
     }

@@ -484,6 +484,12 @@ impl<'a, 'db> Translator<'a, 'db> {
             Expr::Array(elements) => self.array_literal(id, elements),
             Expr::Missing => self.unsupported("an expression the front end could not lower"),
             // Structured concurrency lowers through the LLVM backend only.
+            Expr::Group { .. } => self.unsupported("a task `group`"),
+            Expr::Scope { .. } => self.unsupported("a `scope`"),
+            Expr::Spawn { .. } => self.unsupported("`spawn`"),
+            Expr::ChannelSend { .. } | Expr::ChannelReceive { .. } => {
+                self.unsupported("a channel operation")
+            }
             Expr::Select { .. } => self.unsupported("`select`"),
             Expr::Offer { .. } => self.unsupported("`offer`"),
             Expr::Closure { .. } => self.unsupported("a closure"),

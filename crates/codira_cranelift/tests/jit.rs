@@ -211,3 +211,53 @@ fn compile_time_is_reported() {
         samples[0], samples[12]
     );
 }
+
+/// A `@region` function, a task `group` and a byte-buffer method have no
+/// lowering in this backend: each is refused, naming what it met, so the
+/// program runs on LLVM with its regions, groups and buffers intact.
+#[test]
+fn regions_groups_and_byte_buffers_are_refused() {
+    for (source, what) in [
+        (
+            r"
+            class Box { v: i64 }
+            @region
+            public func main() -> i64 {
+                var last = Box { v: 0 }
+                for i in 0..10 {
+                    let b = Box { v: i }
+                    if i % 3 == 0 { last = b }
+                }
+                last.v
+            }
+            ",
+            "`@region`",
+        ),
+        (
+            r"
+            func square(i: i64) -> i64 { i * i }
+            public func main() -> i64 {
+                let xs = group { spawn square(3) }
+                xs[0]
+            }
+            ",
+            "`group`",
+        ),
+        (
+            r"
+            public func main() -> i64 {
+                let buf: [u8] = []
+                buf.push_json_float(1.5)
+                buf.len() as i64
+            }
+            ",
+            "array method",
+        ),
+    ] {
+        let driver = driver(source);
+        let error = compile(driver.db(), "main")
+            .err()
+            .unwrap_or_else(|| panic!("compiled what should be refused: {what}"));
+        assert!(error.what.contains(what), "{what}: {error}");
+    }
+}

@@ -503,6 +503,12 @@ impl State<'_> {
         if function.is_generic(self.db) {
             return Err(unsupported("a generic function".to_owned()));
         }
+        // A `@region` function allocates in an arena it frees on return; this
+        // backend has no regions, and putting those objects on the GC heap
+        // instead would give it different memory behaviour from LLVM's.
+        if codira_hir::escape::is_region_function(self.db, function) {
+            return Err(unsupported("a `@region` function".to_owned()));
+        }
         if !function.effects(self.db).is_empty() {
             return Err(unsupported("a function with a `uses` clause".to_owned()));
         }
