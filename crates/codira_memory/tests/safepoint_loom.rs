@@ -50,10 +50,14 @@ const MODELLED: &[&str] = &[
     // checks (one more SeqCst load and store, after the flag's store); that
     // keeps the store-load order the model relies on.
     "fn set_stop(on: bool) {\n    STOP.store(on, Ordering::SeqCst);",
-    "set_stop(true);\n        let requested_at = std::time::Instant::now();\n        while registry\n            .records\n            .iter()\n            .any(|record| record.running.load(Ordering::SeqCst))",
+    // (The stop also interrupts threads that have not parked after
+    // `PREEMPT_AFTER`; a preempted thread parks through the same
+    // `make_idle`, so the model's handshake covers it. The signal itself is
+    // not modelled.)
+    "set_stop(true);\n        let requested_at = std::time::Instant::now();\n        let mut next_preempt = super::preempt::PREEMPT_AFTER;\n        while registry\n            .records\n            .iter()\n            .any(|record| record.running.load(Ordering::SeqCst))",
     "set_stop(false);",
     // refresh_poll_word: store, then re-read both flags until they agree.
-    "frames::POLL_WORD.store(on, Ordering::SeqCst);\n        let now = wanted();\n        if now == on {\n            return;\n        }",
+    "frames::store_poll_word(on);\n        let now = wanted();\n        if now == on {\n            return;\n        }",
 ];
 
 #[test]

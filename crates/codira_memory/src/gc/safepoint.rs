@@ -125,6 +125,9 @@ struct Record {
     foreign_previous_low: AtomicUsize,
     /// The thread is in a foreign call.
     in_foreign: AtomicBool,
+    /// The thread's handle for preemption (`preempt::interrupt`), 0 where
+    /// threads are not interrupted.
+    thread: usize,
 }
 
 // Safety: `foreign_registers` is written only by the owning thread while it
@@ -210,6 +213,7 @@ fn registered_or_new() -> Option<Arc<Record>> {
                     foreign_registers: std::cell::UnsafeCell::new([0; 16]),
                     foreign_previous_low: AtomicUsize::new(0),
                     in_foreign: AtomicBool::new(false),
+                    thread: super::preempt::current_thread(),
                 });
                 REGISTRY.lock().records.push(record.clone());
                 *holder = Some(Holder(record));
@@ -237,7 +241,7 @@ pub(crate) fn refresh_poll_word() {
     let wanted = || u8::from(STOP.load(Ordering::SeqCst) || frames::stress());
     let mut on = wanted();
     loop {
-        frames::POLL_WORD.store(on, Ordering::SeqCst);
+        frames::store_poll_word(on);
         let now = wanted();
         if now == on {
             return;
@@ -375,7 +379,22 @@ fn park() {
     blocking(|| {});
 }
 
-/// A poll of compiled code (a loop back-edge or a function entry; see
+/// Called by the preemption signal's handler when it interrupted compiled
+/// code (see `preempt`): parks the thread if a stop is requested, its whole
+/// stack scanned conservatively.
+pub(crate) fn park_preempted() {
+    if MODE.with(Cell::get) != RUNNING || !STOP.load(Ordering::SeqCst) {
+        return;
+    }
+    let Some(record) = record() else {
+        return;
+    };
+    let previous = record.at_poll.swap(true, Ordering::Relaxed);
+    park();
+    record.at_poll.store(previous, Ordering::Relaxed);
+}
+
+/// A poll of compiled code (a loop back-edge; see
 /// `frames::codira_gc_poll`): parks if a collection is waiting, collects in
 /// stress mode. The thread's stack is scanned conservatively throughout
 /// while it is parked here.
@@ -655,6 +674,7 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
         registry.stopped = true;
         set_stop(true);
         let requested_at = std::time::Instant::now();
+        let mut next_preempt = super::preempt::PREEMPT_AFTER;
         while registry
             .records
             .iter()
@@ -663,6 +683,20 @@ pub(crate) fn stop_the_world<R>(f: impl FnOnce(&World) -> R) -> R {
             // Woken when a thread parks; the timeout covers a wake-up a
             // thread could not know was needed (see `make_idle`).
             CHANGED.wait_for(&mut registry, STOP_POLL);
+            // A thread that has not parked by now may be in code that
+            // never polls (recursion that neither loops nor allocates):
+            // interrupt it (see `preempt`), again every `PREEMPT_AFTER`.
+            if requested_at.elapsed() >= next_preempt {
+                next_preempt = requested_at.elapsed() + super::preempt::PREEMPT_AFTER;
+                let current = CURRENT.with(Cell::get);
+                for record in &registry.records {
+                    if record.running.load(Ordering::SeqCst)
+                        && !std::ptr::eq(current, Arc::as_ptr(record))
+                    {
+                        super::preempt::interrupt(record.thread);
+                    }
+                }
+            }
         }
         let world = World::snapshot(&registry, requested_at);
         drop(registry);

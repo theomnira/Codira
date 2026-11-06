@@ -5031,9 +5031,13 @@ Runtime (hosts embedding `codira_runtime`):
     `codira_runtime::enter_codira()` (C: between `codira_thread_enter` and
     `codira_thread_leave`).
   - **Where threads park:** every GC allocation is a safepoint, and so is
-    a *poll*: on the back-edge of every loop whose trip count the optimizer
-    cannot bound when the loop starts, and at the entry of every function
-    that makes calls (a load and a branch). A thread waiting in a channel
+    a *poll* on the back-edge of every loop whose trip count the optimizer
+    cannot bound when the loop starts (a load and a branch). On Linux
+    (x86-64, AArch64) a thread that has not parked a millisecond after a
+    collection asked is interrupted with `SIGURG` and parks if it is in
+    Codira code, so counted loops and recursion do not hold a collection
+    up either; a host that uses `SIGURG` itself must not embed the
+    runtime. A thread waiting in a channel
     send or receive, a `select`, a scope join or `codira_time_sleep_ns` is
     already parked and never holds up a collection, and so is a thread in
     a call to an `extern` function declared `@noalloc` (`@noalloc extern
@@ -5053,9 +5057,11 @@ Runtime (hosts embedding `codira_runtime`):
     benchmark comparison with records and polls off.
 - What is not guaranteed:
   - **Latency:** a collection waits for every running thread to reach a
-    safepoint. A loop the optimizer can bound (a counted loop, a loop over
-    an array or a range) has no poll, so a collection may wait for it to
-    finish, however many iterations it has. Calls to `extern` functions
+    safepoint. Outside Linux there is no preemption: a loop the optimizer
+    can bound (a counted loop, a loop over an array or a range) and
+    recursion have no poll, so a collection may wait for them to finish.
+    Everywhere, a thread running host code (a host function called from
+    Codira code) is not interrupted, and calls to `extern` functions
     without `@noalloc`, and to the file, database and tensor services, are
     not safepoints; a collection waits for them to return.
   - **Raw function pointers:** a Codira function called through a

@@ -72,9 +72,13 @@ public func make(k: i64) -> Big {{
     Big {{ {inits} }}
 }}
 
+// It also keeps an object of its own across the collection: a function that
+// holds no reference across a call gets no frame record, and its frame is
+// scanned conservatively.
 public func probe() -> i64 {{
+    let own = make(7);
 {lets}    collect_now();
-    var live = 0;
+    var live = own.f0 - 7;
 {checks}    live
 }}
 "
@@ -116,7 +120,8 @@ fn fill_addresses(runtime: &Runtime) {
     *ADDRESSES.lock().unwrap() = addresses;
 }
 
-/// With precise roots, integers in compiled frames are not roots: most of
+/// With precise roots, integers in compiled frames with a frame record (a
+/// function that holds a reference across a call) are not roots: most of
 /// the objects are freed. (Integers that sit in a callee-saved register at
 /// the safepoint still are -- those registers may hold a host frame's
 /// references, so they are scanned conservatively -- hence "most".) With
@@ -336,5 +341,48 @@ fn a_loop_without_safepoints_does_not_hold_up_a_collection() {
     assert!(
         latency < std::time::Duration::from_millis(50),
         "a collection waited {latency:?} for a loop (the loop ran {elapsed:?})"
+    );
+}
+
+const RECURSE_SOURCE: &str = r"
+// Recursion on integers: no loop, no allocation, no call into the runtime,
+// so no poll. Only preemption lets a collection on another thread stop it.
+func fib(n: i64) -> i64 {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+public func recurse(n: i64) -> i64 { fib(n) }
+";
+
+/// Before preemption (and without polls at calls), a collection waited for
+/// such a recursion to return.
+#[test]
+fn recursion_without_safepoints_does_not_hold_up_a_collection() {
+    if !cfg!(all(target_os = "linux", any(target_arch = "x86_64", target_arch = "aarch64"))) {
+        return;
+    }
+    let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    let driver = CompileAndRunTestDriver::new(RECURSE_SOURCE, |builder| builder)
+        .expect("Failed to build test driver");
+    let gc = driver.runtime.gc();
+    let (latency, elapsed, value) = std::thread::scope(|s| {
+        let collector = s.spawn(|| {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let start = std::time::Instant::now();
+            let _ = gc.collect_blocking();
+            start.elapsed()
+        });
+        let start = std::time::Instant::now();
+        let value: i64 = driver.runtime.invoke("recurse", (43i64,)).unwrap();
+        (collector.join().unwrap(), start.elapsed(), value)
+    });
+    assert_eq!(value, 433_494_437);
+    assert!(
+        elapsed > std::time::Duration::from_millis(400),
+        "the recursion ended too soon ({elapsed:?}) to tell"
+    );
+    assert!(
+        latency < std::time::Duration::from_millis(50),
+        "a collection waited {latency:?} for a recursion (it ran {elapsed:?})"
     );
 }
