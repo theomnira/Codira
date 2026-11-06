@@ -1135,7 +1135,7 @@ impl HeapInner {
             debug_assert_eq!(
                 (*hdr).state.load(Ordering::Relaxed),
                 STATE_ALLOCATED,
-                "reclaiming a free cell"
+                "reclaiming a free cell {hdr:p}"
             );
             released += (*hdr).payload_size();
             let class = (*hdr).class;

@@ -55,6 +55,9 @@ use crate::{
     r#type::Type,
 };
 
+/// The most epoch boundaries one step completes.
+const MAX_BOUNDARIES_PER_STEP: usize = 2;
+
 /// What Cascade needs from the collector it is attached to.
 pub trait CascadeHost: Send + Sync {
     /// Allocates an object (a safepoint; may collect at the heap limit).
@@ -201,7 +204,8 @@ pub(crate) struct Packet {
     segment: u64,
     incs: Vec<usize>,
     decs: Vec<usize>,
-    /// Newly published objects whose count was zero.
+    /// Newly published objects to examine (publication roots and zero
+    /// counts).
     checks: Vec<usize>,
     /// The root snapshot (published objects held locally), if any.
     roots: Option<Vec<usize>>,
@@ -281,6 +285,9 @@ struct Collector {
     delayed_decs: Vec<usize>,
     /// Root-snapshot decrements to apply at the next boundary.
     root_decs: Vec<usize>,
+    /// Decrements of the snapshot a resynchronisation took, applied one
+    /// boundary later than `root_decs`.
+    resync_root_decs: Vec<usize>,
     /// Root snapshots of quiescent threads.
     standing: FxHashMap<u64, Vec<usize>>,
     /// Checks to make at the next boundary (after a resynchronisation).
@@ -400,6 +407,7 @@ impl Cascade {
                 held: Vec::new(),
                 delayed_decs: Vec::new(),
                 root_decs: Vec::new(),
+                resync_root_decs: Vec::new(),
                 standing: FxHashMap::default(),
                 pending_checks: Vec::new(),
                 retire: Vec::new(),
@@ -556,7 +564,13 @@ impl Cascade {
     /// Starts and continues epoch boundaries until the budget is used up or
     /// the epoch cannot advance.
     fn boundary_work(&self, collector: &mut Collector, work: &mut usize, budget: usize) {
+        // An idle epoch costs no work units; bound how many one step
+        // completes so a step always returns.
+        let mut completed = 0;
         loop {
+            if completed == MAX_BOUNDARIES_PER_STEP {
+                return;
+            }
             if matches!(collector.phase, Phase::Idle) {
                 let Some((boundary, packets)) = self.epochs.try_begin_boundary() else {
                     return;
@@ -594,13 +608,14 @@ impl Cascade {
                 while *work < budget {
                     let Some(object) = checks.pop() else { break };
                     *work += 1;
-                    self.check_zero(collector, object);
+                    self.check(collector, object);
                 }
             }
             if incs.is_empty() && decs.is_empty() && checks.is_empty() {
                 collector.phase = Phase::Idle;
                 collector.completed = boundary;
                 self.epochs.finish_boundary(boundary);
+                completed += 1;
                 if *work >= budget {
                     return;
                 }
@@ -658,6 +673,7 @@ impl Cascade {
         }
         collector.delayed_decs = next_delayed;
         collector.root_decs = roots.clone();
+        collector.root_decs.append(&mut collector.resync_root_decs);
         incs.extend(roots);
         // `incs` and `decs` are popped from the end; order within each
         // does not matter.
@@ -716,14 +732,21 @@ impl Cascade {
                 word.set(ZCT).with_state(OwnershipState::Retiring),
             )
         };
+        if word.is(CYCLE) {
+            // Queued when its cycle set is released (validation never
+            // accepts a zero-count member), so it is never queued twice.
+            return;
+        }
         collector.retire.push(object);
         collector.retiring_bytes += unsafe { payload_size(object) };
     }
 
-    fn check_zero(&self, collector: &mut Collector, object: usize) {
+    /// Examines a newly published object: retired at zero, a cycle
+    /// candidate otherwise.
+    fn check(&self, collector: &mut Collector, object: usize) {
         let word = unsafe { word_of(object) };
-        if word.is_tracked() && word.count() == 0 && !word.is(ZCT) {
-            self.retire(collector, object, word);
+        if word.is_tracked() {
+            self.after_dec(collector, object, word);
         }
     }
 
@@ -746,15 +769,14 @@ impl Cascade {
             if word.count() > 0 {
                 collector.retiring_bytes -= size;
                 collector.stats.resurrections += 1;
-                unsafe {
-                    set_word(
-                        object,
-                        word.clear(ZCT).with_state(OwnershipState::Shared),
-                    )
-                };
+                let word = word.clear(ZCT).with_state(OwnershipState::Shared);
+                unsafe { set_word(object, word) };
+                // As after any decrement that leaves a positive count.
+                self.after_dec(collector, object, word);
             } else if word.is(CYCLE) {
-                // Its cycle set is validated or released first; the release
-                // puts it back.
+                // Not reachable (`retire` does not queue cycle-set members);
+                // kept as a guard: its cycle set's release queues it.
+                debug_assert!(false, "a cycle-set member in the retire list");
                 collector.retiring_bytes -= size;
             } else if unsafe { host_roots(object) } > 0 {
                 collector.retiring_bytes -= size;
@@ -920,12 +942,37 @@ impl Cascade {
             collector.stats.cycle_reclaimed += members.len() as u64;
         } else {
             collector.stats.cycle_sets_rejected += 1;
+            // One live member rejects the whole set, but the set may also
+            // hold garbage cycles no later decrement would queue again:
+            // members that passed both tests on their own become candidates
+            // again (a live one turns black in the next pass).
+            let set: FxHashSet<usize> = members.iter().copied().collect();
+            let mut internal: FxHashMap<usize, u32> = FxHashMap::default();
             for &member in &members {
-                let word = unsafe { word_of(member) }.clear(CYCLE);
+                unsafe {
+                    children_of(member, &mut |child| {
+                        if set.contains(&child) {
+                            *internal.entry(child).or_default() += 1;
+                        }
+                    })
+                };
+            }
+            *work += members.len();
+            for &member in &members {
+                let word = unsafe { word_of(member) };
+                let passed = !word.is(TOUCHED)
+                    && !word.is(ZCT)
+                    && word.count() > 0
+                    && word.count() == internal.get(&member).copied().unwrap_or(0);
+                let word = word.clear(CYCLE);
                 unsafe { set_word(member, word) };
                 if word.is(ZCT) {
                     collector.retire.push(member);
                     collector.retiring_bytes += unsafe { payload_size(member) };
+                } else if passed && !word.is(BUFFERED) {
+                    unsafe { set_word(member, word.set(BUFFERED)) };
+                    collector.candidates.insert(member);
+                    collector.candidate_bytes += unsafe { payload_size(member) };
                 }
             }
         }
@@ -955,44 +1002,65 @@ impl Cascade {
         let mut collector = self.collector.lock();
         let collector = &mut *collector;
 
+        // Every object some dropped piece of work mentions is examined
+        // again at the next boundary (if it survived): a dropped decrement
+        // or snapshot decrement may have been what would have made it a
+        // cycle candidate, and a conservatively retained garbage object
+        // must not fall out of every queue. Only addresses are collected
+        // here; objects the sweep freed are never dereferenced.
+        let mut recheck: Vec<usize> = Vec::new();
+
         // Logged operations describe changes the heap already shows, so
         // they are dropped. Root snapshots handed over but not applied yet
         // still protect what their threads hold at the next boundary (those
         // threads will not hand over another one for it), so packets that
         // carry one are kept, emptied of operations. Held packets' snapshots
         // were already applied.
-        collector.held.clear();
+        for packet in collector.held.drain(..) {
+            recheck.extend(packet.decs);
+            recheck.extend(packet.checks);
+        }
+        let mut kept_packets = Vec::new();
         for mut packet in self.epochs.drain() {
             packet.incs.clear();
-            packet.decs.clear();
-            packet.checks.clear();
+            recheck.append(&mut packet.decs);
+            recheck.append(&mut packet.checks);
             if packet.roots.is_some() || packet.standing != Standing::Keep {
-                self.epochs.push(packet);
+                kept_packets.push(packet);
             }
         }
-        if let Phase::Boundary { boundary, .. } = collector.phase {
+        if let Phase::Boundary {
+            boundary,
+            decs,
+            checks,
+            ..
+        } = std::mem::replace(&mut collector.phase, Phase::Idle)
+        {
+            recheck.extend(decs);
+            recheck.extend(checks);
             collector.completed = boundary;
             self.epochs.finish_boundary(boundary);
         }
-        collector.phase = Phase::Idle;
-        collector.delayed_decs.clear();
-        collector.root_decs.clear();
-        collector.pending_checks.clear();
-        collector.retire.clear();
-        collector.candidates.clear();
-        collector.pending_cycle = None;
+        recheck.append(&mut collector.delayed_decs);
+        recheck.append(&mut collector.root_decs);
+        recheck.append(&mut collector.pending_checks);
+        recheck.append(&mut collector.retire);
+        recheck.extend(collector.candidates.drain());
+        if let Some(pending) = collector.pending_cycle.take() {
+            recheck.extend(pending.members);
+        }
         collector.retiring_bytes = 0;
         collector.candidate_bytes = 0;
-        for thread in self.threads.lock().iter() {
+        let threads = self.threads.lock();
+        for thread in threads.iter() {
             let local = thread.local();
             local.incs.clear();
-            local.decs.clear();
-            local.checks.clear();
-            local.zct.clear();
-            local.candidates.clear();
+            recheck.append(&mut local.decs);
+            recheck.append(&mut local.checks);
         }
 
         let mut tracked = Vec::new();
+        let mut survivors: FxHashSet<usize> = FxHashSet::default();
         inner.for_each_object(|header| {
             let object = header.as_ptr() as usize;
             let word = word_of(object);
@@ -1005,6 +1073,7 @@ impl Cascade {
                 }
                 set_word(object, word);
                 tracked.push(object);
+                survivors.insert(object);
             }
         });
         for &object in &tracked {
@@ -1015,12 +1084,65 @@ impl Cascade {
                 }
             });
         }
+        // The recount applied every decrement at once, including the ones
+        // the epoch scheme delays so that a thread which loaded an object
+        // after its last snapshot stays covered until its next one. Restore
+        // that cover with a snapshot of every thread's exact local
+        // references (the world is stopped), applied now and released only
+        // after the first boundary whose snapshots all postdate this point.
+        recheck.append(&mut collector.resync_root_decs);
+        for thread in threads.iter() {
+            for &object in thread.local().holds.keys() {
+                let word = word_of(object);
+                if word.is_published() {
+                    set_word(object, word.inc());
+                    collector.resync_root_decs.push(object);
+                }
+            }
+        }
         for &object in &tracked {
             let word = word_of(object);
             if word.is_published() && word.count() == 0 {
                 collector.pending_checks.push(object);
             }
         }
+        for object in recheck {
+            if survivors.contains(&object) && word_of(object).is_published() {
+                collector.pending_checks.push(object);
+            }
+        }
+        // A snapshot may name an object its thread dropped since, which the
+        // sweep may have freed: keep only survivors.
+        for mut packet in kept_packets {
+            if let Some(roots) = &mut packet.roots {
+                roots.retain(|o| survivors.contains(o));
+            }
+            self.epochs.push(packet);
+        }
+        for roots in collector.standing.values_mut() {
+            roots.retain(|o| survivors.contains(o));
+        }
+
+        // The owners' queues keep their surviving unpublished entries, with
+        // their flags restored (the owner re-examines them).
+        for thread in threads.iter() {
+            let local = thread.local();
+            local.zct.retain(|o| survivors.contains(o));
+            local.zct.sort_unstable();
+            local.zct.dedup();
+            for &object in &local.zct {
+                let word = word_of(object);
+                if !word.is_published() {
+                    set_word(object, word.set(ZCT));
+                }
+            }
+            local.candidates.retain(|o| survivors.contains(o));
+            local.candidates.retain(|&o| !word_of(o).is_published());
+            for &object in &local.candidates {
+                set_word(object, word_of(object).set(BUFFERED));
+            }
+        }
+        drop(threads);
         collector.stats.resyncs += 1;
         self.deferred_bytes.store(0, Ordering::Relaxed);
     }

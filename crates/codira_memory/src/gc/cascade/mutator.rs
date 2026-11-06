@@ -167,14 +167,26 @@ impl Mutator {
         }
         local.holds.remove(&object);
         let word = unsafe { word_of(object) };
-        if !word.is_published() && word.count() == 0 && !word.is(ZCT) {
-            unsafe {
-                set_word(
-                    object,
-                    word.set(ZCT).with_state(OwnershipState::Retiring),
-                )
-            };
-            local.zct.push(object);
+        if word.is_published() {
+            // The root snapshots stop mentioning it; the collector's
+            // decrement of the last snapshot queues it.
+            return;
+        }
+        if word.count() == 0 {
+            if !word.is(ZCT) {
+                unsafe {
+                    set_word(
+                        object,
+                        word.set(ZCT).with_state(OwnershipState::Retiring),
+                    )
+                };
+                local.zct.push(object);
+            }
+        } else if !word.is(BUFFERED) && !word.is(ZCT) && !word.is_sticky() {
+            // The local reference was external to any cycle through the
+            // object: it may have been the last one.
+            unsafe { set_word(object, word.set(BUFFERED)) };
+            local.candidates.insert(object);
         }
     }
 
@@ -369,7 +381,12 @@ impl Mutator {
             if word.is(BUFFERED) {
                 local.candidates.remove(&object);
             }
-            if word.count() == 0 {
+            // The collector examines the root and every zero-count object
+            // at the next boundary: a zero is retired, any other count makes
+            // the object a cycle candidate. Without this, an object
+            // published and dropped before any root snapshot named it would
+            // never be looked at again if only a cycle keeps its count up.
+            if word.count() == 0 || object == root {
                 local.checks.push(object);
             }
             // A local zero-count entry is skipped once published.
@@ -495,10 +512,17 @@ impl Mutator {
             let held = self.local().holds.contains_key(&object);
             if word.count() > 0 || held || word.borrows() > 0 || unsafe { host_roots(object) } > 0
             {
-                // Still referenced; a later release queues it again.
+                // Still referenced. A later release of a local reference or
+                // borrow queues it again; but a count that rose from zero
+                // while it was queued here may now be kept up by a cycle
+                // through it, so it becomes a cycle candidate.
                 let mut word = word.clear(ZCT);
                 if word.state() == OwnershipState::Retiring {
                     word = word.with_state(OwnershipState::Shared);
+                }
+                if word.count() > 0 && !held && !word.is(BUFFERED) && !word.is_sticky() {
+                    word = word.set(BUFFERED);
+                    self.local().candidates.insert(object);
                 }
                 unsafe { set_word(object, word) };
                 continue;
