@@ -1896,8 +1896,13 @@ fn filtered_float_lit(str: &str, suffix: Option<&str>, base: u32) -> (Literal, V
         LiteralFloatKind::Unsuffixed
     };
 
+    // The lexer accepts an exponent without digits (`5e`), which is not a
+    // number: report it as a malformed literal.
     let value = if base == 10 {
-        f64::from_str(str).expect("could not parse floating point number, this is definitely a bug")
+        f64::from_str(str).unwrap_or_else(|_| {
+            errors.push(LiteralError::LexerError);
+            0.0
+        })
     } else {
         0.0
     };
