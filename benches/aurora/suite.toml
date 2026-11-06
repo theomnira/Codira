@@ -71,3 +71,18 @@ kernels = [
   { name = "range_filter_map_sum" },
   { name = "chain_filter_count", note = "C++ has no `views::concat` before C++26; it is two loops." },
 ]
+
+[[workload]]
+name = "loops"
+title = "Numeric loops and calls"
+kernels = [
+  { name = "sum_for", ci = true },
+  { name = "sum_indexed" },
+  { name = "store_field", ci = true },
+  { name = "copy_plus_one", ci = true },
+  { name = "fib_32", ci = true },
+  { name = "sieve_20m" },
+  { name = "mandelbrot", ci = true },
+  { name = "matmul_200" },
+  { name = "collatz_1m" },
+]
