@@ -110,9 +110,9 @@ pub(crate) struct Heap {
 impl Heap {
     pub(crate) fn new() -> Self {
         let reference = Type::new_struct(
-            "codira.object",
+            "<object>",
             Layout::from_size_align(0, 1).expect("an empty layout"),
-            Guid::from_str("codira.object"),
+            Guid::from_str("<object>"),
             Vec::new(),
             StructMemoryKind::Gc,
         );
