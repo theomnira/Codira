@@ -34,7 +34,7 @@ pub use crate::{
     diagnostics::{Diagnostic, DiagnosticSink},
     display::HirDisplay,
     expr::{
-        opened_session, ArithOp, BinaryOp, Body, BodyContracts, CmpOp, Expr, ExprId, ExprScopes,
+        direct_spawns, opened_session, ArithOp, BinaryOp, Body, BodyContracts, CmpOp, Expr, ExprId, ExprScopes,
         HandlerArm, Literal, LogicOp, LoopContract, MatchArm, MatchSource, Ordering, Pat, PatId,
         RecordLitField, SelectArm, SelectOp, SessionFlow, Statement, UnaryOp,
     },
@@ -49,7 +49,7 @@ pub use crate::{
         cast::{check_cast, CastCheck, CastOp, InvalidCastReason},
         error_conversions,
         lower::CallableDef,
-        main_result, result_variants, ClosureInfo, FloatTy, FnSig, InferenceResult, IntTy,
+        group_shape, main_result, result_variants, ClosureInfo, GroupShape, FloatTy, FnSig, InferenceResult, IntTy,
         MainResult, ResolveBitness, Substitution, Ty, TyKind, TypableDef, TypeWalk,
     },
     visibility::{HasVisibility, Visibility},

@@ -1,0 +1,149 @@
+---
+source: crates/codira_syntax/src/tests/parser.rs
+expression: "SourceFile::parse(r#\"\n        func run(n: i64) -> [i64] {\n            let xs = group {\n                spawn work(1)\n                spawn work(2)\n            }\n            if group { 1 }\n            let group = 3\n            group { spawn work(group) }\n        }\n        \"#,).debug_dump()"
+snapshot_kind: text
+---
+SOURCE_FILE@0..251
+  FUNCTION_DEF@0..242
+    WHITESPACE@0..9 "\n        "
+    FUNC_KW@9..13 "func"
+    WHITESPACE@13..14 " "
+    NAME@14..17
+      IDENT@14..17 "run"
+    PARAM_LIST@17..25
+      L_PAREN@17..18 "("
+      PARAM@18..24
+        BIND_PAT@18..19
+          NAME@18..19
+            IDENT@18..19 "n"
+        COLON@19..20 ":"
+        WHITESPACE@20..21 " "
+        PATH_TYPE@21..24
+          PATH@21..24
+            PATH_SEGMENT@21..24
+              NAME_REF@21..24
+                IDENT@21..24 "i64"
+      R_PAREN@24..25 ")"
+    WHITESPACE@25..26 " "
+    RET_TYPE@26..34
+      THIN_ARROW@26..28 "->"
+      WHITESPACE@28..29 " "
+      ARRAY_TYPE@29..34
+        L_BRACKET@29..30 "["
+        PATH_TYPE@30..33
+          PATH@30..33
+            PATH_SEGMENT@30..33
+              NAME_REF@30..33
+                IDENT@30..33 "i64"
+        R_BRACKET@33..34 "]"
+    WHITESPACE@34..35 " "
+    BLOCK_EXPR@35..242
+      L_CURLY@35..36 "{"
+      WHITESPACE@36..49 "\n            "
+      LET_STMT@49..139
+        LET_KW@49..52 "let"
+        WHITESPACE@52..53 " "
+        BIND_PAT@53..55
+          NAME@53..55
+            IDENT@53..55 "xs"
+        WHITESPACE@55..56 " "
+        EQ@56..57 "="
+        WHITESPACE@57..58 " "
+        GROUP_EXPR@58..139
+          GROUP_KW@58..63 "group"
+          WHITESPACE@63..64 " "
+          BLOCK_EXPR@64..139
+            L_CURLY@64..65 "{"
+            WHITESPACE@65..82 "\n                "
+            EXPR_STMT@82..95
+              SPAWN_EXPR@82..95
+                SPAWN_KW@82..87 "spawn"
+                WHITESPACE@87..88 " "
+                CALL_EXPR@88..95
+                  PATH_EXPR@88..92
+                    PATH@88..92
+                      PATH_SEGMENT@88..92
+                        NAME_REF@88..92
+                          IDENT@88..92 "work"
+                  ARG_LIST@92..95
+                    L_PAREN@92..93 "("
+                    LITERAL@93..94
+                      INT_NUMBER@93..94 "1"
+                    R_PAREN@94..95 ")"
+            WHITESPACE@95..112 "\n                "
+            SPAWN_EXPR@112..125
+              SPAWN_KW@112..117 "spawn"
+              WHITESPACE@117..118 " "
+              CALL_EXPR@118..125
+                PATH_EXPR@118..122
+                  PATH@118..122
+                    PATH_SEGMENT@118..122
+                      NAME_REF@118..122
+                        IDENT@118..122 "work"
+                ARG_LIST@122..125
+                  L_PAREN@122..123 "("
+                  LITERAL@123..124
+                    INT_NUMBER@123..124 "2"
+                  R_PAREN@124..125 ")"
+            WHITESPACE@125..138 "\n            "
+            R_CURLY@138..139 "}"
+      WHITESPACE@139..152 "\n            "
+      EXPR_STMT@152..166
+        IF_EXPR@152..166
+          IF_KW@152..154 "if"
+          WHITESPACE@154..155 " "
+          CONDITION@155..160
+            PATH_EXPR@155..160
+              PATH@155..160
+                PATH_SEGMENT@155..160
+                  NAME_REF@155..160
+                    IDENT@155..160 "group"
+          WHITESPACE@160..161 " "
+          BLOCK_EXPR@161..166
+            L_CURLY@161..162 "{"
+            WHITESPACE@162..163 " "
+            LITERAL@163..164
+              INT_NUMBER@163..164 "1"
+            WHITESPACE@164..165 " "
+            R_CURLY@165..166 "}"
+      WHITESPACE@166..179 "\n            "
+      LET_STMT@179..192
+        LET_KW@179..182 "let"
+        WHITESPACE@182..183 " "
+        BIND_PAT@183..188
+          NAME@183..188
+            IDENT@183..188 "group"
+        WHITESPACE@188..189 " "
+        EQ@189..190 "="
+        WHITESPACE@190..191 " "
+        LITERAL@191..192
+          INT_NUMBER@191..192 "3"
+      WHITESPACE@192..205 "\n            "
+      GROUP_EXPR@205..232
+        GROUP_KW@205..210 "group"
+        WHITESPACE@210..211 " "
+        BLOCK_EXPR@211..232
+          L_CURLY@211..212 "{"
+          WHITESPACE@212..213 " "
+          SPAWN_EXPR@213..230
+            SPAWN_KW@213..218 "spawn"
+            WHITESPACE@218..219 " "
+            CALL_EXPR@219..230
+              PATH_EXPR@219..223
+                PATH@219..223
+                  PATH_SEGMENT@219..223
+                    NAME_REF@219..223
+                      IDENT@219..223 "work"
+              ARG_LIST@223..230
+                L_PAREN@223..224 "("
+                PATH_EXPR@224..229
+                  PATH@224..229
+                    PATH_SEGMENT@224..229
+                      NAME_REF@224..229
+                        IDENT@224..229 "group"
+                R_PAREN@229..230 ")"
+          WHITESPACE@230..231 " "
+          R_CURLY@231..232 "}"
+      WHITESPACE@232..241 "\n        "
+      R_CURLY@241..242 "}"
+  WHITESPACE@242..251 "\n        "

@@ -13,7 +13,7 @@ mod resolve;
 
 use std::{fmt, iter::FromIterator, mem, ops::Deref, sync::Arc};
 
-pub use infer::{error_conversions, main_result, result_variants, MainResult};
+pub use infer::{error_conversions, group_shape, main_result, result_variants, GroupShape, MainResult};
 pub(crate) use infer::{infer_query, substitute_type_params};
 pub use infer::{ClosureInfo, InferenceResult};
 pub use lower::TypableDef;

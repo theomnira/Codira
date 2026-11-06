@@ -134,6 +134,7 @@ impl ExprValidator<'_> {
             | Expr::Field { expr, .. }
             | Expr::Cast { expr, .. }
             | Expr::Scope { body: expr }
+            | Expr::Group { body: expr }
             | Expr::Spawn { call: expr }
             | Expr::ChannelReceive { channel: expr }
             | Expr::Unwrap { expr }

@@ -151,6 +151,24 @@ fn scopes_spawns_and_channels() {
 }
 
 #[test]
+fn task_groups() {
+    insta::assert_snapshot!(SourceFile::parse(
+        r#"
+        func run(n: i64) -> [i64] {
+            let xs = group {
+                spawn work(1)
+                spawn work(2)
+            }
+            if group { 1 }
+            let group = 3
+            group { spawn work(group) }
+        }
+        "#,
+    )
+    .debug_dump());
+}
+
+#[test]
 fn select_arms() {
     insta::assert_snapshot!(SourceFile::parse(
         r#"
