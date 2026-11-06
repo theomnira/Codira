@@ -673,8 +673,11 @@ Construction and conversion:
   hole is a variable optionally followed by fields, as in Rust's
   `format!("{x}")` -- no calls, no operators -- and is converted with
   `to_string()`, so it type-checks like that call (a hole of a type without
-  `to_string` is an error at the literal). `{{` and `}}` are literal braces.
-  The first piece becomes a `String` and the rest are appended to it.
+  `to_string` is an error at the literal; a type's own `to_string(self) ->
+  String` method counts). `{{` and `}}` are literal braces. The first piece
+  becomes a `String` and the rest are appended to it. A hole may carry a
+  format spec, `{x:>8.3}`, and `{x:?}` writes any value: see "Format specs
+  and the debug form" below.
 
 Operators: `a + b` (either side a `String` or a `str`; the result is a new
 `String`), `s += t` (`s` a `String` place, `t` a `String` or `str`), and
@@ -709,6 +712,112 @@ costs nothing):
 `insert`, `remove`, `reverse`, `count`, `compare`, `split_whitespace`,
 `string_from_code_point(s)`. `std.format.format` has `format(template,
 [args])`, `format_int(value, base)`, `hex`/`bin`/`oct` and padding.
+
+#### Format specs and the debug form
+
+```codira
+let x = 3.14159
+let n = 42
+let w = 9
+let name = "héllo"
+f"[{x:>10.3}]"          // "[     3.142]"
+f"[{n:08}] [{n:+}]"      // "[00000042] [+42]"
+f"[{n:*^9}] [{n:#x}]"    // "[***42****] [0x2a]"
+f"[{x:>{w}.2}]"         // "[     3.14]": a width (or precision) from a variable
+f"{x:e} {n:b}"           // "3.14159e0 101010"
+f"[{name:-<8.3}]"        // "[hél-----]": at most 3 chars, left-aligned in 8
+
+struct Point { x: i64, y: f64 }
+let p = Point { x: 1, y: 2.0 }
+f"{p:?}"                 // "Point { x: 1, y: 2.0 }"
+f"{p:#?}"                // the same, one field per line (Rust's `{:#?}`)
+p.debug_string()         // what `{p:?}` writes
+```
+
+A hole may carry a **format spec** after a colon, in Rust's grammar
+(`std::fmt`), with Python's braces for a width or precision held in a
+variable:
+
+```text
+spec      := [[fill] align] [sign] ['#'] ['0'] [width] ['.' precision] [type]
+fill      := any character but '{' and '}'
+align     := '<' | '^' | '>'
+sign      := '+'
+width     := integer | '{' name '}'
+precision := integer | '{' name '}'
+type      := '' | '?' | 'x' | 'X' | 'o' | 'b' | 'e' | 'E'
+```
+
+- What each part means is what it means in Rust: `<`, `^`, `>` align left,
+  centred (an odd fill character goes right) or right within `width`
+  characters, padding with `fill` (a space unless given); numbers align
+  right and everything else left by default. `+` prints the sign of a
+  non-negative number. `0` pads a number with zeros between its sign (and
+  prefix) and its digits, whatever the fill and alignment say. `#` adds
+  `0x`, `0o` or `0b` to `x`/`X`, `o`, `b` (`0x` for `X` too, as in Rust),
+  and makes `?` the pretty form `#?`. A float's precision is its digits
+  after the point, rounded as Rust's `format!` rounds (to nearest, ties to
+  even, on the exact binary value); a string's is the number of characters
+  kept. `e`/`E` is the exponent form of a float or an integer, with a
+  precision if given. The radix forms of a negative integer print its
+  type's bits (an `i8` holding -1 is `ff` under `x`), as Rust does.
+- Without a precision a float has the digits `to_string()` gives it
+  (`1.0`, `1e21`, shortest round trip: Rust's `{:?}`), so `{x:>8}` pads what
+  `{x}` writes.
+- A width or precision `{w}` names a variable, then fields (`{self.width}`),
+  of any integer type; a negative value counts as zero.
+- **Checked at compile time.** A spec that does not parse, or does not
+  apply to the hole's type, is an error at the literal that names the spec
+  and the type: ``the format spec `.2` does not apply to a `i64`: integers
+  have no precision``, ``invalid format spec: `>8z`: unknown format type
+  `z` ``. Integers take the radix and exponent forms but no precision;
+  floats take a precision and the exponent forms but no radix; strings and
+  `bool` take a fill, an alignment and a width (strings a precision too)
+  but no `+`, `0` or `#`; any other type takes only `?`. A value of a
+  generic type `T` takes only `?` (what else applies depends on `T`).
+- **The debug form, `{x:?}`, `{x:#?}` and `x.debug_string()`, exists for
+  every type** with nothing to write: numbers as `to_string()` writes them,
+  `bool`, strings quoted and escaped (`"tab\there \"q\""`: `\n`, `\r`,
+  `\t`, `\0`, `\\`, `\"`, other ASCII control characters as `\xNN`, the
+  rest as it is, so the text reads back as a Codira literal), `nil` or the
+  value of an optional, arrays `[1, 2]`, tuples `(1, true)` and `(7,)`,
+  structs and classes `Point { x: 1, y: 2.0 }` (a tuple struct `Pair(1,
+  2)`, a unit struct by its name), enums `Shape.Circle(2.0)` and
+  `Shape.Dot`, generic instantiations by their name (`Box { value: 3 }`),
+  a function value `<func>`, a channel `<channel>`. The text is the Codira
+  expression that builds the value. For structs, arrays and tuples of
+  numbers, `bool`s and strings that need no `\xNN` escape it is exactly
+  what Rust's `#[derive(Debug)]` writes, compact and pretty (the tests
+  compare the two); enums are written qualified, as Codira writes them
+  (Rust writes `Circle(2.0)`), an optional as its value or `nil` (Rust
+  writes `Some(..)`/`None`), and a string's control characters as `\xNN`
+  (Rust writes `\u{1}`). A user method called `debug_string` takes
+  precedence over the builtin one.
+- `{x:>20?}` pads the whole debug text (Rust pads each leaf field instead);
+  the debug form takes a fill, an alignment and a width, and `#`, but no
+  `+`, `0` or precision.
+- **Reference cycles**: a class instance met again while its own fields are
+  being written prints as `Node { .. }` instead of looping. An instance
+  reached twice without a cycle (shared, not nested) is written both times.
+  The runtime keeps the instances in progress on a per-thread stack.
+- **How it is built**: the compiler generates one debug function per type
+  in the module that needs it (`codira.debug:<type>`, private), from the
+  type alone, and a type that contains itself (through an array, a class
+  or an optional) gets a function that calls itself. Nothing at run time
+  inspects a type. A spec hole is one call to `codira.string_format_int`,
+  `_float` or `_text`, chosen by the type, with the spec passed as four
+  scalars; Rust's formatter makes the digits and the runtime pads them.
+- `x.type_name()` is the name of `x`'s type as a `str` constant (`FileError`,
+  `Box[i64]`, `[u8]`), chosen per instantiation; `std.error.error` records
+  it.
+- Tests: `crates/codira/tests/formatting.rs` prints every spec for seeded
+  random `i64`, `i8`, `u64`, `f64`, `f32`, `String` and `bool` values with
+  random widths and precisions and compares each line with Rust's
+  `format!` of the same spec; the runtime's own unit tests do the same on
+  thousands of values. Golden tests cover the debug form of nested types,
+  cycles and a type from another module; `codira_hir`'s
+  `builtin::format` and `ty::infer::format` tests cover the grammar and the
+  misuse errors.
 
 #### Safety
 
@@ -752,7 +861,9 @@ of a table hashed with it can make them all collide.
   `String`, the implicit `str`-to-`String` conversion, `+` and `+=`
   (counted as allocating even when the append fits), `chars`, `bytes`,
   `split`, `lines`, `to_upper`/`to_lower`, `replace`, `repeat`,
-  `string_from_utf8`, interpolation, and every method called on a `str`.
+  `string_from_utf8`, interpolation (a hole with a format spec and the
+  debug form included), `debug_string()`, and every method called on a
+  `str`.
   `len`, `is_empty`, comparisons, `find`/`rfind`/`contains`/
   `starts_with`/`ends_with`, `char_count`, `hash`, `parse_*` and the views
   (`trim*`, `slice`) allocate nothing. **Panics** (`@nopanic`): `slice` and
@@ -793,10 +904,38 @@ Rust's `push_str` inlines). See
 `crates/codira_runtime/README.md` ("Strings: measured against Rust") for the
 numbers, the machine, and both programs (`benches/strings/`).
 
+Format specs, measured against Rust's `format!` on the same values in a
+loop (`examples/format_bench/`: `src/mod.code` and `format_rust.rs`, which
+print the same check values), 1M formats per run, the median of 7 runs in
+each process and the median of 5 processes, interleaved:
+
+| hole | Codira | Rust | Codira / Rust |
+|---|---:|---:|---:|
+| `f"{x:>10.3}"`, a float | 261.2 ms | 184.3 ms | 1.42x |
+| `f"{n:08}"`, an `i64` | 102.7 ms | 42.1 ms | 2.44x |
+| `f"{p:?}"`, `Point { x: i64, y: f64 }` | 553.1 ms | 259.2 ms | 2.13x |
+
+The same machine as the String numbers (Intel Xeon @ 2.10 GHz, 4 vCPUs,
+Linux 6.18, Rust 1.97.1); the program built by a release build of `codira`
+with `-O 3`, the Rust one with `rustc -C opt-level=3`. The machine was
+shared with other builds while it ran (load average 3.6 to 3.9 on 4
+vCPUs), so the absolute times are noisy; the per-round ratios stayed within
+1.31x to 1.48x, 2.30x to 2.53x and 2.10x to 2.22x. A hole is one indirect
+call into the runtime, which formats with Rust's formatter into a
+thread-local buffer and then copies the text into a new `String` on the GC
+heap; the debug form of a struct is several appends (each a runtime call)
+and a `to_string()` per field. Where the time goes beyond that was not
+profiled.
+
 Not done yet: a `push_str` method (write `+=`); `match` on a `String`
 scrutinee; iterating a string directly (`for c in s.chars()` iterates the
 array of code points); a `char` type; Unicode case mapping and
-normalization; `format`-style width and precision in interpolation holes.
+normalization; expressions in holes (a hole is a name and fields); a
+user-defined debug form (the generated one cannot be overridden except by
+a method named `debug_string`, which `{x:?}` does not call); a precision
+for the debug form (`{x:.2?}`); `x?`/`X?` (hex debug); a `Display` trait
+(`to_string` is found by name); formatting in `codira run --jit` (such a
+program runs on LLVM, as every `String` program does).
 
 ### Integer arithmetic, shifts and casts
 
@@ -960,7 +1099,8 @@ let same = Shape.Point == p              // `==`/`!=`: see below
 - Not supported (each a clear error): braced variants
   (`Circle { radius: f64 }`), an enum containing itself by value (hold the
   recursion through a `class` or an array), variants as function values
-  (`let f = Shape.Circle`), printing an enum, and enums in
+  (`let f = Shape.Circle`), printing an enum with `print` (format it:
+  `f"{s:?}"` is `Shape.Circle(2.0)`), and enums in
   `codira run --jit`, the MIR/e-graph path and quantum kernels. The verifier
   treats a payload a pattern binds as an unknown value.
 - Hot reload: a stored enum keeps its tag and the slots whose names (`f64.0`,
@@ -1222,20 +1362,23 @@ func first_word(bytes: [u8]) -> usize? {
   (`Problem.Io(e)` above). This is what Rust's `From` implementations are
   written for, read off the declaration instead: nothing to write, decided
   at compile time, and two variants holding the same type are an error
-  naming both rather than a choice.
+  naming both rather than a choice. Or, third, `F` has an
+  `@error_conversion` that takes an `E`: the error leaves converted,
+  `AnyError.from_error(e)` (see "Errors with context" below).
 - On a `T?`, `x?` is the `T`, or returns `nil` from a function that
   returns an optional (of any payload).
 - Anything else is a compile error saying which rule is broken: `?` on a
   value that is neither, a function whose result is not a `Result`
   (resp. an optional), an error type that neither matches nor is wrapped
-  by exactly one variant.
+  by exactly one variant nor converted.
 - Which enums are a `Result`: any enum declared `Result` with exactly the
   variants `Ok(T)` and `Err(E)` -- the standard library's, or a program's
   own of that shape. A program's own `Result` and the standard one are
   different types; `?` never converts between them.
 - What it costs: a tag test and a branch, the error moved into the
   caller's `Err` (and its wrapping variant). No allocation, no call, no
-  unwinding.
+  unwinding. A converting `?` adds the conversion's call on the `Err` path
+  only (measured below).
 - An early return through `?` is a return, not a panic, for `@nopanic`
   and the other effect promises. The contract verifier checks
   `ensures` at every `?` as a return point; a postcondition about a
@@ -1248,9 +1391,135 @@ func first_word(bytes: [u8]) -> usize? {
   operator (`x??` is `(x?)?`); a `?` that begins a line is not postfix, so
   a `??` on a line of its own is still a hole. `T?` is a type, parsed by
   the type grammar.
-- Not yet: `?` in `main` (it returns nothing), a conversion other than
-  the variant wrapping above, and `codira run --jit` (Cranelift refuses
-  `?` and generic enums; the program runs on LLVM).
+- Not yet: a conversion between two different `Result` declarations,
+  and `codira run --jit` (Cranelift refuses `?` and generic enums; the
+  program runs on LLVM).
+
+#### Errors with context: `std.error.error`
+
+```codira
+import std.error.error.{AnyError, Error}
+import std.fs.file.{read_file}
+import std.result.result.{Result}
+
+struct Limit { max: i64, got: i64 }
+extend Limit: Error {                        // any type can be an `Error`
+    func message(self) -> String { f"{self.got} is over the limit of {self.max}" }
+}
+
+func load(path: str) -> Result[[u8], AnyError] {
+    read_file(path).context(f"reading {path}")      // FileError -> AnyError
+}
+
+func setup(path: str) -> Result[i64, AnyError] {
+    let bytes = load(path).context("loading the configuration")?
+    let n = bytes.len() as i64
+    if n > 100 {
+        let over: Result[i64, Limit] = Result.Err(Limit { max: 100, got: n })
+        return Result.Ok(over?)                     // Limit -> AnyError, by `?`
+    }
+    Result.Ok(n)
+}
+
+public func main() -> Result[(), AnyError] {
+    let n = setup("app.toml").context("starting")?
+    println(n)
+    Result.Ok(())
+}
+// With no app.toml, on standard error, and exit status 1:
+// Error: starting: loading the configuration: reading app.toml: file not found
+```
+
+For a function that can fail for many reasons its caller will not tell
+apart -- an application's, a test's -- `Result[T, AnyError]` and `?` say
+what went wrong and what was being done, without an error enum to write.
+Where the caller does decide by the cause, return the concrete error type
+(`FileError`) or an enum of them, as above; `AnyError` describes an error,
+it does not keep it.
+
+- **`Error`** is a trait: `message(self) -> String` says what went wrong
+  (a phrase, no trailing period: `"file not found"`); `source(self) ->
+  String?` (default `nil`) is the message of the error that caused this one,
+  for an error that wraps another; `into_any(self) -> AnyError` (default:
+  the message, the source and the type's name) is what the rest is built
+  on. Implement it with `extend MyError: Error { func message(self) ->
+  String { .. } }`. `std.fs.file`'s `FileError` (`file not found`,
+  `permission denied`, `is a directory`, `I/O error <code>`) and
+  `std.text.ascii`'s `ParseError` (`no digits`, `invalid digit at byte
+  <i>`, `number too large`) implement it.
+- **`AnyError`** is a plain value struct: the root cause's message, the
+  contexts added on the way out, and the name of the type of the error it
+  was made from (`x.type_name()`, a constant). `e.to_string()` (and so
+  `f"{e}"`) writes the chain outermost first, `starting: reading app.toml:
+  file not found`; `e.chain()` is the same as an array, `e.root_cause()` the
+  last part, `e.error_type()` the type's name as a `str?` (`FileError`, or
+  `nil` for `AnyError.new(message)`), and `e.context(what)` adds a context
+  to an `AnyError` itself. `AnyError` implements `Error` too, returning itself
+  from `into_any`, so contexts accumulate rather than nest.
+- **`r.context(what)`** on a `Result[T, E]` where `E: Error` is the
+  `Result[T, AnyError]` whose `Err` is the error with `what` as its
+  outermost context; an `Ok` is passed through. `what` is a `str` or a
+  `String` (anything implementing `ContextText`); a literal is copied into
+  the error only for an `Err`, an `f".."` is built before the call either
+  way. **`r.with_context(f)`** takes a `func() -> String` and calls it only
+  for an `Err`. On another `E` both are an error at the
+  call: ``the type `Oops` does not implement the trait `Error` ..``.
+- **`?` converts.** The third rule of `?`, after "the same type" and "the
+  one wrapping variant": when the function's error type `F` has an
+  associated function marked `@error_conversion` -- one parameter, returning
+  an `F` -- and the error can be passed to it, `?` passes `Err(e)` on as
+  `F.conversion(e)`. `AnyError` declares `@error_conversion func
+  from_error[E: Error](error: E) -> AnyError`, so in a function returning
+  `Result[_, AnyError]`, `?` takes an error of any `Error` type, and an
+  `AnyError` as it is (the first rule). The conversion is an ordinary
+  generic call, instantiated per error type and resolved at compile time;
+  a type its bounds rule out is an error at the `?`: ``?` cannot pass this
+  `Oops` error on as a `AnyError`: `AnyError.from_error` takes errors whose
+  type implements `Error`, and `Oops` does not; implement it with `extend
+  Oops: Error { .. }` ``. A program can declare a conversion for its own
+  type the same way; two marked conversions on one type, or one with the
+  wrong shape, are errors at the `?` that would use them.
+- **Why an attribute**: the rule is keyed on `@error_conversion`, not on a
+  type's name or module, so the compiler names no standard-library path,
+  and an unrelated function that happens to be called `from_error` is never
+  called behind the program's back. A rule keyed on a trait would need a
+  generic trait (`From[E]`), which the language does not have yet; the
+  attribute plus an ordinary generic bound (`[E: Error]`) expresses the
+  same thing, with the bound checked like any other (and reported at the
+  `?`).
+- **`main` may return `Result[T, E]`** (a `main` in the package's root
+  module). On an `Err` the program writes `Error: ` and the error to
+  standard error -- its type's `to_string()` when it has one (`AnyError`'s
+  writes the chain), a number's or string's text, the debug form otherwise
+  (`Error: Why.Code(7)`) -- flushes standard output first, and exits with
+  status 1. On an `Ok` it returns the `Ok` value to the host, which `codira
+  run` prints like any primitive result (nothing for `()`).
+- Effects: making an `AnyError` allocates (its message, its context
+  array), and `?` through a conversion is a call of it, so a function with
+  a converting `?` is not `@noalloc`; a wrapping or same-type `?` still
+  costs nothing.
+- **What it costs**, measured (`examples/error_bench/`: a `parse_i64` that
+  succeeds or fails, passed on by `?` from a function, 1M calls, the median
+  of 7 runs in each process and the median of 5 processes; the same machine
+  and release build as the format benchmark, load average 2.5 to 3.3):
+
+  | `?` passing on a `ParseError` | `Ok` | `Err` |
+  |---|---:|---:|
+  | wrapped in an enum variant (`Problem.Parse(e)`) | 5.1 ns | 5.4 ns |
+  | converted to an `AnyError` | 5.2 ns | 519 ns |
+  | `.context("parsing the answer")?` to an `AnyError` | 5.3 ns | 709 ns |
+
+  The `Ok` path is the same in all three: a tag test. The `Err` path of a
+  conversion builds the message (`invalid digit at byte 2`, an `f".."`) and
+  an `AnyError` on the GC heap, and a context copies its literal and makes
+  the one-element context array; an error is expected to be rare.
+- Not done: keeping the original error inside an `AnyError` (that needs
+  trait objects; only its message and type name are kept, so there is no
+  downcasting), a backtrace, `source` returning an error rather than its
+  message, `?` converting between two different `Result` declarations, and
+  `main` reporting an `Err` when it is not the root module's `main` (an
+  entry run with `codira run other_entry` that returns a `Result` is refused
+  by the host as a non-primitive result, as before).
 
 ### `match`
 
@@ -1985,7 +2254,7 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
   `crates/codira_compiler/tests/snapshots/stdlib_import_ratchet__stdlib_import_status.snap`
   (`stdlib_check_ratchet` checks `std/` as one package with its prelude,
   which is not what a program sees).
-- **Importable today** (34 of 94 modules), each run from a program in
+- **Importable today** (35 of 95 modules), each run from a program in
   `crates/codira/tests/std_imports.rs` against independently computed
   values, except `std.memory.page` and `std.builtin.type_aliases` (check,
   build and load; not run):
@@ -1999,6 +2268,10 @@ import std.memory.region.{Region, region_new, region_alloc, region_free}
     handling"), `std.fs.file` (`read_file(path) -> Result[[u8],
     FileError]`) and `std.text.ascii` (`next_word`, and `parse_i64` with
     a `ParseError` carrying the offending byte's index).
+  - `std.error.error`: the `Error` trait, `AnyError`, `context` and
+    `with_context` (see "Errors with context"), run by
+    `crates/codira/tests/error_context.rs`. `FileError` and `ParseError`
+    implement `Error`.
   - `std.bit.bit`, `std.bit.mask`: bit counts, reversal, byte swaps,
     rotations, masks and fields on `u64`/`u32`. Exact. `bit_ceil` needs a
     result that fits (`value` at most 2^63).
@@ -2097,7 +2370,10 @@ codira start target/mod.codiralib main          # run an already-built library
 `codira run` takes the same `--manifest-path`, `-O 0..3` and `--color`
 options as `build`. If the build reports an error, nothing is run. After the
 entry point returns, `run`/`start` print its value if it is a primitive
-(`bool`, any integer or float type); a `()` entry point prints nothing.
+(`bool`, any integer or float type); a `()` entry point prints nothing. A
+`main` returning a `Result[T, E]` returns its `Ok` value (printed the same
+way) or ends the program on an `Err` with `Error: ...` on standard error
+and exit status 1 (see "Errors with context").
 
 ### How a library is linked
 
@@ -3143,8 +3419,12 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   monomorphised per instantiation, with all of the above and bounded
   `extend` blocks (see "Generic enums")
 - `Result[T, E]` (`std.result.result`) and postfix `?` on `Result`s and
-  optionals, wrapping an error in the caller's error enum (see "Error
-  handling")
+  optionals, wrapping an error in the caller's error enum or converting it
+  through an `@error_conversion`; `std.error.error`'s `Error`, `AnyError`
+  and `context`; a `main` returning a `Result` (see "Error handling")
+- format specs in interpolation holes (`f"{x:>8.3}"`, checked at compile
+  time) and the debug form of every type (`f"{x:?}"`, `f"{x:#?}"`,
+  `x.debug_string()`), see "Strings"
 - generic functions, structs and classes, monomorphised per instantiation
   (see "Generics" above for the limits; generic functions are not exported
   to the host)
@@ -3161,7 +3441,7 @@ Verified through the full pipeline (parser → HIR → LLVM → link → run):
   `std.base64.base64`, `std.random.rng`, `std.sys.terminate`,
   `std.math.math`, `std.time.time`, `std.complex.complex`,
   `std.collections.optional`, `std.result.result`, `std.fs.file`,
-  `std.text.ascii`, `std.cmp.cmp`, and `Map`, `Set`, `Deque`,
+  `std.text.ascii`, `std.error.error`, `std.cmp.cmp`, and `Map`, `Set`, `Deque`,
   `BinaryHeap` and `Counter` in `std.collections` (see "Importing the standard library" for
   what is loaded, how it is linked, which modules qualify and why the
   others do not yet)
