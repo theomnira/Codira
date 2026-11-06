@@ -67,3 +67,11 @@ fn a_function_without_a_body_outside_an_extern_block() {
     assert_eq!(diagnostics("extern func g(x: u32) -> f32;"), "");
     assert_eq!(diagnostics("trait T { func f(self) -> i64; }"), "");
 }
+
+/// A tuple index too large for `usize` panicked parsing it.
+#[test]
+fn a_tuple_index_too_large_for_usize() {
+    rejected("func n{p.34028236692093846346");
+    let found = rejected("func f(t: (i64, i64)) -> i64 { t.340282366920938463463374607431768211456 }");
+    assert!(found.contains("non-existent field"), "{found}");
+}
