@@ -164,7 +164,7 @@ mod tests {
     func a(n: usize) -> [i64] { array_filled(0i64, n) }
     func b(n: usize) -> [f64] { array_filled(1.5, n) }
     func c(n: usize) -> [i64] { array_filled(0i64) }
-    func d(n: usize) -> [i64] { array_filled("x", n) }
+    func d(n: usize) -> [(str, i64)] { array_filled(("x", 1i64), n) }
     func e(c: bool, x: f64, y: f64) -> f64 { select(c, x, y) }
     func f(c: i64, x: f64, y: f64) -> f64 { select(c, x, y) }
     func g(x: f64, y: f64) -> f64 { select(true, x) }
@@ -181,11 +181,8 @@ mod tests {
             1,
             "{diags}"
         );
-        assert_eq!(
-            count("`array_filled` makes an array of integers, floats or `bool`s"),
-            1,
-            "{diags}"
-        );
+        // Any element type fills: `d` checks.
+        assert_eq!(count("array_filled` makes"), 0, "{diags}");
         assert_eq!(
             count("`select` takes a condition and two values, found 2 argument(s)"),
             1,
@@ -198,6 +195,6 @@ mod tests {
         );
         // `f` (integer condition), `j` (mixed widths) and `l` (integer hint)
         // are mismatches the unifier reports.
-        assert!(diags.lines().count() >= 7, "{diags}");
+        assert!(diags.lines().count() >= 6, "{diags}");
     }
 }

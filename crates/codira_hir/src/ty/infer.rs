@@ -2154,21 +2154,15 @@ impl InferenceResultBuilder<'_> {
                     }
                     return error_type();
                 }
+                // Any element type: the array holds `n` copies of the value
+                // (of the reference, for a class), written before its length
+                // is, so the collector never sees an unwritten element.
                 let elem_ty = self.infer_expr(args[0], &Expectation::none());
                 self.infer_expr(
                     args[1],
                     &Expectation::has_type(TyKind::Int(IntTy::usize()).intern()),
                 );
                 let elem_ty = self.normalize(&elem_ty);
-                if !is_plain_scalar(&elem_ty) && !elem_ty.is_unknown() {
-                    self.diagnostics.push(InferenceDiagnostic::ExprError {
-                        id: tgt_expr.into(),
-                        message: format!(
-                            "`array_filled` makes an array of integers, floats or `bool`s, not of `{}`",
-                            elem_ty.display(self.db)
-                        ),
-                    });
-                }
                 TyKind::Array(elem_ty).intern()
             }
             BuiltinFn::Select => {
