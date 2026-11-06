@@ -634,3 +634,19 @@ fn codira_run_with_env(dir: &std::path::Path, args: &[&str]) -> std::process::Ou
         .output()
         .unwrap()
 }
+
+/// A program whose only `String` is the copy a method on a `str` makes
+/// mentions the type nowhere else; it used to fail at load time with "Failed
+/// to link types: [core::String]".
+#[test]
+fn a_method_on_a_str_alone_links_the_string_type() {
+    let out = run_ok(
+        r#"
+public func main() {
+    println("a,b".find(",")!)
+    if let n = "x,y,z".rfind(",") { println(n) }
+}
+"#,
+    );
+    assert_eq!(out, "1\n3\n");
+}

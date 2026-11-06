@@ -36,9 +36,18 @@ pub(crate) fn needs_string_types(infer: &InferenceResult, expr: ExprId) -> bool 
 }
 
 /// The types the runtime's string functions are handed handles of: the
-/// `[u8]` buffer, `[String]` (`split`, `lines`) and `[u32]` (`chars`).
-pub(crate) fn runtime_types() -> [Ty; 3] {
-    [byte_array(), string_array(), code_point_array()]
+/// `[u8]` buffer, `[String]` (`split`, `lines`) and `[u32]` (`chars`), and
+/// `String` itself, the element of `[String]`. A program whose only `String`
+/// is the copy a method on a `str` makes (`"a,b".find(",")`) mentions no
+/// `String` anywhere else, and the runtime could not link `[String]` without
+/// its element type.
+pub(crate) fn runtime_types() -> [Ty; 4] {
+    [
+        byte_array(),
+        string_array(),
+        code_point_array(),
+        TyKind::String.intern(),
+    ]
 }
 
 /// `[String]`.

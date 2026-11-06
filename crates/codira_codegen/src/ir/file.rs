@@ -201,6 +201,15 @@ pub(crate) fn gen_file_ir<'ink>(
             collect_structural_types(code_gen.db, ty, &mut type_definitions);
         }
     }
+    // A string operation registers `[String]` with the runtime even when no
+    // expression of the group has the type `String` (`"a,b".find(",")` only
+    // copies a `str` into one): export `String` with it, or the runtime
+    // cannot link the array's element type.
+    let string = codira_hir::TyKind::String.intern();
+    let string_id = code_gen.hir_types.type_id(&string);
+    if group_ir.type_table.entries().iter().any(|id| **id == *string_id) {
+        type_definitions.insert(string);
+    }
 
     let external_globals = {
         let alloc_handle = group_ir
