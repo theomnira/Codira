@@ -1,0 +1,32 @@
+# The AURORA benchmark suite: every workload and kernel `scripts/bench.py`
+# runs. A workload is a directory holding a Codira package (`codira.toml`,
+# `src/mod.code`), a Rust baseline (`<name>.rs`, or a Cargo project named by
+# `rust_cargo`) and a C++ baseline (`<name>.cpp`). A kernel is one public
+# function of the Codira program and one command-line argument of the
+# baselines; all of them print the same check value.
+#
+# Kernel keys:
+#   name           the function / argument
+#   ci = true      part of the CI subset (`--suite ci`)
+#   heap_limit_mb  the Codira GC heap cap for this kernel (default below)
+#   codira | rust | cpp = "reason"   that variant does not exist, and why
+#   note           shown under the workload's table
+
+[defaults]
+heap_limit_mb = 1024
+runs = 11
+ci_runs = 9
+compile_runs = 5
+
+[[workload]]
+name = "strings"
+title = "Strings: append, concatenation, splitting, search, parsing"
+kernels = [
+  { name = "append_short", ci = true },
+  { name = "append_numbers", ci = true },
+  { name = "concat", ci = true },
+  { name = "split_lines" },
+  { name = "split_fields", ci = true },
+  { name = "find_10mb" },
+  { name = "parse_i64" },
+]

@@ -1,0 +1,106 @@
+// AURORA: strings. Appending, concatenating, splitting, searching and
+// parsing, against `strings.rs` (Rust `String`/`&str`) and `strings.cpp`
+// (`std::string`/`std::string_view`), which do the same work on the same
+// text and print the same check values. Each public function is one kernel;
+// `scripts/bench.py` runs each in a process of its own and reads the line
+// `@@ ns=<kernel time> check=<check value>`. Setting up the input is not
+// timed.
+
+extern "C" {
+    func codira_time_monotonic_ns() -> u64;
+}
+
+func now() -> u64 { codira_time_monotonic_ns() }
+
+func report(start: u64, check: u64) {
+    let ns = now() - start
+    println("@@ ns=", ns, " check=", check)
+}
+
+// 1M appends of a 5-byte literal with `+=` (in place).
+public func append_short() {
+    let start = now()
+    var words = "".to_string()
+    var i = 0
+    while i < 1000000 {
+        words += "word "
+        i += 1
+    }
+    report(start, words.len() as u64)
+}
+
+// 1M integers formatted and appended, each followed by a line feed.
+public func append_numbers() {
+    let start = now()
+    var numbers = "".to_string()
+    var i = 0
+    while i < 1000000 {
+        numbers += i.to_string()
+        numbers += "\n"
+        i += 1
+    }
+    report(start, numbers.len() as u64)
+}
+
+// 1M new strings, each `a + "/" + b` of two of 64 names.
+public func concat() {
+    let names: [String] = []
+    var k = 0
+    while k < 64 {
+        names.push(f"name{k}")
+        k += 1
+    }
+    let start = now()
+    var check: u64 = 0
+    var i = 0
+    while i < 1000000 {
+        let t = names[(i & 63) as usize] + "/" + names[((i * 7) & 63) as usize]
+        check += t.len() as u64 + t.byte_at(t.len() - 1) as u64
+        i += 1
+    }
+    report(start, check)
+}
+
+// A 10 MB text split into its 205,600 lines (views).
+public func split_lines() {
+    let text = "the quick brown fox jumps over the lazy dog 012345\n".repeat(205600)
+    let start = now()
+    let lines = text.lines()
+    report(start, lines.len() as u64)
+}
+
+// 1M comma-separated fields split, and their lengths summed.
+public func split_fields() {
+    let text = "alpha,beta,gamma,delta,".repeat(250000)
+    let start = now()
+    let parts = text.split(",")
+    var total: u64 = 0
+    for p in parts { total += p.len() as u64 }
+    report(start, parts.len() as u64 * 1000000 + total)
+}
+
+// `find` of a needle at the end of 10 MB of "ab".
+public func find_10mb() {
+    let hay = "ab".repeat(5000000) + "needle"
+    let start = now()
+    let at = hay.find("needle")!
+    report(start, at as u64)
+}
+
+// 1M decimal integers parsed from their lines.
+public func parse_i64() {
+    var numbers = "".to_string()
+    var i = 0
+    while i < 1000000 {
+        numbers += i.to_string()
+        numbers += "\n"
+        i += 1
+    }
+    let fields = numbers.lines()
+    let start = now()
+    var sum = 0i64
+    for field in fields {
+        sum += field.parse_i64()!
+    }
+    report(start, sum as u64)
+}
