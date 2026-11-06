@@ -60,9 +60,14 @@ use crate::ir::array::RuntimeArrayValue;
 
 /// Where the elements of a pipeline come from, evaluated.
 enum Source<'ink> {
+    /// An array, its length when the pipeline starts, and its element
+    /// buffer loaded once when nothing in the loop can change an array (see
+    /// `is_pure_pipeline`); otherwise every element is read as `for x in xs`
+    /// reads it.
     Array {
         array: RuntimeArrayValue<'ink>,
         len: IntValue<'ink>,
+        elements: Option<PointerValue<'ink>>,
     },
     Range {
         start: IntValue<'ink>,
@@ -84,6 +89,7 @@ enum Cursor<'ink> {
     Array {
         array: RuntimeArrayValue<'ink>,
         len: IntValue<'ink>,
+        elements: Option<PointerValue<'ink>>,
         index: PointerValue<'ink>,
     },
     Range {
@@ -191,7 +197,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         receiver: ExprId,
         args: &[ExprId],
     ) -> Option<BasicValueEnum<'ink>> {
-        let flow = self.build_flow(receiver)?;
+        let pure = self.is_pure_pipeline(receiver)
+            && op
+                .closure_arg()
+                .is_none_or(|index| self.is_pure_closure(args[index]));
+        let flow = self.build_flow(receiver, pure)?;
         let elem_ty = match self.infer[receiver].interned() {
             TyKind::Iter(elem) => elem.clone(),
             _ => unreachable!("inference types a pipeline as `Iter[T]`"),
@@ -230,7 +240,8 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                 stages: Vec::new(),
             }
         } else {
-            self.build_flow(iterable)?
+            // The body is user code: it may change the arrays.
+            self.build_flow(iterable, false)?
         };
         let terminal = Terminal::Loop(pat, body);
         let done = self.context.append_basic_block(self.fn_value, "for.end");
@@ -246,8 +257,9 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     }
 
     /// Evaluates the pipeline `expr` (an `Iter[T]` expression): its source,
-    /// then the arguments of its stages, left to right.
-    fn build_flow(&mut self, expr: ExprId) -> Option<Flow<'ink>> {
+    /// then the arguments of its stages, left to right. `pure` says that no
+    /// code in the loop can change an array (`is_pure_pipeline`).
+    fn build_flow(&mut self, expr: ExprId, pure: bool) -> Option<Flow<'ink>> {
         let body = self.body.clone();
         let mut calls = Vec::new();
         let mut current = expr;
@@ -271,7 +283,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             }
         };
         calls.reverse();
-        let source = self.gen_source(source)?;
+        let source = self.gen_source(source, pure)?;
         let mut flow = Flow {
             source,
             reversed: false,
@@ -308,21 +320,20 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     Stage::Enumerate(index, self.pair_type(call))
                 }
                 PipelineOp::Zip => {
-                    let cursor = self.gen_cursor(args[0])?;
+                    let cursor = self.gen_cursor(args[0], pure)?;
                     Stage::Zip(cursor, self.pair_type(call))
                 }
                 PipelineOp::Chain => {
                     let other = if matches!(self.infer[args[0]].interned(), TyKind::Array(_)) {
                         let array_value = self.gen_expr(args[0])?;
                         let array = self.array_value(args[0], array_value);
-                        let len = self.array_len(array);
                         Flow {
-                            source: Source::Array { array, len },
+                            source: self.array_source(array, pure),
                             reversed: false,
                             stages: Vec::new(),
                         }
                     } else {
-                        self.build_flow(args[0])?
+                        self.build_flow(args[0], pure)?
                     };
                     Stage::Chain(Box::new(other))
                 }
@@ -347,7 +358,7 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
 
     /// Evaluates the source `expr` of a pipeline: a range, or the
     /// `x.iter()` call on an array or an iterator object.
-    fn gen_source(&mut self, expr: ExprId) -> Option<Source<'ink>> {
+    fn gen_source(&mut self, expr: ExprId, pure: bool) -> Option<Source<'ink>> {
         let body = self.body.clone();
         match &body[expr] {
             Expr::Range {
@@ -374,35 +385,142 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     });
                 }
                 let array = self.array_value(*receiver, value);
-                let len = self.array_len(array);
-                Some(Source::Array { array, len })
+                Some(self.array_source(array, pure))
             }
             _ => unreachable!("a pipeline starts at a range or an `iter()` call"),
         }
     }
 
+    /// An array as a source: its length now and, when `pure`, its element
+    /// buffer.
+    fn array_source(&mut self, array: RuntimeArrayValue<'ink>, pure: bool) -> Source<'ink> {
+        let len = self.array_len(array);
+        let elements = pure.then(|| array.get_elements(&self.builder));
+        Source::Array {
+            array,
+            len,
+            elements,
+        }
+    }
+
+    /// Whether nothing the loop of the pipeline `expr` runs can change an
+    /// array or reach a safepoint: no iterator object (its `next` is a
+    /// call), and every closure a literal compiled in place whose body is
+    /// pure (`is_pure_expr`). Then nothing can grow, shorten or move the
+    /// arrays it reads, so their lengths and element buffers can be loaded
+    /// once, before the loop -- what a Rust slice iterator does.
+    fn is_pure_pipeline(&self, expr: ExprId) -> bool {
+        let body = self.body.clone();
+        match (&body[expr], self.infer.builtin_call(expr)) {
+            (Expr::Range { .. }, _) => true,
+            (Expr::MethodCall { receiver, args, .. }, Some(BuiltinFn::Pipeline(op))) => {
+                if self.infer.iterator_next(expr).is_some() {
+                    return false;
+                }
+                let closure_ok = op
+                    .closure_arg()
+                    .is_none_or(|index| self.is_pure_closure(args[index]));
+                let operand_ok = !matches!(op, PipelineOp::Zip | PipelineOp::Chain)
+                    || matches!(self.infer[args[0]].interned(), TyKind::Array(_))
+                    || self.is_pure_pipeline(args[0]);
+                let receiver_ok = match self.infer[*receiver].interned() {
+                    TyKind::Iter(_) => self.is_pure_pipeline(*receiver),
+                    _ => true,
+                };
+                closure_ok && operand_ok && receiver_ok
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether `closure` is a literal compiled in place with a pure body.
+    fn is_pure_closure(&self, closure: ExprId) -> bool {
+        let body = self.body.clone();
+        if !codira_hir::is_inlined_closure_literal(&body, closure) {
+            return false;
+        }
+        let Expr::Closure { body: inner, .. } = &body[closure] else {
+            return false;
+        };
+        self.is_pure_expr(*inner)
+    }
+
+    /// Whether `expr` only computes: arithmetic, comparisons and logic on
+    /// scalars, fields, tuples, casts, reading array elements, `if`,
+    /// blocks with `let`s, unwrapping. No call, method call, assignment,
+    /// closure, allocation or string operation -- nothing that runs other
+    /// code, changes memory or reaches a safepoint.
+    fn is_pure_expr(&self, expr: ExprId) -> bool {
+        let body = self.body.clone();
+        let scalar = |ty: &Ty| {
+            matches!(
+                ty.interned(),
+                TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Tuple(..)
+            )
+        };
+        if self.infer.is_string_conversion(expr) || self.infer.function_value(expr).is_some() {
+            return false;
+        }
+        let own = match &body[expr] {
+            Expr::Literal(codira_hir::Literal::String(_)) => false,
+            Expr::Literal(_) | Expr::Path(_) | Expr::Missing => true,
+            Expr::BinaryOp {
+                lhs,
+                op: Some(op),
+                ..
+            } => {
+                !matches!(op, codira_hir::BinaryOp::Assignment { .. }) && scalar(&self.infer[*lhs])
+            }
+            Expr::UnaryOp { .. }
+            | Expr::Field { .. }
+            | Expr::Tuple(_)
+            | Expr::Cast { .. }
+            | Expr::If { .. }
+            | Expr::Unwrap { .. } => true,
+            Expr::Block { statements, .. } => statements.iter().all(|statement| match statement {
+                codira_hir::Statement::Let { initializer, .. } => initializer.is_some(),
+                codira_hir::Statement::Expr(_) => true,
+            }),
+            // A read, not a slice (which allocates).
+            Expr::Index { index, .. } => !matches!(body[*index], Expr::Range { .. }),
+            _ => false,
+        };
+        if !own {
+            return false;
+        }
+        let mut pure = true;
+        body[expr].walk_child_exprs(|child| pure &= self.is_pure_expr(child));
+        pure
+    }
+
     /// Evaluates the argument of `zip`: an array or a range, bare or with
     /// `.iter()`.
-    fn gen_cursor(&mut self, arg: ExprId) -> Option<Cursor<'ink>> {
+    fn gen_cursor(&mut self, arg: ExprId, pure: bool) -> Option<Cursor<'ink>> {
         let body = self.body.clone();
         let source = match (&body[arg], self.infer.builtin_call(arg)) {
             (Expr::MethodCall { receiver, .. }, Some(BuiltinFn::Pipeline(PipelineOp::Iter)))
                 if matches!(body[*receiver], Expr::Range { .. }) =>
             {
-                self.gen_source(*receiver)?
+                self.gen_source(*receiver, pure)?
             }
-            (Expr::Range { .. }, _) | (Expr::MethodCall { .. }, Some(_)) => self.gen_source(arg)?,
+            (Expr::Range { .. }, _) | (Expr::MethodCall { .. }, Some(_)) => {
+                self.gen_source(arg, pure)?
+            }
             _ => {
                 let array_value = self.gen_expr(arg)?;
                 let array = self.array_value(arg, array_value);
-                let len = self.array_len(array);
-                Source::Array { array, len }
+                self.array_source(array, pure)
             }
         };
         Some(match source {
-            Source::Array { array, len } => Cursor::Array {
+            Source::Array {
                 array,
                 len,
+                elements,
+            } => Cursor::Array {
+                array,
+                len,
+                elements,
                 index: self.new_state(len.get_type().const_zero().into(), "zip.index"),
             },
             Source::Range {
@@ -967,14 +1085,19 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
     ) -> BasicValueEnum<'ink> {
         let take = self.block("zip.take");
         match cursor {
-            Cursor::Array { array, len, index } => {
+            Cursor::Array {
+                array,
+                len,
+                elements,
+                index,
+            } => {
                 let j = self
                     .load_state(*index, len.get_type().into())
                     .into_int_value();
-                let in_range = self.gen_live_in_range(*array, j, *len);
+                let in_range = self.array_in_range(*array, *elements, j, *len);
                 self.branch_if(in_range, take, after);
                 self.builder.position_at_end(take);
-                let element = self.load_element(*array, j);
+                let element = self.array_element(*array, *elements, j);
                 self.bump(*index);
                 element
             }
@@ -1049,7 +1172,11 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
         body: &mut Sink<'_, 'ink, Self>,
     ) {
         match source {
-            Source::Array { array, len } => {
+            Source::Array {
+                array,
+                len,
+                elements,
+            } => {
                 let usize_ty = len.get_type();
                 let cond = self.block("pipe.cond");
                 let body_block = self.block("pipe.body");
@@ -1074,14 +1201,18 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     self.builder
                         .build_store(index, j)
                         .expect("failed to store an index");
-                    let current = self.array_len(*array);
-                    let live = self
-                        .builder
-                        .build_int_compare(IntPredicate::ULT, j, current, "live")
-                        .expect("failed to compare");
-                    self.branch_if(live, body_block, after);
+                    if elements.is_some() {
+                        self.jump(body_block);
+                    } else {
+                        let current = self.array_len(*array);
+                        let live = self
+                            .builder
+                            .build_int_compare(IntPredicate::ULT, j, current, "live")
+                            .expect("failed to compare");
+                        self.branch_if(live, body_block, after);
+                    }
                     self.builder.position_at_end(body_block);
-                    let element = self.load_element(*array, j);
+                    let element = self.array_element(*array, *elements, j);
                     if body(self, element, cond).is_some() {
                         self.jump(cond);
                     }
@@ -1090,10 +1221,10 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
                     self.jump(cond);
                     self.builder.position_at_end(cond);
                     let i = self.load_state(index, usize_ty.into()).into_int_value();
-                    let in_range = self.gen_live_in_range(*array, i, *len);
+                    let in_range = self.array_in_range(*array, *elements, i, *len);
                     self.branch_if(in_range, body_block, after);
                     self.builder.position_at_end(body_block);
-                    let element = self.load_element(*array, i);
+                    let element = self.array_element(*array, *elements, i);
                     self.bump(index);
                     if body(self, element, cond).is_some() {
                         self.jump(cond);
@@ -1344,6 +1475,49 @@ impl<'ink> BodyIrGenerator<'_, 'ink, '_> {
             .try_as_basic_value()
             .unwrap_basic()
             .into_int_value()
+    }
+
+    /// Whether `index` is still to be read from an array source: below the
+    /// length it started with and, unless its element buffer was loaded
+    /// once (nothing in the loop can change it), below its current length.
+    fn array_in_range(
+        &self,
+        array: RuntimeArrayValue<'ink>,
+        elements: Option<PointerValue<'ink>>,
+        index: IntValue<'ink>,
+        len: IntValue<'ink>,
+    ) -> IntValue<'ink> {
+        if elements.is_none() {
+            return self.gen_live_in_range(array, index, len);
+        }
+        self.builder
+            .build_int_compare(IntPredicate::ULT, index, len, "in_range")
+            .expect("failed to compare a loop index")
+    }
+
+    /// Element `index` of an array source, which `array_in_range` checked.
+    fn array_element(
+        &self,
+        array: RuntimeArrayValue<'ink>,
+        elements: Option<PointerValue<'ink>>,
+        index: IntValue<'ink>,
+    ) -> BasicValueEnum<'ink> {
+        let Some(elements) = elements else {
+            return self.load_element(array, index);
+        };
+        // Safety: `index` is below the length the array had when the
+        // pipeline started, and nothing in the loop can shorten it.
+        let ptr = unsafe {
+            self.builder
+                .build_gep(array.element_ty(), elements, &[index], "element_ptr")
+                .expect("failed to build GEP for an element")
+        };
+        let value = self
+            .builder
+            .build_load(array.element_ty(), ptr, "element")
+            .expect("failed to load an element");
+        crate::ir::array_tbaa::tag_value(value, crate::ir::array_tbaa::ArrayAccess::Element);
+        value
     }
 
     /// An `alloca` in the entry block holding `initial`, stored here.
