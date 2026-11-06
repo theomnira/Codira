@@ -44,6 +44,21 @@ Later commits of main were measured against the stored baseline:
   the last collection fell from 604 to 501 MiB), and JSON printing got
   faster: `print_canada` from 2.25x to 1.36x Rust's time.
 
+**`loops.store_field`, bisected** from `ea5aea347e` to main's tip
+(`f7edd949f4`) and `313030150d`: each commit's own compiler built the same
+program as a standalone executable, run interleaved on this machine. No
+step anywhere. With the load average under 1, all nine commits from
+`80babddeed` on took 23.9-24.7 ms (medians, overlapping intervals). The
+timed loop's `-O 2` IR is instruction for instruction the same over the
+whole range: per element it loads `acc.total`, adds and stores it back,
+and reloads the array's length. That is the 2.5x against Rust and C++,
+which keep the sum in a register, and it has not changed. The only IR
+changes in the function are the frame record's stores at entry
+(`241bb85d90` on) and the entry poll that `313030150d` removes. A failing
+gate for this kernel elsewhere points at a machine that differs from the
+baseline's: the ratio of a store-bound loop to a register loop depends on
+the CPU.
+
 **Relocation** (`CODIRA_GC_COMPACT=1`, experimental) on the workloads that
 fragment the heap, at `80babddeed`, 11 rounds with Codira and Rust (the
 ratios make the two runs comparable; they were not interleaved with each
