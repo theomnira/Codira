@@ -185,11 +185,11 @@ fn soak(heap_limit: Option<usize>) {
             requests += BATCH;
             seed += 1;
             if heap_limit.is_none() && seed % COLLECT_EVERY == 0 {
-                gc.collect();
+                gc.collect_blocking().unwrap();
             }
         }
         let seconds = start.elapsed().as_secs_f64();
-        gc.collect();
+        gc.collect_blocking().unwrap();
         windows.push(Window {
             requests,
             seconds,
@@ -267,7 +267,7 @@ fn finish(
     server: RootedStruct,
 ) {
     drop(server);
-    gc.collect();
+    gc.collect_blocking().unwrap();
     assert_eq!(gc.stats().allocated_memory, 0, "the server's state leaked");
 }
 

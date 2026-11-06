@@ -342,7 +342,7 @@ extern "C" fn stress_point(op: i64) -> i64 {
         if !gc.is_null() {
             // Safety: set to the runtime's collector, which outlives the
             // call into Codira code that called this.
-            unsafe { &*gc }.collect();
+            unsafe { &*gc }.collect_blocking().unwrap();
             POINT_COLLECTIONS.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -421,7 +421,7 @@ fn host_collector<'s>(
             if pause > 0 {
                 std::thread::sleep(pause_unit * pause);
             }
-            gc.collect();
+            gc.collect_blocking().unwrap();
             count.fetch_add(1, Ordering::Relaxed);
         }
     });
@@ -502,7 +502,7 @@ fn run_graphs(
 /// collection must free everything.
 fn assert_no_leak(driver: &CompileAndRunTestDriver) {
     let gc = driver.runtime.gc();
-    gc.collect();
+    gc.collect_blocking().unwrap();
     let left = GcRuntime::stats(gc).allocated_memory;
     assert_eq!(
         left, 0,
