@@ -125,6 +125,7 @@
 
 use std::{collections::BTreeSet, fmt, sync::Arc};
 
+use codira_syntax::SyntaxNodePtr;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
@@ -135,7 +136,6 @@ use crate::{
     verify::exec::Frame,
     ArrayMethod, BuiltinFn, CallableDef, HirDatabase, Name, StructMemoryKind, TyKind,
 };
-use codira_syntax::SyntaxNodePtr;
 
 #[cfg(test)]
 mod tests;
@@ -343,7 +343,12 @@ impl EscapeSummary {
     /// parameter escapes.
     fn unknown(arity: usize, why: &str) -> EscapeSummary {
         EscapeSummary {
-            params: vec![ParamEscape::Escapes(Reason::Unknown { what: why.to_string() }); arity],
+            params: vec![
+                ParamEscape::Escapes(Reason::Unknown {
+                    what: why.to_string()
+                });
+                arity
+            ],
             names: (0..arity).map(|i| format!("#{i}")).collect(),
         }
     }
@@ -445,10 +450,15 @@ pub(crate) fn escape_summary_query(db: &dyn HirDatabase, func: Function) -> Arc<
             let snapshot = current.clone();
             let result = analyze(db, member, &mut |callee| {
                 if members.contains(&callee) {
-                    Some(snapshot.get(&callee).cloned().unwrap_or_else(|| EscapeSummary {
-                        params: vec![ParamEscape::NoEscape; arity_of(db, callee)],
-                        names: Vec::new(),
-                    }))
+                    Some(
+                        snapshot
+                            .get(&callee)
+                            .cloned()
+                            .unwrap_or_else(|| EscapeSummary {
+                                params: vec![ParamEscape::NoEscape; arity_of(db, callee)],
+                                names: Vec::new(),
+                            }),
+                    )
                 } else {
                     Some((*db.escape_summary(callee)).clone())
                 }
@@ -687,11 +697,9 @@ impl Analysis<'_, '_> {
         }
         let index = self.sites.len() as u32;
         let fixed = fixed.or_else(|| {
-            self.context
-                .region
-                .map(|region| Reason::InsideOpaque {
-                    what: self.region_what(region),
-                })
+            self.context.region.map(|region| Reason::InsideOpaque {
+                what: self.region_what(region),
+            })
         });
         self.sites.push(SiteInfo {
             expr,
@@ -1056,7 +1064,10 @@ impl Analysis<'_, '_> {
                 self.in_loop(expr, |this| this.eval(*inner));
                 Objs::from([Obj::Unknown])
             }
-            Expr::While { condition, body: inner } => {
+            Expr::While {
+                condition,
+                body: inner,
+            } => {
                 self.in_loop(expr, |this| {
                     this.eval(*condition);
                     this.eval(*inner);
@@ -1080,7 +1091,11 @@ impl Analysis<'_, '_> {
                 });
                 Objs::new()
             }
-            Expr::Match { expr: scrutinee, arms, .. } => {
+            Expr::Match {
+                expr: scrutinee,
+                arms,
+                ..
+            } => {
                 let value = self.eval(*scrutinee);
                 let mut out = Objs::new();
                 for arm in arms {
@@ -1179,7 +1194,11 @@ impl Analysis<'_, '_> {
             }
             Expr::Tuple(elements) => Self::union(self.eval_all(elements)),
             Expr::Cast { expr: inner, .. } => self.eval(*inner),
-            Expr::Closure { body: inner, params, .. } => {
+            Expr::Closure {
+                body: inner,
+                params,
+                ..
+            } => {
                 if self.inlined.contains(&expr) {
                     // Compiled in place by the array method or pipeline
                     // stage around it, once per element: a loop. Its
@@ -1216,9 +1235,9 @@ impl Analysis<'_, '_> {
                 }
                 Objs::new()
             }
-            Expr::Handle { .. } => {
-                self.in_region(expr, |this| this.opaque_children(expr, Reason::InsideHandle))
-            }
+            Expr::Handle { .. } => self.in_region(expr, |this| {
+                this.opaque_children(expr, Reason::InsideHandle)
+            }),
             Expr::Spawn { .. } => {
                 self.in_region(expr, |this| this.opaque_children(expr, Reason::Spawned))
             }
@@ -1378,7 +1397,13 @@ impl Analysis<'_, '_> {
             Some(CallableDef::Struct(s)) => {
                 let values = self.eval_all(args);
                 if s.data(self.db).memory_kind == StructMemoryKind::Gc {
-                    let site = self.site(expr, AllocKind::Class { name: s.name(self.db) }, None);
+                    let site = self.site(
+                        expr,
+                        AllocKind::Class {
+                            name: s.name(self.db),
+                        },
+                        None,
+                    );
                     let target = Objs::from([site]);
                     for value in values {
                         self.store(&target, &value, None);
@@ -1388,10 +1413,7 @@ impl Analysis<'_, '_> {
                     Self::union(values)
                 }
             }
-            None => self.unknown_call(
-                expr,
-                "passed to a call the analysis cannot resolve",
-            ),
+            None => self.unknown_call(expr, "passed to a call the analysis cannot resolve"),
         }
     }
 
@@ -1409,12 +1431,12 @@ impl Analysis<'_, '_> {
             return Self::union(self.eval_all(args));
         }
         if crate::expr::opened_session(self.db, &self.frame.body, expr).is_some()
-            || matches!(
-                self.frame.infer[receiver].interned(),
-                TyKind::Session(..)
-            )
+            || matches!(self.frame.infer[receiver].interned(), TyKind::Session(..))
         {
-            return self.unknown_call(expr, "used by a session operation, which the analysis does not model");
+            return self.unknown_call(
+                expr,
+                "used by a session operation, which the analysis does not model",
+            );
         }
         match self.frame.infer.method_resolution(expr) {
             Some(f) => {
@@ -1456,7 +1478,9 @@ impl Analysis<'_, '_> {
 
     /// A call to the named function `callee` with the arguments' values.
     fn call(&mut self, _expr: ExprId, callee: Function, args: Vec<Objs>) -> Objs {
-        let summary = if callee.module(self.db) != self.func.module(self.db) && !callee.is_intrinsic(self.db) {
+        let summary = if callee.module(self.db) != self.func.module(self.db)
+            && !callee.is_intrinsic(self.db)
+        {
             // A hot reload can replace the callee's module without
             // recompiling this one.
             Some(EscapeSummary::unknown(
@@ -1471,7 +1495,10 @@ impl Analysis<'_, '_> {
         };
         let Some(summary) = summary else {
             // Listing callees only.
-            return Self::union(args).into_iter().chain([Obj::Unknown]).collect();
+            return Self::union(args)
+                .into_iter()
+                .chain([Obj::Unknown])
+                .collect();
         };
         let mut result = Objs::from([Obj::Unknown]);
         let arity_matches = summary.params.len() == args.len();
@@ -1610,7 +1637,12 @@ impl Analysis<'_, '_> {
     /// body as a loop. Its result is what the method does with it.
     fn inline_closure(&mut self, closure: ExprId, element: &Objs) -> Objs {
         let body = Arc::clone(&self.frame.body);
-        let Expr::Closure { params, body: inner, .. } = &body[closure] else {
+        let Expr::Closure {
+            params,
+            body: inner,
+            ..
+        } = &body[closure]
+        else {
             return self.eval(closure);
         };
         self.in_loop(closure, |this| {
@@ -1670,10 +1702,7 @@ impl Analysis<'_, '_> {
             self.escape(
                 &all,
                 Reason::Unknown {
-                    what: format!(
-                        "passed to a function value that `{}` calls",
-                        method.name()
-                    ),
+                    what: format!("passed to a function value that `{}` calls", method.name()),
                 },
             );
             return Objs::from([Obj::Unknown]);

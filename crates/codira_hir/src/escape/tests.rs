@@ -93,9 +93,7 @@ fn assert_escape(source: &str, name: &str, expected: &str) {
 
 #[test]
 fn local_object_goes_to_the_frame() {
-    let source = with_classes(
-        "func sum() -> i64 { let p = Point { x: 1, y: 2 }; p.x + p.y }",
-    );
+    let source = with_classes("func sum() -> i64 { let p = Point { x: 1, y: 2 }; p.x + p.y }");
     assert_eq!(placement_of(&source, "sum"), Placement::Frame);
 }
 
@@ -157,7 +155,10 @@ fn stored_into_a_heap_object_escapes() {
         }",
     );
     let out = placements(&source, "nest");
-    assert!(out.contains("[q]: escapes: stored into field `items` of a heap object"), "{out}");
+    assert!(
+        out.contains("[q]: escapes: stored into field `items` of a heap object"),
+        "{out}"
+    );
 }
 
 #[test]
@@ -378,7 +379,10 @@ fn arrays_of_known_small_length_go_to_the_frame() {
     );
     match placement_of(&source, "grown") {
         Placement::Heap(reason) => {
-            assert_eq!(reason.phrase(), "grown by `push`, which the runtime does on the heap")
+            assert_eq!(
+                reason.phrase(),
+                "grown by `push`, which the runtime does on the heap"
+            )
         }
         other => panic!("{other:?}"),
     }
@@ -396,17 +400,18 @@ fn elements_of_a_heap_array_are_on_the_heap() {
     );
     let out = placements(&source, "local");
     assert!(
-        out.contains("Point { x: 1, y: 2 }: escapes: stored into an object of array literal of 1 \
-                       elements, which is on the heap"),
+        out.contains(
+            "Point { x: 1, y: 2 }: escapes: stored into an object of array literal of 1 \
+                       elements, which is on the heap"
+        ),
         "{out}"
     );
 }
 
 #[test]
 fn derived_arrays_stay_on_the_heap() {
-    let source = with_classes(
-        "func double(xs: [i64]) -> i64 { let ys = xs.map(func(x) { x * 2 }); ys[0] }",
-    );
+    let source =
+        with_classes("func double(xs: [i64]) -> i64 { let ys = xs.map(func(x) { x * 2 }); ys[0] }");
     assert_eq!(
         placement_of(&source, "double"),
         Placement::Heap(Reason::RuntimeLength)
@@ -415,9 +420,7 @@ fn derived_arrays_stay_on_the_heap() {
 
 #[test]
 fn debug_printing_does_not_escape() {
-    let source = with_classes(
-        "func show() -> String { let p = Point { x: 1, y: 2 }; f\"{p:?}\" }",
-    );
+    let source = with_classes("func show() -> String { let p = Point { x: 1, y: 2 }; f\"{p:?}\" }");
     assert_eq!(placement_of(&source, "show"), Placement::Frame);
 }
 
