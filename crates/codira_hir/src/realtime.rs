@@ -798,7 +798,11 @@ impl Collector<'_> {
             ),
             Expr::Format { spec, .. } => self.source(
                 expr,
-                runtime(&[&rt::STRING_FORMAT_INT, &rt::STRING_FORMAT_FLOAT, &rt::STRING_FORMAT_TEXT]),
+                runtime(&[
+                    &rt::STRING_APPEND_FORMAT_INT,
+                    &rt::STRING_APPEND_FORMAT_FLOAT,
+                    &rt::STRING_APPEND_FORMAT_TEXT,
+                ]),
                 format!(
                     "formatting a hole (`{{..:{}}}`) builds a new `String` on the heap",
                     spec.text

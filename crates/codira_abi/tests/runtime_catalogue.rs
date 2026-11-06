@@ -23,6 +23,11 @@ const NOT_RUNTIME_FUNCTIONS: &[&str] = &[
     "codira.dso_fini",
     // The name of the global holding a string literal's bytes.
     "codira.str",
+    // Digit tables and the inline decimal writer the String Fabric format
+    // path emits into the module.
+    "codira.fmt.dec",
+    "codira.fmt.pairs",
+    "codira.fmt.pow10",
     "codira.fn_cell:",
     "codira.fn_code:",
 ];

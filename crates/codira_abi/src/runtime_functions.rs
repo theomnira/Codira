@@ -572,6 +572,49 @@ pub const STRING_CONCAT: RuntimeFunction = string_alloc(
     Unit,
     "A new `String` of `a` followed by `b`, written to `out`.",
 );
+/// `codira.string_with_capacity`.
+pub const STRING_WITH_CAPACITY: RuntimeFunction = string_alloc(
+    "codira.string_with_capacity",
+    with_alloc_out![("capacity", Usize)],
+    Unit,
+    "The empty `String` at the start of a new buffer with room for `capacity` bytes: the \
+     start of a compiled format plan.",
+);
+/// `codira.string_append_int`.
+pub const STRING_APPEND_INT: RuntimeFunction = string_alloc(
+    "codira.string_append_int",
+    with_alloc_out![
+        ("buf", Handle),
+        ("start", Usize),
+        ("len", Usize),
+        ("low", U64),
+        ("high", U64),
+        ("signed", U8),
+    ],
+    Unit,
+    "`buf/start/len` with the decimal digits of an integer (its halves and signedness) \
+     appended, in place when it can be: the slow path of `s += n.to_string()`.",
+);
+/// `codira.string_append_float`.
+pub const STRING_APPEND_FLOAT: RuntimeFunction = string_alloc(
+    "codira.string_append_float",
+    with_alloc_out![
+        ("buf", Handle),
+        ("start", Usize),
+        ("len", Usize),
+        ("value", F64),
+        ("is_f32", U8),
+    ],
+    Unit,
+    "`buf/start/len` with a float's `to_string()` appended, in place when it can be.",
+);
+/// `codira.string_find_byte`.
+pub const STRING_FIND_BYTE: RuntimeFunction = string_pure(
+    "codira.string_find_byte",
+    &[("data", ConstBytes), ("len", Usize), ("byte", U8)],
+    I64,
+    "The offset of the first `byte` in the `len` bytes at `data`, or -1 (`memchr`).",
+);
 /// `codira.string_eq`.
 pub const STRING_EQ: RuntimeFunction = string_pure(
     "codira.string_eq",
@@ -837,10 +880,13 @@ const fn format_alloc(
     RuntimeFunction::pure(symbol, Group::Format, params, ret, doc).allocating_gc()
 }
 
-/// `codira.string_format_int`.
-pub const STRING_FORMAT_INT: RuntimeFunction = format_alloc(
-    "codira.string_format_int",
+/// `codira.string_append_format_int`.
+pub const STRING_APPEND_FORMAT_INT: RuntimeFunction = format_alloc(
+    "codira.string_append_format_int",
     with_alloc_out![
+        ("buf", Handle),
+        ("start", Usize),
+        ("len", Usize),
         ("low", U64),
         ("high", U64),
         ("signed", U8),
@@ -851,13 +897,17 @@ pub const STRING_FORMAT_INT: RuntimeFunction = format_alloc(
         ("precision", I64),
     ],
     Unit,
-    "An integer (its halves, signedness and size in bits) written as a format spec says (a \
-     fill character, `FormatSpec::abi_flags`, a width and a precision), as a new `String`.",
+    "`buf/start/len` with an integer (its halves, signedness and size in bits) appended as \
+     a format spec says (a fill character, `FormatSpec::abi_flags`, a width and a \
+     precision), in place when it can be.",
 );
-/// `codira.string_format_float`.
-pub const STRING_FORMAT_FLOAT: RuntimeFunction = format_alloc(
-    "codira.string_format_float",
+/// `codira.string_append_format_float`.
+pub const STRING_APPEND_FORMAT_FLOAT: RuntimeFunction = format_alloc(
+    "codira.string_append_format_float",
     with_alloc_out![
+        ("buf", Handle),
+        ("start", Usize),
+        ("len", Usize),
         ("value", F64),
         ("is_f32", U8),
         ("fill", U32),
@@ -866,12 +916,16 @@ pub const STRING_FORMAT_FLOAT: RuntimeFunction = format_alloc(
         ("precision", I64),
     ],
     Unit,
-    "A float (an `f32` widened when `is_f32` is set) written as a format spec says.",
+    "`buf/start/len` with a float (an `f32` widened when `is_f32` is set) appended as a \
+     format spec says, in place when it can be.",
 );
-/// `codira.string_format_text`.
-pub const STRING_FORMAT_TEXT: RuntimeFunction = format_alloc(
-    "codira.string_format_text",
+/// `codira.string_append_format_text`.
+pub const STRING_APPEND_FORMAT_TEXT: RuntimeFunction = format_alloc(
+    "codira.string_append_format_text",
     with_alloc_out![
+        ("buf", Handle),
+        ("start", Usize),
+        ("len", Usize),
         ("data", ConstBytes),
         ("len", Usize),
         ("fill", U32),
@@ -880,7 +934,7 @@ pub const STRING_FORMAT_TEXT: RuntimeFunction = format_alloc(
         ("precision", I64),
     ],
     Unit,
-    "Text padded and truncated as a format spec says.",
+    "`buf/start/len` with text appended padded and truncated as a format spec says.",
 );
 /// `codira.debug_quote`.
 pub const DEBUG_QUOTE: RuntimeFunction = format_alloc(
@@ -1113,6 +1167,10 @@ pub const CATALOGUE: &[RuntimeFunction] = &[
     STRING_FROM_BYTES,
     STRING_APPEND,
     STRING_CONCAT,
+    STRING_WITH_CAPACITY,
+    STRING_APPEND_INT,
+    STRING_APPEND_FLOAT,
+    STRING_FIND_BYTE,
     STRING_EQ,
     STRING_CMP,
     STRING_HASH,
@@ -1140,9 +1198,9 @@ pub const CATALOGUE: &[RuntimeFunction] = &[
     STRING_CHARS,
     STRING_TO_BYTES,
     STRING_FROM_UTF8,
-    STRING_FORMAT_INT,
-    STRING_FORMAT_FLOAT,
-    STRING_FORMAT_TEXT,
+    STRING_APPEND_FORMAT_INT,
+    STRING_APPEND_FORMAT_FLOAT,
+    STRING_APPEND_FORMAT_TEXT,
     DEBUG_QUOTE,
     DEBUG_NEWLINE,
     DEBUG_ENTER,
