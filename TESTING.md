@@ -185,8 +185,12 @@ TSAN_OPTIONS="suppressions=$PWD/scripts/sanitizers/tsan.supp" RUSTC_BOOTSTRAP=1 
 - The TSan gate runs `codira_memory`'s tests and the runtime's threaded GC
   tests (`gc_threads`, `gc_stress` but its heap-limit test, which runs too
   slowly under TSan to reach the limit, and `strings_host_gc`). Its
-  suppression file holds one documented issue (below) and nothing else;
-  with it, these tests report no race.
+  suppression file holds one documented issue (below) and nothing else.
+  With it, `codira_memory`'s tests report no race on the current code;
+  `gc_threads` and `gc_stress` reported none on this branch before its
+  last rebase onto main (the heap-policy and scheduler work), and
+  `strings_host_gc` has not finished a TSan run yet (it is very slow
+  under TSan).
 
 Cannot catch: anything in generated Codira code (it is compiled by the
 Codira compiler, not instrumented), the runtime's C sources, and the
