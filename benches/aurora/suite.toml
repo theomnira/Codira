@@ -28,6 +28,8 @@ kernels = [
   { name = "append_numbers", ci = true },
   { name = "concat", ci = true },
   { name = "split_lines" },
+  { name = "lines_lazy" },
+  { name = "split_lazy_count", ci = true },
   { name = "split_fields", ci = true },
   { name = "find_10mb" },
   { name = "parse_i64" },
@@ -145,7 +147,7 @@ name = "channels"
 title = "Concurrent producers and consumers (bounded channels)"
 kernels = [
   { name = "spsc", ci = true, note = "Rust's `sync_channel` (from crossbeam) spins before it sleeps; the C++ queue is the textbook mutex and condition variables, which sleep and wake a thread for most messages. Rust is the strong baseline here." },
-  { name = "mpsc_4", ci = true },
+  { name = "mpsc_4", note = "Not in the CI subset: the C++ queue takes about 20 s here." },
   { name = "fan_out_in", note = "Bound by the latency of waking a worker: each job meets an empty channel." },
 ]
 

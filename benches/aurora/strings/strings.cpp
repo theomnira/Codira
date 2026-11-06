@@ -63,6 +63,35 @@ int main(int argc, char** argv) {
         auto start = now();
         auto ls = lines(text);
         report(start, ls.size());
+    } else if (k == "lines_lazy") {
+        std::string text = repeat("the quick brown fox jumps over the lazy dog 012345\n", 205600);
+        keep(text);
+        auto start = now();
+        uint64_t line_bytes = 0;
+        std::string_view rest = text;
+        while (!rest.empty()) {
+            size_t end = rest.find('\n');
+            std::string_view line = rest.substr(0, end);
+            if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+            line_bytes += line.size();
+            if (end == std::string_view::npos) break;
+            rest.remove_prefix(end + 1);
+        }
+        report(start, line_bytes);
+    } else if (k == "split_lazy_count") {
+        std::string text = repeat("the,quick,brown,fox,jumps,over,the,lazy,dog,012345\n", 205600);
+        keep(text);
+        auto start = now();
+        uint64_t count = 0;
+        std::string_view rest = text;
+        for (;;) {
+            size_t at = rest.find(',');
+            std::string_view field = rest.substr(0, at);
+            if (field.size() > 3) count++;
+            if (at == std::string_view::npos) break;
+            rest.remove_prefix(at + 1);
+        }
+        report(start, count);
     } else if (k == "split_fields") {
         std::string text = repeat("alpha,beta,gamma,delta,", 250000);
         keep(text);

@@ -43,6 +43,21 @@ fn main() {
             let lines: Vec<&str> = black_box(&text).lines().collect();
             report(start, lines.len() as u64);
         }
+        "lines_lazy" => {
+            let text = "the quick brown fox jumps over the lazy dog 012345\n".repeat(205_600);
+            let start = now();
+            let mut line_bytes = 0;
+            for line in black_box(&text).lines() {
+                line_bytes += line.len();
+            }
+            report(start, line_bytes as u64);
+        }
+        "split_lazy_count" => {
+            let text = "the,quick,brown,fox,jumps,over,the,lazy,dog,012345\n".repeat(205_600);
+            let start = now();
+            let long_fields = black_box(&text).split(',').filter(|w| w.len() > 3).count();
+            report(start, long_fields as u64);
+        }
         "split_fields" => {
             let text = "alpha,beta,gamma,delta,".repeat(250_000);
             let start = now();

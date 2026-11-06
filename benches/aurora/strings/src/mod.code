@@ -69,6 +69,27 @@ public func split_lines() {
     report(start, lines.len() as u64)
 }
 
+// The same 10 MB text read line by line lazily (`for line in
+// text.lines()`: no array), the bytes of every line summed.
+public func lines_lazy() {
+    let text = "the quick brown fox jumps over the lazy dog 012345\n".repeat(205600)
+    let start = now()
+    var line_bytes = 0
+    for line in text.lines() {
+        line_bytes += line.len()
+    }
+    report(start, line_bytes as u64)
+}
+
+// A 10 MB text split at commas lazily, the fields longer than 3 counted
+// (`split(",").filter(..).count()`).
+public func split_lazy_count() {
+    let text = "the,quick,brown,fox,jumps,over,the,lazy,dog,012345\n".repeat(205600)
+    let start = now()
+    let long_fields = text.split(",").filter(func(w) { w.len() > 3 }).count()
+    report(start, long_fields as u64)
+}
+
 // 1M comma-separated fields split, and their lengths summed.
 public func split_fields() {
     let text = "alpha,beta,gamma,delta,".repeat(250000)
