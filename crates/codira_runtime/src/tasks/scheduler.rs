@@ -3,8 +3,8 @@
 //! Date: November 6, 2026
 //!
 //! Functionality:
-//! - The work-stealing scheduler that runs Codira tasks: per-worker deques,
-//!   a global injector per priority class, stealing, join helping, blocking
+//! - The work-stealing scheduler that runs Codira tasks: per-worker deques, a
+//!   global injector per priority class, stealing, join helping, blocking
 //!   compensation (the "blocking side"), adaptive worker counts and the
 //!   counters [`stats`] reports.
 //!
@@ -297,10 +297,7 @@ pub fn stats() -> SchedulerStats {
 }
 
 pub(super) fn note_skipped() {
-    scheduler()
-        .counters
-        .skipped
-        .fetch_add(1, Ordering::Relaxed);
+    scheduler().counters.skipped.fetch_add(1, Ordering::Relaxed);
 }
 
 impl Scheduler {
@@ -388,7 +385,8 @@ impl Scheduler {
                 deques,
                 slot,
                 tick: slot,
-                random: 0x9E37_79B9_7F4A_7C15 ^ (slot as u64 + 1).wrapping_mul(0xBF58_476D_1CE4_E5B9),
+                random: 0x9E37_79B9_7F4A_7C15
+                    ^ (slot as u64 + 1).wrapping_mul(0xBF58_476D_1CE4_E5B9),
             });
         });
     }
@@ -486,7 +484,8 @@ impl Scheduler {
             let local = local.as_mut().expect("only workers look for work");
             let first = SCHEDULE[local.tick % SCHEDULE.len()];
             local.tick = local.tick.wrapping_add(1);
-            let order = std::iter::once(first).chain(Priority::ALL.into_iter().filter(|&p| p != first));
+            let order =
+                std::iter::once(first).chain(Priority::ALL.into_iter().filter(|&p| p != first));
             for class in order {
                 if let Some(job) = self.find_in_class(local, class.index()) {
                     self.queued.fetch_sub(1, Ordering::SeqCst);

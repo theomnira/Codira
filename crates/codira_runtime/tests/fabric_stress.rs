@@ -220,13 +220,17 @@ fn sleeping_tasks_release_their_workers_and_extra_workers_retire() {
         let count: i64 = driver.runtime.invoke("sleepers", (n,)).unwrap();
         let elapsed = start.elapsed();
         assert_eq!(count, n);
-        let serial = Duration::from_millis(100) * u32::try_from(n).unwrap() / u32::try_from(target).unwrap();
+        let serial =
+            Duration::from_millis(100) * u32::try_from(n).unwrap() / u32::try_from(target).unwrap();
         assert!(
             elapsed < serial / 4,
             "{n} sleeping tasks took {elapsed:?} (serially on {target} workers: {serial:?})"
         );
         let stats = tasks::stats();
-        assert!(stats.peak_threads > target, "no worker was compensated: {stats:?}");
+        assert!(
+            stats.peak_threads > target,
+            "no worker was compensated: {stats:?}"
+        );
         // Idle workers beyond the target exit.
         let deadline = Instant::now() + Duration::from_secs(30);
         while tasks::stats().threads > target && Instant::now() < deadline {
