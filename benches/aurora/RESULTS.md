@@ -16,12 +16,95 @@ The first full run of the suite (`python3 scripts/bench.py`, see
 `baseline/ci.json` holds the samples of its CI kernels for the regression
 gate.
 
-**Since then.** The CI subset was rerun against that baseline after main
-moved to `16934da443` (task groups, and a scheduler whose channel
-operations try before they wait). No kernel regressed, and the heap floor
-is unchanged (64 MiB). One kernel moved: `channels.spsc` went from 13.2x to
-5.2x Rust's time (a 60% drop, 95% interval -70% to -53%). The tables below
-are still the `f8b145c6a1` run.
+**Since then.** The tables of the full run below are main at `f8b145c6a1`.
+Two later commits of main were measured with the CI subset against the
+stored baseline:
+
+- `16934da443` (task groups, and a scheduler whose channel operations try
+  before they wait): no kernel regressed. `channels.spsc` went from 13.2x
+  to 5.2x Rust's time (95% interval of the change -70% to -53%).
+- `261f4b94da` (a kept format result's buffer sized to its text, `@region`
+  functions): no kernel regressed. **The heap floor fell from 64 to 56
+  MiB** (52 MiB fails), with 41.1 MiB live at that cap instead of 48.7.
+  `baseline/ci.json` is now that run's samples (9 rounds, 42 kernels, with
+  the heap floor).
+
+On `261f4b94da`, two workloads were added, `regions` and `groups` (11
+rounds, the same machine; their compile times are in the files of that
+run, not in the table at the end):
+
+### `@region` functions: an arena per call, against the GC heap
+
+| kernel | Codira | Rust | C++ | Codira/Rust | Codira/C++ | RSS C / R / C++ | check |
+|---|---:|---:|---:|---:|---:|---:|---|
+| list_heap | 255.39 [244.75, 264.45] | 104.76 [102.26, 106.72] | 105.55 [104.82, 115.69] | 2.44x [2.34, 2.53] | 2.42x [2.19, 2.51] | 15 / 2 / 3 | same |
+| list_region | 151.98 [145.41, 154.04] | 109.32 [105.75, 118.54] | 34.97 [34.25, 38.63] | 1.39x [1.26, 1.44] | 4.35x [3.87, 4.46] | 4 / 2 / 4 | same |
+| scratch_arrays_heap | 122.28 [113.39, 138.15] | 25.35 [24.85, 28.76] | 53.49 [50.08, 53.91] | 4.82x [4.12, 5.52] | 2.29x [2.15, 2.62] | 8 / 2 / 3 | same |
+| scratch_arrays_region | 65.94 [65.50, 67.76] | 26.00 [25.12, 31.33] | 55.32 [51.97, 67.73] | 2.54x [2.10, 2.65] | 1.19x [0.97, 1.28] | 4 / 2 / 4 | same |
+
+Codira GC (`Runtime::stats()` at the end of the kernel's process; medians over the runs, pauses with a bootstrap 95% interval):
+
+| kernel | heap cap (MiB) | peak heap (MiB) | live after last GC (MiB) | allocated (MiB) | collections (paced / at cap) | stopped (ms) | to safepoint (ms) | pause p50 (µs) | pause p99 (µs) | pause max (µs) |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|
+| list_heap | 256 | 10.8 | 0.0 | 148 | 36 (36 / 0) | 45.1 | 0.01 | 1245 [1180, 1311] | 2640 [2537, 3033] | 2640 [2537, 3033] |
+| list_region | 256 | 0.0 | 0.0 | 0 | 0 (0 / 0) | 0.0 | 0.00 | 0 [0, 0] | 0 [0, 0] | 0 [0, 0] |
+| scratch_arrays_heap | 256 | 4.0 | 0.0 | 783 | 196 (196 / 0) | 11.7 | 0.04 | 57 [55, 63] | 147 [106, 156] | 172 [130, 199] |
+| scratch_arrays_region | 256 | 0.0 | 0.0 | 0 | 0 (0 / 0) | 0.0 | 0.00 | 0 [0, 0] | 0 [0, 0] | 0 [0, 0] |
+
+| list_heap | codira | 5 | 0 | 7412 | 258 |
+| list_heap | rust | 1 | 0 | 77 | 106 |
+| list_heap | cpp | 1 | 0 | 131 | 107 |
+| list_region | codira | 4 | 0 | 202 | 155 |
+| list_region | rust | 1 | 0 | 77 | 110 |
+| list_region | cpp | 1 | 0 | 132 | 36 |
+| scratch_arrays_heap | codira | 4 | 0 | 10461 | 124 |
+| scratch_arrays_heap | rust | 1 | 0 | 80 | 26 |
+| scratch_arrays_heap | cpp | 1 | 0 | 135 | 55 |
+| scratch_arrays_region | codira | 4 | 0 | 213 | 68 |
+| scratch_arrays_region | rust | 1 | 0 | 79 | 27 |
+| scratch_arrays_region | cpp | 1 | 0 | 135 | 57 |
+
+- `list_region`: Rust: `Box`, the same program as `list_heap` (no arena in its standard library).
+- `scratch_arrays_region`: Rust: `Vec`, the same program as `scratch_arrays_heap`.
+
+### Task groups: tasks that return values
+
+| kernel | Codira | Rust | C++ | Codira/Rust | Codira/C++ | RSS C / R / C++ | check |
+|---|---:|---:|---:|---:|---:|---:|---|
+| fib_64 | 43.22 [38.27, 43.91] | 89.44 [84.99, 94.10] | 79.95 [72.98, 84.50] | 0.48x [0.43, 0.51] | 0.54x [0.48, 0.59] | 4 / 3 / 4 | same |
+| tiny_100k | 72.33 [69.92, 75.16] | n/a | n/a | – | – | 6 / – / – | same |
+
+Codira GC (`Runtime::stats()` at the end of the kernel's process; medians over the runs, pauses with a bootstrap 95% interval):
+
+| kernel | heap cap (MiB) | peak heap (MiB) | live after last GC (MiB) | allocated (MiB) | collections (paced / at cap) | stopped (ms) | to safepoint (ms) | pause p50 (µs) | pause p99 (µs) | pause max (µs) |
+|---|---:|---:|---:|---:|---|---:|---:|---:|---:|---:|
+| fib_64 | 1024 | 0.1 | 0.0 | 0 | 0 (0 / 0) | 0.0 | 0.00 | 0 [0, 0] | 0 [0, 0] | 0 [0, 0] |
+| tiny_100k | 1024 | 0.8 | 0.0 | 1 | 0 (0 / 0) | 0.0 | 0.00 | 0 [0, 0] | 0 [0, 0] | 0 [0, 0] |
+
+| fib_64 | codira | 101 | 19 | 253 | 143 |
+| fib_64 | rust | 1263 | 317 | 1066 | 234 |
+| fib_64 | cpp | 473 | 134 | 1355 | 212 |
+| tiny_100k | codira | 3228 | 44 | 660 | 216 |
+
+- `fib_64`: Rust and C++: a thread per task (`std::thread::scope`, `std::async`), what their standard libraries offer.
+- `tiny_100k` rust: no standard-library task pool: a thread per task is not a comparable baseline
+- `tiny_100k` cpp: no standard-library task pool: a thread per task is not a comparable baseline
+
+What they say:
+
+- **A region pays for many objects.** The 64-cell list is 1.7x faster with
+  `@region` than on the GC heap (152 against 255 ms), with no collections
+  instead of 36. It is still 1.4x Rust's `Box` and 4.3x C++'s
+  `std::pmr::monotonic_buffer_resource`, which needs no root registration
+  or zeroing.
+- **Scratch arrays** are 1.85x faster in a region than on the heap (66
+  against 122 ms, 196 collections avoided), and 2.5x Rust's `Vec`.
+- **A group of 64 tasks of real work** takes 0.48x Rust's time and 0.54x
+  C++'s. Their standard libraries offer only a thread per task, so that
+  ratio measures thread creation, not a better scheduler.
+- **100,000 tiny tasks** take 72 ms in all: about 0.7 µs per task spawned,
+  run and joined, with the result read.
+
 
 **The machine.** Intel(R) Xeon(R) Processor @ 2.10GHz, 4 logical CPUs, 16 GB,
 Ubuntu 24.04.5 LTS, Linux 6.18.44-fc-v242: a **shared virtual machine** (a
