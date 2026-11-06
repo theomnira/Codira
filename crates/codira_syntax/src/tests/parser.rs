@@ -1904,3 +1904,19 @@ fn propagate_expr_leaves_holes_and_optional_types_alone() {
     assert_eq!(kinds.iter().filter(|k| **k == OPTIONAL_TYPE).count(), 3);
     assert!(!kinds.contains(&SyntaxKind::PROPAGATE_EXPR));
 }
+
+/// A `{` where a match arm should start: pattern recovery does not consume
+/// it, so the arm loop ran until the parser's step limit panicked ("the
+/// parser seems stuck"). Found by the compiler fuzzer.
+#[test]
+fn a_brace_where_a_match_arm_should_start_is_an_error() {
+    for text in ["{match s{{", "func f() { match x { { } } }", "func g() { match a { {{{ 1 -> 2 } }"] {
+        let parse = SourceFile::parse(text);
+        assert!(!parse.errors().is_empty(), "{text}");
+        assert!(
+            parse.errors().iter().any(|e| e.to_string().contains("expected pattern")),
+            "{text}: {:?}",
+            parse.errors()
+        );
+    }
+}

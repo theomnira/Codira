@@ -639,6 +639,15 @@ fn match_arm_list(p: &mut Parser<'_>) {
     let m = p.start();
     p.bump(T!['{']);
     while !p.at(EOF) && !p.at(T!['}']) {
+        if p.at(T!['{']) {
+            // Pattern recovery stops at a `{` without consuming it, and so
+            // would every iteration after this one: consume it as an error.
+            let error = p.start();
+            p.error("expected pattern");
+            p.bump_any();
+            error.complete(p, ERROR);
+            continue;
+        }
         let arm = p.start();
         patterns::pattern(p);
         if p.expect(T![->]) {

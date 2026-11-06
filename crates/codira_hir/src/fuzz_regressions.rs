@@ -33,3 +33,10 @@ fn an_exponent_without_digits_is_an_invalid_literal() {
 fn a_field_access_cut_off_at_the_end_of_the_input() {
     rejected("func s{e.");
 }
+
+/// A `{` where a match arm should start sent the parser into a loop that
+/// ended in its "the parser seems stuck" panic.
+#[test]
+fn a_brace_where_a_match_arm_should_start() {
+    rejected("{match s{{");
+}
