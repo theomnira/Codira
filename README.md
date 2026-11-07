@@ -442,6 +442,216 @@ flowchart TD
     N7 -.->|target-specific lowering| Targets
     N7 -.->|loop-region candidates| Passes
 
+
+    %% ========================================================================
+    %% 9. PIETÀ ARCHITECTURE EXTENSION — every node below is a proposal unless
+    %% its label explicitly says it extends an existing 26.11 component.
+    %% ========================================================================
+    subgraph PIETA_SPINE [" 9. Pietà semantic spine: one meaning, many compiler views "]
+        direction TB
+        Atlas["codira_atlas · PROPOSED<br/>incremental semantic fact graph<br/>stable IDs · dependency graph · source provenance"]
+        AtlasFacts["Semantic fact services<br/>type · layout · effects · contracts · alias<br/>escape · ownership · range · shape · ABI"]
+        Loom["codira_loom · PROPOSED canonical IR<br/>Value SSA · Memory SSA · Effect tokens<br/>ownership / region facts · proof handles · cost metadata"]
+        LoomVerifier["Loom verifier · PROPOSED<br/>dominance · token linearity · memory consistency<br/>ownership-state legality · provenance completeness"]
+        AtlasFacts <--> Atlas
+        Atlas --> Loom --> LoomVerifier
+    end
+
+    subgraph PIETA_VERITAS [" 10. Veritas: proof-carrying compilation "]
+        direction LR
+        ProofBroker["codira_proof_broker · PROPOSED<br/>SMT · bit-vector · interval · SAT routing"]
+        ProofKernel["codira_proof_kernel · PROPOSED<br/>small independent certificate checker"]
+        ProofCache["Proof cache · PROPOSED<br/>content-addressed by obligation + assumptions + target"]
+        OptReceipt["Optimisation receipt · PROPOSED<br/>preconditions · proof · hashes · target · cost delta"]
+        ProofBroker --> ProofKernel --> OptReceipt
+        ProofCache <--> ProofBroker
+    end
+
+    subgraph PIETA_AURORA [" 11. Aurora + Eidos: optimisation with a reason "]
+        direction LR
+        Aurora["codira_aurora · PROPOSED<br/>hardware cost model + profile-guided optimisation<br/>latency · code size · allocations · compile-time budget"]
+        LoopIntel["Loop intelligence · PROPOSED<br/>dependence proofs · interchange · fusion / fission<br/>tiling · vectorisation · reductions · parallel schedules"]
+        GuardedSpec["Guarded specialisation · PROPOSED<br/>profile-guided versions + guards + baseline fallback"]
+        PassContracts["Pass contracts · PROPOSED<br/>each pass declares effects read / written<br/>memory lanes changed · proof obligation · fallback"]
+        Aurora --> LoopIntel --> GuardedSpec
+        PassContracts --> Passes
+    end
+
+    subgraph PIETA_AEGIS [" 12. Aegis: evidence-driven memory architecture "]
+        direction TB
+        Aegis["codira_aegis · PROPOSED<br/>ownership lattice + allocation planner"]
+        Ownership["Ownership states<br/>unique · shared · borrowed · frozen · pinned · unknown"]
+        Allocate["Allocation decision<br/>one authoritative reclamation protocol per allocation"]
+        FramePath["Frame / stack path<br/>proven non-escape + frame-bounded lifetime"]
+        RegionPath["Region path<br/>bounded scope + quota + bulk close"]
+        CascadePath["Cascade path<br/>compiler retain / release insertion<br/>epoch reclamation + bounded cycle collection"]
+        TracePath["Tracing fallback<br/>unknown / opaque / untracked graphs<br/>precise roots; conservative native boundary"]
+        PinnedPath["Pinned / FFI path<br/>generation-checked handles + explicit pin scope"]
+        CompactPolicy["Relocation eligibility<br/>only with precise references or handles<br/>unknown raw pointers remain pinned"]
+        Aegis --> Ownership --> Allocate
+        Allocate --> FramePath
+        Allocate --> RegionPath
+        Allocate --> CascadePath
+        Allocate --> TracePath
+        Allocate --> PinnedPath
+        TracePath --> CompactPolicy
+        PinnedPath --> CompactPolicy
+    end
+
+    subgraph PIETA_FABRIC [" 13. Fabric: coherent heterogeneous execution "]
+        direction LR
+        PietaFabric["codira_fabric · PROPOSED<br/>target-independent Kernel IR<br/>memory spaces · launch graph · dependencies"]
+        Placement["Target placement planner · PROPOSED<br/>capabilities · shape · locality · transfer cost<br/>latency / throughput / determinism constraints"]
+        Transfer["Explicit transfer graph · PROPOSED<br/>DMA / copy nodes · async fences · overlap proofs"]
+        CpuExec["CPU execution<br/>LLVM · Cranelift · native"]
+        GpuExec["GPU execution<br/>PTX + future target back ends"]
+        QpuExec["QPU execution<br/>QIR · OpenQASM · sampling effects"]
+        FpgaExec["FPGA execution<br/>Verilog / R1CS routes"]
+        WasmExec["WASM / sandboxed execution"]
+        PietaFabric --> Placement --> Transfer
+        Transfer --> CpuExec
+        Transfer --> GpuExec
+        Transfer --> QpuExec
+        Transfer --> FpgaExec
+        Transfer --> WasmExec
+    end
+
+    subgraph PIETA_DX [" 14. Developer experience: make compiler intelligence visible "]
+        direction LR
+        Lens["codira_lens · PROPOSED<br/>IDE + terminal pipeline explorer<br/>source ↔ CST ↔ HIR ↔ Loom ↔ native code"]
+        Explain["codira explain / why · PROPOSED<br/>why not inline / vectorise / stack-allocate?<br/>show failed obligation + safe remedy"]
+        Forge["codira_forge · PROPOSED<br/>hermetic builds · lockfiles · content-addressed cache<br/>verified remote cache · signed provenance"]
+        Chronicle["codira_chronicle · PROPOSED<br/>trace + deterministic replay<br/>seed · inputs · schedule · build hash"]
+        Lens --> Explain
+    end
+
+    subgraph PIETA_PHOENIX [" 15. Phoenix: transactional hot updates "]
+        direction LR
+        Phoenix["codira_phoenix · PROPOSED<br/>prepare → prove compatibility → quiesce<br/>migrate state → swap dispatch epoch → health-check"]
+        Rollback["Rollback / abort path<br/>retain old dispatch + state snapshot until commit"]
+        Phoenix --> Rollback
+    end
+
+    subgraph PIETA_QUALITY [" 16. Pietà validation and observability "]
+        direction LR
+        Property["Property + metamorphic testing · PROPOSED<br/>generated programs + shrinking"]
+        FuzzIR["Grammar / IR / ABI / certificate fuzzers · PROPOSED"]
+        ModelCheck["Concurrency model checks · PROPOSED<br/>safepoints · cancellation · epochs · barriers"]
+        ShadowHeap["Shadow heap mode · PROPOSED<br/>compare Cascade + tracing against reference model"]
+        Deterministic["Deterministic scheduler mode · PROPOSED<br/>replayable task ordering in tests"]
+        Telemetry["Unified runtime telemetry · PROPOSED<br/>allocations · GC pauses · task events · cache misses"]
+    end
+
+    %% Semantic spine replaces direct HIR-to-MIR knowledge gradually.
+    Infer -.-> Atlas
+    Mono -.-> Atlas
+    Escape -.-> AtlasFacts
+    Effects -.-> AtlasFacts
+    Contracts -.-> AtlasFacts
+    Envelope -.-> AtlasFacts
+    N8Budget -.-> AtlasFacts
+    N8Shape -.-> AtlasFacts
+    N8Cap -.-> AtlasFacts
+    Atlas -.->|future canonical lowering route| Loom
+    Loom -.->|future Eidos input| MirLower
+    MIR -.->|export memory / effect facts| Loom
+    LoomVerifier -.->|reject malformed or inconsistent IR| TV
+
+    %% Proof system is a shared service, not a box attached only to contracts.
+    SMT <--> ProofBroker
+    CERT --> ProofKernel
+    TV <--> ProofBroker
+    Contracts -.-> ProofBroker
+    Envelope -.-> ProofBroker
+    Superopt -.-> ProofBroker
+    N6 -.-> ProofBroker
+    LoopIntel -.-> ProofBroker
+    Passes -.-> PassContracts
+    PassContracts -.->|proof obligation per transform| ProofBroker
+    OptReceipt -.-> CERT
+    OptReceipt -.-> Lens
+    ProofCache -.-> CERT
+
+    %% Aurora feeds optimisation and memory policy from measured evidence.
+    Bench -.-> Aurora
+    Profiles -.-> Aurora
+    CI -.->|reproducible profile and benchmark manifests| Aurora
+    Aurora -.->|target-aware extraction cost| EGraph
+    Aurora -.->|bounded candidate ranking| Superopt
+    Aurora -.->|compaction only when net benefit is positive| N4
+    LoopIntel -.->|dependence-proven loop transformations| TV
+    LoopIntel -.->|validated loop lowering| LLVMGen
+    GuardedSpec -.->|guarded machine versions| LLVMGen
+
+    %% Aegis consumes facts and selects exactly one memory protocol per site.
+    Escape -.-> Aegis
+    N1 -.->|compiler retain / release lowering| CascadePath
+    Aegis -.->|frame placement| FrameAlloc
+    Aegis -.->|region placement| Arenas
+    Aegis -.->|tracked shared ownership| Cascade
+    Aegis -.->|unknown / cyclic fallback| GC
+    CompactPolicy -.->|eligibility gate| Relocate
+    N8Domain -.-> Aegis
+    N8Cap -.-> PinnedPath
+    Roots -.->|precise-root metadata| TracePath
+    RootRegion -.->|registered conservative boundary| TracePath
+    N4 -.-> CompactPolicy
+
+    %% Fabric routes existing back ends without pretending transfers are free.
+    Loom -.-> PietaFabric
+    Targets -.-> Placement
+    Placement -.-> LLVMGen
+    Placement -.-> CL
+    Placement -.-> PTX
+    Placement -.-> Quantum
+    Placement -.-> Circuits
+    Placement -.-> Wasm
+    Transfer -.-> Sched
+    N8Shape -.->|shape constraints| Placement
+    N8Budget -.->|resource budgets| Placement
+    Realtime -.->|real-time constraints| Placement
+    Flow -.->|constant-time restrictions| Placement
+
+    %% Developer tools share the compiler's actual semantic and runtime facts.
+    CLI --> Lens
+    LSP -.-> Lens
+    Daemon -.-> Lens
+    Lens -.-> Atlas
+    Lens -.-> Loom
+    Lens -.-> Passes
+    Explain -.-> Escape
+    Explain -.-> OptReceipt
+    Explain -.-> ProofBroker
+    Forge -.-> Daemon
+    Forge -.-> CI
+    Forge -.-> Supply
+    Chronicle -.-> Sched
+    Chronicle -.-> Telemetry
+    Chronicle -.-> Diff
+    Telemetry -.-> Aurora
+
+    %% Transactional live update extends, rather than bypasses, current loader.
+    N6 -.-> Phoenix
+    Phoenix -.-> Loader
+    Phoenix -.-> Reload
+    Phoenix -.-> CERT
+    Phoenix -.-> Rollback
+
+    %% Validation feeds the compiler/runtime continuously.
+    Property -.-> Infer
+    Property -.-> Passes
+    FuzzIR -.-> Parse
+    FuzzIR -.-> LoomVerifier
+    FuzzIR -.-> CERT
+    ModelCheck -.-> Sched
+    ModelCheck -.-> GC
+    ShadowHeap -.-> Cascade
+    ShadowHeap -.-> GC
+    Deterministic -.-> Sched
+    Chronicle -.-> Deterministic
+    Telemetry -.-> Policy
+    Telemetry -.-> Bench
+
     classDef frontend fill:#1e293b,stroke:#38bdf8,color:#f8fafc,stroke-width:2px;
     classDef mid fill:#172554,stroke:#60a5fa,color:#f8fafc,stroke-width:2px;
     classDef backend fill:#064e3b,stroke:#34d399,color:#f8fafc,stroke-width:2px;
@@ -478,6 +688,8 @@ flowchart TD
     class MTE,Funis,Ueval,ArrayAlias,Superopt,Profiles,CI wip;
     class FrameAlloc,Relocate,Cascade addedwip;
     class DevTools,RunFlags,StdLib,Parse,Infer,Results,Strings,Pipelines,Tasks,Realtime,Escape,LLVMGen,Fabric,Roots,Catalogue,CL,GC,Policy,Arenas,RootRegion,StringRT,Sched,RandSvc,Diff,Bench,Gates added;
+    classDef pieta fill:#241b3c,stroke:#bd9bff,color:#f6f0ff,stroke-width:2px,stroke-dasharray:6 4;
+    class Atlas,AtlasFacts,Loom,LoomVerifier,ProofBroker,ProofKernel,ProofCache,OptReceipt,Aurora,LoopIntel,GuardedSpec,PassContracts,Aegis,Ownership,Allocate,FramePath,RegionPath,CascadePath,TracePath,PinnedPath,CompactPolicy,PietaFabric,Placement,Transfer,CpuExec,GpuExec,QpuExec,FpgaExec,WasmExec,Lens,Explain,Forge,Chronicle,Phoenix,Rollback,Property,FuzzIR,ModelCheck,ShadowHeap,Deterministic,Telemetry pieta;
     linkStyle default stroke:#94a3b8,stroke-width:1.5px;
 ```
 
