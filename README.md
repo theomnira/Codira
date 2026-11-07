@@ -117,6 +117,7 @@ flowchart TD
         L1["on main at 26.11<br/>(plain outline)"]
         L2["added since 26.11<br/>(amber outline)"]
         L3["on main but unfinished,<br/>experimental or opt-in (dashed)"]
+        L4["roadmap: not on main yet<br/>(grey dashed node + links)"]
     end
 
     %% ---------------------------------------------------------------- 5
@@ -135,6 +136,20 @@ flowchart TD
         Ueval["codira_ueval<br/>evaluation harness scaffolding (paper)"]
     end
     TOOLS ==>|drive| FRONTEND
+    CLI --> Daemon
+    CLI --> LSP
+    CLI --> DevTools
+    Daemon --> Infer
+    LSP -.->|diagnostics and navigation| Infer
+    RunFlags --> Policy
+    ImportC -.-> Native
+    EnvCLI --> Envelope
+    Certify --> CERT
+    ApiDiff --> CERT
+    Attest --> Circuits
+    CLI -.-> Ueval
+    Ueval -.-> TestGen
+    Ueval -.-> Bench
 
     %% ---------------------------------------------------------------- 1
     subgraph FRONTEND [" 1. Front end: codira_syntax, codira_hir (salsa) "]
@@ -174,6 +189,14 @@ flowchart TD
             Codegen_ok["Codegen support<br/>honest refusals"]
             Bindings["Binding rules<br/>assigning to a let, in-place parameters<br/>and module-level let/var are errors"]
             Escape["Escape analysis (ALI)<br/>per-allocation placement, escape summaries;<br/>@region: an escape is a compile error;<br/>string_escape sizes kept format results"]
+
+            %% Roadmap: language-level contracts and type-system extensions.
+            N8Budget["@budget<br/>resource budgets as checked obligations"]
+            N8Table["Table declarations<br/>typed declarations connected to std.db"]
+            N8Shape["Tensor shape checking<br/>compile-time shape constraints"]
+            N8Domain["Memory domains<br/>explicit allocation-domain model"]
+            N8Cap["Capability types<br/>typed authority at resource and FFI boundaries"]
+
             Realtime --> Envelope
         end
         Infer --> CHECKS
@@ -183,6 +206,10 @@ flowchart TD
             Contracts["requires / ensures<br/>invariant / decreases / ghost<br/>refinement types, bit-exact,<br/>for and continue modelled"]
             Synth["?? holes and choose x where p"]
             TestGen["Counterexample to test<br/>codira test, codira query"]
+
+            %% Roadmap: advanced effects and proof-carrying runtime evolution.
+            N3["Multi-shot continuations<br/>sample / observe; posterior checks<br/>currently fail"]
+            N6["Proof-gated live updates<br/>relational prover + runtime protocol<br/>not compiling yet"]
         end
         Infer --> VERIFY
     end
@@ -194,6 +221,24 @@ flowchart TD
     Envelope --> CERT
     CERT <--> SMT
 
+    %% Roadmap type-system wiring: these are target integrations, not claims
+    %% that the features are implemented on main.
+    Infer -.-> N8Budget
+    Envelope -.-> N8Budget
+    N8Budget -.->|resource-bound proof obligations| SMT
+    ItemTree -.-> N8Table
+    Infer -.-> N8Table
+    N8Table -.->|typed schema declarations| DbSvc
+    Infer -.-> N8Shape
+    N8Shape -.->|shape-aware tensor API| AiSvc
+    Escape -.-> N8Domain
+    N8Domain -.-> Arenas
+    N8Domain -.->|domain-aware reachability| GC
+    Bindings -.-> N8Cap
+    Flow -.-> N8Cap
+    N8Cap -.->|checked native boundary| Native
+    N8Cap -.-> FsSvc
+
     %% ---------------------------------------------------------------- 2
     subgraph EIDOS [" 2. Eidos mid-end: codira_mir, codira_egraph, codira_tv "]
         direction TB
@@ -203,12 +248,41 @@ flowchart TD
         Rewrite["@rewrite rules<br/>library equations"] -->|admitted only when proven| EGraph
         EGraph --> Fold["eidos_fold<br/>whole-function constant result,<br/>only for effect-free functions"]
         TV["codira_tv<br/>translation validation<br/>counterexamples re-executed"]
+
+        %% Roadmap: make aliasing and scheduling decisions proof-aware.
+        N5["Class-field alias information<br/>a field updated in a loop stays in memory;<br/>reported store_field case: 2.5x Rust"]
+        N2["Loop schedules (LLVM hints)<br/>currently blocked by a dependence-safety test"]
+        N1["Cascade compiler lowering<br/>retain / release insertion from<br/>uniqueness analysis"]
+
         Passes <==>|each transform checked| TV
         Rewrite <==>|proof before use| TV
     end
     Mono ==>|"--mode=release"| MirLower
     TV <==> SMT
     Realtime -.->|effect summary gates the fold| Fold
+    Effects --> N3
+    N3 -.->|posterior obligations| SMT
+    N3 -.->|multi-shot continuation frames| EffRT
+    Contracts --> N6
+    N6 -.->|relational proof against old/new code| CERT
+    N6 -.->|runtime update protocol| Reload
+    N6 -.->|dispatch compatibility| Loader
+
+    %% Roadmap integration: each unfinished optimizer feature is anchored
+    %% to the pass, proof gate and backend it is intended to extend.
+    MIR --> N1
+    Escape -.->|escape / lifetime facts| N1
+    N1 -.->|planned retain-release lowering| LLVMGen
+    N1 -.->|runtime protocol| Cascade
+
+    Loops --> N2
+    N2 -.->|dependence proof before scheduling| TV
+    N2 -.->|emit only validated loop hints| LLVMGen
+
+    MIR --> N5
+    N5 -.->|alias facts constrain promotion| Passes
+    N5 -.->|validate memory transformations| TV
+    N5 -.->|preserve field memory semantics| LLVMGen
 
     %% ---------------------------------------------------------------- 3
     subgraph BACKENDS [" 3. Back ends: codira_codegen and friends "]
@@ -248,6 +322,9 @@ flowchart TD
         Targets --> Image
         Image --> Lib
         Targets -.->|"declined or other formats"| LLD
+        Targets -.->|"planned compiler integration"| Funis
+        Funis -.->|"library mode unfinished"| Lib
+        Funis -.-> Exe
         LLD --> Lib
         LLD --> Exe
         Targets --> Wasm
@@ -276,6 +353,7 @@ flowchart TD
         Policy["Heap policy<br/>finite default limit (50% of available memory),<br/>GOGC-style pacing from Codira allocations,<br/>collect_blocking / request_collection with a<br/>fairness window; controlled OOM exit (102);<br/>Runtime::stats(): heap, pauses p50/p99/max"]
         Relocate["Relocation (opt-in, CODIRA_GC_COMPACT=1)<br/>evacuates sparse blocks; anything a stack,<br/>root, pin or root region refers to stays;<br/>off while Cascade is attached"]
         Cascade["Cascade (opt-in, runtime only)<br/>deferred reference counting, epochs,<br/>bounded cycle collection; the compiler<br/>emits no retains or releases yet"]
+        N4["Self-financing relocation<br/>cheap sparse-block selection;<br/>make relocation coexist with Cascade"]
         Arenas["@region arenas<br/>per-thread chunk cache, released at once;<br/>registered as root spans; close-time check<br/>in debug builds"]
         RootRegion["root_region<br/>conservatively scanned words: task-group<br/>results, region chunks"]
         StringRT["String runtime<br/>owner word per buffer (thread pointer);<br/>views, Rust str algorithms, ryu floats"]
@@ -301,6 +379,9 @@ flowchart TD
         Policy --> GC
         Relocate -.-> GC
         Cascade -.-> GC
+        Cascade -.-> N4
+        N4 -.->|cost model + sparse-block selection| Relocate
+        N4 -.->|coexistence protocol| GC
         RootRegion --> GC
         Arenas --> RootRegion
         Sched --> RootRegion
@@ -335,6 +416,11 @@ flowchart TD
     Diff -.->|checks| CL
     Gates -.->|stresses| GC
     Bench -.->|gates| LLVMGen
+    CI -.->|runs| Gates
+    CI -.->|runs| Bench
+    CI -.->|audits| Supply
+    DevTools -->|audit| Supply
+    Profiles -.->|measured cost model| Superopt
 
     %% ---------------------------------------------------------------- 8
     subgraph MCODE [" 8. Machine code: codira_ctcheck, codira_mcode, codira_superopt "]
@@ -343,26 +429,18 @@ flowchart TD
         MCodeIR["codira_mcode<br/>x86-64 and AArch64 integer instructions,<br/>one semantics run concretely and as Z3 bit-vectors,<br/>checked against the CPU it runs on"]
         Profiles["cost profiles<br/>x86-64 latencies and throughputs measured<br/>on the host; AArch64 from the Neoverse N1<br/>optimization guide, never measured"]
         Superopt["codira_superopt<br/>codira build --superoptimize (experimental):<br/>the integer tail of each function, up to 3 instructions,<br/>proven equal by Z3, patched in place and re-proven;<br/>refuses constant-time code; cached"]
+        N7["Superoptimization in loop bodies<br/>extend beyond the integer tail and<br/>cover additional targets"]
         MCodeIR --> Superopt
+        Superopt --> N7
         Profiles --> Superopt
     end
     Lib -.->|"oblivious functions"| CTCheck
     Lib -.->|"--superoptimize"| Superopt
     Superopt <==>|"replacement proven"| SMT
     Flow -.->|"constant-time code refused"| Superopt
-
-    %% ---------------------------------------------------------------- in progress
-    subgraph NEXT [" Not on main: unfinished work "]
-        direction LR
-        N1["Cascade in the compiler<br/>retain / release insertion from the<br/>uniqueness analysis"]
-        N4["relocation that pays for itself<br/>cheap sparse-block selection;<br/>relocation together with Cascade"]
-        N5["class-field alias information<br/>a field updated in a loop stays in memory<br/>(store_field 2.5x Rust)"]
-        N2["loop schedules (LLVM hints)<br/>fails a dependence-safety test"]
-        N3["multi-shot continuations,<br/>sample / observe<br/>fails posterior checks"]
-        N6["proof-gated live updates<br/>relational prover and runtime<br/>protocol do not compile yet"]
-        N7["superoptimiser in loop bodies and on<br/>other targets"]
-        N8["@budget, table declarations,<br/>tensor shape checking, memory<br/>domains, capability types (in progress)"]
-    end
+    N7 -.->|bit-vector equivalence proof| SMT
+    N7 -.->|target-specific lowering| Targets
+    N7 -.->|loop-region candidates| Passes
 
     classDef frontend fill:#1e293b,stroke:#38bdf8,color:#f8fafc,stroke-width:2px;
     classDef mid fill:#172554,stroke:#60a5fa,color:#f8fafc,stroke-width:2px;
@@ -374,7 +452,7 @@ flowchart TD
     classDef mcode fill:#3f1d1d,stroke:#f87171,color:#f8fafc,stroke-width:2px;
     classDef inner fill:#0f172a,stroke:#64748b,color:#f8fafc,stroke-width:1px;
     classDef smt fill:#581c87,stroke:#e879f9,color:#f8fafc,stroke-width:2px;
-    classDef next fill:#1f2937,stroke:#9ca3af,color:#e5e7eb,stroke-width:1px,stroke-dasharray:5 5;
+    classDef next fill:#1f2937,stroke:#9ca3af,color:#e5e7eb,stroke-width:1.5px,stroke-dasharray:5 5;
     classDef legend fill:#0f172a,stroke:#94a3b8,color:#f8fafc,stroke-width:1px;
     classDef added fill:#1f2937,stroke:#f59e0b,color:#fef3c7,stroke-width:3px;
     classDef wip fill:#111827,stroke:#9ca3af,color:#d1d5db,stroke-width:2px,stroke-dasharray:5 5;
@@ -391,12 +469,12 @@ flowchart TD
     class MCODE mcode;
     class CHECKS,VERIFY,SERVICES inner;
     class SMT,TV smt;
-    class NEXT next;
     class LEGEND legend;
     class L1 old;
     class L2 added;
     class L3 wip;
-    class N1,N2,N3,N4,N5,N6,N7,N8 wip;
+    class L4 next;
+    class N1,N2,N3,N4,N5,N6,N7,N8Budget,N8Table,N8Shape,N8Domain,N8Cap next;
     class MTE,Funis,Ueval,ArrayAlias,Superopt,Profiles,CI wip;
     class FrameAlloc,Relocate,Cascade addedwip;
     class DevTools,RunFlags,StdLib,Parse,Infer,Results,Strings,Pipelines,Tasks,Realtime,Escape,LLVMGen,Fabric,Roots,Catalogue,CL,GC,Policy,Arenas,RootRegion,StringRT,Sched,RandSvc,Diff,Bench,Gates added;
