@@ -91,7 +91,7 @@ jobs:
         if: always()
         run: cat bench-out/summary.md >> "$GITHUB_STEP_SUMMARY" || true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: aurora-bench-${{ github.run_id }}
